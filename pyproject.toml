@@ -1,0 +1,125 @@
+[project]
+name = "alphamind"
+version = "0.1.0"
+description = "Autonomous LLM-powered swing trading system"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    # LLM
+    "claude-agent-sdk>=0.1",
+    # Database
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    # Configuration
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "python-dotenv>=1.0",
+    # Scheduling
+    "apscheduler>=3.11,<4",
+    # Async HTTP / websockets
+    "httpx>=0.27",
+    "websockets>=13",
+    # Numerical
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "scipy>=1.13",
+    "ta-lib>=0.5",
+    # Market calendar
+    "exchange-calendars>=4.5",
+    # Market data clients
+    "polygon-api-client>=1.14",
+    "alpaca-py>=0.32",
+    "finnhub-python>=2.4",
+    "fredapi>=0.5",
+    "openpyxl>=3.1.5",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "types-pyyaml>=6.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",       # pycodestyle errors
+    "W",       # pycodestyle warnings
+    "F",       # pyflakes
+    "I",       # isort
+    "B",       # flake8-bugbear
+    "UP",      # pyupgrade
+    "RUF",     # ruff-specific
+    "DTZ",     # tz-aware datetimes (critical for market data)
+    "ASYNC",   # no blocking calls in async functions
+    "PD",      # pandas-vet
+    "NPY",     # numpy
+    "ERA",     # eradicate commented-out code
+    "TRY",     # tryceratops (exception antipatterns)
+    "SIM",     # flake8-simplify
+    "RET",     # flake8-return
+    "ARG",     # unused arguments
+    "C90",     # mccabe complexity
+    "PTH",     # use pathlib
+    "A",       # don't shadow builtins
+    "G",       # logging format
+    "LOG",     # flake8-logging
+    "N",       # pep8-naming
+    "PIE",     # flake8-pie
+    "FURB",    # refurb modernization
+    "PLR0911", # too many return statements
+    "PLR0912", # too many branches
+    "PLR0913", # too many arguments
+    "PLR0915", # too many statements
+]
+ignore = [
+    "TRY003", # long messages outside exception class — too noisy
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pylint]
+max-args = 8
+max-branches = 12
+max-returns = 6
+max-statements = 50
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "PLR2004", # magic numbers fine in tests
+    "ARG",     # fixtures often appear unused at signature
+]
+
+[tool.ruff.format]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unused_ignores = true
+files = ["scripts"]
+
+[[tool.mypy.overrides]]
+module = [
+    "talib.*",
+    "finnhub.*",
+    "fredapi.*",
+    "alpaca.*",
+    "polygon.*",
+    "exchange_calendars.*",
+    "apscheduler.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--strict-markers --strict-config"
+xfail_strict = true

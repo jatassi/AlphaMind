@@ -1,0 +1,973 @@
+domain: news_sentiment
+spec_prefix: Qual1
+module_description: 'Qual 1–2: News, Financial Media, and Sentiment — entity definitions.'
+common_fields_note: 'All primary entities include ''ticker: Ticker'' and ''metadata: InvocationMetadata'' fields (omitted
+  from individual field listings). See _common.yaml for InvocationMetadata mapping.'
+entities:
+- entity: HeadlineCluster
+  spec_id: N/A (supporting type)
+  description: A group of related headlines detected via NLP clustering. Used to
+  is_primary_entity: false
+  primary_source: Marketaux + Finnhub
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: cluster_id
+    target_type: str
+    description: Unique identifier for this cluster
+    source: Marketaux
+    source_endpoint: GET /v1/news/all?symbols={ticker}&filter_entities=true
+    source_field: 'Derived: NLP clustering of Marketaux + Finnhub + Polygon headlines'
+    source_type: string
+    transform: 'Marketaux: data[].title, data[].description, data[].entities[].sentiment_score. Finnhub company-news for additional
+      coverage.'
+  - target_field: headline_count
+    target_type: int
+    description: Number of headlines in the cluster
+    source: Marketaux
+    source_endpoint: GET /v1/news/all?symbols={ticker}&filter_entities=true
+    source_field: 'Marketaux: data[].title | Finnhub: [].headline | Polygon: results[].title'
+    source_type: string
+    transform: 'Marketaux: data[].title, data[].description, data[].entities[].sentiment_score. Finnhub company-news for additional
+      coverage.'
+  - target_field: primary_theme
+    target_type: str
+    description: Human-readable theme (e.g., "earnings_miss", "regulatory_action")
+    source: Marketaux
+    source_endpoint: GET /v1/news/all?symbols={ticker}&filter_entities=true
+    source_field: 'Derived: NLP clustering of Marketaux + Finnhub + Polygon headlines'
+    source_type: string
+    transform: 'Marketaux: data[].title, data[].description, data[].entities[].sentiment_score. Finnhub company-news for additional
+      coverage.'
+  - target_field: tickers_involved
+    target_type: list[Ticker]
+    description: All tickers mentioned in cluster
+    source: Marketaux
+    source_endpoint: GET /v1/news/all?symbols={ticker}&filter_entities=true
+    source_field: 'Marketaux: data[].entities[].symbol | Polygon: results[].tickers[]'
+    source_type: string/array
+    transform: 'Marketaux: data[].title, data[].description, data[].entities[].sentiment_score. Finnhub company-news for additional
+      coverage.'
+- entity: NewsVolume
+  spec_id: N/A (supporting type)
+  description: Point-in-time news volume for a ticker across multiple rolling windows.
+  is_primary_entity: false
+  primary_source: Marketaux + Finnhub
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: volume_2hr
+    target_type: int
+    description: Article count in last 2 hours
+    source: Marketaux
+    source_endpoint: GET /v1/news/all?symbols={ticker}&filter_entities=true
+    source_field: 'Derived: count of articles per time window'
+    source_type: integer
+    transform: 'Marketaux: data[].title, data[].description, data[].entities[].sentiment_score. Finnhub company-news for additional
+      coverage.'
+  - target_field: volume_6hr
+    target_type: int
+    description: Article count in last 6 hours
+    source: Marketaux
+    source_endpoint: GET /v1/news/all?symbols={ticker}&filter_entities=true
+    source_field: 'Derived: count of articles per time window'
+    source_type: integer
+    transform: 'Marketaux: data[].title, data[].description, data[].entities[].sentiment_score. Finnhub company-news for additional
+      coverage.'
+  - target_field: volume_24hr
+    target_type: int
+    description: Article count in last 24 hours
+    source: Marketaux
+    source_endpoint: GET /v1/news/all?symbols={ticker}&filter_entities=true
+    source_field: 'Derived: count of articles per time window'
+    source_type: integer
+    transform: 'Marketaux: data[].title, data[].description, data[].entities[].sentiment_score. Finnhub company-news for additional
+      coverage.'
+  - target_field: volume_vs_avg_20d
+    target_type: float
+    description: Ratio of current 24hr volume to 20-day trailing average
+    source: Marketaux
+    source_endpoint: GET /v1/news/all?symbols={ticker}&filter_entities=true
+    source_field: 'Derived: count of articles per time window'
+    source_type: integer
+    transform: 'Marketaux: data[].title, data[].description, data[].entities[].sentiment_score. Finnhub company-news for additional
+      coverage.'
+- entity: KeyArgument
+  spec_id: N/A (supporting type)
+  description: An extracted argument or claim from a long-form analysis, tagged with
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: argument_text
+    target_type: str
+    description: The claim or argument (e.g., "chip shortages easing in Q4")
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: argument_direction
+    target_type: Direction
+    description: Is this bullish, bearish, or neutral for the thesis?
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: confidence
+    target_type: float
+    description: How confident the extraction is (0.0–1.0)
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+- entity: PlatformSentimentBreakdown
+  spec_id: N/A (supporting type)
+  description: Per-platform sentiment scores for social media, showing divergence
+  is_primary_entity: false
+  primary_source: StockTwits (registration closed) — gap
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: platform
+    target_type: str
+    description: '"stocktwits" | "reddit" | "twitter" | "seeking_alpha"'
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: sentiment_score
+    target_type: float
+    description: Platform-specific score (-1.0 to 1.0)
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: mention_count_24hr
+    target_type: int
+    description: Volume on this platform in last 24 hours
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: sentiment_direction
+    target_type: Direction
+    description: Aggregated direction from the platform
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+- entity: UnusualOptionsActivity
+  spec_id: N/A (supporting type)
+  description: A single unusual options activity report, providing qualitative narrative
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: report_timestamp
+    target_type: datetime
+    description: When this activity was detected/reported
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: activity_type
+    target_type: str
+    description: '"call_accumulation" | "put_accumulation" | "volatility_crush_trade" | etc.'
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: description
+    target_type: str
+    description: Human-readable narrative of the activity
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: implied_thesis_direction
+    target_type: Direction
+    description: What does this positioning suggest?
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: expiration_focus
+    target_type: Optional[str]
+    description: Which expiration is focal ("weekly" | "monthly" | "leaps" | None if mixed)
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: confidence_signal_strength
+    target_type: SignalStrength
+    description: How high-signal is this activity?
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+- entity: BreakingHeadline
+  spec_id: Qual 1:1a
+  description: Qual 1:1a — Wire service and financial news headlines with sentiment tagging.
+  is_primary_entity: true
+  primary_source: Marketaux + Finnhub
+  fallback_source: Benzinga ($50-200/mo for wire-speed)
+  cadence: Continuous (as headlines are published)
+  feasibility: MEDIUM — multi-source pipeline, slower than wire services but broad coverage
+  fields:
+  - target_field: headline_text
+    target_type: str
+    description: 'The full headline text. E.g., "Apple Misses Q3 Revenue Estimates by 5%". Minimal processing: formatting
+      cleaned, source-specific metadata stripped. This is the raw input to the sentiment analysis pipe...'
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: source
+    target_type: str
+    description: Source outlet name (e.g., "Reuters", "CNBC", "Seeking Alpha"). Used for attribution and audit trail. Important
+      for understanding which outlets typically break news vs. react to competitors' scoops.
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: source_credibility_tier
+    target_type: SourceCredibilityTier
+    description: Tier 1 (wire services, Bloomberg exclusives), Tier 2 (major outlets), or Tier 3 (blogs, social-media-first).
+      Used by research layer to weight the headline's initial signal strength. Tier 1 moves the n...
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: is_first_mover
+    target_type: bool
+    description: True if this source appears to be the first to publish this news (based on timestamp clustering and known
+      source behavior). First movers often command market reaction; derivatives trading follows. Hel...
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: published_at
+    target_type: datetime
+    description: UTC timestamp when the headline was published. Used to correlate with price/volume action in Q1:1a within
+      a 5-minute window (high-frequency correlation requires sub-minute precision; 5 min is the lowe...
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: primary_ticker
+    target_type: Ticker
+    description: The ticker this headline is specifically about. This entity is per-ticker.
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: headline_sentiment
+    target_type: Direction
+    description: 'Directional sentiment tagging (bullish, bearish, neutral, mixed) from the LLM distillation layer. Per-ticker
+      contextualized: "Apple says supply chain improving" is BULLISH for AAPL, potentially neutra...'
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: sentiment_confidence
+    target_type: float
+    description: How confident the LLM is in the sentiment assignment (0.0–1.0). Ambiguous headlines (e.g., "Apple Faces Scrutiny
+      Over Tax Practices") may score 0.5–0.6. Clear headlines (e.g., "Apple Crushes Earnings"...
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: news_volume
+    target_type: NewsVolume
+    description: Article counts for this ticker in rolling windows (2hr, 6hr, 24hr) and ratio vs. 20-day average. Used to
+      detect news bursts (sentiment_volume_ratio > 3.0 = exceptional news flow) and contextualize sin...
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: tickers_mentioned
+    target_type: list[Ticker]
+    description: All other tickers mentioned in the headline. E.g., headline about NVIDIA may also mention competitors AMD,
+      QCOM, or customer/supplier relationships. Research layer uses this to propagate signals acros...
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: topic_tags
+    target_type: list[str]
+    description: 'LLM-extracted topic tags for categorization and clustering: "earnings" | "m&a" | "short_report" | "regulatory"
+      | "supply_chain" | "executive_change" | "product_launch" | "legal" | "macro" | etc. Enabl...'
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: is_earnings_related
+    target_type: bool
+    description: True if the headline is specifically about earnings (guidance, misses, beats). Earnings create synchronized
+      spikes across the universe; this flag enables coordinated relative-strength analysis across ...
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: is_ma_related
+    target_type: bool
+    description: True if the headline involves M&A (acquisition rumors, deal announcements, deal breaks). M&A is event-driven,
+      time-bound, high-volatility catalyst. Flags for distinct M&A thesis routing.
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: is_short_report
+    target_type: bool
+    description: 'True if the headline is about a short-seller report (Hindenburg, Muddy Waters, etc.) or short attack. High-signal
+      for sentiment divergence: if shorts attack and price doesn''t move, thesis is "priced i...'
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: cross_ticker_cluster_id
+    target_type: Optional[str]
+    description: If this headline was grouped with others via NLP clustering (e.g., all headlines about a semiconductor supply-chain
+      issue), the cluster ID. Used to identify correlated multi-ticker narratives and prop...
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: news_price_divergence_flag
+    target_type: bool
+    description: True if the headline sentiment significantly diverges from concurrent price action (5-min window post-publication).
+      E.g., negative headline + rising price, or positive headline + falling price. Comput...
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: divergence_description
+    target_type: Optional[str]
+    description: Human-readable narrative of the divergence, if present. E.g., "Bearish guidance but price +3% — suggests
+      institutional accumulation or priced-in nature of the guidance." Research layer uses this for r...
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: 'Detected anomalies: headline sentiment extreme confidence (>0.95), unusual news volume spikes (>5 std dev
+      from baseline), cross-ticker clustering (correlated multi-ticker event), or divergence flags.'
+    source: SEC EDGAR
+    source_endpoint: GET /api/xbrl/companyfacts/CIK{cik}.json
+    source_field: See transform
+    source_type: varies
+    transform: |-
+      Distillation: derived from Finnhub News (free) + Marketaux (free, 100 req/day with pre-computed sentiment)
+              + RSS feeds (CNBC/Reuters/MarketWatch) + SEC EDGAR 8-K RSS. See entity docstring for computation logic.
+- entity: LongFormAnalysis
+  spec_id: Qual 1:1b
+  description: Qual 1:1b — Sell-side research summaries, opinion/editorial, and short reports.
+  is_primary_entity: true
+  primary_source: Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal
+  fallback_source: SemiAnalysis (~$30/mo for semis), other sector-specific research
+  cadence: Every invocation (collected across available APIs; new pieces not on a timer)
+  feasibility: LOW-MEDIUM — sell-side paywalled, free alternatives + LLM distillation
+  fields:
+  - target_field: title
+    target_type: str
+    description: 'Title of the research piece / opinion article / short report. E.g., "Why Tesla is Heading for a Crash" (short
+      report) or "Nvidia: Still the Best Semiconductor Franchise" (research note).'
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: source
+    target_type: str
+    description: 'Source outlet (e.g., "Goldman Sachs", "Hindenburg Research", "Substack/SemiAnalysis"). Critical for weighting:
+      GS equity research has institutional reach, Hindenburg is activist short-seller (high con...'
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: source_credibility_tier
+    target_type: SourceCredibilityTier
+    description: 'Tier assessment: GS/JPM/Morgan Stanley = Tier 1. Established sell-side (Jefferies, Wedbush) = Tier 2. Independent
+      research / shorts = Tier 2–3 depending on track record. Research layer weights accordi...'
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: published_at
+    target_type: datetime
+    description: UTC timestamp of publication. Used to sequence analysis against price history and to flag stale research
+      (>30 days old is historical context only).
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: content_type
+    target_type: str
+    description: '"research_note" | "editorial" | "investigative" | "short_report" | "ma_rumor". Determines how the research
+      layer interprets conviction and time horizon. Short reports and MA rumors are event-driven (d...'
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: primary_ticker
+    target_type: Ticker
+    description: The main subject ticker.
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: directional_call
+    target_type: Direction
+    description: 'Overall thesis direction: BULLISH | BEARISH | NEUTRAL | MIXED. Extracted from the piece conclusion or rating
+      if explicit. "MIXED" for balanced ("outperform vs. peers but headwinds remain") or ambiguou...'
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: is_sell_side
+    target_type: bool
+    description: True if source is institutional sell-side (GS, JPM, Citi, etc.). Sell-side has institutional reach and editorial
+      process; short-sellers have adversarial incentive alignment (may overstate negatives) b...
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: urgency
+    target_type: SignalStrength
+    description: How time-sensitive is this piece for trading? STRONG = time-critical catalyst (deal deadline, earnings preview,
+      recall risk). MODERATE = important but medium-term (structural thesis). WEAK = historica...
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: author
+    target_type: Optional[str]
+    description: Name of the analyst/author if available (e.g., "Katy Huberty from Morgan Stanley"). Used for track record
+      lookups and continuity (does this analyst have a history of prescience or contrarianism?).
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: author_prominence
+    target_type: Optional[str]
+    description: '"high" | "medium" | "low" | None. High = well-known, quoted frequently, institutional weight. Low = junior
+      analyst or first-time writer. Used to weight conviction.'
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: firm_name
+    target_type: Optional[str]
+    description: If sell-side research, the firm name (e.g., "Goldman Sachs", "Morgan Stanley").
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: prior_rating
+    target_type: Optional[str]
+    description: 'Prior rating (if this is an update): "buy" | "hold" | "sell" | "neutral" | etc. Format varies by firm; stored
+      as-is.'
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: new_rating
+    target_type: Optional[str]
+    description: New rating if the piece changes the analyst's stance. Rating changes (downgrade from Buy to Hold, upgrade
+      from Sell to Buy) carry high signal. Used by research layer to flag conviction shifts and cons...
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: is_activist_short_report
+    target_type: bool
+    description: True if this is a dedicated short-seller research piece (Hindenburg, Muddy Waters, J Capital, etc.). These
+      are high-conviction, thesis-heavy, and often catalyst- driven. Requires cross-reference with ...
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: short_seller_name
+    target_type: Optional[str]
+    description: If short report, the name of the activist (e.g., "Hindenburg Research").
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: tickers_mentioned
+    target_type: list[Ticker]
+    description: Secondary tickers (peers, suppliers, competitors mentioned in the analysis). Enables cross-ticker thesis
+      propagation.
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: key_arguments
+    target_type: list[KeyArgument]
+    description: Extracted key claims/arguments with per-argument sentiment direction. E.g., [KeyArgument("AI growth TAM expanding",
+      BULLISH, 0.9), KeyArgument("Competition from new entrants", BEARISH, 0.8)]. Research...
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: 'Detected anomalies: research rating change (upgrade/downgrade from firm), activist short report publication,
+      major conviction shift, or contradiction with recent related headlines (editorial conflict ...'
+    source: Finnhub
+    source_endpoint: Finnhub API
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Finnhub + Zacks free research reports + finance Substacks + OpenBB Terminal. See
+      entity docstring for computation logic.'
+- entity: SocialSentimentScore
+  spec_id: Qual 2:2a
+  description: Qual 2:2a — Aggregated per-ticker social sentiment with velocity and divergence.
+  is_primary_entity: true
+  primary_source: StockTwits (registration closed) — gap
+  fallback_source: Finnhub sentiment (free, lower granularity)
+  cadence: |-
+    Every invocation (most platforms update sentiment scores continuously
+             or hourly; refresh on analysis cycle not on a schedule)
+  feasibility: MEDIUM — aggregated sentiment data readily available, but per-ticker
+  fields:
+  - target_field: sentiment_score
+    target_type: float
+    description: Aggregate sentiment on -1.0 to +1.0 scale (-1.0 = 100% bearish, 0.0 = neutral, +1.0 = 100% bullish). Computed
+      from social platforms (StockTwits posts, Reddit threads, Twitter sentiment where available...
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from StockTwits API (free). See entity docstring for computation logic.'
+  - target_field: sentiment_magnitude
+    target_type: float
+    description: Absolute strength/conviction of the sentiment, independent of direction. High magnitude (>0.7) suggests consensus;
+      low magnitude (<0.3) suggests divided opinion. Computed from vote ratios, post volume...
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from StockTwits API (free). See entity docstring for computation logic.'
+  - target_field: sentiment_confidence
+    target_type: float
+    description: LLM/distillation assessment of confidence in this score (0.0–1.0). Low confidence (0.4–0.5) when platforms
+      show contradictory signals or low volume. High confidence (0.8+) when platforms agree and vol...
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from StockTwits API (free). See entity docstring for computation logic.'
+  - target_field: sentiment_direction
+    target_type: Direction
+    description: 'Simple classification from sentiment_score: BULLISH (>+0.3), BEARISH (<-0.3), NEUTRAL (±0.3), MIXED (if
+      platform breakdown shows conflicting signals). MIXED is common when retail (Twitter) is bullish ...'
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from StockTwits API (free). See entity docstring for computation logic.'
+  - target_field: sentiment_percentile_vs_history
+    target_type: float
+    description: Percentile rank of current sentiment within this ticker's rolling distribution (e.g., 20-day or 60-day history).
+      0.0 = historical minimum (least bullish this name has been), 100.0 = historical maximum...
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from StockTwits API (free). See entity docstring for computation logic.'
+  - target_field: sentiment_rate_of_change
+    target_type: float
+    description: How fast sentiment is shifting, in standard deviations per hour. E.g., +0.15 = sentiment shifting bullish
+      by 0.15 std dev per hour. Used to detect sentiment cascades (cumulative retail FOMO, panic cap...
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from StockTwits API (free). See entity docstring for computation logic.'
+  - target_field: mention_volume_2hr
+    target_type: int
+    description: Number of social posts/mentions in the last 2 hours mentioning this ticker. Baseline varies dramatically
+      by name (TSLA > GME > most others).
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from StockTwits API (free). See entity docstring for computation logic.'
+  - target_field: mention_volume_6hr
+    target_type: int
+    description: 6-hour rolling mention count.
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from StockTwits API (free). See entity docstring for computation logic.'
+  - target_field: mention_volume_24hr
+    target_type: int
+    description: 24-hour rolling mention count.
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from StockTwits API (free). See entity docstring for computation logic.'
+  - target_field: mention_volume_vs_avg
+    target_type: float
+    description: Ratio of current 24hr mention volume to 20-day trailing average. E.g., 5.0 = 5× normal mention volume (social
+      buzz/FOMO spike). Used to detect retail attention spikes independent of sentiment directio...
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from StockTwits API (free). See entity docstring for computation logic.'
+  - target_field: sentiment_price_divergence
+    target_type: bool
+    description: True if social sentiment significantly diverges from recent price action (last 4 hours). E.g., extreme bullish
+      sentiment (+0.85) but price falling intraday, or extreme bearish sentiment (-0.75) but pr...
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from StockTwits API (free). See entity docstring for computation logic.'
+  - target_field: divergence_description
+    target_type: Optional[str]
+    description: Human-readable narrative if divergence detected. E.g., "Extreme bullish sentiment (percentile 98) but -3%
+      intraday — potential reversal signal."
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from StockTwits API (free). See entity docstring for computation logic.'
+  - target_field: roc_window_hours
+    target_type: int
+    description: Window over which rate_of_change is computed (typically 4 hours for intraday). Included for reproducibility.
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from StockTwits API (free). See entity docstring for computation logic.'
+  - target_field: platform_breakdown
+    target_type: list[PlatformSentimentBreakdown]
+    description: Per-platform sentiment scores (StockTwits, Reddit, Twitter, etc.). Enables research layer to identify which
+      communities are driving the aggregate signal. E.g., if StockTwits is +0.9 but Reddit is -0.1...
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from StockTwits API (free). See entity docstring for computation logic.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: 'Detected anomalies: extreme sentiment percentile (>95 or <5), high rate of change (cascade/panic), sentiment-price
+      divergence, or platform disagreement (platform_breakdown scatter).'
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from StockTwits API (free). See entity docstring for computation logic.'
+- entity: AlternativeSentimentProxy
+  spec_id: Qual 2:2b
+  description: Qual 2:2b — Google Trends search interest and retail brokerage flow signals.
+  is_primary_entity: true
+  primary_source: StockTwits (registration closed) — gap
+  fallback_source: pytrends (unofficial, fragile) or Finnhub retail flow (if available)
+  cadence: Daily (Google Trends and brokerage flow both have 24-hour minimum granularity)
+  feasibility: MEDIUM — official Google Trends API is production-grade as of 2025;
+  fields:
+  - target_field: google_trends_index
+    target_type: float
+    description: Google Trends interest score (0–100 scale, relative to peak in query period). 100 = peak interest; 0 = no
+      meaningful search activity. Not absolute (can't compare across queries directly; relative with...
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Google Trends official API (free, 1,500 req/day since 2025). See entity docstring
+      for computation logic.'
+  - target_field: trends_vs_avg_30d
+    target_type: float
+    description: Ratio of current Google Trends index to 30-day rolling average. E.g., 2.5 = current interest is 2.5× normal
+      level (attention spike).
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Google Trends official API (free, 1,500 req/day since 2025). See entity docstring
+      for computation logic.'
+  - target_field: google_trends_ticker_symbol
+    target_type: bool
+    description: Was the ticker symbol (e.g., "AAPL") the primary search term? True = ticker searches dominate. False = company
+      name ("Apple Inc.") dominates. Ticker dominance suggests financial/trader interest; compa...
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Google Trends official API (free, 1,500 req/day since 2025). See entity docstring
+      for computation logic.'
+  - target_field: google_trends_company_name
+    target_type: bool
+    description: Was the company name (e.g., "Apple") the primary search term?
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Google Trends official API (free, 1,500 req/day since 2025). See entity docstring
+      for computation logic.'
+  - target_field: trends_spike_detected
+    target_type: bool
+    description: True if current Trends index > 1.5 standard deviations above 30-day baseline. High-signal for retail attention
+      cascade, often precedes retail order flow surge.
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Google Trends official API (free, 1,500 req/day since 2025). See entity docstring
+      for computation logic.'
+  - target_field: retail_most_bought_rank
+    target_type: Optional[int]
+    description: Position on the "most bought" list from retail platforms (e.g., Fidelity, E*TRADE, Robinhood most-bought).
+      E.g., rank=3 = 3rd most-bought name today. None if not in top 50 or not available. Lower rank...
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Google Trends official API (free, 1,500 req/day since 2025). See entity docstring
+      for computation logic.'
+  - target_field: retail_most_sold_rank
+    target_type: Optional[int]
+    description: Position on the "most sold" list. Used to identify retail panic selling.
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Google Trends official API (free, 1,500 req/day since 2025). See entity docstring
+      for computation logic.'
+  - target_field: retail_net_flow_direction
+    target_type: Optional[Direction]
+    description: 'Net direction of retail order flow: BULLISH = more buys than sells, BEARISH = more sells than buys, NEUTRAL
+      = balanced. Computed from aggregate retail platform data. None if insufficient data.'
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Google Trends official API (free, 1,500 req/day since 2025). See entity docstring
+      for computation logic.'
+  - target_field: retail_institutional_divergence
+    target_type: bool
+    description: True if retail flow direction diverges from institutional positioning (inferred from options narrative Q2:2c
+      and short interest Q4). E.g., retail heavily buying while institutional shorting (from Q4:4...
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Google Trends official API (free, 1,500 req/day since 2025). See entity docstring
+      for computation logic.'
+  - target_field: data_as_of
+    target_type: Optional[datetime]
+    description: Timestamp of the most recent Google Trends and retail flow data. Google Trends updates daily; retail flow
+      updates intraday (varies by platform). Included for reproducibility.
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Google Trends official API (free, 1,500 req/day since 2025). See entity docstring
+      for computation logic.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: 'Detected anomalies: Google Trends spike (>2 std dev), retail rank appearance (name enters top-50 most bought/sold),
+      retail-institutional divergence, or tick-to-tick flow direction reversal.'
+    source: Gap — StockTwits registration closed
+    source_endpoint: N/A
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Google Trends official API (free, 1,500 req/day since 2025). See entity docstring
+      for computation logic.'
+- entity: OptionsFlowNarrative
+  spec_id: Qual 2:2c
+  description: Qual 2:2c — Qualitative options flow narrative from activity reports and media.
+  is_primary_entity: true
+  primary_source: Derived from Q3:3b local detection (volume spikes, IV crush skew) + news API sweep
+  fallback_source: Financial media options commentary (Benzinga, tastytrade, CBOE reports)
+  cadence: Every invocation (unusual activity is continuous; narrative derived on-demand)
+  feasibility: LOW-MEDIUM — pre-computed narrative requires UW ($125/mo), local derivation
+  fields:
+  - target_field: options_equity_narrative_divergence
+    target_type: bool
+    description: True if options positioning (implied from unusual_activity_reports and Q3:3b IV skew/term structure) significantly
+      diverges from equity narrative (sell-side consensus from Q1:1b, news sentiment from Q...
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Derived from Q3:3b local detection (volume spikes, IV crush skew) + news API sweep.
+      See entity docstring for computation logic.'
+  - target_field: unusual_activity_reports
+    target_type: list[UnusualOptionsActivity]
+    description: List of detected unusual options activities (call accumulation, put buying, volatility crush trades, etc.)
+      with timestamps and descriptions. Each entry includes implied thesis direction (bullish, bear...
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Derived from Q3:3b local detection (volume spikes, IV crush skew) + news API sweep.
+      See entity docstring for computation logic.'
+  - target_field: earnings_positioning_commentary
+    target_type: Optional[str]
+    description: Qualitative narrative about options positioning ahead of earnings (if the name is <7 days to earnings). E.g.,
+      "Call buyers concentrated in $180–190 strikes (bullish thesis), put writers are thin (low ...
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Derived from Q3:3b local detection (volume spikes, IV crush skew) + news API sweep.
+      See entity docstring for computation logic.'
+  - target_field: implied_move_vs_historical
+    target_type: Optional[str]
+    description: Qualitative assessment of how current implied move (from ATM straddle or strangle) compares to historical
+      realized volatility. E.g., "Implied move $5.00 vs. historical avg $3.50 — market pricing eleva...
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Derived from Q3:3b local detection (volume spikes, IV crush skew) + news API sweep.
+      See entity docstring for computation logic.'
+  - target_field: divergence_description
+    target_type: Optional[str]
+    description: Human-readable narrative of the divergence. E.g., "Options flow is pricing +15% implied move (from IV term
+      structure) but equity narrative is stable. Suggests market expects earnings surprise or event...
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Derived from Q3:3b local detection (volume spikes, IV crush skew) + news API sweep.
+      See entity docstring for computation logic.'
+  - target_field: smart_money_signal_direction
+    target_type: Optional[Direction]
+    description: Aggregate direction inferred from sophisticated options positioning (institutional call/put accumulation,
+      dealer gamma positioning inferred from options flow, etc.). None if no clear smart money signa...
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Derived from Q3:3b local detection (volume spikes, IV crush skew) + news API sweep.
+      See entity docstring for computation logic.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: 'Detected anomalies: unusual options activity spike, extreme IV (>2 std dev), options-equity narrative divergence,
+      or IV term structure inversion (front-loaded > longer-dated = event risk expected).'
+    source: Marketaux + Finnhub + Polygon
+    source_endpoint: 'Marketaux: GET /v1/news/all | Finnhub: GET /api/v1/company-news | Polygon: GET /v2/reference/news'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Derived from Q3:3b local detection (volume spikes, IV crush skew) + news API sweep.
+      See entity docstring for computation logic.'
+audit_notes: 'AUDIT 2026-03-15: Three news sources confirmed working — Polygon: GET /v2/reference/news?ticker=AAPL (returns
+  title, publisher, tickers, insights[], keywords[]). Marketaux: GET /v1/news/all?symbols=AAPL (returns title, description,
+  entities[].sentiment_score). Finnhub: GET /api/v1/company-news?symbol=AAPL (returns headline, summary, source, datetime,
+  related). NOTE: Finnhub social-sentiment endpoint returns 403 on free tier. StockTwits API registration closed — use Marketaux
+  sentiment as proxy.'

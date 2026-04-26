@@ -1,0 +1,669 @@
+domain: prediction_markets
+spec_prefix: Qual3
+module_description: 'Qual 3: Prediction Markets — entity definitions.'
+common_fields_note: 'All primary entities include ''ticker: Ticker'' and ''metadata: InvocationMetadata'' fields (omitted
+  from individual field listings). See _common.yaml for InvocationMetadata mapping.'
+entities:
+- entity: RateProbabilityPair
+  spec_id: N/A (supporting type)
+  description: A rate level and its probability from a terminal rate distribution.
+  is_primary_entity: false
+  primary_source: Kalshi + Polymarket
+  fallback_source: N/A
+  cadence: Real-time
+  feasibility: HIGH
+  fields:
+  - target_field: rate_bps
+    target_type: int
+    description: Basis points (e.g., 450 = 4.50%)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: probability
+    target_type: float
+    description: Probability mass at this level (0.0–1.0)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+- entity: FOMCMeetingOdds
+  spec_id: N/A (supporting type)
+  description: Per-meeting odds for an upcoming FOMC decision.
+  is_primary_entity: false
+  primary_source: Kalshi + Polymarket
+  fallback_source: N/A
+  cadence: Real-time
+  feasibility: HIGH
+  fields:
+  - target_field: meeting_date
+    target_type: date
+    description: FOMC meeting date (e.g., 2026-03-15)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: probability_hike
+    target_type: float
+    description: P(rate hike) (0.0–1.0)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: probability_cut
+    target_type: float
+    description: P(rate cut) (0.0–1.0)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: probability_hold
+    target_type: float
+    description: P(no change) (0.0–1.0)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: expected_bp_magnitude
+    target_type: int
+    description: Expected magnitude if hike/cut (e.g., 25 for 0.25%)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: days_until_meeting
+    target_type: int
+    description: Days from now until this meeting
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: market_consensus_action
+    target_type: str
+    description: '"hike" | "cut" | "hold" — the most likely outcome'
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+- entity: PolicyContract
+  spec_id: N/A (supporting type)
+  description: A single regulatory/political outcome contract on a prediction market.
+  is_primary_entity: false
+  primary_source: Kalshi + Polymarket
+  fallback_source: N/A
+  cadence: Real-time
+  feasibility: HIGH
+  fields:
+  - target_field: contract_id
+    target_type: str
+    description: Polymarket or Kalshi contract ID (unique identifier)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: description
+    target_type: str
+    description: Human-readable contract title
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: category
+    target_type: str
+    description: '"antitrust" | "trade" | "financial_reg" | "tax" | "election"'
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: probability
+    target_type: float
+    description: Current market probability (0.0–1.0)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: delta_24hr
+    target_type: float
+    description: Change in probability over last 24 hours (pp)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: delta_7d
+    target_type: float
+    description: Change in probability over last 7 days (pp)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: platform
+    target_type: str
+    description: '"polymarket" | "kalshi" | "metaculus"'
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: contract_liquidity_usd
+    target_type: float
+    description: USD liquidity depth (larger = more reliable)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: prior_probability
+    target_type: Optional[float]
+    description: Probability from 7d ago (to compute delta)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: affected_tickers
+    target_type: list[Ticker]
+    description: Which tickers this impacts
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: affected_sectors
+    target_type: list[AlphaMindSector]
+    description: Which sectors
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: resolution_date
+    target_type: Optional[date]
+    description: When this contract will resolve (if known)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+- entity: GeopoliticalContract
+  spec_id: N/A (supporting type)
+  description: A single geopolitical outcome contract (conflict, sanctions, OPEC decisions).
+  is_primary_entity: false
+  primary_source: Kalshi + Polymarket
+  fallback_source: N/A
+  cadence: Real-time
+  feasibility: HIGH
+  fields:
+  - target_field: contract_id
+    target_type: str
+    description: Unique market identifier
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: description
+    target_type: str
+    description: Contract title
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: theater
+    target_type: str
+    description: '"taiwan_strait" | "middle_east" | "russia_ukraine" | "china_economic" | "opec"'
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: escalation_level
+    target_type: str
+    description: '"low" | "medium" | "high" | "critical" — severity classification'
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: probability
+    target_type: float
+    description: Current market probability (0.0–1.0)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: delta_24hr
+    target_type: float
+    description: Change in probability over last 24 hours (pp)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: delta_7d
+    target_type: float
+    description: Change in probability over last 7 days (pp)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: platform
+    target_type: str
+    description: '"polymarket" | "kalshi" | "metaculus"'
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: contract_liquidity_usd
+    target_type: float
+    description: USD liquidity (higher = more reliable)
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: prior_probability
+    target_type: Optional[float]
+    description: Probability from 7d ago
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: affected_tickers
+    target_type: list[Ticker]
+    description: Tickers most sensitive
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: affected_sectors
+    target_type: list[AlphaMindSector]
+    description: Sectors affected
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: resolution_date
+    target_type: Optional[date]
+    description: When contract resolves
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+- entity: MonetaryPolicyOutcome
+  spec_id: Qual 3:3a
+  description: Qual 3:3a — Fed rate decision probabilities from prediction markets.
+  is_primary_entity: true
+  primary_source: Kalshi + Polymarket
+  fallback_source: N/A
+  cadence: Real-time
+  feasibility: HIGH
+  fields:
+  - target_field: upcoming_fomc_meetings
+    target_type: list[FOMCMeetingOdds]
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: terminal_rate_median
+    target_type: int
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: inter_meeting_action_probability
+    target_type: float
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: prediction_market_vs_futures_divergence
+    target_type: bool
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: primary_source
+    target_type: str
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: contract_liquidity_usd
+    target_type: float
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: terminal_rate_distribution
+    target_type: list[RateProbabilityPair]
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: divergence_description
+    target_type: Optional[str]
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: divergence_magnitude_bp
+    target_type: Optional[int]
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: rate_path_shift_24hr
+    target_type: Optional[float]
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+- entity: RegulatoryPoliticalOutcome
+  spec_id: Qual 3:3b
+  description: Qual 3:3b — Regulatory, trade, and political event probability markets.
+  is_primary_entity: true
+  primary_source: Kalshi + Polymarket
+  fallback_source: N/A
+  cadence: Real-time
+  feasibility: HIGH
+  fields:
+  - target_field: active_contracts
+    target_type: list[PolicyContract]
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: high_delta_contracts
+    target_type: list[PolicyContract]
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: sector_impact_summary
+    target_type: dict[str, str]
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Kalshi: markets[].yes_bid, markets[].yes_ask, markets[].last_price (probability as price 0-1). Polymarket:
+      market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
+      weighted by market liquidity.'
+- entity: GeopoliticalOutcome
+  spec_id: Qual 3:3c
+  description: Qual 3:3c — Geopolitical conflict, sanctions, and OPEC decision markets.
+  is_primary_entity: true
+  primary_source: Kalshi + Polymarket
+  fallback_source: N/A
+  cadence: Real-time
+  feasibility: HIGH
+  fields:
+  - target_field: opec_futures_divergence
+    target_type: bool
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: energy_supply_risk_level
+    target_type: str
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: semiconductor_supply_risk_level
+    target_type: str
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: active_contracts
+    target_type: list[GeopoliticalContract]
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: high_delta_contracts
+    target_type: list[GeopoliticalContract]
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: opec_decision_contracts
+    target_type: list[GeopoliticalContract]
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Kalshi + Polymarket
+    source_endpoint: 'Kalshi: GET /trade-api/v2/markets?series_ticker=KXFEDCOMBO (public, no auth). Polymarket: GET https://gamma-api.polymarket.com/markets?closed=false
+      (public, no auth)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
+      Kalshi: filter by relevant series.'
+audit_notes: 'AUDIT 2026-03-15: Kalshi API moved from email/password to RSA key-based auth. Public read endpoints work without
+  auth at api.elections.kalshi.com/trade-api/v2/. Fed-related series found: KXFEDCOMBO (rate decision + dissents), KXRATECUTCOUNT
+  (total cuts). NOTE: Many Kalshi Fed markets have low liquidity (null bids). Polymarket provides better coverage. Polymarket
+  Gamma API confirmed: /markets endpoint returns outcomePrices, volume, liquidity, clobTokenIds.'

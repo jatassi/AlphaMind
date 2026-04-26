@@ -1,0 +1,528 @@
+domain: reference
+spec_prefix: Ref
+module_description: Reference Data — structural entities that scope and classify the universe.
+common_fields_note: 'All primary entities include ''ticker: Ticker'' and ''metadata: InvocationMetadata'' fields (omitted
+  from individual field listings). See _common.yaml for InvocationMetadata mapping.'
+entities:
+- entity: TickerChange
+  spec_id: N/A (supporting type)
+  description: Record of a ticker symbol change for a universe name. Maintains the
+  is_primary_entity: false
+  primary_source: Polygon ticker details + Finnhub company profile
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: previous_ticker
+    target_type: str
+    description: Old symbol (e.g., "FB")
+    source: Polygon + Finnhub
+    source_endpoint: GET /v3/reference/tickers/{ticker} + Finnhub /stock/profile2
+    source_field: Computed
+    source_type: varies
+    transform: Polygon ticker_details or Finnhub company_profile. See field-specific mapping.
+  - target_field: new_ticker
+    target_type: str
+    description: New symbol (e.g., "META")
+    source: Polygon + Finnhub
+    source_endpoint: GET /v3/reference/tickers/{ticker} + Finnhub /stock/profile2
+    source_field: Computed
+    source_type: varies
+    transform: Polygon ticker_details or Finnhub company_profile. See field-specific mapping.
+  - target_field: effective_date
+    target_type: date
+    description: When the change took effect
+    source: Polygon + Finnhub
+    source_endpoint: GET /v3/reference/tickers/{ticker} + Finnhub /stock/profile2
+    source_field: Computed
+    source_type: varies
+    transform: Polygon ticker_details or Finnhub company_profile. See field-specific mapping.
+  - target_field: reason
+    target_type: str
+    description: '"rebrand" | "merger" | "spin_off" | "other"'
+    source: Polygon + Finnhub
+    source_endpoint: GET /v3/reference/tickers/{ticker} + Finnhub /stock/profile2
+    source_field: Computed
+    source_type: varies
+    transform: Polygon ticker_details or Finnhub company_profile. See field-specific mapping.
+- entity: ETFMembership
+  spec_id: Q12:12f
+  description: A ticker's membership in a specific ETF, with weight and rebalance context.
+  is_primary_entity: true
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: etf_ticker
+    target_type: str
+    description: ETF symbol (e.g., "XLK", "SPY", "QQQ", "SMH")
+    source: Polygon + yfinance
+    source_endpoint: 'Polygon: GET /v3/reference/tickers (ETF tickers) | yfinance: Ticker.info (holdings)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: etf_name
+    target_type: str
+    description: Full ETF name for readability
+    source: Polygon + yfinance
+    source_endpoint: 'Polygon: GET /v3/reference/tickers (ETF tickers) | yfinance: Ticker.info (holdings)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: weight_pct
+    target_type: float
+    description: Weight in ETF as of last rebalance (0.0–100.0)
+    source: Polygon + yfinance
+    source_endpoint: 'Polygon: GET /v3/reference/tickers (ETF tickers) | yfinance: Ticker.info (holdings)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: weight_as_of
+    target_type: date
+    description: Date the weight was last confirmed
+    source: Polygon + yfinance
+    source_endpoint: 'Polygon: GET /v3/reference/tickers (ETF tickers) | yfinance: Ticker.info (holdings)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: is_top_10_holding
+    target_type: bool
+    description: Whether this name is a top-10 holding in the ETF
+    source: Polygon + yfinance
+    source_endpoint: 'Polygon: GET /v3/reference/tickers (ETF tickers) | yfinance: Ticker.info (holdings)'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+- entity: ReclassificationEvent
+  spec_id: Q12:12a
+  description: Record of a sector or industry reclassification. Rare but consequential —
+  is_primary_entity: true
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: effective_date
+    target_type: date
+    description: ''
+    source: Polygon + SEC EDGAR
+    source_endpoint: 'Polygon: GET /v3/reference/tickers/{ticker} (sic_code changes) | SEC EDGAR: 8-K filings'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: previous_sector
+    target_type: AlphaMindSector
+    description: ''
+    source: Polygon + SEC EDGAR
+    source_endpoint: 'Polygon: GET /v3/reference/tickers/{ticker} (sic_code changes) | SEC EDGAR: 8-K filings'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: new_sector
+    target_type: AlphaMindSector
+    description: ''
+    source: Polygon + SEC EDGAR
+    source_endpoint: 'Polygon: GET /v3/reference/tickers/{ticker} (sic_code changes) | SEC EDGAR: 8-K filings'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: previous_gics_sub_industry
+    target_type: str
+    description: ''
+    source: Polygon + SEC EDGAR
+    source_endpoint: 'Polygon: GET /v3/reference/tickers/{ticker} (sic_code changes) | SEC EDGAR: 8-K filings'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: new_gics_sub_industry
+    target_type: str
+    description: ''
+    source: Polygon + SEC EDGAR
+    source_endpoint: 'Polygon: GET /v3/reference/tickers/{ticker} (sic_code changes) | SEC EDGAR: 8-K filings'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: reason
+    target_type: str
+    description: Why the reclassification happened
+    source: Polygon + SEC EDGAR
+    source_endpoint: 'Polygon: GET /v3/reference/tickers/{ticker} (sic_code changes) | SEC EDGAR: 8-K filings'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+  - target_field: expected_flow_impact
+    target_type: Optional[str]
+    description: Brief description of expected passive flow impact
+    source: Polygon + SEC EDGAR
+    source_endpoint: 'Polygon: GET /v3/reference/tickers/{ticker} (sic_code changes) | SEC EDGAR: 8-K filings'
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+- entity: AssetUniverse
+  spec_id: N/A (supporting type)
+  description: REF:UNIVERSE — Canonical ticker list with metadata for the ~65-name universe.
+  is_primary_entity: false
+  primary_source: Polygon ticker details + Finnhub company profile
+  fallback_source: SEC EDGAR company search + Finnhub company profile
+  cadence: On change (index rebalance, M&A, universe review)
+  feasibility: HIGH — static reference data, one-time build + maintenance on events
+  fields:
+  - target_field: asset_id
+    target_type: str
+    description: Stable UUID — survives ticker changes, never reused
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: full_name
+    target_type: str
+    description: Legal entity name (e.g., "Apple Inc.")
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: asset_class
+    target_type: str
+    description: Always "equity" in v1. Field exists for future expansion
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: exchange
+    target_type: Exchange
+    description: Primary listing exchange
+    source: Polygon
+    source_endpoint: GET /v3/reference/tickers/{ticker}
+    source_field: See transform
+    source_type: varies
+    transform: 'Polygon: ticker_details.results.primary_exchange. Maps: XNAS=NASDAQ, XNYS=NYSE.'
+  - target_field: cik
+    target_type: str
+    description: SEC Central Index Key (10-digit, zero-padded). Required for
+    source: Polygon
+    source_endpoint: GET /v3/reference/tickers/{ticker}
+    source_field: See transform
+    source_type: varies
+    transform: 'Polygon: ticker_details.results.cik. For SEC EDGAR lookups.'
+  - target_field: figi
+    target_type: Optional[str]
+    description: OpenFIGI identifier. More universal than ticker but less
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: isin
+    target_type: Optional[str]
+    description: International Securities Identification Number (12-char).
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: market_cap_bucket
+    target_type: MarketCapBucket
+    description: ''
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: market_cap_usd
+    target_type: float
+    description: Current market cap in USD. Updated daily from price × shares
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: avg_daily_volume_shares
+    target_type: int
+    description: '20-day trailing ADV in shares. Selection criterion: >2M shares/day.'
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: avg_daily_volume_notional_usd
+    target_type: float
+    description: 20-day trailing ADV in USD notional. Selection
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: shares_outstanding
+    target_type: int
+    description: 'Total shares outstanding. Source: Polygon reference API or'
+    source: Polygon
+    source_endpoint: GET /v3/reference/tickers/{ticker}
+    source_field: See transform
+    source_type: varies
+    transform: 'Polygon: ticker_details.results.share_class_shares_outstanding.'
+  - target_field: float_shares
+    target_type: int
+    description: Public float (shares outstanding minus restricted/insider-held).
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: beta_spy
+    target_type: float
+    description: '1-year beta relative to SPY. Selection criterion: >0.8.'
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: analyst_count
+    target_type: int
+    description: Number of sell-side analysts covering this name. Selection
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: options_chain_liquid
+    target_type: bool
+    description: Whether the options chain meets the liquidity threshold for
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: ipo_date
+    target_type: Optional[date]
+    description: IPO date, if the company went public within a trackable window.
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: is_active
+    target_type: bool
+    description: Whether this name is currently in the active universe. Inactive
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: added_date
+    target_type: date
+    description: When this name was added to the AlphaMind universe.
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: removed_date
+    target_type: Optional[date]
+    description: When this name was deactivated. None if still active.
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: removal_reason
+    target_type: Optional[str]
+    description: 'Free text: "acquired_by_XYZ", "delisted",'
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: ticker_changes
+    target_type: list[TickerChange]
+    description: 'Ordered list of historical ticker symbol changes. Most names have none. Example: [TickerChange("FB", "META",
+      date(2022, 6, 9), "rebrand")]'
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+  - target_field: last_updated
+    target_type: datetime
+    description: When this record was last refreshed from source data. Reference data doesn't change often, but market_cap_usd,
+      avg_daily_volume_*, beta_spy, and analyst_count need periodic updates (daily for cap/ADV,...
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
+      docstring for computation logic.'
+- entity: SectorClassification
+  spec_id: Q1:1e
+  description: REF:SECTOR — Ticker-to-sector mapping with index membership and ETF linkage.
+  is_primary_entity: true
+  primary_source: Polygon + Finnhub + manual sector mapping
+  fallback_source: Finnhub company profile + manual curation
+  cadence: On change (quarterly rebalance, reclassification events)
+  feasibility: HIGH — well-defined reference data, available from multiple free sources
+  fields:
+  - target_field: asset_id
+    target_type: str
+    description: Must match the corresponding AssetUniverse.asset_id
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference API (free) + index provider announcements. See entity docstring
+      for computation logic.'
+  - target_field: alphamind_sector
+    target_type: AlphaMindSector
+    description: The system's 4-sector grouping. This is the authoritative
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference API (free) + index provider announcements. See entity docstring
+      for computation logic.'
+  - target_field: domain_analyst
+    target_type: str
+    description: Which analysis layer agent receives this ticker's data.
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference API (free) + index provider announcements. See entity docstring
+      for computation logic.'
+  - target_field: gics_sector
+    target_type: str
+    description: GICS Level 1 (e.g., "Information Technology", "Financials")
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference API (free) + index provider announcements. See entity docstring
+      for computation logic.'
+  - target_field: gics_industry_group
+    target_type: str
+    description: GICS Level 2 (e.g., "Semiconductors & Semiconductor Equipment")
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference API (free) + index provider announcements. See entity docstring
+      for computation logic.'
+  - target_field: gics_industry
+    target_type: str
+    description: GICS Level 3 (e.g., "Semiconductors")
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference API (free) + index provider announcements. See entity docstring
+      for computation logic.'
+  - target_field: gics_sub_industry
+    target_type: str
+    description: GICS Level 4 (e.g., "Semiconductors") — most granular
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference API (free) + index provider announcements. See entity docstring
+      for computation logic.'
+  - target_field: sector_etf
+    target_type: Ticker
+    description: Primary sector ETF used for relative performance (Q1:1e).
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference API (free) + index provider announcements. See entity docstring
+      for computation logic.'
+  - target_field: index_memberships
+    target_type: list[str]
+    description: 'Major index memberships: ["SPY", "QQQ", "DIA", etc.]. Used for: - Index rebalance impact estimation (Q12:12a)
+      - Market breadth computation (Q7:7c) - Understanding passive flow exposure'
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference API (free) + index provider announcements. See entity docstring
+      for computation logic.'
+  - target_field: etf_memberships
+    target_type: list[ETFMembership]
+    description: 'Detailed ETF membership with weights. Includes sector ETFs, broad market ETFs, and thematic ETFs. Used for:
+      - ETF flow impact estimation (Q12:12f) - Understanding how ETF creation/redemption affects t...'
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference API (free) + index provider announcements. See entity docstring
+      for computation logic.'
+  - target_field: peer_group
+    target_type: str
+    description: Within-sector peer assignment for tighter correlation analysis.
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference API (free) + index provider announcements. See entity docstring
+      for computation logic.'
+  - target_field: peer_tickers
+    target_type: list[Ticker]
+    description: 'Ordered list of peer tickers for this name''s peer group. Pre-computed so correlation analysis doesn''t
+      need to derive it each invocation. Example for NVDA: ["AMD", "AVGO", "TSM"]'
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference API (free) + index provider announcements. See entity docstring
+      for computation logic.'
+  - target_field: reclassification_history
+    target_type: list[ReclassificationEvent]
+    description: 'Ordered list of sector/industry reclassifications. Most names have none. When a reclassification occurs,
+      it can trigger: - Forced buying/selling from sector-focused funds (structural flow) - Changes t...'
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference API (free) + index provider announcements. See entity docstring
+      for computation logic.'
+  - target_field: last_updated
+    target_type: datetime
+    description: ''
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference API (free) + index provider announcements. See entity docstring
+      for computation logic.'
+  - target_field: classification_source
+    target_type: str
+    description: '"polygon" | "manual" | "finnhub"'
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: See transform
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference API (free) + index provider announcements. See entity docstring
+      for computation logic.'
+audit_notes: 'AUDIT 2026-03-15: Polygon reference endpoints verified — ticker_details: sic_code, market_cap, share_class_shares_outstanding,
+  weighted_shares_outstanding, name, type, locale, market, currency. ticker_list: 100+ tickers per page, filterable by market/type/active.
+  exchanges: 22 exchanges returned. ticker_types: 18 types returned. SEC EDGAR company_tickers.json: 10,435 companies for
+  CIK↔ticker lookup. Polygon market_holidays: 24 upcoming holidays returned. market_status: current open/close state.'

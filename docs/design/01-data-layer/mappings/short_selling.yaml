@@ -1,0 +1,730 @@
+domain: short_selling
+spec_prefix: Q4
+module_description: 'Q4: Short Selling and Lending — entity definitions.'
+common_fields_note: 'All primary entities include ''ticker: Ticker'' and ''metadata: InvocationMetadata'' fields (omitted
+  from individual field listings). See _common.yaml for InvocationMetadata mapping.'
+entities:
+- entity: BorrowCostSnapshot
+  spec_id: N/A (supporting type)
+  description: A single point-in-time borrow cost measurement. Used as building blocks
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: timestamp
+    target_type: datetime
+    description: UTC timestamp of the measurement
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: annualized_fee_pct
+    target_type: float
+    description: Annualized borrow fee as a percentage (e.g., 12.5)
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: daily_fee_pct
+    target_type: Optional[float]
+    description: Daily equivalent (for convenience)
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: available_shares
+    target_type: Optional[int]
+    description: Shares available to borrow at this fee
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+- entity: ShortVolumeTrend
+  spec_id: N/A (supporting type)
+  description: Rolling trend statistics for short volume over multiple days. Captures
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: days_in_period
+    target_type: int
+    description: Number of days in the rolling window (e.g., 5, 20)
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: avg_short_volume
+    target_type: int
+    description: Average daily short volume in this window
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: avg_short_ratio
+    target_type: float
+    description: Average short volume ratio in this window
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: 'FINRA: GET /data/group/otcMarket/name/consolidatedShortInterest'
+    source_field: currentShortPositionQuantity, previousShortPositionQuantity, averageDailyVolumeQuantity
+    source_type: integer
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: trend_direction
+    target_type: Direction
+    description: BULLISH = avg declining, BEARISH = avg rising,
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: trend_magnitude
+    target_type: float
+    description: Standard deviations from longer-term mean
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+- entity: FeeTrendSnapshot
+  spec_id: N/A (supporting type)
+  description: 'Fee trajectory measurement: fee level and direction of movement.'
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: period_start
+    target_type: date
+    description: Start date of measurement period
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: period_end
+    target_type: date
+    description: End date of measurement period
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: fee_start_pct
+    target_type: float
+    description: Annualized borrow fee at period start
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: fee_end_pct
+    target_type: float
+    description: Annualized borrow fee at period end
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: fee_change_pct
+    target_type: float
+    description: Absolute change in percentage points
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: fee_change_pct_of_start
+    target_type: float
+    description: Percentage change relative to starting fee
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: trend_direction
+    target_type: Direction
+    description: Is fee rising (BEARISH) or falling (BULLISH)?
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: is_spike
+    target_type: bool
+    description: True if change magnitude exceeds 1 std dev
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+- entity: ShortInterestSnapshot
+  spec_id: Q4:4a
+  description: Q4:4a — Short interest as % of float, days-to-cover, utilization, and trend.
+  is_primary_entity: true
+  primary_source: FINRA consolidated short interest
+  fallback_source: N/A
+  cadence: Bi-monthly (~10 day lag)
+  feasibility: HIGH
+  fields:
+  - target_field: short_interest_pct_float
+    target_type: float
+    description: Current short interest as a percentage of the stock's float. E.g., 15.0 means 15% of shares outstanding are
+      sold short. This is the primary indicator of short pressure. Values above 25% are considered...
+    source: FINRA
+    source_endpoint: 'FINRA: GET /data/group/otcMarket/name/consolidatedShortInterest'
+    source_field: currentShortPositionQuantity, previousShortPositionQuantity, averageDailyVolumeQuantity
+    source_type: integer
+    transform: 'Distillation: derived from FINRA short interest data and Polygon reference data (shares outstanding for SI%
+      of float calculation).'
+  - target_field: short_interest_abs_shares
+    target_type: int
+    description: Absolute count of shares currently sold short. Provides context on the magnitude — 1M shares short of a 2M-share
+      float is very different from 1M shares short of a 1B-share float, even if both are 50% ...
+    source: FINRA
+    source_endpoint: 'FINRA: GET /data/group/otcMarket/name/consolidatedShortInterest'
+    source_field: currentShortPositionQuantity, previousShortPositionQuantity, averageDailyVolumeQuantity
+    source_type: integer
+    transform: 'Distillation: derived from FINRA short interest data and Polygon reference data (shares outstanding for SI%
+      of float calculation).'
+  - target_field: days_to_cover
+    target_type: float
+    description: 'Short interest ratio: (short shares) / (average daily volume). How many days it would take all short sellers
+      to unwind at average daily volume, assuming unlimited supply and no supporting demand. Valu...'
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/consolidatedShortInterest
+    source_field: daysToCoverQuantity field
+    source_type: integer
+    transform: 'FINRA: daysToCoverQuantity field. Direct map.'
+  - target_field: utilization_rate_pct
+    target_type: Optional[float]
+    description: 'Percentage of lendable shares currently out on loan. 90%+ utilization is a squeeze setup signal — new shorts
+      must bid up borrow costs (fee pressure) or wait for recalls. Source: securities lending pla...'
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/consolidatedShortInterest
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA short interest data and Polygon reference data (shares outstanding for SI%
+      of float calculation).'
+  - target_field: si_change_cycle_pct
+    target_type: Optional[float]
+    description: 'Cycle-over-cycle change in SI: (current SI - prior SI) / prior SI × 100. Negative = shorts covering, positive
+      = more shorting. Large positive changes (>20% per cycle) flag acceleration. Refresh: bi-mo...'
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/consolidatedShortInterest
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA short interest data and Polygon reference data (shares outstanding for SI%
+      of float calculation).'
+  - target_field: si_trend_direction
+    target_type: Direction
+    description: 'Classification of SI trend: BEARISH (SI rising, shorts accumulating), BULLISH (SI falling, shorts covering),
+      NEUTRAL (stable ±5% range).'
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/consolidatedShortInterest
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA short interest data and Polygon reference data (shares outstanding for SI%
+      of float calculation).'
+  - target_field: si_acceleration
+    target_type: SignalStrength
+    description: How pronounced the SI trend is. STRONG = accelerating (2+ consecutive cycles of >20% change). MODERATE =
+      steady growth (10–20% per cycle). WEAK = slow change (<10%). NONE = stable. Helps distinguish s...
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/consolidatedShortInterest
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA short interest data and Polygon reference data (shares outstanding for SI%
+      of float calculation).'
+  - target_field: si_data_as_of
+    target_type: Optional[date]
+    description: Settlement date of the most recent FINRA SI count. FINRA publishes bi-monthly on specific dates with ~5–10
+      day delay. This tells you exactly how stale the data is.
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/consolidatedShortInterest
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA short interest data and Polygon reference data (shares outstanding for SI%
+      of float calculation).'
+  - target_field: utilization_data_as_of
+    target_type: Optional[date]
+    description: Date of the most recent utilization measurement (if available).
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/consolidatedShortInterest
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA short interest data and Polygon reference data (shares outstanding for SI%
+      of float calculation).'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: 'Detected anomalies: SI jumps, utilization approaching 100%, or extreme days-to-cover relative to this name''s
+      history.'
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/consolidatedShortInterest
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA short interest data and Polygon reference data (shares outstanding for SI%
+      of float calculation).'
+- entity: BorrowCost
+  spec_id: Q4:4b
+  description: Q4:4b — Borrow fee rate, fee trends, spikes, and hard-to-borrow status.
+  is_primary_entity: true
+  primary_source: iBorrowDesk (scraping IBKR data)
+  fallback_source: N/A
+  cadence: Every 15 min during US trading hours
+  feasibility: MEDIUM — requires headless browser (React SPA)
+  fields:
+  - target_field: current_fee_annualized_pct
+    target_type: float
+    description: Annualized borrow cost as a percentage. E.g., 15.0 = 15% annualized. This is the headline number — the rate
+      shorts are paying right now to borrow this stock. Fees > 100% annualized are extreme (typica...
+    source: iBorrowDesk
+    source_endpoint: 'Scrape: iborrowdesk.com/report/{ticker}'
+    source_field: Scraped from HTML
+    source_type: string (parsed)
+    transform: 'Distillation: derived from iBorrowDesk scraped data. Track fee trends, detect spikes, classify hard-to-borrow
+      status.'
+  - target_field: current_fee_daily_pct
+    target_type: Optional[float]
+    description: Daily equivalent for convenience. annualized / 252 (trading days).
+    source: iBorrowDesk
+    source_endpoint: 'Scrape: iborrowdesk.com/report/{ticker}'
+    source_field: Scraped from HTML
+    source_type: string (parsed)
+    transform: 'Distillation: derived from iBorrowDesk scraped data. Track fee trends, detect spikes, classify hard-to-borrow
+      status.'
+  - target_field: available_shares_to_borrow
+    target_type: Optional[int]
+    description: 'Number of shares currently available for shorting from the lending pool. Low values (< 100K) suggest tight
+      supply. When combined with elevated fees, signals short panic. Source: iBorrowDesk estimated ...'
+    source: iBorrowDesk
+    source_endpoint: 'Scrape: iborrowdesk.com/report/{ticker}'
+    source_field: Scraped from HTML
+    source_type: string (parsed)
+    transform: 'Distillation: derived from iBorrowDesk scraped data. Track fee trends, detect spikes, classify hard-to-borrow
+      status.'
+  - target_field: fee_trend_1d
+    target_type: Optional[FeeTrendSnapshot]
+    description: Fee movement over the past day (most recent 1-day rolling window). Spikes in overnight or pre-market hours
+      are high-signal. Detects panic.
+    source: iBorrowDesk
+    source_endpoint: 'Scrape: iborrowdesk.com/report/{ticker}'
+    source_field: Scraped from HTML
+    source_type: string (parsed)
+    transform: 'Distillation: derived from iBorrowDesk scraped data. Track fee trends, detect spikes, classify hard-to-borrow
+      status.'
+  - target_field: fee_trend_5d
+    target_type: Optional[FeeTrendSnapshot]
+    description: 5-day rolling fee trend. Smooths 1-day noise; captures sustained pressure.
+    source: iBorrowDesk
+    source_endpoint: 'Scrape: iborrowdesk.com/report/{ticker}'
+    source_field: Scraped from HTML
+    source_type: string (parsed)
+    transform: 'Distillation: derived from iBorrowDesk scraped data. Track fee trends, detect spikes, classify hard-to-borrow
+      status.'
+  - target_field: fee_trend_20d
+    target_type: Optional[FeeTrendSnapshot]
+    description: 20-day rolling fee trend. Shows structural short cost changes.
+    source: iBorrowDesk
+    source_endpoint: 'Scrape: iborrowdesk.com/report/{ticker}'
+    source_field: Scraped from HTML
+    source_type: string (parsed)
+    transform: 'Distillation: derived from iBorrowDesk scraped data. Track fee trends, detect spikes, classify hard-to-borrow
+      status.'
+  - target_field: fee_spike_active
+    target_type: bool
+    description: True if current fee is >1.5× the 20-day average and the change happened within the past 24 hours. High signal
+      of short panic or supply shock.
+    source: iBorrowDesk
+    source_endpoint: 'Scrape: iborrowdesk.com/report/{ticker}'
+    source_field: Scraped from HTML
+    source_type: string (parsed)
+    transform: 'Distillation: derived from iBorrowDesk scraped data. Track fee trends, detect spikes, classify hard-to-borrow
+      status.'
+  - target_field: fee_spike_magnitude
+    target_type: Optional[float]
+    description: How extreme the spike is, measured in standard deviations from the 20-day baseline. E.g., 3.5 = 3.5 std dev
+      above mean (exceptional).
+    source: iBorrowDesk
+    source_endpoint: 'Scrape: iborrowdesk.com/report/{ticker}'
+    source_field: Scraped from HTML
+    source_type: string (parsed)
+    transform: 'Distillation: derived from iBorrowDesk scraped data. Track fee trends, detect spikes, classify hard-to-borrow
+      status.'
+  - target_field: fee_spike_start_time
+    target_type: Optional[datetime]
+    description: UTC timestamp when the current spike began.
+    source: iBorrowDesk
+    source_endpoint: 'Scrape: iborrowdesk.com/report/{ticker}'
+    source_field: Scraped from HTML
+    source_type: string (parsed)
+    transform: 'Distillation: derived from iBorrowDesk scraped data. Track fee trends, detect spikes, classify hard-to-borrow
+      status.'
+  - target_field: hard_to_borrow
+    target_type: bool
+    description: 'True if the stock appears on prime broker hard-to-borrow lists or borrow availability is critically low
+      (<50K shares or unavailable at any fee). Binary flag of extreme short supply. Source: IBKR, Fint...'
+    source: iBorrowDesk
+    source_endpoint: 'Scrape: iborrowdesk.com/report/{ticker}'
+    source_field: Scraped from HTML
+    source_type: string (parsed)
+    transform: 'Distillation: derived from iBorrowDesk scraped data. Track fee trends, detect spikes, classify hard-to-borrow
+      status.'
+  - target_field: fee_term_structure
+    target_type: Optional[str]
+    description: 'Qualitative description of the fee curve: "front_loaded" = near-term expensive, longer-term cheaper (event-driven
+      short thesis). "flat" = fee is similar across all tenors (structural bear thesis). "in...'
+    source: iBorrowDesk
+    source_endpoint: 'Scrape: iborrowdesk.com/report/{ticker}'
+    source_field: Scraped from HTML
+    source_type: string (parsed)
+    transform: 'Distillation: derived from iBorrowDesk scraped data. Track fee trends, detect spikes, classify hard-to-borrow
+      status.'
+  - target_field: recent_measurements
+    target_type: list[BorrowCostSnapshot]
+    description: Last 10–20 fee measurements (timestamps + fees + available shares). Enables downstream systems to compute
+      their own trends without needing full historical data. Most recent first.
+    source: iBorrowDesk
+    source_endpoint: 'Scrape: iborrowdesk.com/report/{ticker}'
+    source_field: Scraped from HTML
+    source_type: string (parsed)
+    transform: 'Distillation: derived from iBorrowDesk scraped data. Track fee trends, detect spikes, classify hard-to-borrow
+      status.'
+  - target_field: last_updated
+    target_type: datetime
+    description: UTC timestamp of the most recent borrow cost measurement. iBorrowDesk updates every 15 min during trading
+      hours; may be stale outside hours.
+    source: iBorrowDesk
+    source_endpoint: 'Scrape: iborrowdesk.com/report/{ticker}'
+    source_field: Scraped from HTML
+    source_type: string (parsed)
+    transform: 'Distillation: derived from iBorrowDesk scraped data. Track fee trends, detect spikes, classify hard-to-borrow
+      status.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: 'Detected anomalies: fee spikes, hard-to-borrow transitions, available shares dropping sharply, or fee reversals.'
+    source: iBorrowDesk
+    source_endpoint: 'Scrape: iborrowdesk.com/report/{ticker}'
+    source_field: Scraped from HTML
+    source_type: string (parsed)
+    transform: 'Distillation: derived from iBorrowDesk scraped data. Track fee trends, detect spikes, classify hard-to-borrow
+      status.'
+- entity: ShortVolumeDaily
+  spec_id: Q4:4c
+  description: Q4:4c — Daily FINRA short volume and short volume ratio.
+  is_primary_entity: true
+  primary_source: FINRA RegSHO daily
+  fallback_source: N/A
+  cadence: Daily (next business day)
+  feasibility: HIGH
+  fields:
+  - target_field: report_date
+    target_type: date
+    description: The trading date for which this short volume is reported. FINRA publishes the prior day's data mid-morning
+      ET.
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/regShoDaily
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA RegSHO daily short volume data.'
+  - target_field: daily_short_volume_shares
+    target_type: int
+    description: 'Total short sale volume on the report date (shares). The raw count of shares sold short by all market participants.
+      Source: FINRA.'
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/regShoDaily
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA RegSHO daily short volume data.'
+  - target_field: daily_total_volume_shares
+    target_type: int
+    description: Total share volume on the same date. Used to compute the ratio.
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/regShoDaily
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA RegSHO daily short volume data.'
+  - target_field: short_volume_ratio_pct
+    target_type: float
+    description: 'Short volume as a percentage of total daily volume. E.g., 65.0 = 65% of the day''s volume was short sales.
+      Above 70% is elevated (concentrated shorting). Below 40% is light shorting. Context: use with ...'
+    source: FINRA
+    source_endpoint: 'FINRA: GET /data/group/otcMarket/name/consolidatedShortInterest'
+    source_field: currentShortPositionQuantity, previousShortPositionQuantity, averageDailyVolumeQuantity
+    source_type: integer
+    transform: 'Distillation: derived from FINRA RegSHO daily short volume data.'
+  - target_field: trend_5d
+    target_type: Optional[ShortVolumeTrend]
+    description: 5-day rolling average short volume and ratio. Smooths single-day noise. Identifies sustained shorting direction
+      independent of one-day spikes.
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/regShoDaily
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA RegSHO daily short volume data.'
+  - target_field: trend_20d
+    target_type: Optional[ShortVolumeTrend]
+    description: 20-day rolling trend. Captures structural changes (e.g., shorts ramping position over weeks vs. a single
+      panic spike).
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/regShoDaily
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA RegSHO daily short volume data.'
+  - target_field: likely_directional
+    target_type: Optional[bool]
+    description: 'True if short volume appears directional (bears building/unwinding positions) rather than mechanical (routine
+      market-making hedging). Heuristics: (1) short ratio > 65% on down day = directional sellin...'
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/regShoDaily
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA RegSHO daily short volume data.'
+  - target_field: directional_signal_strength
+    target_type: SignalStrength
+    description: How confident we are that the short volume is directional vs. routine. STRONG = consistent multi-day pattern
+      + price confirmation. MODERATE = spike on high volume or down day. WEAK = single day or amb...
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/regShoDaily
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA RegSHO daily short volume data.'
+  - target_field: prior_day_ratio_pct
+    target_type: Optional[float]
+    description: Yesterday's short volume ratio (if available). Enables trend detection within a day (ratio increased from
+      45% to 65% = fresh shorting activity).
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/regShoDaily
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA RegSHO daily short volume data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: 'Detected anomalies: extreme short volume ratio (>80%), sustained high ratio over multiple days, or sudden
+      shifts in shorting intensity.'
+    source: FINRA
+    source_endpoint: api.finra.org/data/group/otcMarket/name/regShoDaily
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from FINRA RegSHO daily short volume data.'
+- entity: LendingMarketStructure
+  spec_id: Q4:4d
+  description: Q4:4d — Securities lending supply, recall risk, and lender concentration.
+  is_primary_entity: true
+  primary_source: S3 Partners, IHS Markit, Reg SHO threshold list (SEC, on-demand)
+  fallback_source: iBorrowDesk estimated 'available shares' (partial proxy only)
+  cadence: ON-DEMAND only (too expensive for routine ingestion)
+  feasibility: VERY LOW — true institutional-grade data requires paid APIs;
+  fields:
+  - target_field: lendable_supply_shares
+    target_type: Optional[int]
+    description: Total shares available for lending in the securities lending market. This is NOT the shares short — it's
+      the *available* pool. Combined with short interest, gives you the cushion before covering is fo...
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: supply_trend_direction
+    target_type: Optional[Direction]
+    description: Is the lendable supply growing (BULLISH, shorts have room) or shrinking (BEARISH, squeeze pressure building)?
+      Measured over 5–20 day window.
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: supply_change_pct_20d
+    target_type: Optional[float]
+    description: 20-day percentage change in lendable supply. E.g., -30.0 = supply contracted 30% (large holders recalling
+      shares).
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: lender_concentration_herfindahl
+    target_type: Optional[float]
+    description: Herfindahl concentration index (0.0–1.0) of lenders supplying the lendable pool. Values > 0.6 indicate concentrated
+      lending (fragile — one or two major lenders control supply). Values < 0.3 indicate d...
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: net_new_loans_shares_1d
+    target_type: Optional[int]
+    description: Net new share borrowing over the past day (new loans initiated minus returns). Positive = shorts ramping.
+      Negative = shorts covering. Magnitude indicates pace of position changes.
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: net_new_loans_trend_5d
+    target_type: Optional[Direction]
+    description: Direction of net borrowing over 5 days. BEARISH = consistent new borrowing (shorts accumulating). BULLISH
+      = net returns (shorts covering).
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: reg_sho_threshold_listed
+    target_type: bool
+    description: True if the ticker appears on the SEC Reg SHO threshold list (persistent fails-to-deliver requiring mandatory
+      close-out). Binary flag of extreme squeeze catalyst potential. Checkable on-demand from SE...
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: days_on_threshold_list
+    target_type: Optional[int]
+    description: How many consecutive days the name has been on the threshold list. >5 days = persistent problem, mandatory
+      closes imminent.
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: data_as_of
+    target_type: Optional[date]
+    description: Date of the most recent lending market data. Securities lending data is slower to publish than borrow costs
+      or short volume.
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: 'Detected anomalies: supply collapse, lender concentration spike, threshold list entry, or net lending direction
+      reversal.'
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+- entity: SqueezeComposite
+  spec_id: Q4:4e
+  description: Q4:4e — Composite short squeeze scoring from SI + borrow + short volume.
+  is_primary_entity: true
+  primary_source: |-
+    Derived from Q4:4a (ShortInterestSnapshot), Q4:4b (BorrowCost),
+            Q4:4c (ShortVolumeDaily), plus Q1:1a (price) and Q2:2b (depth)
+  fallback_source: Derived from 4a + 4c only (without borrow costs)
+  cadence: ON-DEMAND (computed when requested, not scheduled)
+  feasibility: HIGH — computation is straightforward with iBorrowDesk borrow
+  fields:
+  - target_field: squeeze_score
+    target_type: float
+    description: 'Composite metric on a 0.0–100.0 scale capturing squeeze intensity. 0–20: NORMAL — routine short activity,
+      no pressure. 20–50: ELEVATED — short pressure building, squeeze conditions developing. 50–80: ...'
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: squeeze_state
+    target_type: str
+    description: 'Classification label for LLM consumption: "normal" | "elevated" | "active" | "extreme". Maps from squeeze_score
+      ranges.'
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: catalyst_proximity_score
+    target_type: float
+    description: '0.0–100.0 score of how close the name is to conditions that historically precipitate short covering cascades.
+      Factors: (1) utilization near 100%, (2) fee spiking or sustained >75% annualized, (3) borr...'
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: days_to_catalyst_estimate
+    target_type: Optional[int]
+    description: 'If a squeeze is building, rough estimate of days until trigger (catalyst). Heuristic: if supply is contracting
+      5% per day and shorts are stable, the crossing point is calculable. Highly uncertain; for...'
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: covering_velocity_atr_per_day
+    target_type: Optional[float]
+    description: If covering begins, estimated daily price move (in ATR multiples) needed to unwind the accumulated short
+      position at current average daily volume and depth (from Q1:1a and Q2:2b). E.g., 2.5 = covering...
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: price_move_for_active_status_pct
+    target_type: Optional[float]
+    description: 'Rough estimate: a move of X% would push the name from current state (e.g., "elevated") into "active" squeeze.
+      Helps analyst understand how tight the powder keg is. E.g., if the name is at "elevated" an...'
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: short_interest_pct_float
+    target_type: Optional[float]
+    description: Latest SI% (from 4a) for context. Included for reference without requiring the analyst to fetch ShortInterestSnapshot
+      separately.
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: 'FINRA: GET /data/group/otcMarket/name/consolidatedShortInterest'
+    source_field: currentShortPositionQuantity, previousShortPositionQuantity, averageDailyVolumeQuantity
+    source_type: integer
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: borrow_fee_annualized_pct
+    target_type: Optional[float]
+    description: Latest borrow fee (from 4b) for context.
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: short_volume_ratio_pct
+    target_type: Optional[float]
+    description: Most recent short volume ratio (from 4c) for context.
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: 'FINRA: GET /data/group/otcMarket/name/consolidatedShortInterest'
+    source_field: currentShortPositionQuantity, previousShortPositionQuantity, averageDailyVolumeQuantity
+    source_type: integer
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: data_freshness_warning
+    target_type: Optional[str]
+    description: String flagging stale data. E.g., "SI is bi-monthly, last update 8 days ago" or "borrow cost is 15 minutes
+      old, very fresh". Helps analyst weight the composite score appropriately.
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: 'Detected anomalies feeding into the squeeze score: SI spikes, fee explosions, covering cascades detected
+      via short volume collapse, threshold list entries, or supply drops.'
+    source: FINRA + iBorrowDesk + Derived
+    source_endpoint: Multiple (FINRA SI, RegSHO, iBorrowDesk)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: composite scoring from FINRA short interest, daily short volume, and borrow cost data.'
+audit_notes: 'AUDIT 2026-03-15: FINRA API verified. Short interest API: GET /data/group/otcMarket/name/consolidatedShortInterest
+  (fields: currentShortPositionQuantity, previousShortPositionQuantity, averageDailyVolumeQuantity, changePreviousNumber,
+  settlementDate). ATS weekly summary: GET /data/group/otcMarket/name/weeklySummary (fields: totalWeeklyShareQuantity, issueSymbolIdentifier,
+  issueName). NOTE: Original /atsIssueData endpoint returned 404 — use /weeklySummary instead. iBorrowDesk scraping for borrow
+  cost requires headless browser (React SPA).'

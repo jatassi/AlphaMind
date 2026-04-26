@@ -1,0 +1,1933 @@
+domain: fundamentals
+spec_prefix: Q5
+module_description: 'Q5: Fundamental and Earnings — entity definitions.'
+common_fields_note: 'All primary entities include ''ticker: Ticker'' and ''metadata: InvocationMetadata'' fields (omitted
+  from individual field listings). See _common.yaml for InvocationMetadata mapping.'
+entities:
+- entity: EstimateRevision
+  spec_id: N/A (supporting type)
+  description: A single estimate revision event tracked to the hour for intraday timing.
+  is_primary_entity: false
+  primary_source: yfinance (Yahoo Finance)
+  fallback_source: Finnhub (basic, free tier limited)
+  cadence: Daily cache refresh
+  feasibility: HIGH
+  fields:
+  - target_field: revision_timestamp
+    target_type: datetime
+    description: UTC timestamp when the revision was published
+    source: yfinance
+    source_endpoint: yfinance.Ticker(ticker).get_earnings_estimate() / get_eps_revisions() / get_revenue_estimate()
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance earnings/revenue estimate data.'
+  - target_field: field
+    target_type: str
+    description: '"eps_current_quarter", "eps_next_quarter", "eps_fy", "revenue_cq", etc.'
+    source: yfinance
+    source_endpoint: yfinance.Ticker(ticker).get_earnings_estimate() / get_eps_revisions() / get_revenue_estimate()
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance earnings/revenue estimate data.'
+  - target_field: prior_estimate
+    target_type: float
+    description: Previous consensus before this revision
+    source: yfinance
+    source_endpoint: yfinance.Ticker(ticker).get_earnings_estimate() / get_eps_revisions() / get_revenue_estimate()
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance earnings/revenue estimate data.'
+  - target_field: new_estimate
+    target_type: float
+    description: New consensus after this revision
+    source: yfinance
+    source_endpoint: yfinance.Ticker(ticker).get_earnings_estimate() / get_eps_revisions() / get_revenue_estimate()
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance earnings/revenue estimate data.'
+  - target_field: revision_magnitude
+    target_type: float
+    description: Absolute change in estimate
+    source: yfinance
+    source_endpoint: yfinance.Ticker(ticker).get_earnings_estimate() / get_eps_revisions() / get_revenue_estimate()
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance earnings/revenue estimate data.'
+  - target_field: revision_pct
+    target_type: float
+    description: Percentage change in estimate
+    source: yfinance
+    source_endpoint: yfinance.Ticker(ticker).get_earnings_estimate() / get_eps_revisions() / get_revenue_estimate()
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance earnings/revenue estimate data.'
+  - target_field: revising_analyst_count
+    target_type: int
+    description: How many analysts revised in this cluster
+    source: yfinance
+    source_endpoint: yfinance.Ticker(ticker).get_earnings_estimate() / get_eps_revisions() / get_revenue_estimate()
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance earnings/revenue estimate data.'
+  - target_field: revision_direction
+    target_type: Direction
+    description: UP / DOWN / NEUTRAL
+    source: yfinance
+    source_endpoint: yfinance.Ticker(ticker).get_earnings_estimate() / get_eps_revisions() / get_revenue_estimate()
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance earnings/revenue estimate data.'
+- entity: AnalystRatingChange
+  spec_id: N/A (supporting type)
+  description: A timestamped rating change event from a covering analyst.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: change_timestamp
+    target_type: datetime
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: analyst_name
+    target_type: str
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: firm
+    target_type: str
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: prior_rating
+    target_type: str
+    description: '"buy" | "hold" | "sell"'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: new_rating
+    target_type: str
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: prior_price_target
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: new_price_target
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+- entity: InsiderTransaction
+  spec_id: N/A (supporting type)
+  description: 'A Form 4 filing: insider transaction (buy, sell, exercise).'
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: transaction_date
+    target_type: date
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: 'Finnhub: GET /api/v1/stock/insider-transactions?symbol={symbol} | SEC EDGAR: Form 4 filings'
+    source_field: 'Finnhub: [].name, [].share, [].change, [].transactionDate, [].transactionCode, [].transactionPrice'
+    source_type: varies
+    transform: 'Finnhub: direct map from insider transactions. SEC EDGAR Form 4 for backup/additional detail.'
+  - target_field: transaction_type
+    target_type: str
+    description: '"buy" | "sell" | "exercise" | "grant"'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: 'Finnhub: GET /api/v1/stock/insider-transactions?symbol={symbol} | SEC EDGAR: Form 4 filings'
+    source_field: 'Finnhub: [].name, [].share, [].change, [].transactionDate, [].transactionCode, [].transactionPrice'
+    source_type: varies
+    transform: 'Finnhub: direct map from insider transactions. SEC EDGAR Form 4 for backup/additional detail.'
+  - target_field: insider_name
+    target_type: str
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: 'Finnhub: GET /api/v1/stock/insider-transactions?symbol={symbol} | SEC EDGAR: Form 4 filings'
+    source_field: 'Finnhub: [].name, [].share, [].change, [].transactionDate, [].transactionCode, [].transactionPrice'
+    source_type: varies
+    transform: 'Finnhub: direct map from insider transactions. SEC EDGAR Form 4 for backup/additional detail.'
+  - target_field: insider_title
+    target_type: str
+    description: '"CEO", "CFO", "Director", etc.'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: 'Finnhub: GET /api/v1/stock/insider-transactions?symbol={symbol} | SEC EDGAR: Form 4 filings'
+    source_field: 'Finnhub: [].name, [].share, [].change, [].transactionDate, [].transactionCode, [].transactionPrice'
+    source_type: varies
+    transform: 'Finnhub: direct map from insider transactions. SEC EDGAR Form 4 for backup/additional detail.'
+  - target_field: shares_transacted
+    target_type: int
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: 'Finnhub: GET /api/v1/stock/insider-transactions?symbol={symbol} | SEC EDGAR: Form 4 filings'
+    source_field: 'Finnhub: [].name, [].share, [].change, [].transactionDate, [].transactionCode, [].transactionPrice'
+    source_type: varies
+    transform: 'Finnhub: direct map from insider transactions. SEC EDGAR Form 4 for backup/additional detail.'
+  - target_field: transaction_price
+    target_type: float
+    description: Price per share at transaction
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: 'Finnhub: GET /api/v1/stock/insider-transactions?symbol={symbol} | SEC EDGAR: Form 4 filings'
+    source_field: 'Finnhub: [].name, [].share, [].change, [].transactionDate, [].transactionCode, [].transactionPrice'
+    source_type: varies
+    transform: 'Finnhub: direct map from insider transactions. SEC EDGAR Form 4 for backup/additional detail.'
+  - target_field: transaction_value
+    target_type: float
+    description: Total transaction value
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: 'Finnhub: GET /api/v1/stock/insider-transactions?symbol={symbol} | SEC EDGAR: Form 4 filings'
+    source_field: 'Finnhub: [].name, [].share, [].change, [].transactionDate, [].transactionCode, [].transactionPrice'
+    source_type: varies
+    transform: 'Finnhub: direct map from insider transactions. SEC EDGAR Form 4 for backup/additional detail.'
+  - target_field: shares_held_after
+    target_type: int
+    description: Insider's holdings after the transaction
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: 'Finnhub: GET /api/v1/stock/insider-transactions?symbol={symbol} | SEC EDGAR: Form 4 filings'
+    source_field: 'Finnhub: [].name, [].share, [].change, [].transactionDate, [].transactionCode, [].transactionPrice'
+    source_type: varies
+    transform: 'Finnhub: direct map from insider transactions. SEC EDGAR Form 4 for backup/additional detail.'
+- entity: AnalystTargetSnapshot
+  spec_id: N/A (supporting type)
+  description: Snapshot of analyst price target distribution at a point in time.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: snapshot_date
+    target_type: date
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: mean_target
+    target_type: float
+    description: Mean price target across analysts
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: median_target
+    target_type: float
+    description: Median price target
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: high_target
+    target_type: float
+    description: Highest price target
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: low_target
+    target_type: float
+    description: Lowest price target
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: target_spread_pct
+    target_type: float
+    description: (high - low) / mean × 100 — dispersion measure
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: analyst_count
+    target_type: int
+    description: Number of analysts contributing targets
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+- entity: EarningsEstimateDynamics
+  spec_id: Q5:5a
+  description: Q5:5a — Consensus EPS/revenue estimates with revision tracking.
+  is_primary_entity: true
+  primary_source: |-
+    yfinance estimate endpoints (free) — get_earnings_estimate, get_eps_trend,
+            get_eps_revisions, get_revenue_estimate
+  fallback_source: Finnhub (premium $11.99/mo for estimates)
+  cadence: Daily (cached)
+  feasibility: HIGH — yfinance 7 estimate endpoints, tested 62/62 tickers
+  fields:
+  - target_field: eps_estimate_cq
+    target_type: Optional[float]
+    description: Consensus EPS estimate for current quarter
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: eps_estimate_nq
+    target_type: Optional[float]
+    description: Consensus EPS estimate for next quarter
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: eps_estimate_fy
+    target_type: Optional[float]
+    description: Consensus EPS estimate for full year
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revenue_estimate_cq
+    target_type: Optional[float]
+    description: Revenue estimate, current quarter (millions)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revenue_estimate_nq
+    target_type: Optional[float]
+    description: Revenue estimate, next quarter (millions)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revenue_estimate_fy
+    target_type: Optional[float]
+    description: Revenue estimate, full year (millions)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: eps_estimate_high_cq
+    target_type: Optional[float]
+    description: Highest EPS estimate from covering analysts (CQ)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: eps_estimate_low_cq
+    target_type: Optional[float]
+    description: Lowest EPS estimate (CQ)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: eps_estimate_spread_cq
+    target_type: float
+    description: (high - low) / mean × 100 — dispersion % (CQ)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revenue_estimate_high_cq
+    target_type: Optional[float]
+    description: Revenue estimate high (CQ, millions)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revenue_estimate_low_cq
+    target_type: Optional[float]
+    description: Revenue estimate low (CQ, millions)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: eps_revision_direction_cq
+    target_type: Direction
+    description: 'Direction of consensus EPS revisions: UP, DOWN, or NEUTRAL'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: eps_revision_magnitude_cq
+    target_type: float
+    description: Absolute change in EPS estimate (CQ) in current tracking window
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: eps_revision_pct_cq
+    target_type: float
+    description: Percentage change in EPS estimate (CQ)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revenue_revision_direction_cq
+    target_type: Direction
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revenue_revision_magnitude_cq
+    target_type: float
+    description: In millions
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revenue_revision_pct_cq
+    target_type: float
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: analysts_revising_cq_count
+    target_type: int
+    description: Number of analysts revising EPS in the tracking window
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: analysts_revising_cq_pct
+    target_type: float
+    description: Percentage of covering analysts that revised
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: total_covering_analysts_cq
+    target_type: int
+    description: Total number of covering analysts
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revision_breadth_days
+    target_type: int
+    description: Lookback window for revision breadth (typically 3–5 days)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revision_momentum_cq
+    target_type: str
+    description: '"accelerating" — revisions increasing in frequency/magnitude this week vs. last "decelerating" — revisions
+      slowing "stable" — consistent pace'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revisions_this_period
+    target_type: int
+    description: Count of revisions in current period
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revisions_prior_period
+    target_type: int
+    description: Count of revisions in prior period (for momentum)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: recent_revisions
+    target_type: list[EstimateRevision]
+    description: Most recent revision events (last 5–10). Timestamped to the hour. Distillation layer uses these to flag "revision
+      published but not yet priced".
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+- entity: EarningsCalendar
+  spec_id: Q5:5b
+  description: Q5:5b — Earnings event calendar with proximity and drift patterns.
+  is_primary_entity: true
+  primary_source: Finnhub (free tier)
+  fallback_source: Alpha Vantage
+  cadence: Daily check
+  feasibility: HIGH — Finnhub free tier covers earnings calendar
+  fields:
+  - target_field: days_to_next_earnings
+    target_type: int
+    description: 'Integer count. Flags are typically: within 7 days, within 2 days, today.'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: next_earnings_date
+    target_type: Optional[date]
+    description: Expected earnings report date (ET)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: next_earnings_time
+    target_type: Optional[str]
+    description: '"pre_market", "post_market", "unknown"'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: last_earnings_date
+    target_type: Optional[date]
+    description: Date of the most recent reported earnings
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: quiet_period_start
+    target_type: Optional[date]
+    description: Typically 10–15 days before earnings
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: quiet_period_end
+    target_type: Optional[date]
+    description: Day before earnings
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: earnings_window_label
+    target_type: str
+    description: '"pre_quiet" | "in_quiet" | "in_event_window" | "post_event" | "no_earnings"'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: days_in_event_window
+    target_type: int
+    description: Count of days in the event window (typically 3–5)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: historical_ped_direction
+    target_type: Direction
+    description: Does this name historically continue in the earnings-reaction direction (positive PED) or mean-revert (negative
+      PED)?
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: historical_ped_magnitude_atr
+    target_type: float
+    description: Average additional drift magnitude in ATR terms over the 1–5 days post-earnings
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: historical_ped_lookback_quarters
+    target_type: int
+    description: How many prior quarters of history analyzed
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: mean_revert_probability_post_earnings
+    target_type: float
+    description: '0.0–1.0: likelihood that the name mean-reverts within 2 days post-earnings'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: sector_earnings_cluster
+    target_type: bool
+    description: True if multiple names in the same sector report within ±2 days
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: sector_cluster_count
+    target_type: int
+    description: How many names in the sector reporting in the window
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: sector_cluster_window_start
+    target_type: Optional[date]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: sector_cluster_window_end
+    target_type: Optional[date]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: implied_vol_rank
+    target_type: float
+    description: '0.0–1.0: current implied vol percentile vs. 1-year history (IVR proxy)'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: implied_vol_vs_realized
+    target_type: float
+    description: IV implied move magnitude vs. realized move post-earnings (historical average)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+- entity: RevenueGrowthTrajectory
+  spec_id: Q5:5c
+  description: Q5:5c — Revenue and EPS growth rates with acceleration detection.
+  is_primary_entity: true
+  primary_source: SEC EDGAR XBRL (free)
+  fallback_source: Alpha Vantage (free, 25 calls/day)
+  cadence: Quarterly
+  feasibility: HIGH — EDGAR CompanyFacts API provides structured financials
+  fields:
+  - target_field: last_reported_revenue
+    target_type: Optional[float]
+    description: Millions
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: last_reported_revenue_yoy_growth
+    target_type: float
+    description: Year-over-year growth rate (%)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: last_reported_revenue_qoq_growth
+    target_type: float
+    description: Quarter-over-quarter growth rate (%)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: last_reported_eps
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: last_reported_eps_yoy_growth
+    target_type: float
+    description: Year-over-year growth rate (%)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: last_reported_eps_qoq_growth
+    target_type: float
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revenue_growth_rates_trailing_4q
+    target_type: list[float]
+    description: Most recent 4 quarters' YoY growth rates, most recent first
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: eps_growth_rates_trailing_4q
+    target_type: list[float]
+    description: Most recent 4 quarters' YoY growth rates
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revenue_acceleration
+    target_type: float
+    description: Δ(growth_this_quarter - growth_prior_quarter). Positive = accelerating.
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: eps_acceleration
+    target_type: float
+    description: Same for EPS. The second derivative is the inflection signal.
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: acceleration_direction
+    target_type: Direction
+    description: '"accelerating" | "decelerating" | "stable"'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: inflection_candidate
+    target_type: bool
+    description: True if growth trajectory shows potential inflection (first positive/negative acceleration after sustained
+      opposite trend)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: beat_miss_ratio_trailing_4q
+    target_type: float
+    description: Count of beats / (beats + misses) over trailing 4 quarters E.g., 0.75 means 3 beats and 1 miss in the last
+      4 quarters
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: last_eps_surprise_pct
+    target_type: float
+    description: (actual - consensus) / consensus × 100. Positive = beat, negative = miss.
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: last_revenue_surprise_pct
+    target_type: float
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: surprise_consistency
+    target_type: str
+    description: '"serial_beater" | "serial_misser" | "mixed" — historical pattern Used to contextualize the next earnings
+      reaction'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: segment_growth_rates
+    target_type: dict[str, float]
+    description: 'Segment name → YoY growth rate. E.g., {"cloud": 35, "legacy": -5, "other": 10} For tech companies, cloud/AI
+      growth vs. legacy matters for multiple assignment.'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: primary_growth_segment
+    target_type: str
+    description: Which segment is driving growth (e.g., "AI", "cloud", "semiconductors")
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+- entity: MarginProfitabilityShift
+  spec_id: Q5:5d
+  description: Q5:5d — Margin trajectory and operating leverage with inflection detection.
+  is_primary_entity: true
+  primary_source: SEC EDGAR XBRL (free)
+  fallback_source: N/A
+  cadence: Quarterly
+  feasibility: HIGH — derived from XBRL financial statements
+  fields:
+  - target_field: gross_margin_latest
+    target_type: Optional[float]
+    description: '% (e.g., 42.5 for 42.5%)'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: operating_margin_latest
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: net_margin_latest
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: gross_margin_trajectory
+    target_type: list[float]
+    description: Most recent 4 quarters, most recent first. Each value is a percentage.
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: operating_margin_trajectory
+    target_type: list[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: net_margin_trajectory
+    target_type: list[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: gross_margin_direction
+    target_type: Direction
+    description: Is margin expanding ("BULLISH") or compressing ("BEARISH")?
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: gross_margin_rate_of_change
+    target_type: float
+    description: Change in gross margin (percentage points) from last quarter to prior quarter
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: operating_margin_direction
+    target_type: Direction
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: operating_margin_rate_of_change
+    target_type: float
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revenue_growth_rate_latest
+    target_type: float
+    description: '% YoY'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: opex_growth_rate_latest
+    target_type: float
+    description: '% YoY (operating expense growth)'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: operating_leverage_spread
+    target_type: float
+    description: Revenue growth % - OpEx growth %. Positive = leverage improving (scaling).
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: leverage_direction
+    target_type: Direction
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: eps_growth_rate_latest
+    target_type: float
+    description: '% YoY'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: revenue_growth_rate_latest_dup
+    target_type: float
+    description: Duplicate for clarity (same as above)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: eps_vs_revenue_divergence
+    target_type: float
+    description: EPS growth % - revenue growth %. Positive = margins expanding, negative = compressing.
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: divergence_direction
+    target_type: Direction
+    description: If EPS growing much faster than revenue, margins expanding (bullish for quality) If EPS growing slower than
+      revenue, margins compressing (bearish)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: profitability_inflection
+    target_type: bool
+    description: True if the company is transitioning from unprofitable to profitable or vice versa
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: inflection_type
+    target_type: str
+    description: '"unprofitable_to_profitable" | "profitable_to_unprofitable" | "none"'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: quarters_until_profitability
+    target_type: Optional[int]
+    description: If currently unprofitable, estimated quarters until profitability (analyst guidance)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: margin_trend_direction
+    target_type: str
+    description: '"improving" | "deteriorating" | "stable" (based on trailing trajectory)'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: margin_stability_score
+    target_type: float
+    description: '0.0–1.0: how consistent margins have been over trailing quarters Higher = more stable, lower = volatile'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+- entity: EarningsEstimates
+  spec_id: Q5:5e
+  description: Q5:5e — Forward guidance vs. consensus with commentary tone scoring.
+  is_primary_entity: true
+  primary_source: Parsed from earnings call transcripts and investor relations statements
+  fallback_source: N/A
+  cadence: Post-earnings (quarterly), updated if management re-guides
+  feasibility: HIGH — structured guidance typically available from company websites
+  fields:
+  - target_field: guidance_source_date
+    target_type: Optional[date]
+    description: Date guidance was issued
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: guidance_applies_to
+    target_type: str
+    description: '"next_quarter" | "full_year"'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: nq_guidance_low
+    target_type: Optional[float]
+    description: Next quarter EPS guidance low
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: nq_guidance_high
+    target_type: Optional[float]
+    description: Next quarter EPS guidance high
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: nq_guidance_midpoint
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: nq_consensus_estimate
+    target_type: Optional[float]
+    description: Consensus estimate at time of guidance
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: nq_guidance_vs_consensus
+    target_type: str
+    description: '"above" | "in_line" | "below" Comparison of guidance midpoint to consensus at the time guidance was given'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: nq_guidance_surprise
+    target_type: float
+    description: '% (guidance_midpoint - consensus) / consensus × 100'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: fy_guidance_low
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: fy_guidance_high
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: fy_guidance_midpoint
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: fy_consensus_estimate
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: fy_guidance_vs_consensus
+    target_type: str
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: fy_guidance_surprise
+    target_type: float
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: nq_guidance_range_width_pct
+    target_type: float
+    description: (high - low) / midpoint × 100. Narrow = confidence, wide = uncertainty.
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: fy_guidance_range_width_pct
+    target_type: float
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: guidance_confidence_level
+    target_type: str
+    description: '"high_confidence" (range < 5%) | "moderate" (5–15%) | "low_confidence" (> 15%)'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: nq_prior_guidance_midpoint
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: nq_guidance_revision_direction
+    target_type: Direction
+    description: Has management raised, lowered, or maintained guidance?
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: nq_guidance_revision_magnitude
+    target_type: float
+    description: In percentage points
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: fy_prior_guidance_midpoint
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: fy_guidance_revision_direction
+    target_type: Direction
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: fy_guidance_revision_magnitude
+    target_type: float
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: forward_tone_sentiment
+    target_type: Direction
+    description: '"bullish" | "neutral" | "bearish" Aggregate of management''s forward-looking language in call script/guidance'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: tone_confidence_score
+    target_type: float
+    description: '0.0–1.0: how confident/clear the tone is'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: tone_key_phrases
+    target_type: list[str]
+    description: 'Sample phrases extracted: ["strong demand", "headwinds", "accelerating"] — for LLM context'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: beat_and_raise
+    target_type: bool
+    description: 'True if company both beat prior quarter and raised forward guidance (strongest bull signal: reality beat
+      expectations AND future expectations rising)'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: beat_and_lower_guidance
+    target_type: bool
+    description: True if beat earnings but lowered forward guidance (sell-the-news candidate)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+- entity: AnalystRatings
+  spec_id: Q5:5f
+  description: Q5:5f — Analyst consensus ratings, price targets, and rating change events.
+  is_primary_entity: true
+  primary_source: Finnhub (free tier) + yfinance (get_analyst_price_targets)
+  fallback_source: N/A
+  cadence: Daily
+  feasibility: MEDIUM — Finnhub provides basic ratings, less structured than paid
+  fields:
+  - target_field: consensus_rating
+    target_type: str
+    description: '"buy" | "hold" | "sell"'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: rating_snapshot_date
+    target_type: date
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: buy_count
+    target_type: int
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: hold_count
+    target_type: int
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: sell_count
+    target_type: int
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: total_raters
+    target_type: int
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: buy_pct
+    target_type: float
+    description: Percentage of buy ratings
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: hold_pct
+    target_type: float
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: sell_pct
+    target_type: float
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: recent_rating_changes
+    target_type: list[AnalystRatingChange]
+    description: Recent upgrades/downgrades/initiations, most recent first (limit ~5)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: rating_changes_last_30d
+    target_type: int
+    description: Count of rating changes in past 30 days
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: price_target_mean
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: price_target_median
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: price_target_high
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: price_target_low
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: price_target_spread_pct
+    target_type: float
+    description: (high - low) / mean × 100 — consensus target dispersion
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: price_target_snapshot
+    target_type: Optional[AnalystTargetSnapshot]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: current_price
+    target_type: float
+    description: Current stock price (as of metadata.collected_at)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: price_vs_mean_target
+    target_type: float
+    description: '% (current - mean_target) / mean_target × 100'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: price_vs_median_target
+    target_type: float
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: target_achievement_gap
+    target_type: str
+    description: '"above_all_targets" | "above_median" | "at_consensus" | "below_median" | "below_all_targets"'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: target_revisions_last_7d
+    target_type: int
+    description: Count of price target changes in last 7 days
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: target_revision_direction_7d
+    target_type: Direction
+    description: On net, are analysts raising or lowering targets?
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: target_revision_magnitude_avg
+    target_type: float
+    description: Average target revision magnitude (% change)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: rating_momentum
+    target_type: Direction
+    description: '"bullish" — more upgrades than downgrades recently "bearish" — more downgrades than upgrades "neutral" —
+      balanced'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: rating_momentum_period_days
+    target_type: int
+    description: Lookback period for momentum assessment
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+- entity: InsiderInstitutionalOwnership
+  spec_id: Q5:5g
+  description: Q5:5g — Insider transactions (Form 4) and institutional ownership shifts.
+  is_primary_entity: true
+  primary_source: SEC EDGAR Form 4 RSS (free) + Finnhub (free)
+  fallback_source: N/A
+  cadence: Daily (insider tx), Quarterly (13F)
+  feasibility: HIGH — SEC Form 4 filings are free and near real-time
+  fields:
+  - target_field: recent_insider_transactions
+    target_type: list[InsiderTransaction]
+    description: Most recent Form 4 filings (limit ~10), most recent first
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: insider_buyback_count_30d
+    target_type: int
+    description: Count of insider buys (last 30 days)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: insider_sell_count_30d
+    target_type: int
+    description: Count of insider sells
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: insider_exercise_count_30d
+    target_type: int
+    description: Option exercises
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: insider_buy_sell_ratio_30d
+    target_type: float
+    description: buys / (buys + sells). Values > 0.5 indicate net buying conviction.
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: insider_aggregate_buy_value_30d
+    target_type: float
+    description: Total $ value of insider buys (last 30d)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: insider_aggregate_sell_value_30d
+    target_type: float
+    description: Total $ value of insider sells
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: insider_buyback_count_90d
+    target_type: int
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: insider_sell_count_90d
+    target_type: int
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: insider_buy_sell_ratio_90d
+    target_type: float
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: clustered_insider_buying
+    target_type: bool
+    description: True if multiple insiders bought within a short window (3–5 days) Stronger signal than isolated buys
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: insider_cluster_count
+    target_type: int
+    description: Number of insiders in the buying cluster
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: last_13f_date
+    target_type: Optional[date]
+    description: Date of most recent 13F filing quarter-end
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: institutional_ownership_pct
+    target_type: float
+    description: '% of shares held by institutional investors'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: institutional_ownership_change_pct
+    target_type: float
+    description: '% point change from prior quarter (e.g., 5.2 percentage points)'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: institutional_ownership_direction
+    target_type: Direction
+    description: '"increasing" | "decreasing" | "stable"'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: top_10_holders_pct
+    target_type: float
+    description: '% of shares held by top 10 shareholders'
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: top_10_concentration_trend
+    target_type: Direction
+    description: Is the ownership becoming more concentrated (fewer hands, conviction) or more distributed?
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: new_13f_positions
+    target_type: list[str]
+    description: List of prominent funds that initiated new positions (last 13F quarter)
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: closed_13f_positions
+    target_type: list[str]
+    description: Prominent funds that exited positions
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: major_13f_increases
+    target_type: dict[str, float]
+    description: Fund name → % increase in position size
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: major_13f_decreases
+    target_type: dict[str, float]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: yfinance + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from yfinance, SEC EDGAR XBRL, and Finnhub financial data.'
+- entity: ValuationMultiples
+  spec_id: Q5:VAL
+  description: Q5:VAL — Valuation ratios with peer-relative context for sector analysis.
+  is_primary_entity: true
+  primary_source: yfinance info + Finnhub basic_financials
+  fallback_source: Polygon financials
+  cadence: Daily
+  feasibility: HIGH
+  fields:
+  - target_field: pe_trailing
+    target_type: Optional[float]
+    description: P/E ratio based on trailing 12-month earnings
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: pe_forward
+    target_type: Optional[float]
+    description: P/E based on forward 12-month consensus estimates
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: ps_ratio
+    target_type: Optional[float]
+    description: Price-to-Sales (market cap / ttm revenue)
+    source: yfinance + Finnhub
+    source_endpoint: yfinance .info + Finnhub /stock/metric?metric=all
+    source_field: Computed
+    source_type: varies
+    transform: 'yfinance: info[''priceToSalesTrailing12Months''].'
+  - target_field: pb_ratio
+    target_type: Optional[float]
+    description: Price-to-Book (market cap / book value)
+    source: yfinance + Finnhub
+    source_endpoint: yfinance .info + Finnhub /stock/metric?metric=all
+    source_field: Computed
+    source_type: varies
+    transform: 'yfinance: info[''priceToBook'']. Finnhub: metric.pbAnnual.'
+  - target_field: ev_ebitda
+    target_type: Optional[float]
+    description: EV / EBITDA
+    source: yfinance + Finnhub
+    source_endpoint: yfinance .info + Finnhub /stock/metric?metric=all
+    source_field: Computed
+    source_type: varies
+    transform: 'yfinance: info[''enterpriseToEbitda'']. Finnhub: metric.evToEbitdaTTM.'
+  - target_field: peg_ratio
+    target_type: Optional[float]
+    description: P/E / growth rate (relevance for growth stocks)
+    source: yfinance + Finnhub
+    source_endpoint: yfinance .info + Finnhub /stock/metric?metric=all
+    source_field: Computed
+    source_type: varies
+    transform: 'yfinance: info[''pegRatio'']. Finnhub: metric.pegAnnual.'
+  - target_field: sector_pe_trailing_avg
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: sector_pe_forward_avg
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: sector_ps_avg
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: sector_pb_avg
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: sector_ev_ebitda_avg
+    target_type: Optional[float]
+    description: ''
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: pe_vs_sector_pct
+    target_type: float
+    description: (ticker PE - sector avg PE) / sector avg PE × 100 Positive = trading at premium, negative = trading at discount
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: ps_vs_sector_pct
+    target_type: float
+    description: ''
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: pb_vs_sector_pct
+    target_type: float
+    description: ''
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: ev_ebitda_vs_sector_pct
+    target_type: float
+    description: ''
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: valuation_vs_sector_label
+    target_type: str
+    description: '"significant_premium" | "moderate_premium" | "at_avg" | "moderate_discount" | "significant_discount"'
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: pe_percentile_1y
+    target_type: float
+    description: 0–100 percentile where current P/E sits vs. 1-year history 0 = lowest valuation in a year, 100 = highest
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: pe_percentile_3y
+    target_type: float
+    description: ''
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: ps_percentile_1y
+    target_type: float
+    description: ''
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: pb_percentile_1y
+    target_type: float
+    description: ''
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: valuation_regime
+    target_type: str
+    description: '"at_highs" (>80 percentile) — overextended, reversal risk "above_avg" (50–80) — premium to history "at_avg"
+      (40–60) — fair value vs. own history "below_avg" (20–50) — discount to history "at_lows" (<2...'
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: sector_valuation_dispersion_pe
+    target_type: float
+    description: Standard deviation of P/E multiples within sector (or coefficient of variation) High dispersion = market
+      unsure how to value the group
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: sector_valuation_dispersion_ps
+    target_type: float
+    description: ''
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: pe_change_qoq
+    target_type: float
+    description: P/E change (percentage points)
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: pe_change_direction
+    target_type: Direction
+    description: Is the P/E multiple expanding (BULLISH — earnings growing slower than price) or contracting (BEARISH — earnings
+      growing faster than price)?
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: ps_change_qoq
+    target_type: float
+    description: ''
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: forward_earnings_yield
+    target_type: Optional[float]
+    description: 1 / pe_forward × 100 — earnings yield %
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: yfinance + Finnhub
+    source_endpoint: See yfinance info + Finnhub basic_financials documentation — derived from entity primary source
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from yfinance info dict and Finnhub basic financials metric.'
+audit_notes: 'AUDIT 2026-03-15: yfinance confirmed working for earnings estimates, EPS revisions, analyst targets, quarterly
+  financials, balance sheet, cash flow, holders (institutional + mutual fund). SEC EDGAR XBRL companyfacts: full GAAP fact
+  history for any CIK. Finnhub: earnings_calendar (with symbol filter), earnings_surprises, basic_financials, recommendations
+  all working. Finnhub: insider_transactions, sec_filings, company_peers, company_profile all working.'

@@ -1,0 +1,1009 @@
+domain: corporate_actions
+spec_prefix: Q10
+module_description: 'Q12: Corporate Actions and Structural Flows — entity definitions.'
+common_fields_note: 'All primary entities include ''ticker: Ticker'' and ''metadata: InvocationMetadata'' fields (omitted
+  from individual field listings). See _common.yaml for InvocationMetadata mapping.'
+entities:
+- entity: IndexAddRemove
+  spec_id: N/A (supporting type)
+  description: An add or remove event from an index.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: index
+    target_type: IndexName
+    description: ''
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Derived from reference data changes
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: event_type
+    target_type: str
+    description: '"add" | "remove"'
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Derived from reference data changes
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: announcement_date
+    target_type: date
+    description: Date the change was announced
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Derived from reference data changes
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: effective_date
+    target_type: date
+    description: Date the change becomes effective (rebalance date)
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Derived from reference data changes
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: prior_weight
+    target_type: Optional[float]
+    description: Prior index weight %
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Derived from reference data changes
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: new_weight
+    target_type: Optional[float]
+    description: New index weight %
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Derived from reference data changes
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: estimated_passive_flow_usd
+    target_type: Optional[float]
+    description: Estimated $ flow from passive funds
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Derived from reference data changes
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+- entity: BuybackBlackout
+  spec_id: N/A (supporting type)
+  description: A blackout period when corporate buybacks are restricted.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: blackout_start
+    target_type: datetime
+    description: Start of blackout (typically earnings announcement - 14 days)
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Derived from SEC filings (10-Q/10-K: insider trading policy) + earnings calendar (blackout windows)'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: blackout_end
+    target_type: datetime
+    description: End of blackout (typically +2 trading days after earnings release)
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Derived from SEC filings (10-Q/10-K: insider trading policy) + earnings calendar (blackout windows)'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: reason
+    target_type: str
+    description: '"earnings_blackout" | "material_event" | "custom"'
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Derived from SEC filings (10-Q/10-K: insider trading policy) + earnings calendar (blackout windows)'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: description
+    target_type: str
+    description: Human-readable explanation
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Derived from SEC filings (10-Q/10-K: insider trading policy) + earnings calendar (blackout windows)'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+- entity: RegulatoryEvent
+  spec_id: N/A (supporting type)
+  description: A single regulatory filing event.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: filing_type
+    target_type: RegulatoryFilingType
+    description: ''
+    source: SEC EDGAR + Finnhub
+    source_endpoint: SEC EDGAR /submissions + Finnhub /stock/filings
+    source_field: facts.us-gaap.{concept}.units.{unit}[].val
+    source_type: number/string
+    transform: 'SEC EDGAR: submissions.filings.recent for filing type, date, URL. Finnhub: /stock/filings for structured filing
+      data.'
+  - target_field: filing_date
+    target_type: datetime
+    description: When filed with SEC (UTC)
+    source: SEC EDGAR + Finnhub
+    source_endpoint: SEC EDGAR /submissions + Finnhub /stock/filings
+    source_field: facts.us-gaap.{concept}.units.{unit}[].val
+    source_type: number/string
+    transform: 'SEC EDGAR: submissions.filings.recent for filing type, date, URL. Finnhub: /stock/filings for structured filing
+      data.'
+  - target_field: announcement_date
+    target_type: Optional[datetime]
+    description: When publicly announced (may differ from filing)
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Finnhub: sec-filings + company-news | SEC EDGAR: 8-K filings'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: event_type
+    target_type: Optional[EventType]
+    description: Classification of the material event (if 8-K)
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Finnhub: sec-filings + company-news | SEC EDGAR: 8-K filings'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: description
+    target_type: str
+    description: Human-readable summary for LLM consumption
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Finnhub: sec-filings + company-news | SEC EDGAR: 8-K filings'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: url
+    target_type: str
+    description: Link to EDGAR filing or news source
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Finnhub: sec-filings + company-news | SEC EDGAR: 8-K filings'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: market_impact_estimate
+    target_type: SignalStrength
+    description: ''
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Finnhub: sec-filings + company-news | SEC EDGAR: 8-K filings'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+- entity: InvestorEvent
+  spec_id: N/A (supporting type)
+  description: A scheduled corporate event for investor engagement.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: event_name
+    target_type: str
+    description: '"Investor Day" | "JPMorgan Conference" | "Goldman Sachs Conference"'
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Finnhub: company-news (investor day mentions) | SEC EDGAR: 8-K (event announcements)'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: event_date
+    target_type: date
+    description: Date of the event
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Finnhub: company-news (investor day mentions) | SEC EDGAR: 8-K (event announcements)'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: event_type
+    target_type: str
+    description: '"investor_day" | "analyst_day" | "capital_markets_day" | "conference"'
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Finnhub: company-news (investor day mentions) | SEC EDGAR: 8-K (event announcements)'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: is_virtual
+    target_type: bool
+    description: True if virtual/hybrid format
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Finnhub: company-news (investor day mentions) | SEC EDGAR: 8-K (event announcements)'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: agenda_topics
+    target_type: list[str]
+    description: Key topics (e.g., "cost reduction", "2025 guidance")
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Finnhub: company-news (investor day mentions) | SEC EDGAR: 8-K (event announcements)'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: novelty_flag
+    target_type: bool
+    description: True if unusual scheduling (hasn't held event in 2+ years, etc.)
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Finnhub: company-news (investor day mentions) | SEC EDGAR: 8-K (event announcements)'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: historical_post_event_drift_1d
+    target_type: float
+    description: Historical avg return in 1 day post-event
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Finnhub: company-news (investor day mentions) | SEC EDGAR: 8-K (event announcements)'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: historical_post_event_drift_5d
+    target_type: float
+    description: Historical avg return in 5 days post-event
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'Finnhub: company-news (investor day mentions) | SEC EDGAR: 8-K (event announcements)'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+- entity: SecondaryOffering
+  spec_id: N/A (supporting type)
+  description: A secondary or follow-on offering of shares.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: offering_type
+    target_type: str
+    description: '"secondary" | "follow_on" | "shelf_takedown"'
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'SEC EDGAR: S-3/S-1 filings (registration statements) | Finnhub: company-news'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: announcement_date
+    target_type: date
+    description: ''
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'SEC EDGAR: S-3/S-1 filings (registration statements) | Finnhub: company-news'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: estimated_shares
+    target_type: Optional[int]
+    description: Number of shares being offered (if known)
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'SEC EDGAR: S-3/S-1 filings (registration statements) | Finnhub: company-news'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: estimated_dilution_pct
+    target_type: Optional[float]
+    description: Estimated dilution % to existing shareholders
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'SEC EDGAR: S-3/S-1 filings (registration statements) | Finnhub: company-news'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: offering_price_range
+    target_type: Optional[tuple[float, float]]
+    description: (low, high) price estimate
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: 'SEC EDGAR: S-3/S-1 filings (registration statements) | Finnhub: company-news'
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+- entity: IndexRebalance
+  spec_id: Q12:12a
+  description: Q12:12a — Index add/remove events with estimated passive flow magnitude.
+  is_primary_entity: true
+  primary_source: Index provider announcements + Finnhub
+  fallback_source: SEC EDGAR, financial news APIs
+  cadence: Event-driven
+  feasibility: MEDIUM — S&P/NASDAQ announce publicly
+  fields:
+  - target_field: current_indices
+    target_type: list[IndexName]
+    description: Which major indices (SP500, NASDAQ100, etc.) currently include this ticker. Updated as adds/removes are announced
+      and become effective.
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: pending_adds
+    target_type: list[IndexAddRemove]
+    description: Announced (but not yet effective) additions to indices. These create forward expectations of passive flow
+      magnitude.
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: pending_removes
+    target_type: list[IndexAddRemove]
+    description: Announced removals. Sellers have time to front-run; the stock often starts declining before the effective
+      date as forward-looking traders sell ahead.
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: sp500_weight_pct
+    target_type: float
+    description: Current S&P 500 weight (for universe names in the index)
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: nasdaq100_weight_pct
+    target_type: float
+    description: Current NASDAQ-100 weight
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: russell_weight_pct
+    target_type: float
+    description: Current Russell 1000/2000 weight (whichever is applicable)
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: next_quarterly_rebalance_date
+    target_type: Optional[date]
+    description: When is the next scheduled index reconstitution / quarterly rebalance that might affect this ticker's weight.
+      Used for flagging "rebalance date proximity."
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: recent_weight_change_pct
+    target_type: Optional[float]
+    description: Percentage change in index weight from the most recent rebalance. Positive = heavier, negative = lighter.
+      Even without adds/removes, market cap changes create rebalance flows.
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: recent_stock_split
+    target_type: bool
+    description: True if stock split occurred recently (affects index weight calc)
+    source: Polygon
+    source_endpoint: GET /v3/reference/splits?ticker={ticker}
+    source_field: Computed
+    source_type: varies
+    transform: 'Polygon: /v3/reference/splits. Fields: execution_date, split_from, split_to.'
+  - target_field: recent_share_offering
+    target_type: bool
+    description: True if secondary offering priced recently
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: buyback_reducing_shares
+    target_type: bool
+    description: True if active buyback is reducing float
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: estimated_flow_magnitude_usd
+    target_type: Optional[float]
+    description: 'Rough estimate of passive fund flow magnitude (in USD millions) when a pending add becomes effective. Derived
+      from: estimated AUM of index × weight change. Larger flow magnitude = stronger and more su...'
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+- entity: BuybackProgram
+  spec_id: Q12:12b
+  description: Q12:12b — Corporate buyback authorization, execution pace, and blackout windows.
+  is_primary_entity: true
+  primary_source: SEC EDGAR (10-Q/10-K free)
+  fallback_source: Earnings transcript extraction
+  cadence: Quarterly
+  feasibility: MEDIUM — authorization from filings, blackout from earnings calendar
+  fields:
+  - target_field: program_active
+    target_type: bool
+    description: True if an authorized buyback program exists
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: authorization_remaining_usd
+    target_type: Optional[float]
+    description: Remaining authorization size (in USD millions). When authorization is nearly exhausted, the company may announce
+      a new program soon (forward signal).
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: authorization_remaining_shares
+    target_type: Optional[int]
+    description: Remaining authorization in share count (alternative/complementary view).
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: recent_buyback_pace_monthly_usd
+    target_type: Optional[float]
+    description: Average monthly buyback spend over the trailing 3 months (USD millions). Combined with daily volume, this
+      indicates buyback as % of volume.
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: buyback_as_pct_daily_volume
+    target_type: Optional[float]
+    description: Estimated buyback execution as percentage of typical daily volume. For mega-caps (AAPL, GOOG, META), this
+      can be 5–15% of daily volume. Presence/absence shifts supply/demand balance materially.
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: current_blackout_window
+    target_type: Optional[BuybackBlackout]
+    description: If in a blackout period, details on when it started and when it ends. Typically ~2 weeks before earnings
+      through ~2 trading days after.
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: next_blackout_window
+    target_type: Optional[BuybackBlackout]
+    description: Next known blackout (usually around next earnings announcement).
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: blackout_lift_date
+    target_type: Optional[datetime]
+    description: Estimated datetime when the current blackout window closes and buybacks can resume. Useful for near-term
+      flow expectations.
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: has_10b5_1_plan
+    target_type: bool
+    description: True if the company has pre-scheduled automatic buyback plans
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: plan_expiration_date
+    target_type: Optional[date]
+    description: When the current 10b5-1 plan expires
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: last_buyback_date
+    target_type: Optional[datetime]
+    description: Last recorded buyback execution
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: days_since_last_buyback
+    target_type: int
+    description: 'Convenience field: today - last_buyback_date'
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: in_blackout_period
+    target_type: bool
+    description: Cached convenience flag
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+- entity: RegulatoryFiling
+  spec_id: Q12:12c
+  description: Q12:12c — SEC filings classified by type and impact (13D, 8-K, HSR, S-3, proxy).
+  is_primary_entity: true
+  primary_source: SEC EDGAR RSS feeds (free)
+  fallback_source: Finnhub
+  cadence: Real-time (EDGAR RSS updates within seconds)
+  feasibility: HIGH — EDGAR RSS feeds are near real-time
+  fields:
+  - target_field: recent_filings
+    target_type: list[RegulatoryEvent]
+    description: Recent regulatory filings (last 90 days). Each entry captures filing type, date, material event classification
+      (for 8-Ks), and estimated market impact. Sorted by filing_date descending (most recent fi...
+    source: SEC EDGAR + Finnhub
+    source_endpoint: SEC EDGAR /submissions + Finnhub /stock/filings
+    source_field: facts.us-gaap.{concept}.units.{unit}[].val
+    source_type: number/string
+    transform: 'SEC EDGAR: submissions.filings.recent for filing type, date, URL. Finnhub: /stock/filings for structured filing
+      data.'
+  - target_field: active_13d
+    target_type: Optional[RegulatoryEvent]
+    description: If a current Schedule 13D filing exists, this field captures the most recent. 13D = activist investor crossing
+      5% ownership with intent to influence. "Someone is coming for this company" signal. Trigg...
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: activist_ownership_pct
+    target_type: Optional[float]
+    description: Disclosed ownership % of the activist(s) filing 13D (if available).
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: recent_8k_filings
+    target_type: list[RegulatoryEvent]
+    description: 'Recent 8-K filings classified by event type. Material events include: executive departures, M&A announcements,
+      credit facility changes, material impairments, strategic pivots. Each entry has event_typ...'
+    source: SEC EDGAR + Finnhub
+    source_endpoint: SEC EDGAR /submissions + Finnhub /stock/filings
+    source_field: facts.us-gaap.{concept}.units.{unit}[].val
+    source_type: number/string
+    transform: 'SEC EDGAR: submissions.filings.recent for filing type, date, URL. Finnhub: /stock/filings for structured filing
+      data.'
+  - target_field: active_hsr_filing
+    target_type: Optional[RegulatoryEvent]
+    description: 'If an HSR filing is pending or in review, this field captures the filing. HSR = Hart-Scott-Rodino pre-merger
+      notification. Flags M&A intent and timing uncertainty (review period varies: 30 days typica...'
+    source: SEC EDGAR + Finnhub
+    source_endpoint: SEC EDGAR /submissions + Finnhub /stock/filings
+    source_field: facts.us-gaap.{concept}.units.{unit}[].val
+    source_type: number/string
+    transform: 'SEC EDGAR: submissions.filings.recent for filing type, date, URL. Finnhub: /stock/filings for structured filing
+      data.'
+  - target_field: active_shelf_registration
+    target_type: Optional[RegulatoryEvent]
+    description: If a shelf registration (S-3) is active, captures the filing. Shelf = quiet warning that dilutive supply
+      is coming. Gap between registration and actual offering is a window of uncertainty. Likely timi...
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: shelf_registration_amount_usd
+    target_type: Optional[float]
+    description: Total $ amount registered (in USD millions) under the active shelf.
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: shelf_registration_remaining_usd
+    target_type: Optional[float]
+    description: Remaining amount available to be drawn down (may differ if partial takedowns occurred).
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: active_proxy_fight
+    target_type: Optional[RegulatoryEvent]
+    description: If a proxy contest (DFAN14A or similar) is active, captures the filing. Signals contested board elections
+      or activist campaigns. Creates event-driven volatility with a known resolution date (proxy vot...
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: proxy_vote_date
+    target_type: Optional[date]
+    description: When the proxy vote/shareholder meeting occurs
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: filing_frequency_last_90d
+    target_type: int
+    description: How many SEC filings in the last 90 days
+    source: SEC EDGAR + Finnhub
+    source_endpoint: SEC EDGAR /submissions + Finnhub /stock/filings
+    source_field: facts.us-gaap.{concept}.units.{unit}[].val
+    source_type: number/string
+    transform: 'SEC EDGAR: submissions.filings.recent for filing type, date, URL. Finnhub: /stock/filings for structured filing
+      data.'
+  - target_field: has_material_pending_disclosures
+    target_type: bool
+    description: True if material events are in progress
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+- entity: InvestorEventCalendar
+  spec_id: Q12:12d
+  description: Q12:12d — Analyst days, conferences, and corporate event scheduling.
+  is_primary_entity: true
+  primary_source: Finnhub (free tier)
+  fallback_source: Company IR pages (manual)
+  cadence: Weekly check
+  feasibility: MEDIUM — Finnhub has IPO/FDA calendars, full coverage needs manual maintenance
+  fields:
+  - target_field: upcoming_events
+    target_type: list[InvestorEvent]
+    description: Scheduled investor events (next 180 days). Includes investor days, analyst days, capital markets days, and
+      conference presentations. Sorted by event_date ascending (nearest first).
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: next_event_date
+    target_type: Optional[date]
+    description: Date of the nearest upcoming investor event (convenience field).
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: next_event_name
+    target_type: str
+    description: Name of next event
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: days_until_next_event
+    target_type: int
+    description: Days until next event (high value if none scheduled)
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: last_investor_day_date
+    target_type: Optional[date]
+    description: When was the last investor day held? Used to detect "unusual scheduling."
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: days_since_last_investor_day
+    target_type: int
+    description: ''
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: has_novelty_flag
+    target_type: bool
+    description: True if company just scheduled an investor day
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: post_event_drift_avg_1d
+    target_type: float
+    description: Average return in 1 day following investor events
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: post_event_drift_avg_5d
+    target_type: float
+    description: Average return in 5 days following investor events
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: post_event_drift_sample_size
+    target_type: int
+    description: How many historical events contributed to the average
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: most_recent_event_drift
+    target_type: Optional[float]
+    description: Return in the 5 days after the most recent completed investor event. Used to assess whether recent events
+      are tracking the historical pattern.
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+- entity: LockupSecondaryCalendar
+  spec_id: Q12:12e
+  description: Q12:12e — IPO lock-up expirations and secondary offering tracking.
+  is_primary_entity: true
+  primary_source: SEC EDGAR S-1/S-3 filings (free)
+  fallback_source: Finnhub IPO calendar
+  cadence: Event-driven
+  feasibility: MEDIUM — lock-up dates from S-1, secondaries from S-3
+  fields:
+  - target_field: is_recently_ipo
+    target_type: bool
+    description: True if ticker IPO'd < 24 months ago
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: ipo_date
+    target_type: Optional[date]
+    description: Date the company went public
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: days_since_ipo
+    target_type: int
+    description: 'Convenience: today - ipo_date'
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: current_lock_up_status
+    target_type: LockupStatus
+    description: ''
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: lock_up_expiration_date
+    target_type: Optional[date]
+    description: Date when insiders/early investors can first sell (typically 180 days post-IPO). Known catalyst for downward
+      pressure on some names.
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: days_until_lock_up_expiration
+    target_type: int
+    description: Days remaining (high value if lock-up expired)
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: insider_ownership_pct
+    target_type: Optional[float]
+    description: Estimated % of shares held by insiders. At lock-up expiration, these shares become freely sellable.
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: stock_performance_since_ipo_pct
+    target_type: Optional[float]
+    description: Return since IPO (%). Large gains = large unrealized profits for insiders = higher selling pressure at lock-up
+      expiration.
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: estimated_lock_up_overhang_pct
+    target_type: Optional[float]
+    description: 'Rough estimate of selling pressure at lock-up expiration. Derived from: insider_ownership × stock performance.
+      High overhang = higher risk of downward pressure when insiders can sell.'
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: pending_secondaries
+    target_type: list[SecondaryOffering]
+    description: Announced secondary or follow-on offerings. Dilutive supply that creates direct selling pressure. The announcement
+      itself often moves the stock more than the actual pricing.
+    source: SEC EDGAR + Finnhub
+    source_endpoint: SEC EDGAR /submissions + Finnhub /stock/filings
+    source_field: facts.us-gaap.{concept}.units.{unit}[].val
+    source_type: number/string
+    transform: 'SEC EDGAR: submissions.filings.recent for filing type, date, URL. Finnhub: /stock/filings for structured filing
+      data.'
+  - target_field: has_active_shelf
+    target_type: bool
+    description: True if active shelf registration exists
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: shelf_takedown_risk
+    target_type: SignalStrength
+    description: 'Qualitative assessment of likelihood of an imminent offering from active shelf. Based on: stock price performance,
+      capital needs (debt ratios, cash burn), market conditions (is the market receptive to...'
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+- entity: ETFFlowImpact
+  spec_id: Q12:12f
+  description: Q12:12f — Sector ETF creation/redemption flows and rebalance impact.
+  is_primary_entity: true
+  primary_source: Derived from ETF volume + NAV
+  fallback_source: Yahoo Finance ETF data
+  cadence: Daily
+  feasibility: MEDIUM — ETF flow estimation from creation/redemption units
+  fields:
+  - target_field: sector_etf_holdings
+    target_type: dict[str, float]
+    description: 'Map of ETF ticker -> weight % in that ETF. Example: {"XLK": 2.5, "QQQ": 1.8} Shows which major sector/thematic
+      ETFs hold this ticker and at what weight.'
+    source: SEC EDGAR + Finnhub
+    source_endpoint: SEC EDGAR /submissions + Finnhub /stock/filings
+    source_field: facts.us-gaap.{concept}.units.{unit}[].val
+    source_type: number/string
+    transform: 'SEC EDGAR: submissions.filings.recent for filing type, date, URL. Finnhub: /stock/filings for structured filing
+      data.'
+  - target_field: sector_etf_net_flow_shares
+    target_type: int
+    description: Net shares created/redeemed by APs today
+    source: SEC EDGAR + Finnhub
+    source_endpoint: SEC EDGAR /submissions + Finnhub /stock/filings
+    source_field: facts.us-gaap.{concept}.units.{unit}[].val
+    source_type: number/string
+    transform: 'SEC EDGAR: submissions.filings.recent for filing type, date, URL. Finnhub: /stock/filings for structured filing
+      data.'
+  - target_field: sector_etf_net_flow_usd
+    target_type: float
+    description: Dollar value of net creation/redemption (USD millions)
+    source: SEC EDGAR + Finnhub
+    source_endpoint: SEC EDGAR /submissions + Finnhub /stock/filings
+    source_field: facts.us-gaap.{concept}.units.{unit}[].val
+    source_type: number/string
+    transform: 'SEC EDGAR: submissions.filings.recent for filing type, date, URL. Finnhub: /stock/filings for structured filing
+      data.'
+  - target_field: etf_flow_direction
+    target_type: Direction
+    description: BULLISH = net creation (inflows), BEARISH = net redemption (outflows), NEUTRAL = balanced
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: etf_driven_volume_pct
+    target_type: Optional[float]
+    description: Estimated percentage of this ticker's daily volume attributable to ETF creation/redemption. When elevated
+      (>10%), single-name flow signals in Q2 (order flow, dark pools) may be misleading. What looks ...
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: thematic_etf_holdings
+    target_type: dict[str, float]
+    description: 'Map of thematic ETF ticker -> weight %. Examples: {"AI": 3.2, "CYBER": 1.8} Thematic ETFs (AI, cybersecurity,
+      clean energy, semiconductor, etc.) have rebalance events independent of sector ETFs, creat...'
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: thematic_etf_recent_rebalance
+    target_type: bool
+    description: True if any thematic ETF holding this ticker rebalanced in the last 5 days
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: next_thematic_etf_rebalance_date
+    target_type: Optional[date]
+    description: Estimated date of next thematic ETF rebalance
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: etf_vs_singlenameflow_divergence
+    target_type: bool
+    description: 'True if the distillation layer detected a conflict: ETF-level flows and single-name flows sending opposite
+      signals. Example: ETF outflows paired with single-name institutional buying suggests someone ...'
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: divergence_signal_strength
+    target_type: SignalStrength
+    description: STRONG = clear, sustained divergence; MODERATE = noisy; WEAK/NONE = no signal
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: total_etf_activity_summary
+    target_type: str
+    description: 'Human-readable summary for LLM consumption:'
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon + SEC EDGAR + Finnhub
+    source_endpoint: Multiple sources
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon reference data, SEC EDGAR filings, and Finnhub event calendars.'
+audit_notes: 'AUDIT 2026-03-15: Polygon dividends (GET /v3/reference/dividends?ticker=AAPL) and splits (GET /v3/reference/stock_splits?ticker=AAPL)
+  both verified working. Finnhub insider_transactions confirmed. SEC EDGAR Form 4 filings accessible via browse-edgar.'

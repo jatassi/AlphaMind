@@ -1,0 +1,1469 @@
+domain: price_volume
+spec_prefix: Q1
+module_description: 'Q1: Price and Volume — entity definitions.'
+common_fields_note: 'All primary entities include ''ticker: Ticker'' and ''metadata: InvocationMetadata'' fields (omitted
+  from individual field listings). See _common.yaml for InvocationMetadata mapping.'
+entities:
+- entity: OHLCVBar
+  spec_id: N/A (supporting type)
+  description: A single OHLCV candle at a specific timeframe. The atomic unit of price data.
+  is_primary_entity: false
+  primary_source: Polygon Stocks Starter
+  fallback_source: Alpaca (free IEX)
+  cadence: Every invocation
+  feasibility: HIGH
+  fields:
+  - target_field: open
+    target_type: float
+    description: ''
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: results[].o
+    source_type: number
+    transform: Direct map. USD float.
+  - target_field: high
+    target_type: float
+    description: ''
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: results[].h
+    source_type: number
+    transform: Direct map. USD float.
+  - target_field: low
+    target_type: float
+    description: ''
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: results[].l
+    source_type: number
+    transform: Direct map. USD float.
+  - target_field: close
+    target_type: float
+    description: ''
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: results[].c
+    source_type: number
+    transform: Direct map. USD float.
+  - target_field: volume
+    target_type: int
+    description: Share volume during this bar
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: results[].v
+    source_type: integer
+    transform: Direct map. Share volume.
+  - target_field: vwap
+    target_type: float
+    description: Volume-weighted average price for this bar. More representative
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: results[].vw
+    source_type: number
+    transform: Direct map. Volume-weighted average price.
+  - target_field: trade_count
+    target_type: int
+    description: Number of individual trades. Higher trade count at same volume
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: results[].n
+    source_type: integer
+    transform: Direct map. Number of trades in bar.
+  - target_field: period_start
+    target_type: Optional[datetime]
+    description: UTC start of bar period
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: results[].t
+    source_type: integer (ms epoch)
+    transform: Convert Unix ms timestamp to UTC datetime. This is the bar open time.
+  - target_field: period_end
+    target_type: Optional[datetime]
+    description: UTC end of bar period
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: results[].t
+    source_type: integer (ms epoch)
+    transform: 'Compute: period_start + timespan duration. Polygon only provides bar start time; end = start + bar_width (e.g.
+      +15min, +1hr, +4hr, +1day).'
+- entity: ReferenceLevels
+  spec_id: N/A (supporting type)
+  description: Key reference price levels where institutional algos cluster orders,
+  is_primary_entity: false
+  primary_source: Polygon Stocks Starter
+  fallback_source: Alpaca
+  cadence: Every invocation
+  feasibility: HIGH
+  fields:
+  - target_field: prior_day_high
+    target_type: float
+    description: Yesterday's high — breakout above is bullish
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/prev
+    source_field: results[0].h
+    source_type: number
+    transform: Direct map from previous day aggregates.
+  - target_field: prior_day_low
+    target_type: float
+    description: Yesterday's low — breakdown below is bearish
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/prev
+    source_field: results[0].l
+    source_type: number
+    transform: Direct map from previous day aggregates.
+  - target_field: prior_day_close
+    target_type: float
+    description: Official close — the anchor for overnight gap calculation
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/prev
+    source_field: results[0].c
+    source_type: number
+    transform: Direct map from previous day aggregates.
+  - target_field: prior_day_vwap
+    target_type: float
+    description: Yesterday's VWAP — institutional execution benchmark
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/prev
+    source_field: results[0].vw
+    source_type: number
+    transform: Direct map from previous day aggregates.
+  - target_field: weekly_open
+    target_type: float
+    description: Monday's open price — weekly trend anchor
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (timespan=week)
+    source_field: results[0].o
+    source_type: number
+    transform: Current week's bar open. Use weekly aggs for the most recent week.
+  - target_field: monthly_open
+    target_type: float
+    description: First trading day of month open — monthly trend anchor
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (timespan=day)
+    source_field: results[0].o
+    source_type: number
+    transform: First trading day of month open. Query daily bars from month start, take first result's open.
+  - target_field: prior_week_high
+    target_type: float
+    description: Last week's high
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (timespan=week)
+    source_field: results[-2].h
+    source_type: number
+    transform: Previous week's bar high. Query weekly aggs, take second-to-last result.
+  - target_field: prior_week_low
+    target_type: float
+    description: Last week's low
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (timespan=week)
+    source_field: results[-2].l
+    source_type: number
+    transform: Previous week's bar low.
+  - target_field: current_session_vwap
+    target_type: float
+    description: Running VWAP for the current session. Institutional
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (timespan=minute, current day)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: compute running VWAP from today''s 1-min bars. sum(vw * v) / sum(v) across all bars.'
+  - target_field: current_session_high
+    target_type: float
+    description: ''
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (timespan=minute, current day)
+    source_field: max(results[].h)
+    source_type: number
+    transform: 'Distillation: max of all intraday bar highs for today.'
+  - target_field: current_session_low
+    target_type: float
+    description: ''
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (timespan=minute, current day)
+    source_field: min(results[].l)
+    source_type: number
+    transform: 'Distillation: min of all intraday bar lows for today.'
+- entity: SwingPoint
+  spec_id: N/A (supporting type)
+  description: A detected swing high or swing low — a local price extreme that defines
+  is_primary_entity: false
+  primary_source: Derived (distillation layer)
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: HIGH
+  fields:
+  - target_field: price
+    target_type: float
+    description: Price level of the swing point
+    source: Derived
+    source_endpoint: Distillation layer computation
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: local high/low detection algorithm applied to OHLCV bars from Polygon. Fractal pivot detection (N-bar
+      high/low).'
+  - target_field: timestamp
+    target_type: datetime
+    description: When the swing point occurred (UTC)
+    source: Derived
+    source_endpoint: Distillation layer computation
+    source_field: Derived from bar timestamp
+    source_type: N/A
+    transform: Timestamp of the bar containing the swing point. Source bar's results[].t converted to UTC.
+  - target_field: is_high
+    target_type: bool
+    description: True for swing high, False for swing low
+    source: Derived
+    source_endpoint: Distillation layer computation
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: True if this is a local maximum (swing high), False if local minimum (swing low).'
+  - target_field: strength
+    target_type: int
+    description: How many bars on each side confirm this swing point.
+    source: Derived
+    source_endpoint: Distillation layer computation
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: count of confirming bars on each side of the pivot. More bars = stronger swing point.'
+- entity: TimeframeTrend
+  spec_id: N/A (supporting type)
+  description: Trend state assessment at a single timeframe. Combines swing structure
+  is_primary_entity: false
+  primary_source: Derived (distillation layer)
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: HIGH
+  fields:
+  - target_field: timeframe
+    target_type: Timeframe
+    description: ''
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: Set by distillation layer based on which timeframe is being analyzed.
+  - target_field: trend_state
+    target_type: TrendState
+    description: Classified trend direction
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: classify from swing point sequence — higher highs + higher lows = UPTREND, lower highs + lower lows
+      = DOWNTREND, else RANGE_BOUND.'
+  - target_field: swing_highs
+    target_type: list[SwingPoint]
+    description: Recent swing highs (most recent first). Typically 3–5 points retained. Sequence of higher highs confirms
+      uptrend; lower highs confirms downtrend.
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: list of SwingPoint objects detected at this timeframe. Most recent first, 3-5 retained.'
+  - target_field: swing_lows
+    target_type: list[SwingPoint]
+    description: Recent swing lows (most recent first). Same logic inverted.
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: list of SwingPoint objects for swing lows. Same retention policy.'
+  - target_field: ma_alignment
+    target_type: str
+    description: 'Describes EMA stacking at this timeframe:'
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: compare price vs EMA(20) vs EMA(50) vs EMA(200). ''bullish_stack'' if price > 20 > 50 > 200, ''bearish_stack''
+      if inverted, else ''mixed''.'
+  - target_field: trend_duration_bars
+    target_type: int
+    description: How many bars the current trend state has persisted.
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: count bars since trend_state last changed.'
+  - target_field: trend_confidence
+    target_type: float
+    description: 0.0–1.0. Higher when swing structure and MA alignment
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: 0.0-1.0 score combining swing structure agreement with MA alignment. Higher when both align.'
+- entity: MultiTimeframePriceBar
+  spec_id: Q1:1a
+  description: Q1:1a — Multi-timeframe OHLCV bars with reference levels and trend state.
+  is_primary_entity: true
+  primary_source: Polygon Stocks Starter
+  fallback_source: Alpaca (free), yfinance
+  cadence: Every invocation
+  feasibility: HIGH
+  fields:
+  - target_field: bar_15min
+    target_type: OHLCVBar
+    description: Most recent completed 15-min bar
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=15, timespan=minute)
+    source_field: results[-1]
+    source_type: object {o,h,l,c,v,vw,t,n}
+    transform: 'Map last completed 15-min bar to OHLCVBar. Fields: o→open, h→high, l→low, c→close, v→volume, vw→vwap, n→trade_count,
+      t→period_start.'
+  - target_field: bar_1h
+    target_type: OHLCVBar
+    description: Most recent completed 1-hour bar
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=hour)
+    source_field: results[-1]
+    source_type: object {o,h,l,c,v,vw,t,n}
+    transform: Map last completed 1-hour bar to OHLCVBar.
+  - target_field: bar_4h
+    target_type: OHLCVBar
+    description: Most recent completed 4-hour bar
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=4, timespan=hour)
+    source_field: results[-1]
+    source_type: object {o,h,l,c,v,vw,t,n}
+    transform: Map last completed 4-hour bar to OHLCVBar.
+  - target_field: bar_daily
+    target_type: OHLCVBar
+    description: Current or most recent completed daily bar
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=day)
+    source_field: results[-1]
+    source_type: object {o,h,l,c,v,vw,t,n}
+    transform: Map current/most recent daily bar to OHLCVBar.
+  - target_field: bar_weekly
+    target_type: OHLCVBar
+    description: Current or most recent completed weekly bar
+    source: Polygon
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=week)
+    source_field: results[-1]
+    source_type: object {o,h,l,c,v,vw,t,n}
+    transform: Map current/most recent weekly bar to OHLCVBar.
+  - target_field: last_trade_price
+    target_type: float
+    description: Real-time last trade price. May differ from bar close
+    source: Polygon
+    source_endpoint: GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
+    source_field: ticker.lastTrade.p
+    source_type: number
+    transform: 'From snapshot endpoint. Fallback: use most recent 1-min bar close.'
+  - target_field: last_trade_time
+    target_type: Optional[datetime]
+    description: Timestamp of last trade (UTC)
+    source: Polygon
+    source_endpoint: GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
+    source_field: ticker.lastTrade.t
+    source_type: integer (ns epoch)
+    transform: Convert nanosecond Unix timestamp to UTC datetime.
+  - target_field: reference_levels
+    target_type: Optional[ReferenceLevels]
+    description: ''
+    source: Polygon
+    source_endpoint: Multiple endpoints (prev, aggs)
+    source_field: Composed
+    source_type: N/A
+    transform: Compose ReferenceLevels object from prev day + weekly + monthly aggs + running intraday computation.
+  - target_field: trend_15min
+    target_type: Optional[TimeframeTrend]
+    description: ''
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: TimeframeTrend from 15-min OHLCV series.'
+  - target_field: trend_1h
+    target_type: Optional[TimeframeTrend]
+    description: ''
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: TimeframeTrend from 1-hour OHLCV series.'
+  - target_field: trend_4h
+    target_type: Optional[TimeframeTrend]
+    description: ''
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: TimeframeTrend from 4-hour OHLCV series.'
+  - target_field: trend_daily
+    target_type: Optional[TimeframeTrend]
+    description: ''
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: TimeframeTrend from daily OHLCV series.'
+  - target_field: trend_weekly
+    target_type: Optional[TimeframeTrend]
+    description: ''
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: TimeframeTrend from weekly OHLCV series.'
+  - target_field: composite_trend_score
+    target_type: float
+    description: 'Multi-timeframe composite trend score. Range: -1.0 (all timeframes bearish, aligned) to +1.0 (all timeframes
+      bullish, aligned). Near 0.0 means conflicting signals across timeframes.  Weighting: higher...'
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: weighted average of per-timeframe trend scores. Weights: weekly(0.30) > daily(0.25) > 4h(0.20) >
+      1h(0.15) > 15min(0.10). Range -1.0 to +1.0.'
+  - target_field: composite_trend_label
+    target_type: str
+    description: 'Human-readable composite label for LLM consumption: "strong_uptrend" | "uptrend" | "weak_uptrend" | "neutral"
+      | "weak_downtrend" | "downtrend" | "strong_downtrend"'
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: map composite_trend_score to label. >0.6=''strong_uptrend'', >0.3=''uptrend'', >0.1=''weak_uptrend'',
+      >-0.1=''neutral'', >-0.3=''weak_downtrend'', >-0.6=''downtrend'', else ''strong_downtrend''.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: anomaly detection on price/volume patterns. E.g., volume > 3x 20-day avg, price > 2 ATR move, etc.'
+- entity: VolumeProfile
+  spec_id: Q1:1b
+  description: Q1:1b — Volume-at-price distribution with value area, POC, and node detection.
+  is_primary_entity: true
+  primary_source: Derived from Polygon 1-min bars
+  fallback_source: yfinance 1-min bars (60 days only)
+  cadence: Every invocation
+  feasibility: MEDIUM — 1-min bar approximation acceptable for swing trades
+  fields:
+  - target_field: value_area_high
+    target_type: float
+    description: Upper bound of the price range where ~70% of volume
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=minute)
+    source_field: Computed from 1-min OHLCV distribution
+    source_type: N/A
+    transform: 'Distillation: build price-volume histogram from 1-min bars (price=vw, vol=v). Find 70% volume range centered
+      on POC. VAH = upper bound.'
+  - target_field: value_area_low
+    target_type: float
+    description: Lower bound. Price below VAL = breakdown territory.
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=minute)
+    source_field: Computed from 1-min OHLCV distribution
+    source_type: N/A
+    transform: 'Distillation: lower bound of 70% volume range.'
+  - target_field: value_area_volume_pct
+    target_type: float
+    description: Actual percentage of volume within the VA (target ~70%).
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=minute)
+    source_field: Computed from 1-min OHLCV distribution
+    source_type: N/A
+    transform: 'Distillation: actual volume within VA / total volume * 100.'
+  - target_field: poc_price
+    target_type: float
+    description: The single most-traded price level. Acts as a magnet —
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=minute)
+    source_field: Computed from 1-min OHLCV distribution
+    source_type: N/A
+    transform: 'Distillation: price level (vw) with highest cumulative volume (v). Bin prices into tick-sized buckets, sum
+      volumes per bucket.'
+  - target_field: poc_volume
+    target_type: int
+    description: Volume at the POC price level (shares)
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=minute)
+    source_field: Computed from 1-min OHLCV distribution
+    source_type: N/A
+    transform: 'Distillation: total volume at POC price bucket.'
+  - target_field: high_volume_nodes
+    target_type: list[float]
+    description: Price levels with concentrated volume (above 1 std dev from mean volume per level). These are "speed bumps"
+      — price tends to stall and consolidate at these levels. Sorted by volume descending.
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=minute)
+    source_field: Computed from 1-min OHLCV distribution
+    source_type: N/A
+    transform: 'Distillation: price buckets with volume > mean + 1 std dev. Return as sorted list of price levels.'
+  - target_field: low_volume_nodes
+    target_type: list[float]
+    description: 'Price levels with minimal volume (below 0.5 std dev from mean). These are "air pockets" — price tends to
+      move quickly through them. Important for the analyst: if price breaks through a high-volum...'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=minute)
+    source_field: Computed from 1-min OHLCV distribution
+    source_type: N/A
+    transform: 'Distillation: price buckets with volume < mean - 0.5 std dev. Return as sorted list.'
+  - target_field: profile_type
+    target_type: str
+    description: '"single_distribution" — normal bell-shaped, mean-reversion'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=minute)
+    source_field: Computed from 1-min OHLCV distribution
+    source_type: N/A
+    transform: 'Distillation: classify distribution shape. Single peak = ''single_distribution'', two peaks = ''double_distribution'',
+      volume at lows = ''b_shaped'', at highs = ''p_shaped''.'
+  - target_field: profile_developing
+    target_type: bool
+    description: True if the current session's volume profile is still
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=minute)
+    source_field: Computed from 1-min OHLCV distribution
+    source_type: N/A
+    transform: Set True if profile covers current (incomplete) session.
+  - target_field: profile_migration
+    target_type: str
+    description: '"higher" | "lower" | "stable" | "expanding"'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=minute)
+    source_field: Computed from 1-min OHLCV distribution
+    source_type: N/A
+    transform: 'Distillation: compare current session VAH/VAL vs prior session. Higher = ''higher'', lower = ''lower'', overlapping
+      = ''stable'', wider = ''expanding''.'
+  - target_field: profile_period
+    target_type: str
+    description: '"session" | "2_day" | "5_day" | "weekly"'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=minute)
+    source_field: Computed from 1-min OHLCV distribution
+    source_type: N/A
+    transform: 'Set based on bars queried: today = ''session'', 2 days = ''2_day'', etc.'
+  - target_field: total_profile_volume
+    target_type: int
+    description: Total shares across all price levels in the profile
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=minute)
+    source_field: Computed from 1-min OHLCV distribution
+    source_type: N/A
+    transform: Sum of all v values across all 1-min bars in the profile period.
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (multiplier=1, timespan=minute)
+    source_field: Computed from 1-min OHLCV distribution
+    source_type: N/A
+    transform: 'Distillation: flag if profile shape is unusual vs recent history.'
+- entity: IndicatorReading
+  spec_id: N/A (supporting type)
+  description: A single indicator value at a specific timeframe. Used as building blocks
+  is_primary_entity: false
+  primary_source: Derived (TA-Lib / pandas-ta)
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: HIGH — 100% computed
+  fields:
+  - target_field: timeframe
+    target_type: Timeframe
+    description: ''
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta)
+    source_field: N/A
+    source_type: N/A
+    transform: Set by distillation layer based on which timeframe series is being computed.
+  - target_field: value
+    target_type: float
+    description: ''
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Primary indicator value: RSI value (0-100), MACD line, EMA value, ADX value, ATR value, etc.'
+  - target_field: signal
+    target_type: Optional[float]
+    description: Signal line value (for MACD, stochastic, etc.)
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Signal line where applicable: MACD signal line, Stochastic %D, etc. None for single-value indicators.'
+  - target_field: histogram
+    target_type: Optional[float]
+    description: Histogram value (MACD histogram)
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Histogram where applicable: MACD histogram (MACD - signal). None for non-histogram indicators.'
+  - target_field: upper_band
+    target_type: Optional[float]
+    description: Upper band (Bollinger, Keltner)
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Upper band for band indicators: Bollinger upper (SMA + 2*std), Keltner upper (EMA + 1.5*ATR). None otherwise.'
+  - target_field: lower_band
+    target_type: Optional[float]
+    description: Lower band
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Lower band: Bollinger lower (SMA - 2*std), Keltner lower (EMA - 1.5*ATR).'
+  - target_field: middle_band
+    target_type: Optional[float]
+    description: Middle band / basis
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Middle/basis band: Bollinger SMA(20), Keltner EMA(20).'
+- entity: DivergenceFlag
+  spec_id: N/A (supporting type)
+  description: A detected divergence between an indicator and price, or between the same
+  is_primary_entity: false
+  primary_source: Derived (distillation layer)
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: HIGH — 100% computed
+  fields:
+  - target_field: divergence_type
+    target_type: str
+    description: '"bullish_regular" | "bearish_regular" |'
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: divergence detection between indicator values and price action across timeframes.'
+  - target_field: indicator
+    target_type: str
+    description: Which indicator (e.g., "rsi", "macd_histogram")
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: divergence detection between indicator values and price action across timeframes.'
+  - target_field: timeframe
+    target_type: Timeframe
+    description: Timeframe where the divergence is observed
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: divergence detection between indicator values and price action across timeframes.'
+  - target_field: vs_timeframe
+    target_type: Optional[Timeframe]
+    description: 'For cross-timeframe divergences:'
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: divergence detection between indicator values and price action across timeframes.'
+  - target_field: description
+    target_type: str
+    description: Human-readable description for LLM consumption
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: divergence detection between indicator values and price action across timeframes.'
+  - target_field: strength
+    target_type: SignalStrength
+    description: ''
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: divergence detection between indicator values and price action across timeframes.'
+  - target_field: bars_since_onset
+    target_type: int
+    description: How many bars ago the divergence started forming
+    source: Derived
+    source_endpoint: Distillation layer
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: divergence detection between indicator values and price action across timeframes.'
+- entity: TechnicalIndicator
+  spec_id: Q1:1c
+  description: Q1:1c — Standard technical indicators computed across multiple timeframes.
+  is_primary_entity: true
+  primary_source: Derived from Q1:1a OHLCV (TA-Lib / pandas-ta)
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: HIGH — 100% derived, no external source needed
+  fields:
+  - target_field: rsi
+    target_type: list[IndicatorReading]
+    description: 'RSI(14) at each timeframe. Values: 0–100. >70 = overbought, <30 = oversold (classic), but thresholds should
+      be read in context of the trend (RSI can stay >70 for extended periods in strong uptrends). ...'
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: RSI(14) via TA-Lib. Input: close prices from Polygon aggs at each timeframe. Output: IndicatorReading
+      per timeframe with value=RSI.'
+  - target_field: macd
+    target_type: list[IndicatorReading]
+    description: 'MACD(12,26,9) at each timeframe. The histogram (MACD - signal) is the primary signal: histogram turning
+      positive = bullish momentum building, turning negative = bearish momentum building. Signal line ...'
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: MACD(12,26,9). value=MACD line, signal=signal line, histogram=MACD-signal. Per timeframe.'
+  - target_field: stochastic
+    target_type: list[IndicatorReading]
+    description: Stochastic(14,3,3) at each timeframe. Similar to RSI but more sensitive to recent price action. %K (value)
+      and %D (signal). Crossovers in extreme zones (>80 or <20) are the primary signal.
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: Stochastic(14,3,3). value=%K, signal=%D. Input: H/L/C from Polygon aggs.'
+  - target_field: bollinger
+    target_type: list[IndicatorReading]
+    description: 'Bollinger Bands(20,2) at each timeframe. Key signals: - Position within bands (percentile: 0 = at lower
+      band, 100 = at upper) - Band width (stored in histogram field): narrow = squeeze (vol compressio...'
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: Bollinger(20,2). upper_band=SMA+2σ, lower_band=SMA-2σ, middle_band=SMA(20), histogram=bandwidth.
+      Per timeframe.'
+  - target_field: keltner
+    target_type: list[IndicatorReading]
+    description: Keltner Channels(20, 1.5×ATR). When Bollinger bands contract inside Keltner channels, it's a "squeeze" —
+      the TTM Squeeze setup that signals an imminent volatility expansion. Stored for squeeze detecti...
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: Keltner(20, 1.5×ATR). upper_band=EMA+1.5×ATR, lower_band=EMA-1.5×ATR, middle_band=EMA(20).'
+  - target_field: ema_20
+    target_type: list[IndicatorReading]
+    description: 20-period EMA at each timeframe. Short-term trend.
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: EMA(20). value=EMA value at each timeframe.'
+  - target_field: ema_50
+    target_type: list[IndicatorReading]
+    description: 50-period EMA. Intermediate trend.
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: EMA(50). value=EMA value at each timeframe.'
+  - target_field: ema_200
+    target_type: list[IndicatorReading]
+    description: 200-period EMA. Long-term trend. Price below 200 EMA on the daily is the classic "bear market" signal for
+      institutional positioning.
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: EMA(200). value=EMA value at each timeframe.'
+  - target_field: adx
+    target_type: list[IndicatorReading]
+    description: ADX(14) at each timeframe. Measures trend strength regardless of direction. >25 = trending, <20 = range-bound.
+      Rising ADX confirms directional moves; falling ADX suggests the trend is losing steam.
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: ADX(14). value=ADX, signal=+DI, histogram=-DI. Per timeframe.'
+  - target_field: atr
+    target_type: list[IndicatorReading]
+    description: ATR(14) at each timeframe. The universal volatility normalizer — used throughout the system to express moves
+      in "this ticker's normal range" units. A 2 ATR daily move is exceptional for any name.
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: ATR(14). value=ATR value in USD. Per timeframe. Primary volatility normalizer.'
+  - target_field: atr_expansion_regime
+    target_type: str
+    description: '"compressing" | "expanding" | "stable"'
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: compare current ATR to 20-period SMA of ATR. Rising = ''expanding'', falling = ''compressing'',
+      flat = ''stable''.'
+  - target_field: bollinger_bandwidth
+    target_type: list[IndicatorReading]
+    description: Bollinger bandwidth at each timeframe. Low bandwidth = squeeze.
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: (upper - lower) / middle * 100. Per timeframe. Low = squeeze.'
+  - target_field: divergences
+    target_type: list[DivergenceFlag]
+    description: The crown jewel of this entity. Divergences between indicator and price (e.g., RSI bearish divergence on
+      4h — price higher high, RSI lower high) and between the same indicator at different timeframes ...
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: scan all indicator-price and cross-timeframe pairs for divergences. Each detected divergence becomes
+      a DivergenceFlag.'
+  - target_field: squeeze_active
+    target_type: bool
+    description: True when Bollinger bands are inside Keltner channels
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: True when daily Bollinger bands fit inside Keltner channels (BB upper < Keltner upper AND BB lower
+      > Keltner lower).'
+  - target_field: squeeze_timeframes
+    target_type: list[Timeframe]
+    description: Which timeframes currently show an active squeeze. Multiple timeframes in squeeze simultaneously = higher
+      conviction setup.
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: list of timeframes where squeeze_active is True.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Derived
+    source_endpoint: Distillation layer (TA-Lib / pandas-ta from Polygon OHLCV)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: flag extreme indicator readings (RSI > 85 or < 15, ADX > 50, ATR > 95th percentile).'
+- entity: GapAnalysis
+  spec_id: Q1:1d
+  description: Q1:1d — Overnight and intraday gap classification and fill probability.
+  is_primary_entity: true
+  primary_source: Derived from Q1:1a OHLCV
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: HIGH
+  fields:
+  - target_field: overnight_gap_abs
+    target_type: float
+    description: 'Absolute dollar gap: today''s open - yesterday''s close'
+    source: Derived
+    source_endpoint: Distillation layer (from Polygon daily + extended hours bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: today_open (from daily bar .o) - yesterday_close (from prev day bar .c).'
+  - target_field: overnight_gap_pct
+    target_type: float
+    description: 'Percentage gap: gap / prior close × 100'
+    source: Derived
+    source_endpoint: Distillation layer (from Polygon daily + extended hours bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: overnight_gap_abs / yesterday_close * 100.'
+  - target_field: overnight_gap_atr
+    target_type: float
+    description: Gap expressed in ATR multiples. This is the primary
+    source: Derived
+    source_endpoint: Distillation layer (from Polygon daily + extended hours bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: abs(overnight_gap_abs) / ATR(14, daily). Normalizes gap by ticker''s typical range.'
+  - target_field: gap_direction
+    target_type: Direction
+    description: BULLISH (gap up), BEARISH (gap down), NEUTRAL (< threshold)
+    source: Derived
+    source_endpoint: Distillation layer (from Polygon daily + extended hours bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: BULLISH if gap > 0, BEARISH if gap < 0, NEUTRAL if abs(gap_pct) < threshold (e.g., 0.1%).'
+  - target_field: gap_type
+    target_type: str
+    description: '"full_gap_up" — open above prior high (true gap)'
+    source: Derived
+    source_endpoint: Distillation layer (from Polygon daily + extended hours bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: if today_open > prior_high → ''full_gap_up''; if today_open < prior_low → ''full_gap_down''; if
+      between prior_close and prior_high → ''partial_gap_up''; etc.'
+  - target_field: gap_vs_trend
+    target_type: str
+    description: '"with_trend" — gap direction aligns with the daily trend'
+    source: Derived
+    source_endpoint: Distillation layer (from Polygon daily + extended hours bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: compare gap_direction with daily TrendState. Same direction = ''with_trend'', opposite = ''counter_trend''.'
+  - target_field: historical_fill_rate
+    target_type: float
+    description: 0.0–1.0. Based on this ticker's historical gap fill
+    source: Derived
+    source_endpoint: Distillation layer (from Polygon daily + extended hours bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: backtest trailing 1yr of gap events for this ticker. Count filled (price retraced to prior close)
+      / total gaps of same type.'
+  - target_field: avg_fill_time_hours
+    target_type: float
+    description: Average time to fill in hours, conditional on fill occurring.
+    source: Derived
+    source_endpoint: Distillation layer (from Polygon daily + extended hours bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: average hours to fill, conditional on fill occurring, from trailing 1yr backtest.'
+  - target_field: fill_rate_by_size
+    target_type: str
+    description: '"small_gaps_fill_more" | "large_gaps_fill_less" | "no_pattern"'
+    source: Derived
+    source_endpoint: Distillation layer (from Polygon daily + extended hours bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: segment gap events by ATR-size, compare fill rates. ''small_gaps_fill_more'' if small gaps fill
+      at higher rate.'
+  - target_field: intraday_gaps
+    target_type: list[IntradayGap]
+    description: Sudden intraday dislocations on news or large orders. Timestamped for correlation with flow data (Q2) and
+      news events (Qual 1).
+    source: Derived
+    source_endpoint: Distillation layer (from Polygon daily + extended hours bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: detect sudden intraday price dislocations from 1-min bar data. Flag moves > 0.5% in a single 1-min
+      bar.'
+  - target_field: extended_hours_gap
+    target_type: float
+    description: Gap from regular close to most recent extended-hours trade.
+    source: Derived
+    source_endpoint: Distillation layer (from Polygon daily + extended hours bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Polygon: query extended hours 1-min bars. Gap = last_ext_hours_trade.c - regular_close.'
+  - target_field: extended_hours_gap_atr
+    target_type: float
+    description: Same, in ATR multiples
+    source: Derived
+    source_endpoint: Distillation layer (from Polygon daily + extended hours bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: abs(extended_hours_gap) / ATR(14, daily).'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Derived
+    source_endpoint: Distillation layer (from Polygon daily + extended hours bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: flag if gap_atr > 2.0 or if fill pattern deviates significantly from historical.'
+- entity: IntradayGap
+  spec_id: N/A (supporting type)
+  description: A sudden intraday price dislocation — a gap within the session caused by
+  is_primary_entity: false
+  primary_source: Derived from Polygon 1-min bars
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: timestamp
+    target_type: datetime
+    description: When the gap occurred (UTC)
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Distillation: detect sudden intraday price jumps from 1-min bar sequence.'
+  - target_field: gap_magnitude_pct
+    target_type: float
+    description: Percentage move in the gap
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Distillation: detect sudden intraday price jumps from 1-min bar sequence.'
+  - target_field: gap_magnitude_atr
+    target_type: float
+    description: ATR-relative magnitude
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Distillation: detect sudden intraday price jumps from 1-min bar sequence.'
+  - target_field: direction
+    target_type: Direction
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Distillation: detect sudden intraday price jumps from 1-min bar sequence.'
+  - target_field: likely_cause
+    target_type: str
+    description: '"news" | "block_trade" | "liquidity_vacuum" | "unknown"'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min bars)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Distillation: detect sudden intraday price jumps from 1-min bar sequence.'
+- entity: RelativePerformance
+  spec_id: Q1:1e
+  description: Q1:1e — Relative strength vs. sector ETFs, SPY, and intra-sector ranking.
+  is_primary_entity: true
+  primary_source: Derived from Polygon OHLCV (ticker vs benchmarks)
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: HIGH — derived by comparing OHLCV across tickers
+  fields:
+  - target_field: sector_etf
+    target_type: Ticker
+    description: The sector ETF benchmark (from SectorClassification.sector_etf)
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Lookup: from SectorClassification entity, mapped per AlphaMind sector (XLK, XLF, XLE, SMH, etc.).'
+  - target_field: rs_vs_sector_1d
+    target_type: float
+    description: '1-day relative return: ticker return - sector ETF return.'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: ticker_return_1d - sector_etf_return_1d. Both from Polygon daily bars.'
+  - target_field: rs_vs_sector_5d
+    target_type: float
+    description: 5-day relative return
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: ticker_return_5d - sector_etf_return_5d. From trailing 5 daily bars.'
+  - target_field: rs_vs_sector_20d
+    target_type: float
+    description: 20-day relative return (roughly 1 month)
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: ticker_return_20d - sector_etf_return_20d.'
+  - target_field: rs_ratio_sector
+    target_type: float
+    description: Rolling price ratio (ticker / sector ETF). Rising ratio
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: rolling ratio ticker_close / sector_etf_close. Tracked over time.'
+  - target_field: rs_ratio_sector_trend
+    target_type: TrendState
+    description: 'Trend of the RS ratio: is relative performance improving, deteriorating, or flat?'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: apply trend classification to rs_ratio_sector time series.'
+  - target_field: rs_vs_spy_1d
+    target_type: float
+    description: 1-day relative return vs. SPY
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: ticker_return_1d - SPY_return_1d. SPY data from Polygon daily bars.'
+  - target_field: rs_vs_spy_5d
+    target_type: float
+    description: 5-day relative return vs. SPY
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: ticker_return_5d - SPY_return_5d.'
+  - target_field: rs_vs_spy_20d
+    target_type: float
+    description: 20-day relative return vs. SPY
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: ticker_return_20d - SPY_return_20d.'
+  - target_field: rs_ratio_spy
+    target_type: float
+    description: Rolling price ratio (ticker / SPY)
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: rolling ratio ticker_close / SPY_close.'
+  - target_field: rs_ratio_spy_trend
+    target_type: TrendState
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: apply trend classification to rs_ratio_spy time series.'
+  - target_field: sector_rank_today
+    target_type: int
+    description: Rank within sector by today's return (1 = best performer)
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: rank ticker by today''s return among all tickers in same sector. Data from Polygon grouped daily
+      endpoint for all tickers.'
+  - target_field: sector_rank_5d
+    target_type: int
+    description: Rank within sector by 5-day return
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: rank ticker by 5-day return among sector peers.'
+  - target_field: sector_peer_count
+    target_type: int
+    description: 'How many names in the sector (for context: rank 3/15 vs 3/35)'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: count of tickers in the same AlphaMind sector.'
+  - target_field: sector_quartile
+    target_type: int
+    description: 1 = top quartile, 4 = bottom quartile. Quick filter for
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: map sector_rank_today to quartile (1-4).'
+  - target_field: rs_regime_change
+    target_type: bool
+    description: 'True when a multi-day RS regime shift is detected:'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: detect when rolling RS ratio crosses from above to below median (or vice versa) over 5-10 day window.'
+  - target_field: rs_regime_change_direction
+    target_type: str
+    description: '"leader_to_laggard" | "laggard_to_leader"'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: ''leader_to_laggard'' if RS declining, ''laggard_to_leader'' if RS improving.'
+  - target_field: rs_regime_change_duration_days
+    target_type: int
+    description: How many days the shift has been in progress.
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: count of consecutive days in current RS regime shift.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} + GET /v2/aggs/grouped/locale/us/market/stocks/{date}
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: flag if RS divergence > 2 std devs from recent history.'
+- entity: HistoricalContext
+  spec_id: Q1:1f
+  description: 'Q1:1f — Historical regime context: ATR-normalized moves, 52-week positioning.'
+  is_primary_entity: true
+  primary_source: Derived from Polygon OHLCV + rolling statistics
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: HIGH — derived from OHLCV
+  fields:
+  - target_field: daily_range_atr
+    target_type: float
+    description: Today's high-low range as a multiple of ATR(14).
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: (today_high - today_low) / ATR(14). From Polygon daily bars.'
+  - target_field: daily_move_atr
+    target_type: float
+    description: Today's directional move (close vs. prior close) in ATR
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: (today_close - yesterday_close) / ATR(14). Signed.'
+  - target_field: move_5d_atr
+    target_type: float
+    description: 5-day cumulative directional move in ATR multiples
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: (close_today - close_5d_ago) / ATR(14).'
+  - target_field: move_20d_atr
+    target_type: float
+    description: 20-day cumulative directional move in ATR multiples
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: (close_today - close_20d_ago) / ATR(14).'
+  - target_field: pct_of_52w_range
+    target_type: float
+    description: Where current price sits in the 52-week range.
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: (current_price - low_52w) / (high_52w - low_52w) * 100. From trailing 252 trading days of Polygon
+      daily bars.'
+  - target_field: high_52w
+    target_type: float
+    description: 52-week high price
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: max(h) over trailing 252 daily bars.'
+  - target_field: low_52w
+    target_type: float
+    description: 52-week low price
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: min(l) over trailing 252 daily bars.'
+  - target_field: days_since_52w_high
+    target_type: int
+    description: Calendar days since the 52-week high was set
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: calendar days from date of 52w high to today.'
+  - target_field: days_since_52w_low
+    target_type: int
+    description: Calendar days since the 52-week low was set
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: calendar days from date of 52w low to today.'
+  - target_field: near_52w_high
+    target_type: bool
+    description: Within 3% of 52-week high (potential breakout)
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: True if current_price >= high_52w * 0.97.'
+  - target_field: near_52w_low
+    target_type: bool
+    description: Within 3% of 52-week low (potential capitulation)
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: True if current_price <= low_52w * 1.03.'
+  - target_field: dist_ema_20_atr
+    target_type: float
+    description: (Price - EMA20) / ATR. Positive = above, negative = below.
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: (current_price - EMA(20)) / ATR(14).'
+  - target_field: dist_ema_50_atr
+    target_type: float
+    description: Same for 50 EMA. Mean-reversion signal at ±3 ATR.
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: (current_price - EMA(50)) / ATR(14).'
+  - target_field: dist_ema_200_atr
+    target_type: float
+    description: Same for 200 EMA. Extreme distance from 200 EMA is the
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: (current_price - EMA(200)) / ATR(14).'
+  - target_field: vol_regime
+    target_type: str
+    description: '"compression" | "expansion" | "stable"'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: if ATR declining and BB narrowing → ''compression''; if ATR rising → ''expansion''; else ''stable''.'
+  - target_field: bollinger_squeeze
+    target_type: bool
+    description: True when Bollinger bands are at historically narrow width
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: True if BB bandwidth < 20th percentile of trailing 252-day bandwidth.'
+  - target_field: atr_percentile_1y
+    target_type: float
+    description: Where current ATR sits vs. its own trailing 1-year range.
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: percentile rank of current ATR vs trailing 252 ATR values.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (daily, 1yr lookback)
+    source_field: N/A
+    source_type: N/A
+    transform: 'Computed: flag extreme readings (pct_of_52w_range > 95 or < 5, daily_move_atr > 3).'
+- entity: ExtendedHoursBar
+  spec_id: Q1:1g
+  description: Q1:1g — Pre-market and after-hours OHLCV with volume context.
+  is_primary_entity: true
+  primary_source: Polygon Stocks Starter
+  fallback_source: Alpaca
+  cadence: Every invocation
+  feasibility: HIGH — Polygon Stocks Starter provides ext-hours bars
+  fields:
+  - target_field: pre_market_bar
+    target_type: Optional[OHLCVBar]
+    description: Aggregated pre-market candle. None if no
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Polygon: query 1-min bars for today. Filter bars with timestamp 04:00-09:30 ET. Aggregate into single OHLCVBar
+      (o=first.o, h=max(h), l=min(l), c=last.c, v=sum(v), vw=sum(vw*v)/sum(v), n=sum(n)).'
+  - target_field: pre_market_change_pct
+    target_type: float
+    description: '% change from prior regular close to pre-market last trade'
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Computed: (pre_market_bar.c - prior_regular_close) / prior_regular_close * 100.'
+  - target_field: pre_market_change_atr
+    target_type: float
+    description: Same, in ATR multiples
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Computed: abs(pre_market_change) / ATR(14).'
+  - target_field: after_hours_bar
+    target_type: Optional[OHLCVBar]
+    description: Aggregated after-hours candle.
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Polygon: filter 1-min bars with timestamp 16:00-20:00 ET. Aggregate same as pre-market.'
+  - target_field: after_hours_change_pct
+    target_type: float
+    description: '% change from regular close to after-hours last trade'
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Computed: (after_hours_bar.c - regular_close) / regular_close * 100.'
+  - target_field: after_hours_change_atr
+    target_type: float
+    description: ''
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Computed: abs(after_hours_change) / ATR(14).'
+  - target_field: pre_market_volume_vs_avg
+    target_type: float
+    description: Pre-market volume as a ratio of the average pre-market volume for this ticker (20-day trailing). > 2.0 =
+      unusually active pre-market, suggesting a catalyst or institutional positioning. < 0.5 = quiet,...
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Computed: today_pre_market_volume / avg_pre_market_volume_20d. Requires maintaining 20-day trailing pre-market
+      volumes.'
+  - target_field: after_hours_volume_vs_avg
+    target_type: float
+    description: Same ratio for after-hours session.
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Computed: today_after_hours_volume / avg_after_hours_volume_20d.'
+  - target_field: extended_hours_volume_vs_regular_session
+    target_type: float
+    description: 'Total extended-hours volume as a percentage of the most recent regular session volume. Normal range: 2–10%.
+      Above 15% is exceptional and usually means an earnings release or major news event occurred.'
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Computed: (pre_market_vol + after_hours_vol) / regular_session_vol * 100.'
+  - target_field: gap_from_close
+    target_type: float
+    description: Dollar gap from regular session close to most recent
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Computed: last_extended_hours_trade_price - regular_session_close.'
+  - target_field: gap_from_close_pct
+    target_type: float
+    description: Same, as percentage
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Computed: gap_from_close / regular_close * 100.'
+  - target_field: gap_from_close_atr
+    target_type: float
+    description: Same, in ATR multiples
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Computed: abs(gap_from_close) / ATR(14).'
+  - target_field: confidence_discount
+    target_type: float
+    description: 0.0–1.0 multiplier on signal reliability. 1.0 = full
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Computed: f(volume_ratio, spread_ratio). Higher ext-hours volume + tighter spreads = higher confidence.'
+  - target_field: ext_hours_spread_ratio
+    target_type: float
+    description: Average ext-hours spread / average regular-hours spread.
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Polygon: would require quote data (NOT_AUTHORIZED on Starter). Fallback: estimate from 1-min bar range vs
+      regular-hours range.'
+  - target_field: historical_confirmation_rate
+    target_type: float
+    description: 'Over the trailing 60 days, what percentage of extended-hours moves in this name were confirmed (continued
+      in the same direction) during the first 30 minutes of the next regular session. Range: 0.0–1.0...'
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Computed: backtest 60 days. For each day, compare ext-hours move direction with first 30 min of next regular
+      session. Confirmation rate = same_direction / total_days.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, include extended hours)
+    source_field: Computed
+    source_type: varies
+    transform: 'Computed: flag if pre_market_volume_vs_avg > 3.0 or gap_from_close_atr > 1.5.'
+audit_notes: 'AUDIT 2026-03-15: Polygon Starter tier limitations documented — /v2/last/trade and /v2/last/nbbo return NOT_AUTHORIZED.
+  Workaround: use /v2/snapshot endpoint (confirmed working with full data including lastQuote, min, prevDay). Extended hours
+  confirmed: 1-min bars available from 4:00 AM ET (pre-market) through midnight ET (after-hours). Alpaca backup confirmed
+  working: bars, trades, quotes, snapshots all verified.'

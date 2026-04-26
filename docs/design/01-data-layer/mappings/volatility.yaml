@@ -1,0 +1,507 @@
+domain: volatility
+spec_prefix: Q11
+module_description: 'Q11: Volatility Regime — entity definitions.'
+common_fields_note: 'All primary entities include ''ticker: Ticker'' and ''metadata: InvocationMetadata'' fields (omitted
+  from individual field listings). See _common.yaml for InvocationMetadata mapping.'
+entities:
+- entity: VIXDynamics
+  spec_id: Q11:11a
+  description: Q11:11a — VIX level, percentile rank, rate of change, and z-score.
+  is_primary_entity: true
+  primary_source: FRED (VIX free — VIXCLS series) + CBOE delayed
+  fallback_source: Yahoo Finance for VIX futures
+  cadence: Every invocation
+  feasibility: HIGH — VIX on FRED
+  fields:
+  - target_field: vix_spot
+    target_type: float
+    description: Current VIX level. Nominal range 10–80 under normal/stressed conditions, occasionally exceeding 80 during
+      crises (e.g., March 2020). Interpretation requires context — 20 after months at 12 is differen...
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vix_pctl_1y
+    target_type: float
+    description: Percentile rank of current VIX relative to its trailing 1-year range. 0 = lowest VIX in past year, 100 =
+      highest VIX in past year. Expresses whether the current level is "high for this year" or "low."
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vix_pctl_5y
+    target_type: float
+    description: Same, relative to 5-year range. Longer history reveals whether current conditions are extreme by multi-year
+      standards.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vix_change_1d_pct
+    target_type: float
+    description: 1-day percentage change in VIX. Positive = rising vol, negative = falling vol. A spike from 14 to 22 in two
+      days (57% move) means the market is repricing risk *right now*. VIX sitting at 22 for a mont...
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vix_change_5d_pct
+    target_type: float
+    description: 5-day percentage change. Captures multi-day velocity.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vix_change_20d_pct
+    target_type: float
+    description: 20-day percentage change. Longer-term trend direction.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vix_zscore_20d
+    target_type: float
+    description: How many standard deviations VIX is from its trailing 20-day mean. Extreme deviations (|z| > 2.0) tend to
+      mean-revert. Positive = above mean (vol elevated), negative = below mean (vol compressed).
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vix_spike_detected
+    target_type: bool
+    description: True when VIX has moved > 3 standard deviations from its 20-day mean in a single session or multi-session
+      burst. A short-term anomaly flag (different from regime transitions, which are sustained).
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+- entity: VIXTermStructure
+  spec_id: Q11:11b
+  description: Q11:11b — VIX futures term structure shape and roll yield signal.
+  is_primary_entity: true
+  primary_source: FRED + CBOE delayed + Yahoo Finance (VIX futures)
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: HIGH
+  fields:
+  - target_field: vix_spot
+    target_type: float
+    description: Current VIX spot for reference.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vx1_level
+    target_type: float
+    description: VIX front-month futures (roughly 1-month forward volatility expectations)
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vx2_level
+    target_type: float
+    description: VIX second-month futures (roughly 2-month forward)
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vx3_level
+    target_type: float
+    description: VIX third-month futures (roughly 3-month forward). Longer-term expectations.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: term_structure_state
+    target_type: VIXTermStructureState
+    description: 'Classification of the curve shape: steep contango (normal but complacent), flat contango (balanced), flat
+      (transition), mild backwardation (early stress), or deep backwardation (crisis).'
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vx1_vs_spot_spread
+    target_type: float
+    description: VX1 - VIX spot. Positive = contango (normal), negative = backwardation (stress). Absolute value indicates
+      steepness.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vx3_vs_spot_spread
+    target_type: float
+    description: VX3 - VIX spot. Longer-term spread. Smaller than VX1 spread in normal contango.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: curve_steepness
+    target_type: float
+    description: 'Numerical measure of curve slope: (VX3 - VX1) / VX1. Positive = upward slope (contango), negative = downward
+      slope (backwardation). Magnitude shows severity.'
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: contango_regime_flag
+    target_type: str
+    description: '"steep_contango" — VX1 premium > 5% of spot (complacency building, breakout risk) "normal_contango" — 2–5%
+      premium (balanced) "flat" — <2% difference "backwardation" — spot > futures (stress signal)'
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: roll_yield_direction
+    target_type: Direction
+    description: BULLISH = contango (volatility sellers rewarded, long-vol expensive) BEARISH = backwardation (short-vol expensive,
+      volatility buyers rewarded) NEUTRAL = flat
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: roll_yield_magnitude
+    target_type: float
+    description: Absolute percent difference between front and second month. Magnitude of the roll yield opportunity.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+- entity: VVIX
+  spec_id: Q11:11c
+  description: 'Q11:11c — Volatility of volatility: VVIX level and VIX/VVIX regime matrix.'
+  is_primary_entity: true
+  primary_source: CBOE (delayed)
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: HIGH
+  fields:
+  - target_field: vvix_spot
+    target_type: float
+    description: 'Current VVIX level. Measures implied volatility of the VIX itself — "the volatility of volatility." Normal
+      range 10–25; extremes >30 or <8 are rare and significant. VVIX answers: how uncertain is the ...'
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vvix_pctl_1y
+    target_type: float
+    description: Percentile rank of VVIX relative to 1-year range. 0 = lowest VVIX in past year (market is confident about
+      VIX), 100 = highest (high uncertainty).
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vix_vvix_state
+    target_type: VIXVVIXMatrix
+    description: 'The combination defines four distinct regime states: - Low VIX + low VVIX: calm and confident — normal operations
+      - High VIX + low VVIX: stressed but stable — market thinks it knows how bad it is - Hi...'
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vix_threshold_high
+    target_type: float
+    description: VIX level above which we classify as "high VIX" for the matrix. Default 20, adjustable based on regime history.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: vvix_threshold_high
+    target_type: float
+    description: VVIX level above which we classify as "high VVIX" for the matrix. Default 15, adjustable; historically VVIX
+      > 15 is elevated.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+- entity: RealizedImpliedVolGap
+  spec_id: Q11:11d
+  description: Q11:11d — VIX vs. SPX realized vol gap and risk premium tracking.
+  is_primary_entity: true
+  primary_source: Derived from Q11:11a + SPX OHLCV
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: HIGH — realized vol from SPX prices
+  fields:
+  - target_field: spx_realized_vol_10d
+    target_type: float
+    description: Trailing 10-day realized volatility of SPX (annualized %). Computed as the standard deviation of daily returns.
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: spx_realized_vol_20d
+    target_type: float
+    description: Trailing 20-day realized volatility of SPX. Captures recent actual movement.
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: vix_spot
+    target_type: float
+    description: Current VIX level for reference. VIX is the implied vol market, so VIX ≈ SPX annualized implied volatility
+      (roughly).
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: risk_premium_10d
+    target_type: float
+    description: Implied vol (VIX) minus realized vol (10-day SPX realized vol). Positive = market is paying for protection
+      not justified by actual movement. Indicates fear outrunning reality; potential for vol mean-r...
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: risk_premium_20d
+    target_type: float
+    description: Same calculation with 20-day realized vol. Longer-term gap perspective.
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: gap_direction
+    target_type: Direction
+    description: BULLISH = realized vol > implied vol (risk is actually materializing) BEARISH = implied vol > realized vol
+      (fear outrunning reality) NEUTRAL = gap is near its historical center
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: premium_pctl_1y
+    target_type: float
+    description: Historical percentile of the current risk premium relative to 1-year range. 0 = premium at its lowest (best
+      prices for volatility buyers), 100 = highest. Extreme premiums (>90th or <10th percentile) a...
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: gap_closing
+    target_type: bool
+    description: True if realized vol is converging toward implied vol (or vice versa). Closing gap = acceleration signal.
+      Widening gap = potential for mean-reversion.
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: gap_travel_pct_change_5d
+    target_type: float
+    description: How much the gap has widened or closed in the last 5 days, as a percentage. Positive = gap widening (fear
+      outrunning reality), negative = gap closing (risk actually materializing).
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+- entity: SKEWIndex
+  spec_id: Q11:11e
+  description: Q11:11e — CBOE SKEW level, percentile, and VIX/SKEW combination states.
+  is_primary_entity: true
+  primary_source: CBOE (delayed)
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: HIGH
+  fields:
+  - target_field: skew_spot
+    target_type: float
+    description: Current SKEW level. Measures implied vol of deep OTM puts relative to ATM options. Normal range 100–150 (index).
+      Values >150 = elevated tail hedging. SKEW is the tail risk barometer — one of the most ...
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: skew_pctl_1y
+    target_type: float
+    description: Percentile rank of SKEW relative to 1-year range. 0 = lowest SKEW (no one hedging), 100 = highest (maximum
+      tail anxiety). Rising SKEW over days/weeks signals building institutional anxiety.
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: vix_skew_state
+    target_type: VIXSKEWMatrix
+    description: 'The critical pairing: - Low VIX + low SKEW: genuine complacency — no one is hedging anything - Low VIX +
+      high SKEW: "surface calm, deep anxiety" — institutional money is quietly buying disaster insura...'
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: skew_trend
+    target_type: SKEWTrend
+    description: Rising = institutional anxiety building (even if VIX is flat, tail hedging is increasing). Stable = SKEW
+      maintaining level. Declining = anxiety easing.
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: skew_trend_days
+    target_type: int
+    description: How many days the current trend has been in place. Longer = more confirmed.
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: vix_threshold_high
+    target_type: float
+    description: VIX level above which we classify as "high VIX" for the matrix.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=VIXCLS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=VIXCLS for VIX close. Polygon: daily bars for ^VIX or VIXY ETF for intraday. Distillation
+      computes percentile, z-score, rate of change.'
+  - target_field: skew_threshold_high
+    target_type: float
+    description: SKEW level above which we classify as "high SKEW" for the matrix. Default 130; above this is elevated institutional
+      hedging.
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+- entity: VolRegimeClassification
+  spec_id: Q11:11f
+  description: Q11:11f — Composite volatility regime label with transition detection.
+  is_primary_entity: true
+  primary_source: Derived from Q11:11a–11e
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: HIGH — composite classification, pure distillation logic
+  fields:
+  - target_field: regime_label
+    target_type: VolatilityRegime
+    description: 'The composite regime state broadcast to all agents: - LOW_VOL_COMPRESSION: VIX low, term structure in steep
+      contango, VVIX low, realized vol declining. Squeeze building, mean-reversion works well. Bre...'
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: regime_changed
+    target_type: bool
+    description: True when the regime label changed since the previous invocation. Critical for agents to know about regime
+      shifts immediately.
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: prior_regime
+    target_type: Optional[VolatilityRegime]
+    description: Previous regime label for context.
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: regime_change_confidence
+    target_type: float
+    description: 0.0–1.0. Early transitions (1–2 invocations into the new regime) are less certain but more actionable. Confirmed
+      transitions (5+ invocations) are certain but already priced. Agents should weight both ...
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: regime_duration_invocations
+    target_type: int
+    description: How many invocations (usually ~4 per trading day during regular session) the current regime has persisted.
+      Helps agents distinguish early signals from confirmed moves. Higher = regime is more establis...
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: regime_drivers
+    target_type: list[str]
+    description: 'List of the dominant factors driving the current classification: e.g., ["vix_spike_detected", "term_structure_backwardation",
+      "vvix_elevated"] Helps agents understand the "why" behind the regime call.'
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: regime_risk_score
+    target_type: float
+    description: 0.0–1.0. Composite risk level of the current regime. 0.0 = lowest risk (low-vol compression), 1.0 = highest
+      risk (crisis spike). Used by agents for position sizing and stop-width guidance.
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+  - target_field: next_regime_probability
+    target_type: Optional[dict[str, float]]
+    description: 'Optional: forward-looking probabilities for the next regime. If included, helps agents anticipate transitions.
+      E.g., {"vol_expansion": 0.35, "crisis_spike": 0.15, "continued_compression": 0.50}'
+    source: FRED + Derived
+    source_endpoint: FRED + Distillation layer
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED VIX/VVIX data and Polygon option chain data. See entity docstring.'
+audit_notes: 'AUDIT 2026-03-15: VIX data confirmed from FRED (VIXCLS series, daily close). Polygon options greeks (delta,
+  gamma, theta, vega, IV) available per-contract from snapshot. Historical volatility computed from Polygon daily bars (confirmed
+  252+ days available). Finnhub pattern-recognition: 403 (premium only — not available on free tier).'

@@ -1,0 +1,1904 @@
+domain: macro
+spec_prefix: Q6
+module_description: 'Q6: Macro and Rates — entity definitions.'
+common_fields_note: 'All primary entities include ''ticker: Ticker'' and ''metadata: InvocationMetadata'' fields (omitted
+  from individual field listings). See _common.yaml for InvocationMetadata mapping.'
+entities:
+- entity: YieldLevelAndChange
+  spec_id: N/A (supporting type)
+  description: A single yield level with rate-of-change metrics at multiple horizons.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: level
+    target_type: float
+    description: Current yield in basis points (e.g., 4.25%)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: change_1d
+    target_type: float
+    description: Daily change in basis points
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: change_5d
+    target_type: float
+    description: 5-day change in basis points
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: change_20d
+    target_type: float
+    description: 20-day (monthly) change in basis points
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: z_score
+    target_type: float
+    description: How many std devs from 20-day baseline. Volatility signal.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: CurveSpread
+  spec_id: N/A (supporting type)
+  description: A single yield curve spread and its dynamics.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: spread
+    target_type: float
+    description: Spread width in basis points
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: change_1d
+    target_type: float
+    description: Daily change
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: change_5d
+    target_type: float
+    description: 5-day change
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: z_score
+    target_type: float
+    description: Std devs from trailing baseline. Steepening/flattening signal.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: TreasuryAuctionResult
+  spec_id: N/A (supporting type)
+  description: Results from a single Treasury auction (2Y, 5Y, 10Y, or 30Y).
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: tenor
+    target_type: str
+    description: '"2Y", "5Y", "10Y", "30Y"'
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: auction_date
+    target_type: date
+    description: ''
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: auction_yield
+    target_type: float
+    description: Yield at which the auction cleared (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: bid_to_cover
+    target_type: float
+    description: Bid-to-cover ratio. >2.5 is strong, <2.0 is weak.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: tail
+    target_type: float
+    description: Spread between auction yield and when-issued at cutoff (bp).
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: primary_dealer_pct
+    target_type: float
+    description: Percent of auction absorbed by primary dealers.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: indirect_pct
+    target_type: float
+    description: Percent to foreign central banks and official institutions.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: direct_pct
+    target_type: float
+    description: Percent to public (direct bidders).
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: auction_size_usd
+    target_type: float
+    description: Auction size in billions. For context vs. recent issuance.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: FedProbabilityAssessment
+  spec_id: N/A (supporting type)
+  description: Market-implied probability distribution over Fed action at next FOMC meeting.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: probability_hike
+    target_type: float
+    description: Probability of 25bp+ hike (0.0–1.0)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: probability_hold
+    target_type: float
+    description: Probability of unchanged (0.0–1.0)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: probability_cut
+    target_type: float
+    description: Probability of 25bp+ cut (0.0–1.0)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: implied_probability_change_1d
+    target_type: float
+    description: How much the most-likely outcome's prob shifted in 1d.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: RatePathExpectation
+  spec_id: N/A (supporting type)
+  description: Implied rate expectations over multiple horizons from Fed funds futures.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: implied_terminal_rate
+    target_type: float
+    description: Where markets expect the Fed funds rate to settle (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id=DFEDTARU
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: terminal_rate_timing
+    target_type: str
+    description: Expected timing (e.g., "Q3 2025" or "end of tightening cycle")
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: expected_hikes_next_12m
+    target_type: float
+    description: Cumulative 25bp hikes priced in next 12 months
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: expected_cuts_next_12m
+    target_type: float
+    description: Cumulative 25bp cuts priced in next 12 months
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: dot_plot_vs_market_gap
+    target_type: float
+    description: Spread between Fed's latest dot-plot midpoint and market
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: InflationDataRelease
+  spec_id: N/A (supporting type)
+  description: A single inflation data release (CPI, PPI, or PCE) with surprise scoring.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: metric
+    target_type: str
+    description: '"CPI" | "PPI" | "PCE"'
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id=PCEPI
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: reported_value
+    target_type: float
+    description: Actual released value (annual % change)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: consensus_estimate
+    target_type: float
+    description: Economist consensus estimate
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: surprise_bps
+    target_type: float
+    description: Actual minus estimate (basis points). Positive = hotter than expected.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: surprise_pct
+    target_type: float
+    description: Surprise as % of the actual value. For magnitude normalization.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: release_date
+    target_type: date
+    description: ''
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: core_value
+    target_type: Optional[float]
+    description: Core (ex-food/energy) for CPI/PPI; ex-volatile for PCE
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id=PCEPI
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: shelter_pct
+    target_type: Optional[float]
+    description: Shelter's contribution to overall (for CPI, major component)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id=CPIAUCSL
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: services_pct
+    target_type: Optional[float]
+    description: Services ex-shelter
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: goods_pct
+    target_type: Optional[float]
+    description: Goods (ex-food/energy)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: energy_pct
+    target_type: Optional[float]
+    description: Energy component % change
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: BreakevenInflation
+  spec_id: N/A (supporting type)
+  description: Market-implied inflation expectations from TIPS spreads.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: breakeven_5y
+    target_type: float
+    description: 5Y breakeven inflation rate (annual %, bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: breakeven_10y
+    target_type: float
+    description: 10Y breakeven inflation rate (annual %, bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: change_1d_5y
+    target_type: float
+    description: 1-day change in 5Y breakeven (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: change_1d_10y
+    target_type: float
+    description: 1-day change in 10Y breakeven (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: change_5d_5y
+    target_type: float
+    description: 5-day change in 5Y breakeven (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: change_5d_10y
+    target_type: float
+    description: 5-day change in 10Y breakeven (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: z_score_5y
+    target_type: float
+    description: Std devs from trailing 20-day baseline for 5Y
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: z_score_10y
+    target_type: float
+    description: Std devs from trailing 20-day baseline for 10Y
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: PMISubcomponent
+  spec_id: N/A (supporting type)
+  description: A single PMI subcomponent (New Orders, Production, Inventories, etc.).
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: component
+    target_type: str
+    description: '"new_orders" | "production" | "employment" |'
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: index
+    target_type: float
+    description: PMI subindex value (0–100, >50 = expansion)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: change_1m
+    target_type: float
+    description: 1-month change. Direction matters more than level.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: EmploymentData
+  spec_id: N/A (supporting type)
+  description: Latest employment snapshot from monthly NFP or weekly claims.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: nonfarm_payroll_change
+    target_type: Optional[float]
+    description: Monthly change in NFP (thousands)
+    source: FRED + BLS + Derived
+    source_endpoint: 'BLS: POST /publicAPI/v2/timeseries/data/ (series_id=CES0000000001)'
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: unemployment_rate
+    target_type: Optional[float]
+    description: Unemployment rate (%, e.g., 3.9)
+    source: FRED + BLS + Derived
+    source_endpoint: 'BLS: POST /publicAPI/v2/timeseries/data/ (series_id=LNS14000000)'
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: wage_growth_yoy
+    target_type: Optional[float]
+    description: Wage growth year-over-year (%)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: initial_claims_weekly
+    target_type: Optional[float]
+    description: Most recent week initial jobless claims (thousands)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id=ICSA
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: adp_private_payroll
+    target_type: Optional[float]
+    description: ADP monthly payroll change (thousands). Noisy NFP preview.
+    source: FRED + BLS + Derived
+    source_endpoint: 'BLS: POST /publicAPI/v2/timeseries/data/ (series_id=CES0000000001)'
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: ConsumerData
+  spec_id: N/A (supporting type)
+  description: Latest consumer-side economic data.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: retail_sales_yoy
+    target_type: Optional[float]
+    description: Retail sales YoY growth (%)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id=RSAFS
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: retail_sales_surprise_bps
+    target_type: Optional[float]
+    description: Beat/miss vs. consensus (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: consumer_confidence
+    target_type: Optional[float]
+    description: Conference Board or Michigan sentiment score
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: confidence_change_1m
+    target_type: Optional[float]
+    description: Monthly change in confidence
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: HousingData
+  spec_id: N/A (supporting type)
+  description: Housing market indicators.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: new_home_sales_monthly
+    target_type: Optional[float]
+    description: Monthly new home sales (thousands)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: existing_home_sales_monthly
+    target_type: Optional[float]
+    description: Existing home sales (millions)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: building_permits_monthly
+    target_type: Optional[float]
+    description: Building permits (thousands)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: housing_starts_monthly
+    target_type: Optional[float]
+    description: Housing starts (thousands)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: PublicCreditMetrics
+  spec_id: N/A (supporting type)
+  description: Investment grade and high-yield credit spread data.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: ig_spread
+    target_type: float
+    description: IG OAS vs. treasuries (basis points). Baseline risk appetite.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: ig_spread_change_1d
+    target_type: float
+    description: 1-day change (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: ig_spread_change_5d
+    target_type: float
+    description: 5-day change (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: ig_spread_widening_velocity
+    target_type: float
+    description: Bp/day momentum if widening. Velocity often > level.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: hy_spread
+    target_type: float
+    description: HY OAS vs. treasuries (bp). More sensitive to recession risk.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: hy_spread_change_1d
+    target_type: float
+    description: ''
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: hy_spread_change_5d
+    target_type: float
+    description: ''
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: hy_spread_widening_velocity
+    target_type: float
+    description: ''
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: ted_spread
+    target_type: float
+    description: TED spread (LIBOR–Treasury, bp). Interbank stress indicator.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id=STLFSI4
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: sofr_treasury_spread
+    target_type: float
+    description: SOFR rate minus comparable treasury yield (bp).
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id=SOFR
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: commercial_paper_rate
+    target_type: Optional[float]
+    description: 3M A2/P2 CP rate (%). Short-term corp funding cost.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: cdx_ig_index
+    target_type: Optional[float]
+    description: CDX Investment Grade CDS index spread (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: cdx_hy_index
+    target_type: Optional[float]
+    description: CDX High Yield CDS index spread (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: PrivateCreditMetrics
+  spec_id: N/A (supporting type)
+  description: BDC and private lending market health indicators.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: bdc_price_index
+    target_type: Optional[float]
+    description: Weighted index of major BDC prices (ARCC, MAIN, BXSL, etc.)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: bdc_price_change_1d
+    target_type: float
+    description: 1-day change (%)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: bdc_price_change_5d
+    target_type: float
+    description: 5-day change (%)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: bdc_avg_nav_discount
+    target_type: Optional[float]
+    description: Average price-to-NAV discount across major BDCs (%).
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: bdc_nav_discount_change_1d
+    target_type: float
+    description: 1-day change in avg discount (percentage points)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: bdc_vs_ig_divergence
+    target_type: bool
+    description: True if BDCs are weakening while IG spreads stable.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: clo_senior_spread
+    target_type: Optional[float]
+    description: CLO senior tranche spread (bp). Lower bound of credit stack.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: clo_mezzanine_spread
+    target_type: Optional[float]
+    description: CLO mezzanine spread (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: clo_equity_tranche_spread
+    target_type: Optional[float]
+    description: CLO equity tranche spread (bp).
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: direct_lending_default_rate
+    target_type: Optional[float]
+    description: Latest available from Cliffwater/KBRA (%).
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: direct_lending_recovery_rate
+    target_type: Optional[float]
+    description: Average recovery % on defaults
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: direct_lending_weighted_avg_yield
+    target_type: Optional[float]
+    description: Yield to maturity on private lending books (%)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: FundingMarketMetrics
+  spec_id: N/A (supporting type)
+  description: Overnight and short-term repo, SOFR, and money market funding conditions.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: sofr_rate
+    target_type: float
+    description: Current SOFR rate (annual %, bp). Baseline funding rate.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id=SOFR
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: sofr_change_1d
+    target_type: float
+    description: 1-day change (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: sofr_above_fed_target
+    target_type: float
+    description: SOFR minus Fed funds target midpoint (bp).
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id=SOFR
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: repo_treasury_spread
+    target_type: float
+    description: Overnight repo rate minus comparable treasury yield (bp).
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: repo_spread_change_1d
+    target_type: float
+    description: 1-day change (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: repo_spread_change_5d
+    target_type: float
+    description: 5-day change (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: term_repo_1w_premium
+    target_type: Optional[float]
+    description: 1-week repo rate minus overnight (bp).
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: term_repo_1m_premium
+    target_type: Optional[float]
+    description: 1-month term repo premium (bp)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: fed_reverse_repo_facility_usage
+    target_type: Optional[float]
+    description: RRP usage (billions). Acts as liquidity floor.
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: rrp_change_1d
+    target_type: Optional[float]
+    description: 1-day change (billions)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: rrp_change_5d
+    target_type: Optional[float]
+    description: 5-day change (billions)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: mmf_govt_assets
+    target_type: Optional[float]
+    description: Government money market fund assets (billions).
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: mmf_prime_assets
+    target_type: Optional[float]
+    description: Prime money market fund assets (billions).
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: mmf_govt_asset_change_1w
+    target_type: Optional[float]
+    description: 1-week change in government MMF assets (billions)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: mmf_prime_asset_change_1w
+    target_type: Optional[float]
+    description: 1-week change in prime MMF assets (billions)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: mmf_flow_direction
+    target_type: str
+    description: '"flight_to_quality" | "risk_on" | "neutral"'
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: FundingStressComposite
+  spec_id: N/A (supporting type)
+  description: High-level funding and credit stress aggregate maintained by distillation layer.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: stress_score
+    target_type: float
+    description: 0.0–100.0. Composite of SOFR spread, repo spread,
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id=SOFR
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: stress_direction
+    target_type: Direction
+    description: BULLISH (easing) | BEARISH (tightening) | NEUTRAL
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id=STLFSI4
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: stress_components
+    target_type: list[str]
+    description: Which components are flashing red
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id=STLFSI4
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: CurrencyLevel
+  spec_id: N/A (supporting type)
+  description: A single currency rate with change and context.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: rate
+    target_type: float
+    description: Current rate (e.g., 1.0850 for EUR/USD)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: change_1d
+    target_type: float
+    description: 1-day change in the rate (e.g., +0.0025)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: change_1d_pct
+    target_type: float
+    description: 1-day change as % (e.g., +0.23%)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: change_5d
+    target_type: float
+    description: 5-day change (rate points)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: change_5d_pct
+    target_type: float
+    description: 5-day change (%)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: z_score
+    target_type: float
+    description: Std devs from 20-day trailing baseline
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: DollarMoveAttribution
+  spec_id: N/A (supporting type)
+  description: Distillation layer's interpretation of why the dollar moved.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: primary_driver
+    target_type: str
+    description: '"rate_differential" | "risk_sentiment" | "trade_flow" | "mixed"'
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: rate_differential_score
+    target_type: float
+    description: 0.0–1.0 confidence that rate expectations drove the move
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: risk_sentiment_score
+    target_type: float
+    description: 0.0–1.0 confidence that risk-on/risk-off drove it
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: trade_flow_score
+    target_type: float
+    description: 0.0–1.0 confidence that trade flows/commodities drove it
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: explanation
+    target_type: str
+    description: Human-readable summary for LLM consumption
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: MacroEvent
+  spec_id: N/A (supporting type)
+  description: A single economic event scheduled or recently released.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: event_name
+    target_type: str
+    description: e.g., "FOMC Decision", "CPI Release", "NFP", "ISM Manufacturing"
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id=CPIAUCSL
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: event_datetime
+    target_type: datetime
+    description: UTC timestamp of event (e.g., FOMC decision time, data release time)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: event_type
+    target_type: str
+    description: '"fed_decision" | "inflation_data" | "employment" | "growth" | "credit" |'
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: consensus_estimate
+    target_type: Optional[float]
+    description: Expected value (if applicable)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: actual_result
+    target_type: Optional[float]
+    description: Posted result after release
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: surprise_bps
+    target_type: Optional[float]
+    description: Actual minus estimate (bp), if applicable
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: surprise_direction
+    target_type: Direction
+    description: BULLISH (beat) | BEARISH (miss) | NEUTRAL
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: surprise_magnitude
+    target_type: SignalStrength
+    description: How large the surprise is
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: affected_sectors
+    target_type: list[str]
+    description: Sector codes affected (e.g., ["tech", "energy"])
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: EventProximityFlag
+  spec_id: N/A (supporting type)
+  description: Alert that a market-moving event is imminent.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: next_event
+    target_type: str
+    description: Event name (e.g., "CPI Release")
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id=CPIAUCSL
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: hours_until_event
+    target_type: float
+    description: Time remaining until event (hours, float for minutes)
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+  - target_field: event_risk_level
+    target_type: SignalStrength
+    description: STRONG (high-impact event), MODERATE, WEAK, NONE
+    source: FRED + BLS + Derived
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
+- entity: YieldCurve
+  spec_id: Q6:6a
+  description: Q6:6a — Treasury yield curve, spreads, real yields, and auction results.
+  is_primary_entity: true
+  primary_source: FRED API
+  fallback_source: Treasury Fiscal Data
+  cadence: Daily (FRED updates EOD)
+  feasibility: HIGH
+  fields:
+  - target_field: rate_2y
+    target_type: YieldLevelAndChange
+    description: 2Y yield — monetary policy proxy
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: rate_5y
+    target_type: YieldLevelAndChange
+    description: 5Y yield — discount rate for medium-term earnings
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: rate_10y
+    target_type: YieldLevelAndChange
+    description: 10Y yield — primary equity discount rate
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: rate_30y
+    target_type: YieldLevelAndChange
+    description: 30Y yield — long-term growth/inflation expectations
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: fed_funds_rate
+    target_type: YieldLevelAndChange
+    description: Federal funds effective rate — baseline policy rate
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id=DFEDTARU
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: spread_2s10s
+    target_type: CurveSpread
+    description: 2Y–10Y spread. Steepness of the curve's middle.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=T10Y2Y. Or computed: yield_10y - yield_2y.'
+  - target_field: spread_2s30s
+    target_type: CurveSpread
+    description: 2Y–30Y spread. Long-end curve shape.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: spread_3m10s
+    target_type: CurveSpread
+    description: 3M–10Y spread. Full curve tilt, earliest inversion signal.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: real_yield_5y
+    target_type: float
+    description: 5Y real yield (bp). Rising real yields headwind for growth multiples.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=DFII5. 5-year TIPS yield.'
+  - target_field: real_yield_10y
+    target_type: float
+    description: 10Y real yield (bp)
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=DFII10. 10-year TIPS yield.'
+  - target_field: real_yield_5y_change_1d
+    target_type: float
+    description: 1-day change (bp)
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: real_yield_10y_change_1d
+    target_type: float
+    description: 1-day change (bp)
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: curve_regime
+    target_type: YieldCurveRegime
+    description: NORMAL | FLAT | INVERTED | STEEPENING | FLATTENING.
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: regime_confidence
+    target_type: float
+    description: 0.0–1.0. How clear the regime is (vs. noise). High when
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: latest_auction_2y
+    target_type: Optional[TreasuryAuctionResult]
+    description: ''
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: latest_auction_5y
+    target_type: Optional[TreasuryAuctionResult]
+    description: ''
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: latest_auction_10y
+    target_type: Optional[TreasuryAuctionResult]
+    description: ''
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: latest_auction_30y
+    target_type: Optional[TreasuryAuctionResult]
+    description: ''
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: next_scheduled_auction
+    target_type: Optional[MacroEvent]
+    description: Upcoming auction with scheduled date/time
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED yield curve data series.'
+- entity: FedPolicyExpectations
+  spec_id: Q6:6b
+  description: Q6:6b — Fed funds futures-implied rate probabilities and rate path.
+  is_primary_entity: true
+  primary_source: Derived from Kalshi + Polymarket + FRED fed funds futures
+  fallback_source: Compute from SOFR futures
+  cadence: Daily
+  feasibility: HIGH
+  fields:
+  - target_field: next_fomc_meeting_date
+    target_type: date
+    description: Date of the next FOMC decision
+    source: Kalshi + Polymarket + FRED
+    source_endpoint: GET /trade-api/v2/markets?series_ticker={series}
+    source_field: markets[].{field}
+    source_type: varies
+    transform: 'Distillation: derived from prediction market probabilities and FRED rate data.'
+  - target_field: next_fomc_probabilities
+    target_type: FedProbabilityAssessment
+    description: ''
+    source: Kalshi + Polymarket + FRED
+    source_endpoint: GET /trade-api/v2/markets?series_ticker={series}
+    source_field: markets[].{field}
+    source_type: varies
+    transform: 'Distillation: derived from prediction market probabilities and FRED rate data.'
+  - target_field: rate_path_12m
+    target_type: RatePathExpectation
+    description: ''
+    source: Kalshi + Polymarket + FRED
+    source_endpoint: GET /trade-api/v2/markets?series_ticker={series}
+    source_field: markets[].{field}
+    source_type: varies
+    transform: 'Distillation: derived from prediction market probabilities and FRED rate data.'
+  - target_field: probability_change_velocity_1d
+    target_type: float
+    description: How fast the most-likely outcome's probability shifted
+    source: Kalshi + Polymarket + FRED
+    source_endpoint: GET /trade-api/v2/markets?series_ticker={series}
+    source_field: markets[].{field}
+    source_type: varies
+    transform: 'Distillation: derived from prediction market probabilities and FRED rate data.'
+  - target_field: probability_change_velocity_5d
+    target_type: float
+    description: 5-day velocity
+    source: Kalshi + Polymarket + FRED
+    source_endpoint: GET /trade-api/v2/markets?series_ticker={series}
+    source_field: markets[].{field}
+    source_type: varies
+    transform: 'Distillation: derived from prediction market probabilities and FRED rate data.'
+  - target_field: last_fomc_decision_date
+    target_type: date
+    description: ''
+    source: Kalshi + Polymarket + FRED
+    source_endpoint: GET /trade-api/v2/markets?series_ticker={series}
+    source_field: markets[].{field}
+    source_type: varies
+    transform: 'Distillation: derived from prediction market probabilities and FRED rate data.'
+  - target_field: last_fomc_decision
+    target_type: str
+    description: '"hike" | "cut" | "hold"'
+    source: Kalshi + Polymarket + FRED
+    source_endpoint: GET /trade-api/v2/markets?series_ticker={series}
+    source_field: markets[].{field}
+    source_type: varies
+    transform: 'Distillation: derived from prediction market probabilities and FRED rate data.'
+  - target_field: last_fomc_decision_size_bps
+    target_type: int
+    description: Size of last move (25, 50, 75 bp), if any
+    source: Kalshi + Polymarket + FRED
+    source_endpoint: GET /trade-api/v2/markets?series_ticker={series}
+    source_field: markets[].{field}
+    source_type: varies
+    transform: 'Distillation: derived from prediction market probabilities and FRED rate data.'
+  - target_field: next_fed_speaker_event
+    target_type: Optional[MacroEvent]
+    description: Upcoming Chair/Vice Chair/FOMC member appearance
+    source: Kalshi + Polymarket + FRED
+    source_endpoint: GET /trade-api/v2/markets?series_ticker={series}
+    source_field: markets[].{field}
+    source_type: varies
+    transform: 'Distillation: derived from prediction market probabilities and FRED rate data.'
+  - target_field: recent_speaker_impact
+    target_type: Optional[float]
+    description: Market reaction to most recent speaker appearance (bp move)
+    source: Kalshi + Polymarket + FRED
+    source_endpoint: GET /trade-api/v2/markets?series_ticker={series}
+    source_field: markets[].{field}
+    source_type: varies
+    transform: 'Distillation: derived from prediction market probabilities and FRED rate data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Kalshi + Polymarket + FRED
+    source_endpoint: GET /trade-api/v2/markets?series_ticker={series}
+    source_field: markets[].{field}
+    source_type: varies
+    transform: 'Distillation: derived from prediction market probabilities and FRED rate data.'
+- entity: InflationMetrics
+  spec_id: Q6:6c
+  description: Q6:6c — CPI/PPI/PCE with breakevens, surprise scoring, and regime classification.
+  is_primary_entity: true
+  primary_source: FRED + BLS
+  fallback_source: N/A
+  cadence: Monthly (CPI/PPI/PCE release schedule)
+  feasibility: HIGH
+  fields:
+  - target_field: breakeven_inflation
+    target_type: BreakevenInflation
+    description: ''
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id} / BLS POST /publicAPI/v2/timeseries/data/
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED inflation series and BLS detailed CPI/PPI data.'
+  - target_field: inflation_regime
+    target_type: InflationRegime
+    description: HOT | COOLING | STABLE | DEFLATION_RISK.
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id} / BLS POST /publicAPI/v2/timeseries/data/
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED inflation series and BLS detailed CPI/PPI data.'
+  - target_field: latest_cpi
+    target_type: Optional[InflationDataRelease]
+    description: ''
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id} / BLS POST /publicAPI/v2/timeseries/data/
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED inflation series and BLS detailed CPI/PPI data.'
+  - target_field: latest_ppi
+    target_type: Optional[InflationDataRelease]
+    description: ''
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id} / BLS POST /publicAPI/v2/timeseries/data/
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED inflation series and BLS detailed CPI/PPI data.'
+  - target_field: latest_pce
+    target_type: Optional[InflationDataRelease]
+    description: ''
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id} / BLS POST /publicAPI/v2/timeseries/data/
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED inflation series and BLS detailed CPI/PPI data.'
+  - target_field: regime_confidence
+    target_type: float
+    description: 0.0–1.0. How clear is the current regime classification.
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id} / BLS POST /publicAPI/v2/timeseries/data/
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED inflation series and BLS detailed CPI/PPI data.'
+  - target_field: inflation_trend
+    target_type: Direction
+    description: BULLISH (accelerating) | BEARISH (decelerating) | NEUTRAL
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id} / BLS POST /publicAPI/v2/timeseries/data/
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED inflation series and BLS detailed CPI/PPI data.'
+  - target_field: trend_basis
+    target_type: str
+    description: Brief explanation (e.g., "breakevens drifting higher between releases")
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id} / BLS POST /publicAPI/v2/timeseries/data/
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED inflation series and BLS detailed CPI/PPI data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id} / BLS POST /publicAPI/v2/timeseries/data/
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED inflation series and BLS detailed CPI/PPI data.'
+- entity: GrowthIndicators
+  spec_id: Q6:6d
+  description: Q6:6d — PMI, employment, consumer data, housing, and growth surprise index.
+  is_primary_entity: true
+  primary_source: FRED + BLS
+  fallback_source: N/A
+  cadence: Monthly/Weekly (varies by indicator)
+  feasibility: HIGH
+  fields:
+  - target_field: pmi_manufacturing_headline
+    target_type: Optional[float]
+    description: ISM Manufacturing PMI headline (0–100, >50 = expansion)
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED and BLS macro time series.'
+  - target_field: pmi_manufacturing_change_1m
+    target_type: Optional[float]
+    description: 1-month change
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED and BLS macro time series.'
+  - target_field: pmi_manufacturing_subcomponents
+    target_type: list[PMISubcomponent]
+    description: New Orders (leading), Production, Employment, Inventory, Prices Paid, Deliveries
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED and BLS macro time series.'
+  - target_field: pmi_services_headline
+    target_type: Optional[float]
+    description: ISM Services PMI headline
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED and BLS macro time series.'
+  - target_field: pmi_services_change_1m
+    target_type: Optional[float]
+    description: ''
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED and BLS macro time series.'
+  - target_field: pmi_services_subcomponents
+    target_type: list[PMISubcomponent]
+    description: ''
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED and BLS macro time series.'
+  - target_field: employment_latest
+    target_type: EmploymentData
+    description: ''
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED and BLS macro time series.'
+  - target_field: consumer_latest
+    target_type: ConsumerData
+    description: ''
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED and BLS macro time series.'
+  - target_field: housing_latest
+    target_type: HousingData
+    description: ''
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED and BLS macro time series.'
+  - target_field: growth_surprise_index
+    target_type: float
+    description: -100.0 to +100.0. Like Citi Economic Surprise Index (ESI).
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED and BLS macro time series.'
+  - target_field: growth_surprise_trend
+    target_type: Direction
+    description: Is the ESI rising (data improving vs. consensus)
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED and BLS macro time series.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: FRED + BLS
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED and BLS macro time series.'
+- entity: CreditConditions
+  spec_id: Q6:6e
+  description: Q6:6e — IG/HY spreads, funding markets, and financial stress indicators.
+  is_primary_entity: true
+  primary_source: FRED
+  fallback_source: N/A
+  cadence: Daily (spreads), Weekly/Monthly (other)
+  feasibility: HIGH
+  fields:
+  - target_field: public_credit
+    target_type: PublicCreditMetrics
+    description: ''
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED credit spread and financial conditions data.'
+  - target_field: private_credit
+    target_type: PrivateCreditMetrics
+    description: ''
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED credit spread and financial conditions data.'
+  - target_field: funding_markets
+    target_type: FundingMarketMetrics
+    description: ''
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED credit spread and financial conditions data.'
+  - target_field: funding_stress_composite
+    target_type: FundingStressComposite
+    description: ''
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED credit spread and financial conditions data.'
+  - target_field: credit_regime
+    target_type: str
+    description: '"normal" (spreads <300bp IG, <600bp HY) | "elevated" |'
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED credit spread and financial conditions data.'
+  - target_field: credit_regime_confidence
+    target_type: float
+    description: 0.0–1.0
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED credit spread and financial conditions data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: FRED
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED credit spread and financial conditions data.'
+- entity: CurrencyAndDollar
+  spec_id: Q6:6f
+  description: Q6:6f — DXY, major currency pairs, and dollar move attribution.
+  is_primary_entity: true
+  primary_source: FRED + Polygon forex
+  fallback_source: Yahoo Finance
+  cadence: Daily
+  feasibility: HIGH
+  fields:
+  - target_field: dxy
+    target_type: CurrencyLevel
+    description: Basket of major currencies weighted by trade volume
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'FRED: series_id=DTWEXBGS. Trade Weighted US Dollar Index. observations[-1].value.'
+  - target_field: eur_usd
+    target_type: CurrencyLevel
+    description: EUR/USD. EUR is largest DXY component; Eurozone recession fears
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED exchange rate data and Polygon forex bars.'
+  - target_field: usd_jpy
+    target_type: CurrencyLevel
+    description: USD/JPY. Carry trade proxy — sharp yen strengthening (unwind)
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED exchange rate data and Polygon forex bars.'
+  - target_field: usd_cny
+    target_type: CurrencyLevel
+    description: USD/CNY. China growth proxy; CNY weakness ripples into semis
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED exchange rate data and Polygon forex bars.'
+  - target_field: usd_cad
+    target_type: Optional[CurrencyLevel]
+    description: USD/CAD. Energy-linked proxy; CAD weakness = commodity weakness
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED exchange rate data and Polygon forex bars.'
+  - target_field: usd_nok
+    target_type: Optional[CurrencyLevel]
+    description: USD/NOK. Norwegian krone; energy-sensitive
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED exchange rate data and Polygon forex bars.'
+  - target_field: dollar_move_attribution
+    target_type: DollarMoveAttribution
+    description: ''
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED exchange rate data and Polygon forex bars.'
+  - target_field: dxy_commodity_correlation
+    target_type: str
+    description: '"positive" (DXY up = commodities down) |'
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED exchange rate data and Polygon forex bars.'
+  - target_field: correlation_strength
+    target_type: float
+    description: Abs value of correlation coefficient (0.0–1.0)
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED exchange rate data and Polygon forex bars.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED exchange rate data and Polygon forex bars.'
+- entity: MacroEventCalendar
+  spec_id: Q6:6g
+  description: Q6:6g — Economic event calendar with consensus, surprise scoring, and proximity.
+  is_primary_entity: true
+  primary_source: Finnhub economic calendar
+  fallback_source: Manual maintenance
+  cadence: Daily
+  feasibility: MEDIUM — Finnhub economic_calendar returned 403 on free tier; may need alternative
+  fields:
+  - target_field: upcoming_events
+    target_type: list[MacroEvent]
+    description: 'Chronologically sorted. Major events: FOMC decisions, CPI/PPI/PCE, NFP, ISM/PMI, GDP, Fed speaker appearances,
+      Treasury auctions.'
+    source: Finnhub (if accessible) + Manual
+    source_endpoint: Finnhub /calendar/economic (403 on free tier)
+    source_field: Computed
+    source_type: varies
+    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
+      key releases (FOMC, NFP, CPI, GDP).'
+  - target_field: event_proximity_alerts
+    target_type: list[EventProximityFlag]
+    description: Events within N hours (distillation layer configurable, typically 24–48 hours). The sector analysts and PM
+      agent need to know when event risk is imminent.
+    source: Finnhub (if accessible) + Manual
+    source_endpoint: Finnhub /calendar/economic (403 on free tier)
+    source_field: Computed
+    source_type: varies
+    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
+      key releases (FOMC, NFP, CPI, GDP).'
+  - target_field: macro_surprise_index
+    target_type: float
+    description: Similar to Citi Economic Surprise Index (ESI).
+    source: Finnhub (if accessible) + Manual
+    source_endpoint: Finnhub /calendar/economic (403 on free tier)
+    source_field: Computed
+    source_type: varies
+    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
+      key releases (FOMC, NFP, CPI, GDP).'
+  - target_field: surprise_index_trend
+    target_type: Direction
+    description: Is the surprise index rising (improving data flow)
+    source: Finnhub (if accessible) + Manual
+    source_endpoint: Finnhub /calendar/economic (403 on free tier)
+    source_field: Computed
+    source_type: varies
+    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
+      key releases (FOMC, NFP, CPI, GDP).'
+  - target_field: surprise_index_change_5d
+    target_type: float
+    description: 5-day change in the ESI (how fast perception is shifting)
+    source: Finnhub (if accessible) + Manual
+    source_endpoint: Finnhub /calendar/economic (403 on free tier)
+    source_field: Computed
+    source_type: varies
+    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
+      key releases (FOMC, NFP, CPI, GDP).'
+  - target_field: event_impact_by_sector
+    target_type: dict[str, float]
+    description: 'Map of event_type → avg sector-specific reaction (multiplier on absolute market reaction). e.g., {"hot_cpi":
+      {"tech": 1.8, "semis": 1.2, "financials": 0.8, "energy": 0.6}} Helps the analyst size ...'
+    source: Finnhub (if accessible) + Manual
+    source_endpoint: Finnhub /calendar/economic (403 on free tier)
+    source_field: Computed
+    source_type: varies
+    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
+      key releases (FOMC, NFP, CPI, GDP).'
+  - target_field: latest_release
+    target_type: Optional[MacroEvent]
+    description: ''
+    source: Finnhub (if accessible) + Manual
+    source_endpoint: Finnhub /calendar/economic (403 on free tier)
+    source_field: Computed
+    source_type: varies
+    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
+      key releases (FOMC, NFP, CPI, GDP).'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Finnhub (if accessible) + Manual
+    source_endpoint: Finnhub /calendar/economic (403 on free tier)
+    source_field: Computed
+    source_type: varies
+    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
+      key releases (FOMC, NFP, CPI, GDP).'
+audit_notes: 'AUDIT 2026-03-15: All FRED series verified working. Confirmed series: DGS10, DGS2, DGS30, T10Y2Y, T10Y3M, T10YIE,
+  T5YIE, BAMLH0A0HYM2, BAMLC0A0CM, VIXCLS, DTWEXBGS, DCOILWTICO, CPIAUCSL, PCEPI, STLFSI4, SOFR, DFEDTARU, M2SL. Additional
+  series probed: ICSA (initial claims), UMCSENT (consumer sentiment), RSAFS (retail sales), INDPRO (industrial production),
+  HOUST (housing starts), PPIACO (PPI). BLS series verified: CES0000000001 (NFP), LNS14000000 (unemployment), CES0500000003
+  (avg hourly earnings). Treasury Fiscal Data verified: auctions_query, avg_interest_rates.'

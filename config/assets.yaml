@@ -1,0 +1,101 @@
+# Asset universe — authoritative ticker list scoping all external data collection.
+# Validation procedure: docs/design/asset-universe-validation.md
+# Run:           uv run python scripts/validate_universe.py
+# Discover:      uv run python scripts/validate_universe.py --discover
+
+last_full_validation: 2026-04-25
+
+discovery_sources:
+  tech:       { etf: XLK,  vendor: spdr }
+  semis:      { etf: SOXX, vendor: ishares, ishares_product_id: "239705" }
+  financials: { etf: XLF,  vendor: spdr }
+  energy:     { etf: XLE,  vendor: spdr }
+
+sectors:
+  tech:
+    - AAPL
+    - MSFT
+    - GOOG
+    - GOOGL
+    - AMZN
+    - META
+    - TSLA
+    - ORCL
+    - PLTR
+    - SNOW
+    - SHOP
+    - CRWD
+    - PANW
+    - DDOG
+    - NET
+    - ZS
+    - COIN
+    - XYZ  # Block Inc. — renamed from SQ in early 2025
+    - CSCO
+    - IBM
+    - ACN
+    - INTU
+    - CDW
+    - FTNT
+
+  semis:
+    - NVDA
+    - AMD
+    - AVGO
+    - TSM
+    - MU
+    - INTC
+    - QCOM
+    - MRVL
+    - LRCX
+    - AMAT
+    - ASML
+    - TXN
+    - NXPI
+    - MCHP
+    - "ON"  # quoted: bare 'ON' is YAML 1.1 boolean True
+    - TER
+
+  financials:
+    - JPM
+    - BAC
+    - GS
+    - MS
+    - C
+    - WFC
+    - SCHW
+    - USB
+    - V
+    - MA
+    - AXP
+    - PYPL
+    - PNC
+    - TFC
+    - COF
+    - MET
+    - PRU
+
+  energy:
+    - COP
+    - EOG
+    - DVN
+    - OXY
+    - SLB
+    - BKR
+    - LNG
+    - CTRA
+    - APA
+
+benchmarks:
+  SPY:  { role: broad_market, description: "S&P 500 ETF" }
+  QQQ:  { role: broad_market, description: "Nasdaq 100 ETF" }
+  IWM:  { role: breadth,      description: "Russell 2000 ETF" }
+  RSP:  { role: breadth,      description: "Equal-weight S&P 500" }
+  XLK:  { role: sector_etf,   description: "Tech Select Sector SPDR" }
+  SMH:  { role: sector_etf,   description: "iShares Semiconductor ETF" }
+  SOXX: { role: sector_etf,   description: "iShares Semiconductor (discovery basket)" }
+  XLF:  { role: sector_etf,   description: "Financial Select Sector SPDR" }
+  XLE:  { role: sector_etf,   description: "Energy Select Sector SPDR" }
+  TLT:  { role: intermarket,  description: "20+ Year Treasury Bond ETF" }
+  IEF:  { role: intermarket,  description: "7-10 Year Treasury Bond ETF" }
+  GLD:  { role: intermarket,  description: "SPDR Gold Shares" }

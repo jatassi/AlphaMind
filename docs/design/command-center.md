@@ -1,0 +1,611 @@
+# Command center
+
+How the operator monitors active runs, reviews past runs, edits configuration, manages portfolio and theses, and is alerted to conditions requiring attention. Implemented as a web application running on the same machine as the pipeline and continuous monitor, accessible locally and remotely via the operator's `atassi.org` domain with passkey authentication.
+
+This spec covers the *features* of the command center — what it surfaces, what it lets the operator do, how it alerts, how access is controlled. The tech stack, framework choices, and interaction protocol with the pipeline and monitor processes are designed in a follow-on conversation; this doc establishes the requirements that conversation has to satisfy.
+
+The command center is the implementation of the Phase 4 monitoring & alerting design item from [remaining-work.md](remaining-work.md#phase-4--maturation-before-live-transition). Its scope grew during alignment to include configuration editing and operator-initiated control actions, because both are natural neighbors of the monitoring surface and use the same authentication, audit, and access model.
+
+---
+
+## Scope
+
+**In scope.**
+- Views that surface pipeline state, portfolio state, theses, run history, agent outputs, activity log, guardrail headroom, regime and overlay state, and continuous-monitor health.
+- A graphical configuration editor that exposes every knob in `config/` as a structured form, never as raw YAML text.
+- Operator actions that mutate system state (cancel orders, force closes, toggle halt mode, trigger emergency invocations, switch profile, run universe validation).
+- An alert rule registry, alert conditions, severity model, and notification channel definitions.
+- Authentication, session management, and the local-plus-remote access model.
+
+**Out of scope** (owned by other docs, not duplicated here):
+
+| Concern | Authoritative spec |
+|---|---|
+| Pipeline scheduling, processes, deployment | [architecture/infrastructure.md](../architecture/infrastructure.md) |
+| Activity log event taxonomy and entity tables | [05-execution-layer/state-persistence.md](05-execution-layer/state-persistence.md) |
+| Configuration file layout, composition resolver, validation layers | [configuration-management.md](configuration-management.md) |
+| Per-rule guardrail definitions and breach mechanics | [06-risk-guardrails/rules-and-limits.md](06-risk-guardrails/rules-and-limits.md), [06-risk-guardrails/breach-behavior.md](06-risk-guardrails/breach-behavior.md) |
+| Continuous monitor responsibilities | [05-execution-layer/architecture.md § Continuous monitor](05-execution-layer/architecture.md) |
+| Feedback-loop analytics (thesis outcomes, calibration, prompt iteration) | Phase 4 [Feedback loop design](remaining-work.md#phase-4--maturation-before-live-transition) — not yet landed |
+| Tech stack, framework selection, interaction protocol with the pipeline/monitor | Follow-on conversation; this spec defers it explicitly |
+
+The command center is an additive read-and-control surface over data that already lives in the system of record. It does not own positions, orders, theses, fills, configuration, or any other primary state. Every datum it shows traces back to an existing table or file.
+
+---
+
+## Architecture context
+
+The command center is a third long-running process on the trading machine, alongside the pipeline and the continuous monitor. It serves a web UI to a single operator. The pipeline and monitor remain authoritative for all state mutation; the command center either reads from shared state or invokes a narrow control surface those processes expose.
+
+```
+Trading machine (Windows)
+├── alphamind-pipeline       (APScheduler-driven, invocation-on-trigger)
+├── alphamind-monitor        (always-on, websocket fills, breach detection)
+├── command center           (always-on, web UI, this spec)
+│
+├── %USERPROFILE%\AlphaMind\data\
+│   └── alphamind.db         (SQLite, shared)
+└── %USERPROFILE%\AlphaMind\archive\     (per-invocation file archive)
+```
+
+Three properties are load-bearing for this design and constrain all later choices:
+
+1. **Live updates are push-based.** When a pipeline invocation transitions phases, the live run watcher reflects it within a second. When the monitor logs a fill or a breach, the dashboard updates without requiring a refresh. Polling is permitted only as a fallback for connection recovery.
+
+2. **Read-only by default.** Every view is a read against existing state. State mutation happens only through explicit operator-action endpoints (see [Operator actions](#operator-actions)), each of which emits an activity-log entry with `source: operator_console`.
+
+3. **Single source of truth for everything that already has one.** The command center never duplicates the entity tables, the activity log, the file archive, or the config files. Edits to config files write through to disk and are picked up by the standard invocation-time reload path; operator actions write through to the activity log via the same OMS / monitor write paths an internal command would use.
+
+---
+
+## Tech stack
+
+### Frontend
+
+| Component | Choice |
+|---|---|
+| Language | TypeScript |
+| Framework | React |
+| Build | Vite |
+| Component primitives | shadcn/ui — BaseUI variants |
+| Styling | Tailwind CSS |
+| Routing | TanStack Router |
+| Data fetching and cache | TanStack Query |
+| Forms | React Hook Form + Zod |
+| Tables | TanStack Table (headless) |
+| Charts | Recharts |
+| Type sharing with backend | `openapi-typescript` against the FastAPI-generated OpenAPI schema |
+
+The Pydantic entity, config, and event models defined for the pipeline are reused as FastAPI request/response models; the OpenAPI schema FastAPI emits is the single source of truth for frontend types. No hand-maintained TypeScript interfaces for entities the backend already defines.
+
+### Backend
+
+| Component | Choice |
+|---|---|
+| Language | Python 3.13 (matches the pipeline and monitor) |
+| Framework | FastAPI (asyncio) |
+| Web server | Uvicorn |
+| Database access | SQLAlchemy 2.0 + `aiosqlite`, reusing the pipeline's session factory and ORM definitions |
+| Authentication | `py_webauthn` for WebAuthn relying-party logic |
+| Sessions | Signed cookies (HttpOnly, SameSite=Strict, Secure), CSRF protection on state-mutating endpoints |
+| Static asset serving | FastAPI `StaticFiles` mount over the Vite-built frontend |
+
+The command center backend is a third member of the existing Python project (same `pyproject.toml`, same dev tooling, same lint/type configuration). It does not maintain its own duplicate ORM layer.
+
+### Build and serving
+
+A single port serves the entire surface in production: FastAPI mounts the Vite-built `dist/` at `/`, exposes the API at `/api/*`, the SSE channel at `/api/events`, and the WebAuthn ceremony endpoints at `/auth/*`. Development uses the Vite dev server on a separate port with a proxy to the FastAPI backend.
+
+### Process supervision
+
+NSSM wraps each of the three Windows-side processes (pipeline, monitor, command center) as a Windows Service with restart-on-failure and stdout/stderr capture, per [infrastructure.md § Process supervision](../architecture/infrastructure.md#process-supervision-when-running-unattended). Log files and the SQLite database live under `%USERPROFILE%\AlphaMind\` as defined by that doc.
+
+---
+
+## Interaction model
+
+The command center never holds write locks on the SQLite database and never invents new authoritative state for anything that already has a system of record. State mutation flows through the pipeline's and monitor's existing write paths via a narrow control surface; live updates are transient screen state pushed over SSE, not persisted history.
+
+### Control surface
+
+The pipeline and the monitor each bind a localhost-only HTTP server (FastAPI + Uvicorn within the same process). These servers are loopback-bound, not reachable on any non-loopback interface, and rely on the operating system's loopback isolation rather than an authentication layer of their own — the command center backend is the only client that ever connects to them.
+
+**Pipeline endpoints** (operator actions whose effect is scoped to scheduling, configuration, or invocation triggering):
+
+| Method + path | Body | Effect |
+|---|---|---|
+| `POST /control/pause` | `{reason}` | Sets the scheduler-pause flag; subsequent triggers no-op and log `status: skipped_paused` |
+| `POST /control/resume` | — | Clears the scheduler-pause flag |
+| `POST /control/trigger_emergency_invocation` | `{reason}` | Fires an out-of-schedule invocation; subject to the existing `max_instances=1` and emergency-invocation cooldown |
+| `POST /control/switch_profile` | `{profile_name}` | Writes `main.yaml` `active_profile`; takes effect at next invocation |
+| `POST /control/run_universe_validation` | — | Executes `scripts/validate_universe.py` and returns the report inline |
+| `GET /events` | — | SSE stream of pipeline state |
+
+**Monitor endpoints** (operator actions whose effect is on positions, orders, or always-on state):
+
+| Method + path | Body | Effect |
+|---|---|---|
+| `POST /control/cancel_order` | `{order_id}` | Submits CANCEL via engine-originated envelope; `source: operator_console` |
+| `POST /control/force_close_position` | `{position_id, rationale}` | Submits CLOSE via engine-originated envelope with `close_rationale_type: risk_management`, `risk_management_subtype: pm_directed`; `source: operator_console` |
+| `POST /control/set_halt_mode` | `{enabled, reason}` | Toggles the halt-mode flag |
+| `GET /events` | — | SSE stream of monitor state |
+
+The command center backend exposes a public-facing `/api/control/*` surface that the browser talks to. Each browser-facing endpoint is authenticated, audited (writes an `activity_log` entry with `source: operator_console`), and proxies to the appropriate localhost endpoint on either the pipeline or the monitor. Browsers never reach the pipeline or monitor directly.
+
+### Live event stream
+
+Pipeline and monitor each push a transient event stream over SSE. The command center backend subscribes to both upstream streams as a long-lived client and re-emits a multiplexed downstream SSE stream to the browser at `/api/events`. The browser maintains a single `EventSource` connection and relies on the native `EventSource` reconnect behavior; the backend manages the upstream connections and reconnects to pipeline or monitor independently if either drops.
+
+**Pipeline events:**
+
+| Event | Payload |
+|---|---|
+| `invocation_started` | `invocation_id`, `run_type`, `started_at` |
+| `phase_transition` | `invocation_id`, `phase`, `phase_started_at` |
+| `agent_started` | `invocation_id`, `agent_name`, `started_at`, `latency_budget_seconds` |
+| `agent_succeeded` | `invocation_id`, `agent_name`, `duration_seconds`, `tokens_used` |
+| `agent_retrying` | `invocation_id`, `agent_name`, `attempt`, `reason` |
+| `agent_failed` | `invocation_id`, `agent_name`, `failure_mode` |
+| `invocation_ended` | `invocation_id`, `status`, `commands_issued` |
+| `next_trigger_changed` | `next_trigger_at`, `next_trigger_type` |
+| `heartbeat` | `timestamp` (sent every 15 s when no other event has been sent) |
+
+**Monitor events:**
+
+| Event | Payload |
+|---|---|
+| `websocket_connected` | `timestamp` |
+| `websocket_disconnected` | `timestamp`, `reason` |
+| `fill_received` | `order_id`, `position_id`, `fill_price`, `fill_qty` |
+| `breach_detected` | `rule`, `current_value`, `limit`, `response_classification` |
+| `emergency_invocation_triggered` | `reason` |
+| `greeks_refreshed` | `underlying`, `refreshed_at` |
+| `heartbeat` | `timestamp` (sent every 15 s when no other event has been sent) |
+
+These events carry no historical guarantee. If the SSE connection drops mid-invocation, the browser reconnects fresh; the live run watcher repopulates static state from the most recent `invocations` row plus current entity reads, then begins receiving live events from the next push. There is no `Last-Event-ID` resume — live state is screen state, not history.
+
+### Persistence boundary
+
+| Data class | Persistence | Owner |
+|---|---|---|
+| Trade-relevant state changes (fills, orders, positions, theses, PM decisions, breaches, corporate actions) | `activity_log` and entity tables | Pipeline OMS, monitor — see [state-persistence.md](05-execution-layer/state-persistence.md) |
+| Per-invocation summary (phase durations, agent metrics, status) | `invocations` table | Pipeline — see [infrastructure.md § Layer 1](../architecture/infrastructure.md#layer-1-structured-metrics-sqlite) |
+| Per-invocation file archive (briefs, decision-layer outputs, commands) | `%USERPROFILE%\AlphaMind\archive\` | Pipeline — see [infrastructure.md § Layer 2](../architecture/infrastructure.md#layer-2-invocation-archive-files) |
+| Live phase / agent / monitor state during operation | SSE stream only — not persisted | Pipeline, monitor (transient) |
+| Operator actions | `activity_log` entries with `source: operator_console` | Routed through pipeline / monitor write paths |
+| Alerts (active, fired history, acknowledgements, snoozes) | New `alerts` table | Command center |
+| Operator session and WebAuthn credentials | New small dedicated tables | Command center |
+| Review session state (highlights, annotations, pins, current view, operator selections) | In-process memory on the command center backend; transient | Command center — see [Review sessions](#review-sessions) |
+| Weekly digest snapshots (serialized digest contents at the weekly snapshot boundary) | New `weekly_digest_snapshots` table | Command center — see [feedback-loop.md § Dashboard and digest curation](feedback-loop.md#dashboard-and-digest-curation) |
+| Feedback-loop artifacts (validations, validation outcomes, retrospective reports + saved markdown, retrospective decisions) | New `validations`, `validation_outcomes`, `retrospective_reports`, `retrospective_decisions` tables plus filesystem-stored report markdown | Command center backend, populated via the `/feedback-validate` and `/feedback-retrospective` skills — see [state-persistence.md](05-execution-layer/state-persistence.md) |
+
+The only authoritative state the command center owns is the alerts table and the credential store. Everything else it surfaces traces back to a system of record owned by another component.
+
+---
+
+## Information sources
+
+The command center reads exclusively from sources already specified by other docs. This table is the contract between this spec and the rest of the system: any new view must source from one of these or motivate the addition of a new source.
+
+| Source | Owner | What the command center reads |
+|---|---|---|
+| `invocations` table | Pipeline | Per-invocation metadata: id, run_type, started_at, ended_at, status, phase_durations, agent metrics, command count, error summary |
+| `activity_log` table | OMS, monitor | Append-only event stream — every position/order/bracket/thesis/cash/guardrail/PM-decision/corporate-action event |
+| `positions`, `orders`, `brackets`, `theses`, `cash_ledger`, `fills`, `corporate_action_ledger` tables | OMS | Live core state |
+| `portfolio_summary`, `thesis_quality_aggregates` tables | OMS | Derived aggregates refreshed at mutation time |
+| `%USERPROFILE%\AlphaMind\archive\<date>\<time>_<run_type>\` | Pipeline | Per-invocation markdown archive: distillation outputs, analysis briefs (sector, qualitative, adaptive, synthesis), decision-layer outputs (analyst, strategist, PM), final OMS commands |
+| Source-brief retrieval store | Pipeline (synthesizer) | Sections of upstream briefs indexed by reference ID (`SA-TECH-N`, `QR-N`, `AR-N`, etc.) |
+| `%USERPROFILE%\AlphaMind\logs\pipeline.log`, `%USERPROFILE%\AlphaMind\logs\monitor.log` | Both processes | Operational logs for raw error inspection |
+| `config/` YAML tree | Operator | Configuration files, presented as structured forms |
+| Resolved-config snapshot | Pipeline | The composed profile × regime × mode × overlays bundle for the current invocation, written by the composition resolver at invocation start |
+| Live status push from pipeline | Pipeline | Phase transitions, agent state changes, current `invocation_id` |
+| Live status push from monitor | Monitor | Websocket connection state, fill events, breach detections, greeks refreshes, emergency invocation triggers |
+
+The push channels in the last two rows are the only new producer obligations this spec adds to the pipeline and monitor. Their wire format is part of the deferred interaction-model design.
+
+---
+
+## Views
+
+Organized as five top-level sections in the UI, each with one or more views.
+
+### A. Live operations
+
+The landing surface. Always reflects the current state of the pipeline and the monitor.
+
+#### Live run watcher
+
+The headline view. When a pipeline invocation is running, shows phase-by-phase progress; when no invocation is running, shows the most recent completion plus a countdown to the next scheduled trigger.
+
+| Pane | Content | Source |
+|---|---|---|
+| Pipeline status | `invocation_id`, run type, current phase, per-phase elapsed vs. budget, per-agent status (running / retrying / succeeded / failed-aborted) with retry attempts and reason | `invocations` table; live push from pipeline |
+| Continuous monitor | Websocket connection state, time-since-connect, fill buffer depth, per-underlying greeks freshness with last-refresh timestamp, breach-detector state | Live push from monitor; positions table greeks fields |
+| Active alerts banner | Unacknowledged alerts grouped by severity, with one-line context and click-through to alert detail | Alerts table (introduced in [Alerting](#alerting)) |
+
+Long-running phases (analysis 1–4 min, decision 1–4 min) show a progress indicator anchored on the agent's latency budget. The watcher does not invent ETA — when the budget is exceeded but the agent has not failed, the indicator pegs and shows "in budget overage" until the agent retries, succeeds, or aborts.
+
+#### Schedule preview
+
+A separate small view showing the next several scheduled triggers and any pause / overlap-deduplication state. Sourced from APScheduler via the pipeline's status push.
+
+### B. History and diagnostics
+
+The diagnostic substrate. The single most-used set of views during prompt iteration and incident review.
+
+#### Run history
+
+Paginated, filterable list of past invocations. Filters: date range, run type, status (completed / failed / partial), command-count-greater-than, has-errors. Each row shows `invocation_id`, started-at, duration, run type, status, # commands, # rejections, abort reason if any. Click → per-invocation detail page.
+
+#### Per-invocation detail
+
+The full graph for one `invocation_id`, rendered as a single navigable page:
+
+| Section | Content | Source |
+|---|---|---|
+| Header | run type, started_at, ended_at, status, phase durations, agent metrics, error summary | `invocations` row |
+| Distillation outputs | One tab per produced markdown brief | `archive/.../distillation/*.md` |
+| Analysis briefs | Domain researcher briefs, qualitative brief, adaptive research, synthesis — each its own tab, with reference IDs (`SA-TECH-N`, `QR-N`, `AR-N`, `CR-N`) hyperlinked to the source-brief retrieval store viewer | `archive/.../analysis/*.md` |
+| Analyst output | Structured rendering of recommendations (`REC-N`) — instrument, conviction, entry/target/invalidation legs, narrative fields, source-reference chips | `archive/.../decision/trader_recommendations.md` plus structured envelope from activity log |
+| Strategist output | Per-position assessments (`SA-N`) and pending-order assessments (`SA-ORD-N`) — thesis status with `prior_status` transition arrow, recommended action with parameters, status and action rationales | `archive/.../decision/` plus structured envelope from activity log |
+| Pre-processor bundle | §1 aggregate observations (combined-set impact, conviction distribution, book-health summary), §2 strategist section, §3 analyst section, conflict cross-references | bundle file in archive |
+| PM envelopes | One per evaluated proposal — verdict, evaluation criteria pass/fail with notes, modifications, concerns, anti-patterns, rationale narrative, resulting commands | `pm_decision` activity log entries plus archived envelope |
+| Commands and fills | OMS commands submitted, fills collected (this invocation's Phase 1), guardrail rejections | activity log filtered by `invocation_id` |
+
+Every reference ID is a hyperlink to its source. Every position ID, thesis ID, order ID, command ID is a hyperlink to its respective detail view.
+
+A rejected proposal is rendered with the same prominence as an approved one — the verdict pill, the failed criterion list, the anti-pattern tags, and the rationale narrative are all primary content, not collapsed below the fold.
+
+#### Activity log explorer
+
+Filterable view over the full activity log. Filter dimensions: event type (the [taxonomy](05-execution-layer/state-persistence.md) of ~26 types), `invocation_id`, position/thesis/order ID, source subsystem, time range. Result table shows event type, timestamp, primary entity link, one-line summary; row expands to the full event detail JSON.
+
+This is the workhorse view for "what happened and why." Most other views link into it with a pre-applied filter (e.g., the position detail view's "history" tab is the activity log filtered by `position_id`).
+
+#### Source-brief retrieval store viewer
+
+A reader for the indexed brief content. Pick an `invocation_id` and a reference ID prefix; see the brief sections keyed by that prefix in the form the decision-layer agents see them via `retrieve_brief`. Used for verifying claims in agent narrative against underlying source.
+
+#### Failure and abort log
+
+Filtered view over invocations with `status` ∈ {failed, partial}. Shows the failure mode (timeout / malformed / context-overflow / model-API / tool-use / data-layer-abort), retry counts, the offending output if applicable. Click-through to the invocation detail.
+
+### C. Portfolio and theses
+
+#### Portfolio dashboard
+
+Single page showing current portfolio state in aggregate.
+
+| Pane | Content | Source |
+|---|---|---|
+| Equity and P/L | Total portfolio value, equity high-water mark, current drawdown, daily realized P/L, cumulative realized P/L, total unrealized P/L | `portfolio_summary` |
+| Cash and capital | Current cash balance, settled cash, reserved capital, available buying power, margin held, unsettled proceeds with settlement dates | `cash_ledger` |
+| Exposure | Gross exposure %, net long/short exposure %, sector exposure breakdown ($ and %, long and short separately), delta-adjusted equivalents where options are present | `portfolio_summary` |
+| Positions table | One row per open position: ticker / underlying, instrument type, direction, quantity, market value, unrealized P/L (abs and %), thesis status, position age, distance to target, distance to nearest invalidation | `positions` joined with `theses` |
+| Pending orders | One row per pending order: order id, type, instrument, parameters, age, fill probability assessment from most recent strategist review if any | `orders` filtered by status `pending` or `partially-filled` |
+
+#### Position detail
+
+One page per position. Three tabs: state (current fields, bracket legs, fill history), thesis (component-level structure with linked legs, current and prior status, status transitions over the position's life), history (the activity log filtered by `position_id`).
+
+The thesis tab renders thesis components as cards keyed by component type (entry rationale, target rationale, invalidation rationale per leg), with each component showing its narrative, key assumptions, and the linked bracket leg or order it grounds. Status transitions are a vertical timeline on the right with the cited signal for each transition.
+
+#### Theses dashboard
+
+Filterable list of theses by status (active, resolved, cancelled), thesis status classification (on-track / partially-realized / at-risk / stale / invalidated), sector, age, resolution category once closed. One row per thesis showing the thesis summary, current status with `prior_status` if recently transitioned, linked position, age, P/L of the underlying position.
+
+#### Thesis detail
+
+Full thesis: summary, all components with type and narrative, status history with cited signals at each transition, resolution outcome if closed (component-level outcomes plus thesis-level category). Cross-link to the source-brief retrieval store viewer for any reference IDs cited in component narratives.
+
+### D. Configuration
+
+#### Config editor
+
+A graphical editor over the entire `config/` tree. The operator never sees raw YAML.
+
+Each settings page corresponds to one config file or one bundle (`profiles/<profile>.yaml`, `regimes/<regime>.yaml`, etc.). Each leaf value renders as an input control type-matched to the value:
+
+| Value type | Control |
+|---|---|
+| Number with unit (%, USD, hours, σ, multipliers) | Number input with unit suffix; min/max enforced if known |
+| Boolean | Toggle |
+| Enum | Dropdown populated from the schema |
+| String | Text input with regex validation if applicable |
+| Array of strings (e.g., `active_sectors`, ticker arrays) | Tag-list editor with add and remove |
+| Array of objects (e.g., overlay parameters, profile `rule_values`) | Table editor with row add and remove and per-cell type-matched controls |
+| Cron expression | Structured "every N hours, anchored at HH:MM" picker with the equivalent cron string shown read-only |
+| Path | Text input with existence indicator |
+
+Inline validation shows the three layers from [configuration-management.md § Validation](configuration-management.md#validation):
+
+- **Parse-time errors** — red highlight on the offending field with the error message.
+- **Cross-reference errors** — page-level banner naming the broken reference (e.g., "active_profile names a profile that doesn't exist").
+- **Semantic errors** — page-level banner naming the violated invariant (e.g., "regime multiplier drives `position_max_size_pct` to zero").
+
+Save is gated on all three layers passing. The save action writes the YAML file to disk; the next invocation picks it up via the standard reload path.
+
+Each setting carries a reload-policy badge — invocation-time-reload (most settings) or deploy-time-only (paths in `main.yaml`, SQLite pragmas, package versions, `.env` location) — so the operator knows whether a change requires a process restart. Deploy-time-only changes are saved with a banner explaining what restart is needed.
+
+#### Resolved config viewer
+
+A read-only view of the composed config that the most recent invocation actually consumed (profile base × regime multipliers × active overlays × mode behavioral transform). Side-by-side with the profile/regime/overlay sources that fed into it. The diff between consecutive invocations' resolved configs is one click away.
+
+#### Config history and diff
+
+The `config/` tree is git-tracked; the command center shows the commit history per file with diff rendering. Useful for "when did I change the daily drawdown limit and what was the trigger." For files not in git (e.g., if an operator edits without committing), the view shows the last-modified timestamp and surfaces an "uncommitted changes" warning.
+
+### E. Risk and guardrails
+
+#### Guardrail dashboard
+
+The full state of all rules at the current snapshot.
+
+| Pane | Content | Source |
+|---|---|---|
+| Per-rule status | One row per rule: rule name, current value, limit value, headroom %, zone (normal / warning 70-85% / critical 85-95% / hard-block ≥95%) | Live computation from current state via the guardrail-evaluation library |
+| Active multipliers and overlays | Current regime label and multiplier table, list of active overlays with their multipliers, mode flag (normal / halt / defensive_posture) | Resolved config snapshot |
+| Drawdown state | Daily drawdown progress, cumulative drawdown progressive tier, halt-mode banner if active | `portfolio_summary`, halt-mode flag |
+| Recent breaches | Activity log filter for `guardrail_rejection`, `risk_limit_approached`, `risk_parameter_changed` over the last day | activity log |
+
+Click any rule row → drill-down showing per-position contribution, the breach response classification (immediate vs. deferred-to-strategist), and the cross-reference to that rule in [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md).
+
+#### Regime and overlay timeline
+
+A chronological view of regime classifications, regime transitions (immediate-tightening on the way up, gradual loosening over three invocations on the way down), pre-event overlay activations, stress overlay activations. P/L drawdown and breach event markers are overlaid on the same timeline. Sourced from `risk_parameter_changed` activity log entries plus the per-invocation resolved-config snapshots.
+
+### F. Quality and feedback
+
+The rendering surface for the [feedback loop](feedback-loop.md). All views in this group are deterministic (no LLM tokens) and read from the persistence layer plus the [counterfactual replay engine](05-execution-layer/counterfactual-replay-engine.md) output. [Session mode](#review-sessions) overlays on top of these views without changing them.
+
+#### Weekly digest
+
+Single scrollable page, snapshotted weekly. Section content (headline outcomes, process pulse, trajectory sparklines, validation status, notable shifts, open validation queue) and per-section metric selection are specified in [feedback-loop.md § Dashboard and digest curation](feedback-loop.md#dashboard-and-digest-curation). The default landing view of `/feedback-review`.
+
+#### Validation evaluation view
+
+The dedicated view for evaluating a registered validation (the EVALUATE mode of [`/feedback-validate`](../../.claude/skills/feedback-validate/SKILL.md)). Designed for side-by-side pre/post comparison with the discipline the skill enforces.
+
+Layout, top to bottom:
+
+1. **Registration recap.** Verbatim re-display of the validation record (edited artifact, pre/post git SHAs, watched metric, window length, expected direction and magnitude, success criterion, failure criterion, registered timestamp). This is the anti-rationalization anchor the skill reads aloud at evaluation start.
+2. **Pre-edit window panel.** The watched metric over the registered pre-edit window. Shows: line chart with 80% credible band, sample size annotation, regime distribution overlay, active model version overlay, list of any other prompt edits that landed in the window.
+3. **Post-edit window panel.** Same shape as the pre-edit panel, for the post-edit window.
+4. **Comparison summary.** Delta with credible-interval shape (overlapping vs. disjoint), confounder flags surfaced from the pre/post conditioning context (regime distribution mismatch, model version straddle, concurrent edits in window), and a non-binding suggested verdict (`improved` / `degraded` / `no_change` / `inconclusive`) — the operator and Claude make the call.
+5. **Verdict capture.** Form for the verdict and narrative; submits via `submit_validation_outcome()` and writes the validation outcome record per [state-persistence.md](05-execution-layer/state-persistence.md).
+
+Session-mode affordances specific to this view: `pin_pre_panel(metric_id)` and `pin_post_panel(metric_id)` keep a specific pre or post panel visible across navigation when the operator wants to drill into related metrics. Standard `highlight_metric`, `navigate_to_view`, `annotate`, `pin_for_comparison` work as elsewhere.
+
+Reachable from: the validation status row in the weekly digest, the `list_pending_validations()` results, and direct deep-link to a specific validation ID.
+
+#### Monthly view
+
+Outcome-tier metrics with conditioning slices (regime, sector, conviction band, prompt version, model version), citation-chain visualizations, and anti-pattern accuracy curves. Specific layout drafted once resolved-thesis volume supports meaningful outcome-tier reading (per [feedback-loop.md § Pending](feedback-loop.md#pending)).
+
+#### Retrospective view
+
+Renders a `retrospective_reports` record's saved markdown plus the joining `retrospective_decisions`. Walked through during Phase 4 of [`/feedback-retrospective`](../../.claude/skills/feedback-retrospective/SKILL.md). Layout drafted alongside the first quarterly retrospective.
+
+#### Ad-hoc query surface
+
+For everything not on the curated views — direct query against the persistence layer with a SQL-like interface, filterable by date range, agent name, sector, regime, prompt version, and the conditioning dimensions defined in [feedback-loop.md](feedback-loop.md).
+
+---
+
+## Review sessions
+
+A capability that overlays on top of the standard views, activated when the operator opens a [feedback-loop](feedback-loop.md) review session via one of the Skills (`/feedback-review`, `/feedback-validate`, `/feedback-retrospective`). In session mode the dashboard becomes a shared canvas: Claude can highlight metrics, navigate to views, annotate chart points, and pin items for comparison; the operator continues using the dashboard normally and Claude reads the resulting state on demand. The integration model mirrors the Claude Code IDE pattern — Claude has *passive awareness* of what the operator is currently viewing and selecting and can query the dashboard's current state at any prompt turn.
+
+### Asymmetric model
+
+Claude writes via tool calls; Claude reads via tool calls; the operator interacts with the dashboard the same way they do in self-review mode. There is no reverse channel that triggers Claude on operator clicks. The session state on the backend is the single source of truth — both sides read and write it, and the dashboard renders from it via SSE.
+
+### Session lifecycle
+
+| Method + path | Body | Effect |
+|---|---|---|
+| `POST /review-sessions` | `{skill_name}` | Creates a new session; returns `session_id` and the dashboard URL operator opens in their browser |
+| `DELETE /review-sessions/{id}` | — | Ends the session; transient state cleared |
+| `GET /review-sessions/{id}/state` | — | Returns the current session state object (see schema below) |
+| `POST /review-sessions/{id}/control` | `{action, params}` | Claude-issued action; mutates the session state and pushes an SSE event to the subscribed dashboard |
+| `GET /review-sessions/{id}/events` | — | SSE stream the dashboard subscribes to; renders highlights, navigation, annotations, and pins as they arrive |
+
+Session state is **transient**: it lives in process memory on the command center backend and is dropped when the session is explicitly ended or the operator closes the dashboard tab for longer than a 30-second tolerance window (which absorbs page refreshes). Sessions are scoped to the browser tab; closing the tab ends the session.
+
+### v1 affordance vocabulary
+
+The `action` field on `POST /control` accepts the following:
+
+| Action | Params | Effect |
+|---|---|---|
+| `highlight_metric` | `{metric_id, label?, color?}` | Marks a metric on the current view with a colored badge and optional label |
+| `highlight_chart_point` | `{chart_id, point_id, label?}` | Marks a specific data point on a chart with a callout |
+| `navigate_to_view` | `{view_path}` | Navigates the dashboard to the named view (e.g., `quality-and-feedback/conviction-calibration`) |
+| `annotate` | `{target_id, note_text}` | Attaches a short textual note to a target (metric, chart point, table row) |
+| `pin_for_comparison` | `{target_id}` | Adds a target to the comparison-pin tray, where it remains across view changes for side-by-side comparison |
+| `clear_highlights` | — | Removes all Claude-set highlights from the current view |
+| `clear_annotations` | — | Removes all Claude-set annotations from the current view |
+| `clear_pins` | — | Empties the comparison-pin tray |
+
+Multiple actions may be batched in a single `POST /control` call (the body accepts `{actions: [...]}` as the bulk form), reducing tool-call overhead when Claude wants to mark several things at once.
+
+### Session state shape
+
+The `GET /review-sessions/{id}/state` response:
+
+```json
+{
+  "session_id": "...",
+  "skill_name": "feedback-review",
+  "started_at": "2026-04-26T14:00:00-04:00",
+  "current_view": "quality-and-feedback/anti-pattern-frequency",
+  "claude_highlights": [
+    {"id": "...", "target_type": "metric", "target_id": "...", "label": "...", "color": "...", "set_at": "..."}
+  ],
+  "claude_annotations": [
+    {"id": "...", "target_id": "...", "note": "...", "set_at": "..."}
+  ],
+  "pinned_items": [
+    {"id": "...", "target_type": "...", "target_id": "...", "set_by": "claude" | "operator", "set_at": "..."}
+  ],
+  "operator_selections": [
+    {"id": "...", "target_type": "...", "target_id": "...", "selected_at": "..."}
+  ],
+  "recent_view_history": [
+    {"view_path": "...", "viewed_at": "..."}
+  ]
+}
+```
+
+`operator_selections` captures the operator's current and recent selections — table rows clicked, chart points hovered/clicked, metrics expanded — giving Claude the equivalent of the IDE's "currently viewing / currently selected" context. This is the load-bearing field for the IDE-pattern integration.
+
+`recent_view_history` is bounded (last ~20 entries) and rolls; it gives Claude awareness of what the operator has been navigating through during the session.
+
+### Skill workflow shape
+
+Each Skill (`/feedback-review`, `/feedback-validate`, `/feedback-retrospective`) follows the same shape:
+
+1. Skill invocation creates a session via `POST /review-sessions` and returns the dashboard URL to the operator.
+2. Operator opens the URL in their browser; the dashboard subscribes to the session's SSE stream.
+3. On each prompt turn, the skill calls `GET /review-sessions/{id}/state` to inject current dashboard state into Claude's context.
+4. Claude reasons about the state plus operator's message plus the activity log / agent_calls / counterfactual_replays / thesis records data, then issues `POST /review-sessions/{id}/control` calls to highlight or navigate as part of its response.
+5. Operator reads Claude's text and looks at the dashboard; responds verbally in the chat.
+6. Repeat until session end (`DELETE /review-sessions/{id}`).
+
+The Skill prompts that orchestrate this — when to highlight, when to navigate, how to phrase findings, how to handle pre-registration in `/feedback-validate`, how to drive the open-ended retrospective in `/feedback-retrospective` — are drafted as a follow-up to this surface.
+
+### Session persistence
+
+Review session state lives in process memory on the command center backend and is dropped on session end or browser disconnect (with the 30-second refresh tolerance). The artifacts the session reasons over (activity log, agent calls, counterfactual replays, thesis records) are persisted separately by the OMS and the counterfactual replay engine; the session is a viewing surface over them.
+
+This aligns with the [Persistence boundary](#persistence-boundary) discipline elsewhere in the dashboard — live screen state is not history.
+
+---
+
+## Operator actions
+
+State-mutating actions exposed in the UI. Each emits an activity-log entry with `source: operator_console`. Every action is gated on confirmation (a typed confirmation token for destructive actions, a single-click confirmation for non-destructive ones). All actions are subject to the same [authentication](#authentication-and-access) requirement as views.
+
+| Action | What it does | Where it lands in state |
+|---|---|---|
+| Trigger emergency invocation | Asks the pipeline to fire an out-of-schedule invocation immediately | Same path the monitor uses for breach-driven emergency invocations; respects the existing `max_instances=1` and emergency cooldown |
+| Pause / resume scheduler | Sets a flag the scheduler reads at trigger fire time; while paused, fired triggers no-op and log the skip | `invocations` table records skipped triggers with `status: skipped_paused` |
+| Cancel an order | Submits a CANCEL command via the engine-originated envelope path | Standard CANCEL command flow; activity log `order_cancelled` with `reason: operator_cancel` |
+| Force-close a position | Submits a CLOSE command via the engine-originated envelope path with `close_rationale_type: risk_management`, `risk_management_subtype: pm_directed` | Standard CLOSE flow; activity log `position_closed` plus `pm_decision` envelope tagged `source: operator_console` |
+| Toggle halt mode | Flips the halt-mode flag in the resolved config; the next invocation runs in halt / defensive-posture; existing positions retain bracket coverage | Activity log `risk_parameter_changed` with `reason: operator_halt_toggle` |
+| Switch active profile | Edits `main.yaml`'s `active_profile`; subject to the [transitioning-between-profiles](06-risk-guardrails/rules-and-limits.md#transitioning-between-profiles) discipline | Standard config write path; takes effect at next invocation |
+| Run universe validation | Executes the `scripts/validate_universe.py` validation procedure against `config/universe.yaml` and renders the report inline | No state change unless the operator subsequently edits `universe.yaml` |
+| Acknowledge or snooze an alert | Updates the alert state | Alerts table |
+
+There is no operator action for editing prompts in `prompts/` from the UI — the spec deliberately keeps prompt iteration to a text-editor-and-git workflow. The command center provides a *viewer* for the active prompt per invocation as a diagnostic aid, sourced from the `agent_calls` table's `system_prompt_path`, `system_prompt_git_sha`, and `system_prompt_snapshot_reference` fields per [state-persistence.md § Agent calls](05-execution-layer/state-persistence.md).
+
+---
+
+## Alerting
+
+### Alert rules
+
+An alert rule has four fields: a condition, a severity, a debounce window, and a set of channels. Conditions are predicates over the same state the views read; a rule fires when the predicate transitions from false to true. Severity drives the notification channel and the dashboard banner color.
+
+**Severity tiers:**
+
+| Tier | Definition | Default channels |
+|---|---|---|
+| Critical | Trading is degraded or at risk now | In-app banner (sticky) + Discord webhook |
+| Important | Trading remains functional but operator review is warranted within the session | In-app banner + Discord webhook |
+| Operational | Information for trend analysis; no immediate action required | In-app banner only |
+
+**Default rule set** (initial population; the operator can add, edit, disable rules through the rule registry editor):
+
+| Rule | Condition | Severity |
+|---|---|---|
+| Pipeline aborted | Most recent invocation `status = failed` | Critical |
+| Critical-tier API failure | Q1, Q6, or Q8 data category failed in the most recent invocation | Critical |
+| Monitor websocket disconnected | Monitor reports websocket disconnected for ≥ 15 min | Critical |
+| Margin call detected | Activity log `margin_call` event in the last hour | Critical |
+| Drawdown progressive tier crossed | `portfolio_summary` cumulative drawdown crosses a [progressive tier](06-risk-guardrails/breach-behavior.md) threshold | Critical |
+| Halt mode entered | Halt-mode flag transitions from off to on for any reason | Critical |
+| Hard-block guardrail rejection | Activity log `guardrail_rejection` with zone `hard_block` | Important |
+| Regime jump | Regime classification skips a level (e.g., normal → crisis without elevated) | Important |
+| Agent malformed output | Activity log shows an agent malformed-output retry, before resolution | Important |
+| Schedule miss | A scheduled trigger fires but no invocation runs within five minutes | Important |
+| Optional data category skipped | Q4, Qual 2, or Qual 3 skipped by failure handler | Operational |
+| Command abandoned | Activity log `command_abandoned` event | Operational |
+| Thesis resolved | Activity log `thesis_resolved` event (informational, for feedback loop tracking) | Operational |
+
+The rule registry is itself part of the configuration tree (`config/alerts.yaml`) and is edited via the same GUI config editor described above.
+
+### Notification channels
+
+| Channel | Behavior | Format |
+|---|---|---|
+| In-app banner | Always present on every page; severity-color-coded; persists until acknowledged or snoozed | Title, one-line context, click-through to alert detail |
+| Discord webhook | Posts to a configured webhook URL on critical and important alerts | Embed with title, severity, context, link to the command center URL for the alert detail |
+
+The Discord webhook URL is a secret and lives in `.env` referenced from `config/alerts.yaml`. Additional channels (email, SMS, iMessage) are not in the initial scope; the channel registry is structured so a future channel adds without altering the alert-rule contract.
+
+### Acknowledge and snooze
+
+Any alert can be acknowledged (clears the banner; the alert remains in history) or snoozed for a specified duration (suppresses re-firing of the same rule for the snooze window). Snoozes are scoped per rule, not global; an alert that was snoozed but whose underlying condition has cleared and re-armed during the snooze re-fires as soon as the snooze window expires. Acknowledges and snoozes themselves are activity-log events with `source: operator_console`.
+
+---
+
+## Authentication and access
+
+### Identity model
+
+**Single user.** The command center serves exactly one operator. There is no multi-user provisioning, no role-based access control, no per-user audit segregation. All state-mutating actions are attributed to the single operator identity in the activity log via `source: operator_console`.
+
+### Authentication
+
+**Passkey-based (WebAuthn).** No passwords. The operator registers one or more passkeys (resident credentials on phone, laptop, or hardware security key) at first launch, gated by a one-time setup token shown on the local console. Subsequent sessions are authenticated by passkey assertion only.
+
+Sessions are time-limited; the duration is configured in `config/security.yaml`. There is no "remember me" beyond the session lifetime.
+
+### Access surfaces
+
+**Local access.** From the trading machine itself, the command center is reachable on `localhost` at its bound port. Local access is still subject to passkey authentication; there is no localhost bypass.
+
+**Remote access.** The trading machine joins the operator's existing VPS WireGuard hub (`wg0`, `10.8.0.0/24`) as a new peer. The command center backend binds to the trading machine's WG IP. The VPS Caddy reverse proxy adds a new site block for the chosen subdomain of `atassi.org` that proxies over the WG tunnel:
+
+```caddy
+commandcenter.atassi.org {
+    import security_headers
+    rate_limit /auth* { 10r/m }
+    rate_limit /*      { 300r/m }
+    reverse_proxy 10.8.0.<peer>:<port>
+}
+```
+
+The public path is browser → Cloudflare DNS (DNS-only, grey cloud) → VPS:443 → Caddy (TLS termination, security headers, rate limit) → WireGuard tunnel → command center on the trading machine. No WireGuard client is required on the operator's accessing devices; the VPS is the gateway. TLS terminates at the VPS; traffic between the VPS and the trading machine traverses the encrypted WG tunnel and does not require its own TLS layer, matching the existing pattern for the home media server services.
+
+The VPS-side artifacts (WG peer entry in `/etc/wireguard/wg0.conf`, the new Caddyfile block) are operator-maintained alongside the existing VPS configuration and are not within this repository.
+
+### Audit
+
+Every state-mutating endpoint logs an entry to the activity log with `source: operator_console`, the action name, the parameters, and the session timestamp. The activity log explorer surfaces these alongside system-originated events; a saved filter view named "Operator actions" is available by default.
+
+---
+
+## Implementation status notes
+
+This is a Phase 4 design spec. The command center itself is unimplemented as of writing; the supporting primitives in [infrastructure.md § Observability](../architecture/infrastructure.md#observability) (the `invocations` table and the file archive) are also Phase-4-and-later implementation work.
+
+One related work item is tracked separately in [remaining-work.md](remaining-work.md):
+
+1. **Feedback-loop design.** The [Quality and feedback](#f-quality-and-feedback-stub) view section is stubbed; concrete metrics, time windows, and visualizations land alongside the feedback-loop spec.
+
+---
+
+## Cross-references
+
+- Pipeline scheduling and process layout: [architecture/infrastructure.md](../architecture/infrastructure.md)
+- Activity log event taxonomy and entity tables: [05-execution-layer/state-persistence.md](05-execution-layer/state-persistence.md)
+- Configuration file layout and validation: [configuration-management.md](configuration-management.md)
+- Continuous monitor responsibilities: [05-execution-layer/architecture.md § Continuous monitor](05-execution-layer/architecture.md)
+- Per-rule guardrail definitions: [06-risk-guardrails/rules-and-limits.md](06-risk-guardrails/rules-and-limits.md)
+- Breach mechanics and halt mode: [06-risk-guardrails/breach-behavior.md](06-risk-guardrails/breach-behavior.md)
+- Per-invocation file archive layout: [architecture/infrastructure.md § Layer 2: Invocation archive](../architecture/infrastructure.md#layer-2-invocation-archive-files)
+- Source-brief reference-ID taxonomy: [03-analysis-layer/synthesizer.md](03-analysis-layer/synthesizer.md)
+- PM envelope schema and rejection structure: [04-decision-layer/pm-envelope-schema.md](04-decision-layer/pm-envelope-schema.md)
+- Phase 4 feedback loop (when shipped): [remaining-work.md § Phase 4](remaining-work.md#phase-4--maturation-before-live-transition)

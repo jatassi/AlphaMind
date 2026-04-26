@@ -1,0 +1,1259 @@
+domain: commodities
+spec_prefix: Q7/Q8
+module_description: 'Q8: Commodities — entity definitions.'
+common_fields_note: 'All primary entities include ''ticker: Ticker'' and ''metadata: InvocationMetadata'' fields (omitted
+  from individual field listings). See _common.yaml for InvocationMetadata mapping.'
+entities:
+- entity: FuturesCurvePoint
+  spec_id: N/A (supporting type)
+  description: A single point on a commodity futures curve (e.g., front month, 3-month out).
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: expiry_label
+    target_type: str
+    description: '"front" | "2m" | "3m" | "6m" | "12m" or contract month'
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: price
+    target_type: float
+    description: Futures contract price ($/bbl, $/MMBtu, etc.)
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: days_to_expiry
+    target_type: int
+    description: Trading days until expiration
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+- entity: ETFFlowData
+  spec_id: N/A (supporting type)
+  description: Inflow/outflow data for a specific commodity ETF.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: flow_usd
+    target_type: float
+    description: Net flow in USD. Positive = inflow, negative = outflow
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: flow_change_pct
+    target_type: float
+    description: '% change in fund AUM from prior period'
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: accumulated_flow_7d
+    target_type: float
+    description: 7-day cumulative flow in USD
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: data_confidence
+    target_type: DataConfidence
+    description: ''
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+- entity: CrudeOil
+  spec_id: Q8:8a
+  description: Q8:8a — WTI/Brent prices, futures curve, spreads, and EIA inventory.
+  is_primary_entity: true
+  primary_source: EIA + FRED
+  fallback_source: Polygon (commodity ETF tickers)
+  cadence: Daily (prices), Weekly (inventory/production)
+  feasibility: HIGH
+  fields:
+  - target_field: wti_spot_price
+    target_type: float
+    description: Current WTI spot price ($/barrel)
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/pri/spt/data/?frequency=daily&facets[series][]=RWTC
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: wti_prior_close
+    target_type: float
+    description: Prior day close ($/barrel)
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/pri/spt/data/?frequency=daily&facets[series][]=RWTC
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: wti_change_pct
+    target_type: float
+    description: Daily change percentage
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/pri/spt/data/?frequency=daily&facets[series][]=RWTC
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: wti_change_atr
+    target_type: float
+    description: Daily change in ATR-equivalent multiples (for
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/pri/spt/data/?frequency=daily&facets[series][]=RWTC
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: wti_5d_change_pct
+    target_type: float
+    description: 5-day cumulative change
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/pri/spt/data/?frequency=daily&facets[series][]=RWTC
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: wti_20d_change_pct
+    target_type: float
+    description: 20-day cumulative change
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/pri/spt/data/?frequency=daily&facets[series][]=RWTC
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: brent_spot_price
+    target_type: float
+    description: Current Brent spot price ($/barrel)
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/pri/spt/data/?frequency=daily&facets[series][]=RBRTE
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: brent_prior_close
+    target_type: float
+    description: Prior day close
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/pri/spt/data/?frequency=daily&facets[series][]=RBRTE
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: brent_change_pct
+    target_type: float
+    description: Daily change
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/pri/spt/data/?frequency=daily&facets[series][]=RBRTE
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: brent_5d_change_pct
+    target_type: float
+    description: 5-day change
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/pri/spt/data/?frequency=daily&facets[series][]=RBRTE
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: wti_brent_spread
+    target_type: float
+    description: Brent - WTI ($/barrel). Positive = Brent premium.
+    source: EIA + FRED
+    source_endpoint: EIA v2 API + FRED
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Computed: wti_spot - brent_spot.'
+  - target_field: wti_brent_spread_pct
+    target_type: float
+    description: Spread as % of Brent price
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/pri/spt/data/?frequency=daily&facets[series][]=RWTC
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: spread_trend
+    target_type: str
+    description: '"widening" | "narrowing" | "stable"'
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: futures_curve
+    target_type: list[FuturesCurvePoint]
+    description: 'WTI futures curve points: front month, 2M, 3M, 6M, 12M. Enables computation of curve slope. Front month
+      > 3M signals backwardation (supply tightness). 3M > 12M signals contango (surplus/storage carry)...'
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/pri/spt/data/?frequency=daily&facets[series][]=RWTC
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: curve_slope_1m_3m
+    target_type: float
+    description: (3M price - front price) / front price × 100.
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: curve_shape_regime
+    target_type: str
+    description: '"backwardation" | "contango" | "flat"'
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: eia_crude_inventory_mbbl
+    target_type: float
+    description: EIA crude oil inventory (million barrels)
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/stoc/wstk/data/?frequency=weekly&facets[product][]=EPC0
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: eia_inventory_prior
+    target_type: float
+    description: Prior week inventory
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/stoc/wstk/data/?frequency=weekly&facets[product][]=EPC0
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: eia_inventory_change_mbbl
+    target_type: float
+    description: Week-over-week change (positive = build)
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/stoc/wstk/data/?frequency=weekly&facets[product][]=EPC0
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: eia_inventory_consensus_mbbl
+    target_type: float
+    description: Market consensus for the change (pre-report)
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/stoc/wstk/data/?frequency=weekly&facets[product][]=EPC0
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: eia_inventory_surprise_pct
+    target_type: float
+    description: (actual - consensus) / |consensus| × 100.
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/stoc/wstk/data/?frequency=weekly&facets[product][]=EPC0
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: eia_refinery_utilization_pct
+    target_type: float
+    description: '% of US refinery capacity in use'
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/pnp/wiup/data/?frequency=weekly
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: eia_product_demand_change_pct
+    target_type: float
+    description: Gasoline + distillate demand YoY %
+    source: EIA + FRED
+    source_endpoint: GET /v2/petroleum/pri/gnd/data/?frequency=weekly
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: crude_iv_pct
+    target_type: float
+    description: Implied volatility on crude futures (30-day).
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: iv_regime
+    target_type: str
+    description: '"low" | "normal" | "elevated" | "spike"'
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA petroleum data and FRED commodity series.'
+- entity: NaturalGas
+  spec_id: Q8:8b
+  description: Q8:8b — Henry Hub pricing, futures curve, EIA storage, and weather context.
+  is_primary_entity: true
+  primary_source: EIA + FRED
+  fallback_source: FRED
+  cadence: Daily (prices), Weekly (storage)
+  feasibility: HIGH
+  fields:
+  - target_field: henry_hub_spot_price
+    target_type: float
+    description: Current Henry Hub spot price ($/MMBtu)
+    source: EIA + FRED
+    source_endpoint: GET /v2/natural-gas/pri/sum/data/?frequency=daily
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: henry_hub_prior_close
+    target_type: float
+    description: Prior day close
+    source: EIA + FRED
+    source_endpoint: GET /v2/natural-gas/pri/sum/data/?frequency=daily
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: henry_hub_change_pct
+    target_type: float
+    description: Daily % change
+    source: EIA + FRED
+    source_endpoint: GET /v2/natural-gas/pri/sum/data/?frequency=daily
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: henry_hub_5d_change_pct
+    target_type: float
+    description: 5-day cumulative change
+    source: EIA + FRED
+    source_endpoint: GET /v2/natural-gas/pri/sum/data/?frequency=daily
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: front_month_futures_price
+    target_type: float
+    description: Front-month futures contract ($/MMBtu)
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: front_month_change_pct
+    target_type: float
+    description: Daily change in front month
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: futures_curve
+    target_type: list[FuturesCurvePoint]
+    description: 'Natural gas curve: front, 2M, 3M, 6M, 12M. Seasonal patterns: winter (Dec/Jan) premium over summer (Jul/Aug)
+      is typical. Inversion signals structural tightness.'
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: curve_slope_1m_3m
+    target_type: float
+    description: (3M - front) / front × 100. Positive = typical
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: curve_seasonality_deviation
+    target_type: float
+    description: '% deviation from typical seasonal curve'
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: eia_storage_bcf
+    target_type: float
+    description: EIA working gas in underground storage (Bcf)
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: eia_storage_prior
+    target_type: float
+    description: Prior week storage level
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: eia_storage_change_bcf
+    target_type: float
+    description: Weekly net change (positive = injection)
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: eia_storage_consensus_bcf
+    target_type: float
+    description: Pre-report consensus
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: eia_storage_surprise_pct
+    target_type: float
+    description: (actual - consensus) / |consensus| × 100.
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: eia_storage_vs_5y_avg_pct
+    target_type: float
+    description: Current storage vs. 5-year average for this
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: hdd_forecast_7d
+    target_type: float
+    description: Heating degree days forecast (7-day). Cold snap =
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: cdd_forecast_7d
+    target_type: float
+    description: Cooling degree days forecast. Heat wave = bullish gas.
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: weather_demand_signal
+    target_type: str
+    description: '"bullish" | "bearish" | "neutral" based on HDD/CDD'
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: weather_surprise_vs_normal
+    target_type: float
+    description: '% deviation of HDD/CDD from seasonal normal'
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: lng_export_volume_mtpa
+    target_type: float
+    description: Annualized LNG export capacity from US (million
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: lng_spot_price_jkm
+    target_type: float
+    description: Japan Korea Marker (global LNG benchmark, $/MMBtu).
+    source: EIA + FRED
+    source_endpoint: GET /v2/natural-gas/pri/sum/data/?frequency=daily
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: lng_spread_henry_hub
+    target_type: float
+    description: (JKM - Henry Hub) × liquefaction costs. Positive =
+    source: EIA + FRED
+    source_endpoint: GET /v2/natural-gas/pri/sum/data/?frequency=daily
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: EIA + FRED
+    source_endpoint: See EIA + FRED documentation — derived from entity primary source
+    source_field: response.data[].value
+    source_type: number
+    transform: 'Distillation: derived from EIA natural gas data.'
+- entity: IndustrialMetals
+  spec_id: Q8:8c
+  description: Q8:8c — Copper, aluminum prices with copper-to-gold ratio and inventory.
+  is_primary_entity: true
+  primary_source: Yahoo Finance (free) or Polygon Stocks Starter
+  fallback_source: FRED (some series)
+  cadence: Daily
+  feasibility: MEDIUM — spot prices available, LME inventory harder
+  fields:
+  - target_field: copper_spot_price
+    target_type: float
+    description: Current copper spot price ($/lb or $/kg, specify)
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: copper_prior_close
+    target_type: float
+    description: Prior day close
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: copper_change_pct
+    target_type: float
+    description: Daily % change
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: copper_5d_change_pct
+    target_type: float
+    description: 5-day cumulative change
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: copper_20d_change_pct
+    target_type: float
+    description: 20-day cumulative change (trend context)
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: copper_lme_inventory_kt
+    target_type: float
+    description: LME warehouse inventory (kilotonnes). Rising inventory
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: copper_inventory_change_pct
+    target_type: float
+    description: '% change in LME inventory from prior week'
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: aluminum_spot_price
+    target_type: float
+    description: Aluminum spot price ($/metric tonne)
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: aluminum_prior_close
+    target_type: float
+    description: Prior day close
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: aluminum_change_pct
+    target_type: float
+    description: Daily % change
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: copper_gold_ratio
+    target_type: float
+    description: Copper price / gold price (both in $/oz equivalent
+    source: Polygon (GLD ETF)
+    source_endpoint: GET /v2/aggs/ticker/GLD/range/1/day/{from}/{to}
+    source_field: results[].c
+    source_type: number
+    transform: 'Polygon: GLD ETF close price as gold proxy. FRED GOLDAMGBD228NLBM series discontinued. GLD tracks gold spot
+      price closely.'
+  - target_field: industrial_metals_5d_return_pct
+    target_type: float
+    description: Composite return (copper + aluminum)
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: equities_5d_return_pct
+    target_type: float
+    description: SPY 5-day return for divergence comparison.
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: aluminum_production_ytd_pct
+    target_type: float
+    description: YTD production vs. prior year (trend)
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: copper_gold_ratio_20d_ma
+    target_type: float
+    description: 20-day moving average of the ratio (trend)
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: copper_gold_trend
+    target_type: str
+    description: '"rising" | "falling" | "stable"'
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: divergence_signal
+    target_type: str
+    description: '"copper_strength_equity_weakness" |'
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: divergence_severity
+    target_type: SignalStrength
+    description: ''
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+- entity: PreciousMetals
+  spec_id: Q8:8d
+  description: Q8:8d — Gold, silver prices with ratios and ETF flow signals.
+  is_primary_entity: true
+  primary_source: FRED
+  fallback_source: Polygon
+  cadence: Daily
+  feasibility: HIGH
+  fields:
+  - target_field: gold_spot_price
+    target_type: float
+    description: Current gold spot price ($/oz)
+    source: Polygon (GLD ETF)
+    source_endpoint: GET /v2/aggs/ticker/GLD/range/1/day/{from}/{to}
+    source_field: results[].c
+    source_type: number
+    transform: 'Polygon: GLD ETF close price as gold proxy. FRED GOLDAMGBD228NLBM series discontinued. GLD tracks gold spot
+      price closely.'
+  - target_field: gold_prior_close
+    target_type: float
+    description: Prior day close
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED precious metals series and Polygon ETF data.'
+  - target_field: gold_change_pct
+    target_type: float
+    description: Daily % change
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED precious metals series and Polygon ETF data.'
+  - target_field: gold_5d_change_pct
+    target_type: float
+    description: 5-day cumulative change
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED precious metals series and Polygon ETF data.'
+  - target_field: gold_20d_change_pct
+    target_type: float
+    description: 20-day cumulative change
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED precious metals series and Polygon ETF data.'
+  - target_field: silver_spot_price
+    target_type: float
+    description: Current silver spot price ($/oz)
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED precious metals series and Polygon ETF data.'
+  - target_field: silver_prior_close
+    target_type: float
+    description: Prior day close
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED precious metals series and Polygon ETF data.'
+  - target_field: silver_change_pct
+    target_type: float
+    description: Daily % change
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED precious metals series and Polygon ETF data.'
+  - target_field: gold_silver_ratio
+    target_type: float
+    description: Gold price / silver price ($/oz basis). Higher ratio
+    source: Polygon (GLD ETF)
+    source_endpoint: GET /v2/aggs/ticker/GLD/range/1/day/{from}/{to}
+    source_field: results[].c
+    source_type: number
+    transform: 'Polygon: GLD ETF close price as gold proxy. FRED GOLDAMGBD228NLBM series discontinued. GLD tracks gold spot
+      price closely.'
+  - target_field: gold_silver_ratio_20d_ma
+    target_type: float
+    description: 20-day MA of the ratio
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED precious metals series and Polygon ETF data.'
+  - target_field: gs_ratio_regime
+    target_type: str
+    description: '"gold_premium" (ratio > 20yr MA + 1 std dev) |'
+    source: Polygon (GLD ETF)
+    source_endpoint: GET /v2/aggs/ticker/GLD/range/1/day/{from}/{to}
+    source_field: results[].c
+    source_type: number
+    transform: 'Polygon: GLD ETF close price as gold proxy. FRED GOLDAMGBD228NLBM series discontinued. GLD tracks gold spot
+      price closely.'
+  - target_field: real_yield_2y
+    target_type: float
+    description: 2-year real yield (from Q6:6a). Filled by distillation
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED precious metals series and Polygon ETF data.'
+  - target_field: gold_real_yield_divergence
+    target_type: float
+    description: Deviation from typical gold = -real_yields
+    source: Polygon (GLD ETF)
+    source_endpoint: GET /v2/aggs/ticker/GLD/range/1/day/{from}/{to}
+    source_field: results[].c
+    source_type: number
+    transform: 'Polygon: GLD ETF close price as gold proxy. FRED GOLDAMGBD228NLBM series discontinued. GLD tracks gold spot
+      price closely.'
+  - target_field: gold_yield_relationship
+    target_type: str
+    description: '"normal" | "gold_extended" | "gold_cheap"'
+    source: Polygon (GLD ETF)
+    source_endpoint: GET /v2/aggs/ticker/GLD/range/1/day/{from}/{to}
+    source_field: results[].c
+    source_type: number
+    transform: 'Polygon: GLD ETF close price as gold proxy. FRED GOLDAMGBD228NLBM series discontinued. GLD tracks gold spot
+      price closely.'
+  - target_field: gld_flow_usd
+    target_type: Optional[ETFFlowData]
+    description: SPDR Gold Shares (largest gold ETF)
+    source: Polygon (GLD ETF)
+    source_endpoint: GET /v2/aggs/ticker/GLD/range/1/day/{from}/{to}
+    source_field: results[].c
+    source_type: number
+    transform: 'Polygon: GLD ETF close price as gold proxy. FRED GOLDAMGBD228NLBM series discontinued. GLD tracks gold spot
+      price closely.'
+  - target_field: iau_flow_usd
+    target_type: Optional[ETFFlowData]
+    description: iShares Gold Trust
+    source: Polygon (GLD ETF)
+    source_endpoint: GET /v2/aggs/ticker/GLD/range/1/day/{from}/{to}
+    source_field: results[].c
+    source_type: number
+    transform: 'Polygon: GLD ETF close price as gold proxy. FRED GOLDAMGBD228NLBM series discontinued. GLD tracks gold spot
+      price closely.'
+  - target_field: gold_etf_flow_7d_usd
+    target_type: float
+    description: Combined 7-day flow (GLD + IAU) in USD
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED precious metals series and Polygon ETF data.'
+  - target_field: gold_etf_flow_signal
+    target_type: str
+    description: '"inflow_accumulation" (sustained inflows during calm)'
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED precious metals series and Polygon ETF data.'
+  - target_field: cb_buying_trend
+    target_type: str
+    description: '"increasing" | "decreasing" | "stable"'
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED precious metals series and Polygon ETF data.'
+  - target_field: cb_buying_last_month_oz
+    target_type: float
+    description: Approximate central bank purchases last month (oz)
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED precious metals series and Polygon ETF data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: FRED + Polygon
+    source_endpoint: GET /fred/series/observations?series_id={id}
+    source_field: observations[].value
+    source_type: string (numeric)
+    transform: 'Distillation: derived from FRED precious metals series and Polygon ETF data.'
+- entity: CrackSpreads
+  spec_id: Q8:8e
+  description: Q8:8e — Gasoline and diesel crack spreads with demand patterns.
+  is_primary_entity: true
+  primary_source: Derived from Q8:8a + EIA product prices
+  fallback_source: N/A
+  cadence: Weekly
+  feasibility: HIGH — computable from crude + product prices
+  fields:
+  - target_field: gasoline_crack_spread
+    target_type: float
+    description: '$/bbl. Derived: gasoline_price - WTI_price. Widening'
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: gasoline_crack_prior
+    target_type: float
+    description: Prior week spread
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: gasoline_crack_change_pct
+    target_type: float
+    description: Weekly % change in spread
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: diesel_crack_spread
+    target_type: float
+    description: $/bbl. Heating oil / diesel crack spread.
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: diesel_crack_prior
+    target_type: float
+    description: Prior week spread
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: diesel_crack_change_pct
+    target_type: float
+    description: Weekly % change
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: crack_3_2_1_spread
+    target_type: float
+    description: '$/bbl. Composite: 3 barrels crude → 2 gasoline +'
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: crack_3_2_1_prior
+    target_type: float
+    description: Prior week
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: crack_3_2_1_change_pct
+    target_type: float
+    description: Weekly % change
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: eia_gasoline_demand_change_pct
+    target_type: float
+    description: Weekly gasoline demand vs. prior year
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: eia_diesel_demand_change_pct
+    target_type: float
+    description: Weekly diesel demand vs. prior year
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: energy_stock_5d_return_pct
+    target_type: float
+    description: XLE 5-day return (filled by distillation)
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: crack_spread_5d_change_pct
+    target_type: float
+    description: 5-day % change in 3-2-1 crack
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: gasoline_crack_5w_ma
+    target_type: float
+    description: 5-week moving average (trend)
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: diesel_crack_seasonal_pattern
+    target_type: str
+    description: '"peak_season" | "off_season" | "neutral"'
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: crack_3_2_1_vs_20w_ma
+    target_type: float
+    description: '% deviation from 20-week MA. Extreme deviations'
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: driving_season_phase
+    target_type: str
+    description: '"peak" (Memorial Day–Labor Day) | "shoulder" | "off_season"'
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: divergence_signal
+    target_type: str
+    description: '"crack_up_stocks_down" | "crack_down_stocks_up" |'
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: divergence_severity
+    target_type: SignalStrength
+    description: ''
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: EIA + FRED + CFTC
+    source_endpoint: Multiple (EIA, FRED, CFTC)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from EIA energy data, FRED commodity series, and CFTC positioning data.'
+- entity: CommodityPositioning
+  spec_id: Q8:8f
+  description: Q8:8f — COT commercial/speculative positioning and commodity ETF flows.
+  is_primary_entity: true
+  primary_source: CFTC COT Reports
+  fallback_source: Quandl/Nasdaq Data Link
+  cadence: Weekly (Friday, for prior Tuesday)
+  feasibility: HIGH
+  fields:
+  - target_field: cot_crude_commercial_net
+    target_type: int
+    description: Net long or short position (contracts)
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_crude_speculative_net
+    target_type: int
+    description: Net speculative position
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_crude_total_open_interest
+    target_type: int
+    description: Total open interest for reference
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_gas_commercial_net
+    target_type: int
+    description: Net commercial position
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_gas_speculative_net
+    target_type: int
+    description: Net speculative position
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_gas_total_open_interest
+    target_type: int
+    description: Total open interest
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_gold_commercial_net
+    target_type: int
+    description: Net commercial position
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_gold_speculative_net
+    target_type: int
+    description: Net speculative position
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_gold_total_open_interest
+    target_type: int
+    description: Total open interest
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_copper_commercial_net
+    target_type: int
+    description: Net commercial position
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_copper_speculative_net
+    target_type: int
+    description: Net speculative position
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_copper_total_open_interest
+    target_type: int
+    description: Total open interest
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_crude_spec_percentile
+    target_type: float
+    description: Where speculative positioning sits vs. trailing
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_crude_trend
+    target_type: str
+    description: '"specs_accumulating_longs" |'
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_gas_spec_percentile
+    target_type: float
+    description: ''
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_gas_trend
+    target_type: str
+    description: ''
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_gold_spec_percentile
+    target_type: float
+    description: ''
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_gold_trend
+    target_type: str
+    description: ''
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_copper_spec_percentile
+    target_type: float
+    description: ''
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_copper_trend
+    target_type: str
+    description: ''
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: cot_report_date
+    target_type: Optional[datetime]
+    description: The Tuesday date the COT report covers (published Fri)
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: uso_flow
+    target_type: Optional[ETFFlowData]
+    description: United States Oil Fund (crude proxy)
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: ung_flow
+    target_type: Optional[ETFFlowData]
+    description: United States Natural Gas Fund
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: gld_flow
+    target_type: Optional[ETFFlowData]
+    description: SPDR Gold Shares
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: slv_flow
+    target_type: Optional[ETFFlowData]
+    description: iShares Silver Trust
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: managed_money_trend
+    target_type: str
+    description: '"accumulating" | "liquidating" | "mixed"'
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: managed_money_trend_velocity
+    target_type: str
+    description: '"fast" | "moderate" | "slow"'
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: aggregate_etf_flow_7d_usd
+    target_type: float
+    description: Combined flow across all commodity ETFs
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: etf_positioning_signal
+    target_type: str
+    description: '"institutional_buying" | "retail_selling" | "neutral"'
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: CFTC
+    source_endpoint: publicreporting.cftc.gov/resource/jun7-fc8e.json (disaggregated)
+    source_field: Various columns (Open Interest, Dealer, Asset Manager positions)
+    source_type: integer
+    transform: 'Distillation: derived from CFTC COT disaggregated futures report.'
+audit_notes: 'AUDIT 2026-03-15: Gold price source changed from FRED (GOLDAMGBD228NLBM discontinued) to Polygon GLD ETF. EIA
+  endpoints verified: crude_inventory, nat_gas_storage, wti_spot, refinery_util, gasoline_prices, lng_exports all working.
+  CFTC COT data confirmed via bulk CSV and CFPB API.'

@@ -1,0 +1,1822 @@
+domain: derivatives
+spec_prefix: Q3
+module_description: 'Q3: Derivatives and Options — entity definitions.'
+common_fields_note: 'All primary entities include ''ticker: Ticker'' and ''metadata: InvocationMetadata'' fields (omitted
+  from individual field listings). See _common.yaml for InvocationMetadata mapping.'
+entities:
+- entity: IVTerm
+  spec_id: N/A (supporting type)
+  description: Implied volatility at a specific expiration. IV term structure (near vs.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: days_to_expiration
+    target_type: int
+    description: Days until this expiration. 1–365.
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: iv_level
+    target_type: float
+    description: IV (annualized, %). E.g., 35.5 means 35.5% IV
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: call_iv
+    target_type: float
+    description: IV on ATM calls for this expiration
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: put_iv
+    target_type: float
+    description: IV on ATM puts for this expiration
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: iv_skew
+    target_type: float
+    description: put_iv - call_iv. Positive = put premium,
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+- entity: StrikeOI
+  spec_id: N/A (supporting type)
+  description: Open Interest concentrated at a specific strike. Used to identify put walls,
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: strike_price
+    target_type: float
+    description: Strike level (USD)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: call_oi
+    target_type: int
+    description: Open interest on call side (contracts)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: put_oi
+    target_type: int
+    description: Open interest on put side (contracts)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: total_oi
+    target_type: int
+    description: call_oi + put_oi
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: put_call_oi_ratio
+    target_type: float
+    description: put_oi / call_oi. >1.0 = put-heavy, <1.0 = call-heavy
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: oi_rank_pct
+    target_type: float
+    description: This strike's OI as % of max OI across all strikes
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+- entity: ExpirationCluster
+  spec_id: N/A (supporting type)
+  description: Open Interest clustering analysis at a specific expiration. Reveals where
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: days_to_expiration
+    target_type: int
+    description: Days until this expiration
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: total_call_oi
+    target_type: int
+    description: Sum of all call OI at this expiration
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: total_put_oi
+    target_type: int
+    description: Sum of all put OI at this expiration
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: total_oi
+    target_type: int
+    description: call + put OI
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: put_call_oi_ratio
+    target_type: float
+    description: put_oi / call_oi at this expiration
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: oi_pct_of_total
+    target_type: float
+    description: This expiration's OI as % of all expirations
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+- entity: UnusualBlock
+  spec_id: N/A (supporting type)
+  description: A single block trade (large institutional print) detected in options. Alert
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: timestamp
+    target_type: datetime
+    description: UTC timestamp of the block
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: strike_price
+    target_type: float
+    description: Strike of the block trade
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: expiration_date
+    target_type: str
+    description: 'ISO format: "YYYY-MM-DD"'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: contract_type
+    target_type: str
+    description: '"call" | "put"'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: contracts
+    target_type: int
+    description: Number of contracts
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: notional_usd
+    target_type: float
+    description: Notional value (contracts × price per contract × 100)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: side
+    target_type: Direction
+    description: BULLISH (buy) | BEARISH (sell)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: volume_vs_oi_ratio
+    target_type: float
+    description: Today's volume on this strike / existing OI.
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+- entity: VolumeOIAnomaly
+  spec_id: N/A (supporting type)
+  description: Detected spike in options volume relative to open interest at a specific
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: strike_price
+    target_type: float
+    description: Strike level
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: expiration_date
+    target_type: str
+    description: 'ISO format: "YYYY-MM-DD"'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: contract_type
+    target_type: str
+    description: '"call" | "put"'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: today_volume
+    target_type: int
+    description: Contracts traded today at this strike/exp
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: trailing_avg_volume
+    target_type: float
+    description: 5-day average volume at this strike
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: volume_spike_multiple
+    target_type: float
+    description: today_volume / trailing_avg_volume. > 3.0 = anomaly
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: current_oi
+    target_type: int
+    description: Open interest at this strike (snapshot)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: volume_to_oi_ratio
+    target_type: float
+    description: today_volume / current_oi. > 0.5 = new positioning
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+- entity: SweepDetection
+  spec_id: N/A (supporting type)
+  description: Detected sweep order — institutional urgency signal. Sweeps hit multiple
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: timestamp
+    target_type: datetime
+    description: UTC when the sweep was detected
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: strike_price
+    target_type: float
+    description: Strike being swept
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: expiration_date
+    target_type: str
+    description: 'ISO format: "YYYY-MM-DD"'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: contract_type
+    target_type: str
+    description: '"call" | "put"'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: side
+    target_type: Direction
+    description: BULLISH (buying) | BEARISH (selling)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: contracts
+    target_type: int
+    description: Total contracts across all legs of sweep
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: notional_usd
+    target_type: float
+    description: Total notional value
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: venues_count
+    target_type: int
+    description: How many venues the order hit (>1 suggests sweep)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: price_paid_vs_ask
+    target_type: float
+    description: Average price paid vs. ask at time of sweep.
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+- entity: COTPositioning
+  spec_id: N/A (supporting type)
+  description: Equity index futures positioning from CFTC Commitments of Traders report.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: index_name
+    target_type: str
+    description: '"SP500" | "NQ100" | etc. (derived from futures ticker)'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: report_date
+    target_type: str
+    description: 'ISO format: "YYYY-MM-DD" — CFTC reports weekly'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: asset_manager_net_contracts
+    target_type: int
+    description: Asset manager net position (contracts)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: asset_manager_pct_of_total
+    target_type: float
+    description: As % of total open interest
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: leveraged_fund_net_contracts
+    target_type: int
+    description: Leveraged fund/hedge fund net position
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: leveraged_fund_pct_of_total
+    target_type: float
+    description: As % of total
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: positioning_extreme_flag
+    target_type: str
+    description: '"very_bullish" | "bullish" | "neutral" | "bearish" |'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+- entity: GreekExposure
+  spec_id: N/A (supporting type)
+  description: Aggregated gamma/delta/vanna/charm exposure at the ticker level. Determines
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: timestamp
+    target_type: datetime
+    description: UTC timestamp of calculation
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: expiration_date
+    target_type: Optional[str]
+    description: If specific expiration; None = all expirations aggregated
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: net_gamma_usd
+    target_type: float
+    description: 'Total dealer gamma in USD. Computed as:'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: gamma_flip_level_up
+    target_type: Optional[float]
+    description: Price level where gamma flips from
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: gamma_flip_level_down
+    target_type: Optional[float]
+    description: Price level where gamma flips from
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: net_delta_contracts
+    target_type: float
+    description: Net dealer delta position (positive = short delta,
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: dex_direction
+    target_type: Direction
+    description: BULLISH (dealer short delta, hedges by buying) |
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: net_vanna_notional
+    target_type: float
+    description: Net vanna (notional USD). Vanna = ∂delta/∂volatility.
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: net_charm_notional
+    target_type: float
+    description: Net charm = ∂gamma/∂time (or delta decay). Indicates
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+- entity: StrikeOIDistribution
+  spec_id: N/A (supporting type)
+  description: Snapshot of OI distribution across strikes at a specific expiration. Identifies
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: expiration_date
+    target_type: str
+    description: 'ISO format: "YYYY-MM-DD"'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: total_call_oi
+    target_type: int
+    description: ''
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: total_put_oi
+    target_type: int
+    description: ''
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: call_oi_skew
+    target_type: float
+    description: 'Concentration measure: std dev of call OI across'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: put_oi_skew
+    target_type: float
+    description: Same for puts
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: max_pain_level
+    target_type: float
+    description: Strike where max OI × gamma decay would cause most
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: put_wall_identified
+    target_type: bool
+    description: True if a significant wall (>25% of total put OI)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: call_magnet_identified
+    target_type: bool
+    description: True if significant call concentration at a high strike
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+- entity: EarningsImpliedMoveData
+  spec_id: N/A (supporting type)
+  description: Pricing of ATM straddle spanning an earnings event. Reveals market's
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: earnings_date
+    target_type: str
+    description: 'ISO format: "YYYY-MM-DD"'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: days_to_earnings
+    target_type: int
+    description: Days until earnings (on invocation date)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: atm_strike
+    target_type: float
+    description: At-the-money strike used for straddle
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: atm_call_price
+    target_type: float
+    description: Call price (USD per share)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: atm_put_price
+    target_type: float
+    description: Put price (USD per share)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: atm_straddle_price
+    target_type: float
+    description: atm_call_price + atm_put_price
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: implied_move_pct
+    target_type: float
+    description: Implied move as % of stock price. Derived from
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: implied_move_abs_usd
+    target_type: float
+    description: Implied move in absolute dollars
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: iv_level_atm
+    target_type: float
+    description: IV at ATM strike (expiration spanning earnings)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: iv_ramp_rate
+    target_type: float
+    description: IV change per day leading into earnings. Positive =
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+- entity: PCFlowBreakdown
+  spec_id: N/A (supporting type)
+  description: Put/call flow directionality classification. Same ratio reads very differently
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: expiration_date
+    target_type: Optional[str]
+    description: If specific expiration; None = all expirations
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: put_volume_total
+    target_type: int
+    description: Total put contracts traded
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: call_volume_total
+    target_type: int
+    description: Total call contracts traded
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: put_call_volume_ratio
+    target_type: float
+    description: put_volume_total / call_volume_total
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: put_buy_to_open_pct
+    target_type: float
+    description: '% of put volume that is buy-to-open (bearish conviction)'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: put_sell_to_open_pct
+    target_type: float
+    description: '% of put volume that is sell-to-open (income, bullish bias)'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: call_buy_to_open_pct
+    target_type: float
+    description: '% of call volume that is buy-to-open (bullish)'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: call_sell_to_open_pct
+    target_type: float
+    description: '% of call volume that is sell-to-open (bearish)'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: protective_vs_speculative_flag
+    target_type: str
+    description: '"protective" = put buying dominates (hedging) |'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: is_index_heavy
+    target_type: bool
+    description: True if this represents index-level data (SPY/QQQ)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: is_single_stock
+    target_type: bool
+    description: True if single-name
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+- entity: CrossTickerPairSignal
+  spec_id: N/A (supporting type)
+  description: A detected pair trade signature — simultaneous bullish flow on one name
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: detected_at
+    target_type: datetime
+    description: ''
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: long_ticker
+    target_type: Ticker
+    description: Name with bullish flow (calls bought)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: short_ticker
+    target_type: Ticker
+    description: Peer with bearish flow (puts bought)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: correlation
+    target_type: float
+    description: Historical correlation between the two names
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: long_call_volume_surge
+    target_type: int
+    description: Call volume on long_ticker as multiple of avg
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: short_put_volume_surge
+    target_type: int
+    description: Put volume on short_ticker as multiple of avg
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: pair_signal_strength
+    target_type: SignalStrength
+    description: STRONG | MODERATE | WEAK | NONE
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: relative_value_hypothesis
+    target_type: str
+    description: 'Free-text hypothesis: "long_ticker_outperformer" |'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+- entity: SectorETFFlowSnapshot
+  spec_id: N/A (supporting type)
+  description: Options flow data for a single sector ETF. Institutions express sector views
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: etf_ticker
+    target_type: str
+    description: '"XLK" | "XLF" | "XLE" | "SMH" | "QQQ"'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: timestamp
+    target_type: datetime
+    description: UTC
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: unusual_block_detected
+    target_type: bool
+    description: Recent large block trade on this ETF's options
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: sweep_activity_detected
+    target_type: bool
+    description: Sweep detection on this ETF
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: volume_oi_spike_detected
+    target_type: bool
+    description: Volume spike relative to OI
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: put_call_volume_ratio
+    target_type: float
+    description: ETF put volume / call volume
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: etf_put_buy_to_open_pct
+    target_type: float
+    description: '% of put volume that is buy-to-open'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: etf_put_sell_to_open_pct
+    target_type: float
+    description: '% of put volume that is sell-to-open'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: etf_iv_level
+    target_type: float
+    description: ATM IV on the ETF
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: component_iv_avg
+    target_type: float
+    description: Average IV on the top 10 component stocks
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: iv_divergence_pct
+    target_type: float
+    description: (etf_iv_level - component_iv_avg) / component_iv_avg × 100
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: etf_options_sentiment
+    target_type: Direction
+    description: BULLISH (call buying dominant) |
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: hedging_indicator
+    target_type: bool
+    description: True if this looks like index hedging (SPY/QQQ puts)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+- entity: ImpliedVolSurface
+  spec_id: Q3:3a
+  description: Q3:3a — IV term structure, skew, and rank/percentile metrics.
+  is_primary_entity: true
+  primary_source: Polygon Options Starter
+  fallback_source: yfinance EOD option chains
+  cadence: Every invocation
+  feasibility: HIGH
+  fields:
+  - target_field: term_structure
+    target_type: list[IVTerm]
+    description: 'IV levels at key expirations (typically 7d, 14d, 30d, 60d, 90d, 180d). Ordered by days_to_expiration ascending.
+      Used to detect contango (normal: near < far) vs. backwardation (crisis: near > far).'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. IV surface construction, term structure fitting,
+      skew calculation.'
+  - target_field: term_structure_type
+    target_type: str
+    description: '"contango" = normal (near < far) |'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. IV surface construction, term structure fitting,
+      skew calculation.'
+  - target_field: put_call_iv_skew_atm
+    target_type: float
+    description: IV(ATM put) - IV(ATM call) at nearest expiration.
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. IV surface construction, term structure fitting,
+      skew calculation.'
+  - target_field: skew_direction
+    target_type: Direction
+    description: BEARISH (put premium) |
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. IV surface construction, term structure fitting,
+      skew calculation.'
+  - target_field: iv_level_atm
+    target_type: float
+    description: Current ATM IV (annualized, %)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. IV surface construction, term structure fitting,
+      skew calculation.'
+  - target_field: realized_vol_20d
+    target_type: float
+    description: 20-day realized volatility of price moves
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. IV surface construction, term structure fitting,
+      skew calculation.'
+  - target_field: iv_vs_realized_ratio
+    target_type: float
+    description: iv_level_atm / realized_vol_20d. > 1.0 = market
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. IV surface construction, term structure fitting,
+      skew calculation.'
+  - target_field: iv_rank
+    target_type: float
+    description: IV's rank relative to its 252-day high/low range.
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. IV surface construction, term structure fitting,
+      skew calculation.'
+  - target_field: iv_percentile
+    target_type: float
+    description: Percentile rank vs. trailing 252 days.
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. IV surface construction, term structure fitting,
+      skew calculation.'
+  - target_field: iv_trending
+    target_type: Direction
+    description: BULLISH (IV declining, contracting) |
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. IV surface construction, term structure fitting,
+      skew calculation.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. IV surface construction, term structure fitting,
+      skew calculation.'
+- entity: UnusualOptionsActivity
+  spec_id: Q3:3b
+  description: Q3:3b — Sweep/block detection and volume-vs-OI spike identification.
+  is_primary_entity: true
+  primary_source: Polygon Options Starter
+  fallback_source: yfinance option chains (EOD only)
+  cadence: Every invocation
+  feasibility: MEDIUM — no individual trades on Starter; detect via volume vs OI spikes
+  fields:
+  - target_field: large_blocks_detected
+    target_type: bool
+    description: Whether any block trades (>10k shares or >$500k notional)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: compare daily option volume (from snapshot day.volume) to open_interest. Flag contracts where
+      volume/OI > 2.0 as unusual. Sweep/block detection requires Options Developer tier.'
+  - target_field: block_trades
+    target_type: list[UnusualBlock]
+    description: List of detected blocks, most recent first. Each block is a high-signal institutional print. When a block
+      is accompanied by low OI on the strike, it indicates new positioning rather than closing.
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: compare daily option volume (from snapshot day.volume) to open_interest. Flag contracts where
+      volume/OI > 2.0 as unusual. Sweep/block detection requires Options Developer tier.'
+  - target_field: largest_block_size
+    target_type: int
+    description: Contracts in the largest block
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: compare daily option volume (from snapshot day.volume) to open_interest. Flag contracts where
+      volume/OI > 2.0 as unusual. Sweep/block detection requires Options Developer tier.'
+  - target_field: largest_block_notional_usd
+    target_type: float
+    description: Notional of the largest block
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: compare daily option volume (from snapshot day.volume) to open_interest. Flag contracts where
+      volume/OI > 2.0 as unusual. Sweep/block detection requires Options Developer tier.'
+  - target_field: block_count_session
+    target_type: int
+    description: Number of blocks detected this session
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: compare daily option volume (from snapshot day.volume) to open_interest. Flag contracts where
+      volume/OI > 2.0 as unusual. Sweep/block detection requires Options Developer tier.'
+  - target_field: sweeps_detected
+    target_type: bool
+    description: Whether any sweeps (multi-venue orders hitting rapidly)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: compare daily option volume (from snapshot day.volume) to open_interest. Flag contracts where
+      volume/OI > 2.0 as unusual. Sweep/block detection requires Options Developer tier.'
+  - target_field: sweep_list
+    target_type: list[SweepDetection]
+    description: 'Detected sweeps, most recent first. Key insight: a sweep on a low-OI strike strongly suggests NEW positioning
+      vs. closing.'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: compare daily option volume (from snapshot day.volume) to open_interest. Flag contracts where
+      volume/OI > 2.0 as unusual. Sweep/block detection requires Options Developer tier.'
+  - target_field: sweep_count_session
+    target_type: int
+    description: ''
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: compare daily option volume (from snapshot day.volume) to open_interest. Flag contracts where
+      volume/OI > 2.0 as unusual. Sweep/block detection requires Options Developer tier.'
+  - target_field: volume_oi_spike_detected
+    target_type: bool
+    description: Whether volume spikes on low-OI strikes
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: compare daily option volume (from snapshot day.volume) to open_interest. Flag contracts where
+      volume/OI > 2.0 as unusual. Sweep/block detection requires Options Developer tier.'
+  - target_field: volume_oi_anomalies
+    target_type: list[VolumeOIAnomaly]
+    description: Specific strikes where volume >> typical, and volume >> existing OI. High volume_to_oi_ratio (>0.5) suggests
+      new contracts being opened, not old positions closing.
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: compare daily option volume (from snapshot day.volume) to open_interest. Flag contracts where
+      volume/OI > 2.0 as unusual. Sweep/block detection requires Options Developer tier.'
+  - target_field: dominant_activity_type
+    target_type: str
+    description: '"new_opening" = mostly buy-to-open positioning |'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: compare daily option volume (from snapshot day.volume) to open_interest. Flag contracts where
+      volume/OI > 2.0 as unusual. Sweep/block detection requires Options Developer tier.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: compare daily option volume (from snapshot day.volume) to open_interest. Flag contracts where
+      volume/OI > 2.0 as unusual. Sweep/block detection requires Options Developer tier.'
+- entity: OpenInterestLandscape
+  spec_id: Q3:3c
+  description: Q3:3c — Strike-level OI concentration, max pain, and positioning data.
+  is_primary_entity: true
+  primary_source: Polygon Options Starter
+  fallback_source: yfinance option chains
+  cadence: Daily
+  feasibility: HIGH
+  fields:
+  - target_field: strike_oi_distributions
+    target_type: list[StrikeOIDistribution]
+    description: OI breakdown across strikes at each major expiration (7d, 14d, 30d, etc.). Each includes max_pain calculation,
+      wall/magnet detection.
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: max_pain_level_30d
+    target_type: Optional[float]
+    description: For 30-day options, the strike where
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: compute max pain by finding strike price that minimizes total option holder value. Sum put+call
+      intrinsic values at each strike.'
+  - target_field: max_pain_level_60d
+    target_type: Optional[float]
+    description: ''
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: compute max pain by finding strike price that minimizes total option holder value. Sum put+call
+      intrinsic values at each strike.'
+  - target_field: max_pain_distance_pct
+    target_type: float
+    description: Current price vs. nearest max pain level, as %.
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: compute max pain by finding strike price that minimizes total option holder value. Sum put+call
+      intrinsic values at each strike.'
+  - target_field: significant_put_wall_identified
+    target_type: bool
+    description: True if >25% of total put OI at a
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: put_wall_strike
+    target_type: Optional[float]
+    description: ''
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: put_wall_oi_count
+    target_type: int
+    description: ''
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: significant_call_magnet_identified
+    target_type: bool
+    description: True if concentrated call OI
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: call_magnet_strike
+    target_type: Optional[float]
+    description: ''
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: call_magnet_oi_count
+    target_type: int
+    description: ''
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: expiration_clusters
+    target_type: list[ExpirationCluster]
+    description: OI distribution across time. Shows where the bulk of positioning is. Concentrated in near-term = event-driven.
+      Spread across expirations = longer-dated conviction.
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: oi_change_pct_session
+    target_type: float
+    description: Total OI today vs. yesterday, as %. Positive =
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: oi_change_direction
+    target_type: Direction
+    description: ''
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: bullish_oi_buildup
+    target_type: bool
+    description: True if call OI building + put OI declining
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: bearish_oi_buildup
+    target_type: bool
+    description: True if put OI building + call OI declining
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: total_put_oi
+    target_type: int
+    description: ''
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: total_call_oi
+    target_type: int
+    description: ''
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: put_call_oi_ratio
+    target_type: float
+    description: put_oi / call_oi. > 1.0 = put-heavy (bearish bias).
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: cot_positioning
+    target_type: list[COTPositioning]
+    description: CFTC data for major indices (S&P 500, Nasdaq 100, etc.). Shows asset manager and hedge fund conviction. Extreme
+      positioning (very bullish or very bearish) is often contrarian.
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon Options
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon options snapshot. Aggregate OI by strike, detect concentration patterns.'
+- entity: DealerExposure
+  spec_id: Q3:3d
+  description: Q3:3d — Gamma (GEX), delta (DEX), vanna, and charm exposure estimates.
+  is_primary_entity: true
+  primary_source: Derived from Polygon Options chain
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: MEDIUM — GEX/DEX approximation from chain snapshot; true values require trade-level data
+  fields:
+  - target_field: aggregate_exposure
+    target_type: GreekExposure
+    description: ''
+    source: Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: N/A — computed from raw source data
+    source_type: N/A
+    transform: 'Distillation: approximate dealer positioning. Assume dealers short to market makers. GEX per strike = OI ×
+      gamma × 100 × spot² × 0.01. Aggregate across all strikes. DEX = OI × delta × 100 per strike.'
+  - target_field: exposure_by_expiration
+    target_type: list[GreekExposure]
+    description: Breakdown of gamma/delta exposure at each major expiration. Shows if dealer risk is concentrated in near-term
+      or spread.
+    source: Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: N/A — computed from raw source data
+    source_type: N/A
+    transform: 'Distillation: approximate dealer positioning. Assume dealers short to market makers. GEX per strike = OI ×
+      gamma × 100 × spot² × 0.01. Aggregate across all strikes. DEX = OI × delta × 100 per strike.'
+  - target_field: gex_flip_levels
+    target_type: list[float]
+    description: Sorted ascending. Represents levels where dealer gamma flips from positive (dampening, long gamma) to negative
+      (amplifying, short gamma) or vice versa. Price behavior often accelerates through flip le...
+    source: Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: N/A — computed from raw source data
+    source_type: N/A
+    transform: 'Distillation: approximate dealer positioning. Assume dealers short to market makers. GEX per strike = OI ×
+      gamma × 100 × spot² × 0.01. Aggregate across all strikes. DEX = OI × delta × 100 per strike.'
+  - target_field: dex_trend
+    target_type: Direction
+    description: BULLISH (dealer increasingly short delta,
+    source: Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: N/A — computed from raw source data
+    source_type: N/A
+    transform: 'Distillation: approximate dealer positioning. Assume dealers short to market makers. GEX per strike = OI ×
+      gamma × 100 × spot² × 0.01. Aggregate across all strikes. DEX = OI × delta × 100 per strike.'
+  - target_field: vanna_direction
+    target_type: Direction
+    description: How vanna will interact with vol moves.
+    source: Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: N/A — computed from raw source data
+    source_type: N/A
+    transform: 'Distillation: approximate dealer positioning. Assume dealers short to market makers. GEX per strike = OI ×
+      gamma × 100 × spot² × 0.01. Aggregate across all strikes. DEX = OI × delta × 100 per strike.'
+  - target_field: charm_direction
+    target_type: Direction
+    description: How charm (time decay) affects dealer
+    source: Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: N/A — computed from raw source data
+    source_type: N/A
+    transform: 'Distillation: approximate dealer positioning. Assume dealers short to market makers. GEX per strike = OI ×
+      gamma × 100 × spot² × 0.01. Aggregate across all strikes. DEX = OI × delta × 100 per strike.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: N/A — computed from raw source data
+    source_type: N/A
+    transform: 'Distillation: approximate dealer positioning. Assume dealers short to market makers. GEX per strike = OI ×
+      gamma × 100 × spot² × 0.01. Aggregate across all strikes. DEX = OI × delta × 100 per strike.'
+- entity: EarningsImpliedMove
+  spec_id: Q3:3e
+  description: Q3:3e — Implied earnings move from ATM straddle pricing.
+  is_primary_entity: true
+  primary_source: Polygon Options Starter + yfinance earnings calendar
+  fallback_source: yfinance option chains
+  cadence: Pre-earnings (when next earnings < 2 weeks)
+  feasibility: HIGH
+  fields:
+  - target_field: has_upcoming_earnings
+    target_type: bool
+    description: True if next earnings within 30 days
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: price nearest-expiry ATM straddle (call + put at strike closest to spot). Implied move = straddle_price
+      / spot * 100. Compare to historical earnings moves from yfinance earnings_history.'
+  - target_field: upcoming_earnings
+    target_type: Optional[EarningsImpliedMoveData]
+    description: Straddle pricing and implied move for next earnings. None if no earnings scheduled within 30 days or if options
+      chain doesn't span the date.
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: price nearest-expiry ATM straddle (call + put at strike closest to spot). Implied move = straddle_price
+      / spot * 100. Compare to historical earnings moves from yfinance earnings_history.'
+  - target_field: earnings_history
+    target_type: list[str]
+    description: 'Formatted strings with prior earnings moves: "Implied: 4.2% | Actual: +5.1% | Beat" (most recent first).
+      Shows historical move magnitudes for this ticker.'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: price nearest-expiry ATM straddle (call + put at strike closest to spot). Implied move = straddle_price
+      / spot * 100. Compare to historical earnings moves from yfinance earnings_history.'
+  - target_field: historical_realized_move_avg
+    target_type: float
+    description: Average realized move over last N earnings
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: price nearest-expiry ATM straddle (call + put at strike closest to spot). Implied move = straddle_price
+      / spot * 100. Compare to historical earnings moves from yfinance earnings_history.'
+  - target_field: historical_implied_move_avg
+    target_type: float
+    description: Average implied move over last N earnings
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: price nearest-expiry ATM straddle (call + put at strike closest to spot). Implied move = straddle_price
+      / spot * 100. Compare to historical earnings moves from yfinance earnings_history.'
+  - target_field: current_implied_vs_historical_ratio
+    target_type: float
+    description: Next earnings implied move / average
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: price nearest-expiry ATM straddle (call + put at strike closest to spot). Implied move = straddle_price
+      / spot * 100. Compare to historical earnings moves from yfinance earnings_history.'
+  - target_field: straddle_richness_assessment
+    target_type: str
+    description: '"rich" = expensive | "fair" = normal |'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: price nearest-expiry ATM straddle (call + put at strike closest to spot). Implied move = straddle_price
+      / spot * 100. Compare to historical earnings moves from yfinance earnings_history.'
+  - target_field: iv_ramp_rate_per_day
+    target_type: float
+    description: Change in ATM IV per day approaching earnings.
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: price nearest-expiry ATM straddle (call + put at strike closest to spot). Implied move = straddle_price
+      / spot * 100. Compare to historical earnings moves from yfinance earnings_history.'
+  - target_field: iv_ramp_acceleration
+    target_type: float
+    description: 'Second derivative: is the ramp accelerating or'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: price nearest-expiry ATM straddle (call + put at strike closest to spot). Implied move = straddle_price
+      / spot * 100. Compare to historical earnings moves from yfinance earnings_history.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: price nearest-expiry ATM straddle (call + put at strike closest to spot). Implied move = straddle_price
+      / spot * 100. Compare to historical earnings moves from yfinance earnings_history.'
+- entity: PutCallDynamics
+  spec_id: Q3:3f
+  description: Q3:3f — Put/call volume ratios and flow directionality classification.
+  is_primary_entity: true
+  primary_source: Polygon Options Starter
+  fallback_source: yfinance (unreliable)
+  cadence: Every invocation
+  feasibility: HIGH
+  fields:
+  - target_field: overall_flow
+    target_type: PCFlowBreakdown
+    description: ''
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: from Polygon options snapshot. Separate calls/puts by details.contract_type. Sum volumes and
+      OI. P/C ratio = put_volume / call_volume.'
+  - target_field: flow_by_expiration
+    target_type: list[PCFlowBreakdown]
+    description: Separate P/C breakdown for each major expiration (7d, 14d, 30d, etc.). Near-term P/C ratio can differ significantly
+      from longer-dated.
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: from Polygon options snapshot. Separate calls/puts by details.contract_type. Sum volumes and
+      OI. P/C ratio = put_volume / call_volume.'
+  - target_field: flow_sentiment
+    target_type: Direction
+    description: BULLISH (call buying or put selling
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: from Polygon options snapshot. Separate calls/puts by details.contract_type. Sum volumes and
+      OI. P/C ratio = put_volume / call_volume.'
+  - target_field: index_put_call_ratio
+    target_type: Optional[float]
+    description: P/C ratio for SPY or QQQ, for reference.
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: from Polygon options snapshot. Separate calls/puts by details.contract_type. Sum volumes and
+      OI. P/C ratio = put_volume / call_volume.'
+  - target_field: index_vs_stock_divergence
+    target_type: str
+    description: '"aligned" = single-stock and index P/C'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: from Polygon options snapshot. Separate calls/puts by details.contract_type. Sum volumes and
+      OI. P/C ratio = put_volume / call_volume.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: from Polygon options snapshot. Separate calls/puts by details.contract_type. Sum volumes and
+      OI. P/C ratio = put_volume / call_volume.'
+- entity: CrossTickerOptionsSignal
+  spec_id: Q3:3g
+  description: Q3:3g — Cross-ticker correlated options activity and sector-wide patterns.
+  is_primary_entity: true
+  primary_source: Derived from Q3:3a–3f across universe
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: MEDIUM — cross-ticker OI/IV anomaly scanning from chain snapshots
+  fields:
+  - target_field: pair_signals
+    target_type: list[CrossTickerPairSignal]
+    description: 'Detected pair trades: long_ticker calls + short_ticker puts, or vice versa. Example: NVDA call surge + AMD
+      put surge = NVDA outperformance bet. Sorted by signal strength descending.'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: sector_sweep_activity_detected
+    target_type: bool
+    description: True if multiple names in the same
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: sector_sweep_names
+    target_type: list[Ticker]
+    description: Other names in this ticker's sector showing sweeps
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: cross_sector_hedge_detected
+    target_type: bool
+    description: True if unusual options activity on
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: hedge_pair_ticker
+    target_type: Optional[Ticker]
+    description: ''
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: hedge_pair_sector
+    target_type: Optional[str]
+    description: ''
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: hedge_hypothesis
+    target_type: str
+    description: Description of the hypothesized multi-sector trade
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: etf_divergence_detected
+    target_type: bool
+    description: True if this ticker's options flow diverges
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: related_etf_ticker
+    target_type: Optional[str]
+    description: ''
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: divergence_direction
+    target_type: str
+    description: '"etf_bearish_stock_bullish" | "etf_bullish_stock_bearish" | etc.'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: divergence_interpretation
+    target_type: str
+    description: '"stock_leading_sector" | "etf_hedging_not_propagated" | etc.'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+- entity: SectorETFOptionsFlow
+  spec_id: Q3:3h
+  description: Q3:3h — Sector ETF unusual options activity and flow character.
+  is_primary_entity: true
+  primary_source: Polygon Options Starter — applied to sector ETFs
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: MEDIUM — same Options Starter coverage applied to ETFs
+  fields:
+  - target_field: sector
+    target_type: str
+    description: '"tech" | "semis" | "financials" | "energy"'
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: etf_snapshots
+    target_type: list[SectorETFFlowSnapshot]
+    description: Unusual activity and flow breakdown for each major sector ETF (XLK for tech, SMH for semis, XLF for financials,
+      XLE for energy, QQQ as broad). Sector analysts read this as their sector-level sentiment...
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: sector_put_call_ratio
+    target_type: float
+    description: Aggregate P/C ratio across all sector ETFs.
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: sector_sentiment
+    target_type: Direction
+    description: BULLISH | BEARISH | NEUTRAL
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: primary_etf_ticker
+    target_type: str
+    description: Main sector ETF (XLK for tech, etc.)
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: etf_iv_vs_components_delta
+    target_type: float
+    description: ETF IV - average component IV (%).
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: broad_market_hedging_detected
+    target_type: bool
+    description: True if SPY/QQQ puts spiking without
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: sector_specific_conviction
+    target_type: bool
+    description: True if sector ETF puts or calls up
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon Options + Derived
+    source_endpoint: GET /v3/snapshot/options/{underlying}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from Polygon options chain snapshot. See entity-level source notes.'
+audit_notes: 'AUDIT 2026-03-15: Polygon Options Starter verified. Options chain snapshot: GET /v3/snapshot/options/{underlyingAsset}
+  — returns greeks (delta, gamma, theta, vega), IV, OI, volume. Options contracts reference: GET /v3/reference/options/contracts?underlying_ticker={ticker}
+  — returns contract specs, strike, expiration. NOTE: Use contracts reference first to find valid nearby strikes/expirations,
+  then query snapshot. Options aggs: GET /v2/aggs/ticker/{optionsTicker}/range/1/day/{from}/{to} — OHLCV for individual contracts.'

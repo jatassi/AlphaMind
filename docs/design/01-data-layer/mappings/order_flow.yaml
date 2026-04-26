@@ -1,0 +1,1032 @@
+domain: order_flow
+spec_prefix: Q2
+module_description: 'Q2: Order Flow and Microstructure — entity definitions.'
+common_fields_note: 'All primary entities include ''ticker: Ticker'' and ''metadata: InvocationMetadata'' fields (omitted
+  from individual field listings). See _common.yaml for InvocationMetadata mapping.'
+entities:
+- entity: FlowWindow
+  spec_id: N/A (supporting type)
+  description: Aggregated trade flow metrics over a specific time window. The fundamental
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: window_label
+    target_type: str
+    description: '"1h" | "4h" | "session" | "pre_market" | "after_hours"'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: window_start
+    target_type: datetime
+    description: UTC
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: window_end
+    target_type: datetime
+    description: UTC
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: net_dollar_flow
+    target_type: float
+    description: Buy-side minus sell-side dollar volume (Lee-Ready classified).
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: total_dollar_volume
+    target_type: float
+    description: Total dollar volume in the window (denominator for intensity)
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: flow_intensity
+    target_type: float
+    description: '|net_dollar_flow| / total_dollar_volume. Range 0.0–1.0.'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: aggressor_ratio
+    target_type: float
+    description: Ratio of trades hitting the ask (buy aggressor) vs. hitting
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: volume_shares
+    target_type: int
+    description: Share volume in the window
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: trade_count
+    target_type: int
+    description: Number of individual trades
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+- entity: TradeSizeBreakdown
+  spec_id: N/A (supporting type)
+  description: Distribution of trade sizes within a window. Shifting mix signals changing
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: window_label
+    target_type: str
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: small_pct
+    target_type: float
+    description: '% of volume from small prints (< 100 shares). Higher = more'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: medium_pct
+    target_type: float
+    description: '% of volume from medium prints (100–9,999 shares)'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: large_pct
+    target_type: float
+    description: '% of volume from large prints (≥ 10,000 shares). Higher ='
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: avg_trade_size
+    target_type: float
+    description: Average trade size in shares
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: median_trade_size
+    target_type: float
+    description: Median trade size — more robust to outlier blocks
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: size_trend
+    target_type: str
+    description: '"growing" | "shrinking" | "stable" — is average trade size'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+- entity: BlockTrade
+  spec_id: N/A (supporting type)
+  description: A single detected block trade — a large print that signals institutional
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: timestamp
+    target_type: datetime
+    description: UTC
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: shares
+    target_type: int
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: price
+    target_type: float
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: notional_usd
+    target_type: float
+    description: shares × price
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: side
+    target_type: Direction
+    description: BULLISH (buy-side) | BEARISH (sell-side) | NEUTRAL (uncertain)
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: venue
+    target_type: str
+    description: Exchange or dark pool venue (e.g., "NYSE", "SIGMA_X", "IEX",
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: venue_type
+    target_type: str
+    description: '"lit" | "dark" | "unknown"'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: is_above_vwap
+    target_type: Optional[bool]
+    description: Whether the print was above session VWAP. Institutional
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: condition_codes
+    target_type: list[str]
+    description: Exchange condition codes (e.g., "T" for extended hours, "X" for cross).
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+- entity: VenueVolume
+  spec_id: N/A (supporting type)
+  description: Volume breakdown by execution venue. Different venues have different
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: venue_name
+    target_type: str
+    description: '"NYSE" | "NASDAQ" | "SIGMA_X" | "IEX" | "BATS" | etc.'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: venue_type
+    target_type: str
+    description: '"lit" | "dark" | "ats"'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: volume_shares
+    target_type: int
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: volume_pct_of_total
+    target_type: float
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: likely_participant_type
+    target_type: str
+    description: '"institutional" | "retail" | "mixed" | "unknown"'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+- entity: TimeOfDayAnomaly
+  spec_id: N/A (supporting type)
+  description: A burst of unusual volume at an atypical time of day.
+  is_primary_entity: false
+  primary_source: TBD
+  fallback_source: N/A
+  cadence: TBD
+  feasibility: TBD
+  fields:
+  - target_field: window_start
+    target_type: datetime
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: window_end
+    target_type: datetime
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: volume_vs_typical
+    target_type: float
+    description: Volume in this window vs. typical volume for this time of day
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: direction
+    target_type: Direction
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+  - target_field: likely_cause
+    target_type: str
+    description: '"programmatic_execution" | "rebalancing" | "news_driven" |'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: computed from Polygon 1-min bar data and Alpaca IEX trades.'
+- entity: TradeFlowAggregate
+  spec_id: Q2:2a
+  description: Q2:2a — Aggressor-side trade flow with size distribution and directional signals.
+  is_primary_entity: true
+  primary_source: Alpaca IEX trades (free) + Polygon 1-min bars
+  fallback_source: Polygon 1-min bar volume/direction approximation
+  cadence: Every invocation
+  feasibility: MEDIUM — IEX covers ~2-3% of volume; supplement with bar-level approximation
+  fields:
+  - target_field: flow_1h
+    target_type: Optional[FlowWindow]
+    description: Last 1 hour — most recent directional read
+    source: Alpaca + Derived
+    source_endpoint: GET /v2/stocks/{ticker}/trades (Alpaca) + GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: Lee-Ready algorithm on Alpaca IEX trades for aggressor classification. Supplement with bar-level
+      direction from Polygon 1-min bars (close vs open → buy/sell pressure proxy).'
+  - target_field: flow_4h
+    target_type: Optional[FlowWindow]
+    description: Last 4 hours — aligns with 4h candle timeframe
+    source: Alpaca + Derived
+    source_endpoint: GET /v2/stocks/{ticker}/trades (Alpaca) + GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: Lee-Ready algorithm on Alpaca IEX trades for aggressor classification. Supplement with bar-level
+      direction from Polygon 1-min bars (close vs open → buy/sell pressure proxy).'
+  - target_field: flow_session
+    target_type: Optional[FlowWindow]
+    description: Full current/most recent regular session
+    source: Alpaca + Derived
+    source_endpoint: GET /v2/stocks/{ticker}/trades (Alpaca) + GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: Lee-Ready algorithm on Alpaca IEX trades for aggressor classification. Supplement with bar-level
+      direction from Polygon 1-min bars (close vs open → buy/sell pressure proxy).'
+  - target_field: size_breakdown_1h
+    target_type: Optional[TradeSizeBreakdown]
+    description: ''
+    source: Alpaca + Derived
+    source_endpoint: GET /v2/stocks/{ticker}/trades (Alpaca) + GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: Lee-Ready algorithm on Alpaca IEX trades for aggressor classification. Supplement with bar-level
+      direction from Polygon 1-min bars (close vs open → buy/sell pressure proxy).'
+  - target_field: size_breakdown_session
+    target_type: Optional[TradeSizeBreakdown]
+    description: ''
+    source: Alpaca + Derived
+    source_endpoint: GET /v2/stocks/{ticker}/trades (Alpaca) + GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: Lee-Ready algorithm on Alpaca IEX trades for aggressor classification. Supplement with bar-level
+      direction from Polygon 1-min bars (close vs open → buy/sell pressure proxy).'
+  - target_field: flow_price_alignment
+    target_type: str
+    description: '"confirming" | "diverging" | "neutral"'
+    source: Alpaca + Derived
+    source_endpoint: GET /v2/stocks/{ticker}/trades (Alpaca) + GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: Lee-Ready algorithm on Alpaca IEX trades for aggressor classification. Supplement with bar-level
+      direction from Polygon 1-min bars (close vs open → buy/sell pressure proxy).'
+  - target_field: cumulative_flow_trend
+    target_type: str
+    description: '"accumulation" | "distribution" | "neutral"'
+    source: Alpaca + Derived
+    source_endpoint: GET /v2/stocks/{ticker}/trades (Alpaca) + GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: Lee-Ready algorithm on Alpaca IEX trades for aggressor classification. Supplement with bar-level
+      direction from Polygon 1-min bars (close vs open → buy/sell pressure proxy).'
+  - target_field: flow_vs_prior_session
+    target_type: float
+    description: Net flow today vs. average net flow over prior 5 sessions.
+    source: Alpaca + Derived
+    source_endpoint: GET /v2/stocks/{ticker}/trades (Alpaca) + GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: Lee-Ready algorithm on Alpaca IEX trades for aggressor classification. Supplement with bar-level
+      direction from Polygon 1-min bars (close vs open → buy/sell pressure proxy).'
+  - target_field: iex_volume_pct
+    target_type: float
+    description: IEX volume as % of consolidated volume. Typically 2–3%.
+    source: Alpaca + Derived
+    source_endpoint: GET /v2/stocks/{ticker}/trades (Alpaca) + GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: Lee-Ready algorithm on Alpaca IEX trades for aggressor classification. Supplement with bar-level
+      direction from Polygon 1-min bars (close vs open → buy/sell pressure proxy).'
+  - target_field: data_coverage_note
+    target_type: str
+    description: Human-readable note on data limitations for this invocation.
+    source: Alpaca + Derived
+    source_endpoint: GET /v2/stocks/{ticker}/trades (Alpaca) + GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: Lee-Ready algorithm on Alpaca IEX trades for aggressor classification. Supplement with bar-level
+      direction from Polygon 1-min bars (close vs open → buy/sell pressure proxy).'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Alpaca + Derived
+    source_endpoint: GET /v2/stocks/{ticker}/trades (Alpaca) + GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to}
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: Lee-Ready algorithm on Alpaca IEX trades for aggressor classification. Supplement with bar-level
+      direction from Polygon 1-min bars (close vs open → buy/sell pressure proxy).'
+- entity: LiquiditySnapshot
+  spec_id: Q2:2b
+  description: Q2:2b — Bid-ask spread and liquidity scoring from NBBO snapshots.
+  is_primary_entity: true
+  primary_source: Polygon Stocks Starter (snapshot)
+  fallback_source: Alpaca latest quote
+  cadence: Every invocation
+  feasibility: MEDIUM — NBBO from snapshot only, no depth
+  fields:
+  - target_field: current_spread_bps
+    target_type: float
+    description: Current bid-ask spread in basis points.
+    source: Polygon + Derived
+    source_endpoint: GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: computed from spread and volume data.'
+  - target_field: avg_spread_1h_bps
+    target_type: float
+    description: Average spread over the last hour
+    source: Polygon + Derived
+    source_endpoint: GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: computed from spread and volume data.'
+  - target_field: avg_spread_session_bps
+    target_type: float
+    description: Average spread for the current/most recent session
+    source: Polygon + Derived
+    source_endpoint: GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: computed from spread and volume data.'
+  - target_field: avg_spread_20d_bps
+    target_type: float
+    description: 20-day trailing average spread — the baseline
+    source: Polygon + Derived
+    source_endpoint: GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: computed from spread and volume data.'
+  - target_field: spread_z_score
+    target_type: float
+    description: Current spread vs. 20-day average, in standard deviations.
+    source: Polygon + Derived
+    source_endpoint: GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: computed from spread and volume data.'
+  - target_field: spread_widening_alert
+    target_type: bool
+    description: True when spread has widened >50% vs. 20-day average.
+    source: Polygon + Derived
+    source_endpoint: GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: computed from spread and volume data.'
+  - target_field: book_imbalance_ratio
+    target_type: Optional[float]
+    description: Bid depth / (bid depth + ask depth) at best levels. Range 0.0–1.0. >0.6 = more resting buy orders (bullish
+      lean), <0.4 = more resting sell. None when only NBBO is available.
+    source: Polygon + Derived
+    source_endpoint: GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: computed from spread and volume data.'
+  - target_field: liquidity_score
+    target_type: float
+    description: Composite score 0–100. Combines spread, available depth,
+    source: Polygon + Derived
+    source_endpoint: GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: computed from spread and volume data.'
+  - target_field: liquidity_vs_20d
+    target_type: float
+    description: Liquidity score change vs. 20-day average. Negative =
+    source: Polygon + Derived
+    source_endpoint: GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: computed from spread and volume data.'
+  - target_field: est_fill_prob_1k_shares
+    target_type: float
+    description: Estimated probability of filling 1,000 shares within
+    source: Polygon + Derived
+    source_endpoint: GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: computed from spread and volume data.'
+  - target_field: est_fill_prob_10k_shares
+    target_type: float
+    description: Same for 10,000 shares.
+    source: Polygon + Derived
+    source_endpoint: GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: computed from spread and volume data.'
+  - target_field: est_slippage_10k_bps
+    target_type: float
+    description: Estimated slippage in bps for 10,000-share order.
+    source: Polygon + Derived
+    source_endpoint: GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: computed from spread and volume data.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon + Derived
+    source_endpoint: GET /v2/snapshot/locale/us/markets/stocks/tickers/{ticker}
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: computed from spread and volume data.'
+- entity: InstitutionalFlow
+  spec_id: Q2:2c
+  description: Q2:2c — Dark pool volume, FINRA short volume, and block trade detection.
+  is_primary_entity: true
+  primary_source: FINRA short volume (daily) + Polygon 1-min bars
+  fallback_source: N/A
+  cadence: Daily (FINRA) + Every invocation (bar-level)
+  feasibility: MEDIUM — no real-time dark pool; FINRA delayed
+  fields:
+  - target_field: block_trades
+    target_type: list[BlockTrade]
+    description: All detected block trades (>10k shares or >$500k notional). Sorted by timestamp descending (most recent first).
+    source: FINRA + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon 1-min bars. Block trade detection: flag bars with v > 10,000 shares and
+      price impact > typical.'
+  - target_field: block_count_session
+    target_type: int
+    description: ''
+    source: FINRA + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon 1-min bars. Block trade detection: flag bars with v > 10,000 shares and
+      price impact > typical.'
+  - target_field: block_net_direction
+    target_type: Direction
+    description: ''
+    source: FINRA + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon 1-min bars. Block trade detection: flag bars with v > 10,000 shares and
+      price impact > typical.'
+  - target_field: block_notional_total
+    target_type: float
+    description: Total notional value of all blocks in session (USD)
+    source: FINRA + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon 1-min bars. Block trade detection: flag bars with v > 10,000 shares and
+      price impact > typical.'
+  - target_field: dark_pool_volume_pct
+    target_type: float
+    description: 'Off-exchange volume as % of total. Normal: 35–50%.'
+    source: FINRA + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon 1-min bars. Block trade detection: flag bars with v > 10,000 shares and
+      price impact > typical.'
+  - target_field: dark_pool_net_direction
+    target_type: Direction
+    description: Inferred direction of dark pool flow relative to VWAP.
+    source: FINRA + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon 1-min bars. Block trade detection: flag bars with v > 10,000 shares and
+      price impact > typical.'
+  - target_field: dark_pool_vs_20d_avg
+    target_type: float
+    description: Dark pool volume % today vs. 20-day average.
+    source: FINRA + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon 1-min bars. Block trade detection: flag bars with v > 10,000 shares and
+      price impact > typical.'
+  - target_field: venue_breakdown
+    target_type: list[VenueVolume]
+    description: Volume breakdown by venue/dark pool where available.
+    source: FINRA + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon 1-min bars. Block trade detection: flag bars with v > 10,000 shares and
+      price impact > typical.'
+  - target_field: finra_short_volume
+    target_type: int
+    description: Daily short sale volume from FINRA.
+    source: FINRA + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon 1-min bars. Block trade detection: flag bars with v > 10,000 shares and
+      price impact > typical.'
+  - target_field: finra_short_volume_ratio
+    target_type: float
+    description: Short volume as % of total daily volume.
+    source: FINRA + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon 1-min bars. Block trade detection: flag bars with v > 10,000 shares and
+      price impact > typical.'
+  - target_field: finra_short_vol_5d_avg
+    target_type: float
+    description: 5-day rolling average for trend detection
+    source: FINRA + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon 1-min bars. Block trade detection: flag bars with v > 10,000 shares and
+      price impact > typical.'
+  - target_field: short_volume_classification
+    target_type: str
+    description: '"directional" | "mechanical" | "mixed"'
+    source: FINRA + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon 1-min bars. Block trade detection: flag bars with v > 10,000 shares and
+      price impact > typical.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: FINRA + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed
+    source_type: varies
+    transform: 'Distillation: derived from Polygon 1-min bars. Block trade detection: flag bars with v > 10,000 shares and
+      price impact > typical.'
+- entity: AuctionData
+  spec_id: Q2:2d
+  description: Q2:2d — MOC/MOO auction imbalance and closing auction mechanics.
+  is_primary_entity: true
+  primary_source: Not available at hobby tier
+  fallback_source: Infer from opening/closing price gaps post-hoc
+  cadence: Daily (post-hoc)
+  feasibility: LOW — MOC/MOO imbalance requires exchange feeds
+  fields:
+  - target_field: moo_imbalance_shares
+    target_type: Optional[int]
+    description: ''
+    source: Gap accepted
+    source_endpoint: N/A (exchange feeds not available)
+    source_field: N/A
+    source_type: N/A
+    transform: 'GAP: Not available at current tier. Mitigate: infer auction direction from opening/closing bar price vs prior
+      reference level.'
+  - target_field: moo_imbalance_direction
+    target_type: Direction
+    description: ''
+    source: Gap accepted
+    source_endpoint: N/A (exchange feeds not available)
+    source_field: N/A
+    source_type: N/A
+    transform: 'GAP: Not available at current tier. Mitigate: infer auction direction from opening/closing bar price vs prior
+      reference level.'
+  - target_field: opening_auction_price
+    target_type: Optional[float]
+    description: ''
+    source: Gap accepted
+    source_endpoint: N/A (exchange feeds not available)
+    source_field: N/A
+    source_type: N/A
+    transform: 'GAP: Not available at current tier. Mitigate: infer auction direction from opening/closing bar price vs prior
+      reference level.'
+  - target_field: open_vs_continuous_gap
+    target_type: Optional[float]
+    description: Auction print vs. last pre-open trade
+    source: Gap accepted
+    source_endpoint: N/A (exchange feeds not available)
+    source_field: N/A
+    source_type: N/A
+    transform: 'GAP: Not available at current tier. Mitigate: infer auction direction from opening/closing bar price vs prior
+      reference level.'
+  - target_field: moc_imbalance_shares
+    target_type: Optional[int]
+    description: ''
+    source: Gap accepted
+    source_endpoint: N/A (exchange feeds not available)
+    source_field: N/A
+    source_type: N/A
+    transform: 'GAP: Not available at current tier. Mitigate: infer auction direction from opening/closing bar price vs prior
+      reference level.'
+  - target_field: moc_imbalance_direction
+    target_type: Direction
+    description: ''
+    source: Gap accepted
+    source_endpoint: N/A (exchange feeds not available)
+    source_field: N/A
+    source_type: N/A
+    transform: 'GAP: Not available at current tier. Mitigate: infer auction direction from opening/closing bar price vs prior
+      reference level.'
+  - target_field: moc_imbalance_evolution
+    target_type: str
+    description: '"growing_buy" | "growing_sell" | "stable" | "reversing"'
+    source: Gap accepted
+    source_endpoint: N/A (exchange feeds not available)
+    source_field: N/A
+    source_type: N/A
+    transform: 'GAP: Not available at current tier. Mitigate: infer auction direction from opening/closing bar price vs prior
+      reference level.'
+  - target_field: closing_auction_price
+    target_type: Optional[float]
+    description: ''
+    source: Gap accepted
+    source_endpoint: N/A (exchange feeds not available)
+    source_field: N/A
+    source_type: N/A
+    transform: 'GAP: Not available at current tier. Mitigate: infer auction direction from opening/closing bar price vs prior
+      reference level.'
+  - target_field: close_vs_continuous_gap
+    target_type: Optional[float]
+    description: ''
+    source: Gap accepted
+    source_endpoint: N/A (exchange feeds not available)
+    source_field: N/A
+    source_type: N/A
+    transform: 'GAP: Not available at current tier. Mitigate: infer auction direction from opening/closing bar price vs prior
+      reference level.'
+  - target_field: closing_auction_volume_pct
+    target_type: Optional[float]
+    description: Fraction of daily volume in close auction
+    source: Gap accepted
+    source_endpoint: N/A (exchange feeds not available)
+    source_field: N/A
+    source_type: N/A
+    transform: 'GAP: Not available at current tier. Mitigate: infer auction direction from opening/closing bar price vs prior
+      reference level.'
+  - target_field: closing_auction_volume_vs_avg
+    target_type: Optional[float]
+    description: vs. 20-day average
+    source: Gap accepted
+    source_endpoint: N/A (exchange feeds not available)
+    source_field: N/A
+    source_type: N/A
+    transform: 'GAP: Not available at current tier. Mitigate: infer auction direction from opening/closing bar price vs prior
+      reference level.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Gap accepted
+    source_endpoint: N/A (exchange feeds not available)
+    source_field: N/A
+    source_type: N/A
+    transform: 'GAP: Not available at current tier. Mitigate: infer auction direction from opening/closing bar price vs prior
+      reference level.'
+- entity: IntradayFlowPattern
+  spec_id: Q2:2e
+  description: Q2:2e — VWAP trajectory, volume distribution, and time-of-day anomalies.
+  is_primary_entity: true
+  primary_source: Derived from Polygon 1-min bars
+  fallback_source: N/A
+  cadence: Every invocation
+  feasibility: HIGH
+  fields:
+  - target_field: price_vs_vwap
+    target_type: float
+    description: Current price minus session VWAP (USD)
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed from intraday bar sequence
+    source_type: N/A
+    transform: 'Distillation: analyze 1-min bar sequence for VWAP trajectory, volume distribution patterns, and time-of-day
+      anomalies.'
+  - target_field: price_vs_vwap_pct
+    target_type: float
+    description: Same, as percentage of VWAP
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed from intraday bar sequence
+    source_type: N/A
+    transform: 'Distillation: analyze 1-min bar sequence for VWAP trajectory, volume distribution patterns, and time-of-day
+      anomalies.'
+  - target_field: vwap_trajectory
+    target_type: str
+    description: '"persistent_above" | "persistent_below" | "oscillating" |'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed from intraday bar sequence
+    source_type: N/A
+    transform: 'Distillation: analyze 1-min bar sequence for VWAP trajectory, volume distribution patterns, and time-of-day
+      anomalies.'
+  - target_field: vwap_deviation_duration_mins
+    target_type: int
+    description: Minutes continuously on current side of VWAP
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed from intraday bar sequence
+    source_type: N/A
+    transform: 'Distillation: analyze 1-min bar sequence for VWAP trajectory, volume distribution patterns, and time-of-day
+      anomalies.'
+  - target_field: volume_profile_intraday
+    target_type: str
+    description: '"front_loaded" | "back_loaded" | "u_shaped" |'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed from intraday bar sequence
+    source_type: N/A
+    transform: 'Distillation: analyze 1-min bar sequence for VWAP trajectory, volume distribution patterns, and time-of-day
+      anomalies.'
+  - target_field: volume_first_hour_pct
+    target_type: float
+    description: '% of daily volume in first hour. Normal: 20–30%.'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed from intraday bar sequence
+    source_type: N/A
+    transform: 'Distillation: analyze 1-min bar sequence for VWAP trajectory, volume distribution patterns, and time-of-day
+      anomalies.'
+  - target_field: volume_last_hour_pct
+    target_type: float
+    description: '% of daily volume in last hour. Normal: 15–25%.'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed from intraday bar sequence
+    source_type: N/A
+    transform: 'Distillation: analyze 1-min bar sequence for VWAP trajectory, volume distribution patterns, and time-of-day
+      anomalies.'
+  - target_field: volume_midday_anomaly
+    target_type: bool
+    description: True if midday volume >1.5x typical
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed from intraday bar sequence
+    source_type: N/A
+    transform: 'Distillation: analyze 1-min bar sequence for VWAP trajectory, volume distribution patterns, and time-of-day
+      anomalies.'
+  - target_field: eod_flow_direction
+    target_type: Direction
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed from intraday bar sequence
+    source_type: N/A
+    transform: 'Distillation: analyze 1-min bar sequence for VWAP trajectory, volume distribution patterns, and time-of-day
+      anomalies.'
+  - target_field: eod_flow_intensity
+    target_type: float
+    description: 0.0–1.0 strength of end-of-day directional flow
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed from intraday bar sequence
+    source_type: N/A
+    transform: 'Distillation: analyze 1-min bar sequence for VWAP trajectory, volume distribution patterns, and time-of-day
+      anomalies.'
+  - target_field: eod_flow_vs_session
+    target_type: str
+    description: '"same_direction" | "reversal" | "intensifying" | "fading"'
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed from intraday bar sequence
+    source_type: N/A
+    transform: 'Distillation: analyze 1-min bar sequence for VWAP trajectory, volume distribution patterns, and time-of-day
+      anomalies.'
+  - target_field: tod_anomalies
+    target_type: list[TimeOfDayAnomaly]
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed from intraday bar sequence
+    source_type: N/A
+    transform: 'Distillation: analyze 1-min bar sequence for VWAP trajectory, volume distribution patterns, and time-of-day
+      anomalies.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min)
+    source_field: Computed from intraday bar sequence
+    source_type: N/A
+    transform: 'Distillation: analyze 1-min bar sequence for VWAP trajectory, volume distribution patterns, and time-of-day
+      anomalies.'
+- entity: ExtendedHoursFlow
+  spec_id: Q2:2f
+  description: Q2:2f — Extended-hours trade tape and block detection signals.
+  is_primary_entity: true
+  primary_source: Polygon Stocks Starter (extended hours 1-min bars)
+  fallback_source: Alpaca
+  cadence: Every invocation
+  feasibility: HIGH
+  fields:
+  - target_field: pre_market_flow
+    target_type: Optional[FlowWindow]
+    description: ''
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, ext hours)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: filter Polygon 1-min bars for pre-market (04:00-09:30 ET) and after-hours (16:00-20:00 ET) windows.
+      Analyze volume and price patterns.'
+  - target_field: pre_market_size_breakdown
+    target_type: Optional[TradeSizeBreakdown]
+    description: ''
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, ext hours)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: filter Polygon 1-min bars for pre-market (04:00-09:30 ET) and after-hours (16:00-20:00 ET) windows.
+      Analyze volume and price patterns.'
+  - target_field: pre_market_blocks
+    target_type: list[BlockTrade]
+    description: ''
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, ext hours)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: filter Polygon 1-min bars for pre-market (04:00-09:30 ET) and after-hours (16:00-20:00 ET) windows.
+      Analyze volume and price patterns.'
+  - target_field: after_hours_flow
+    target_type: Optional[FlowWindow]
+    description: ''
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, ext hours)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: filter Polygon 1-min bars for pre-market (04:00-09:30 ET) and after-hours (16:00-20:00 ET) windows.
+      Analyze volume and price patterns.'
+  - target_field: after_hours_size_breakdown
+    target_type: Optional[TradeSizeBreakdown]
+    description: ''
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, ext hours)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: filter Polygon 1-min bars for pre-market (04:00-09:30 ET) and after-hours (16:00-20:00 ET) windows.
+      Analyze volume and price patterns.'
+  - target_field: after_hours_blocks
+    target_type: list[BlockTrade]
+    description: ''
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, ext hours)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: filter Polygon 1-min bars for pre-market (04:00-09:30 ET) and after-hours (16:00-20:00 ET) windows.
+      Analyze volume and price patterns.'
+  - target_field: ext_hours_dark_pool_pct
+    target_type: Optional[float]
+    description: ''
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, ext hours)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: filter Polygon 1-min bars for pre-market (04:00-09:30 ET) and after-hours (16:00-20:00 ET) windows.
+      Analyze volume and price patterns.'
+  - target_field: historical_confirmation_rate
+    target_type: float
+    description: What % of pre-market flow direction was confirmed at regular open (60-day trailing).
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, ext hours)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: filter Polygon 1-min bars for pre-market (04:00-09:30 ET) and after-hours (16:00-20:00 ET) windows.
+      Analyze volume and price patterns.'
+  - target_field: prior_session_confirmed
+    target_type: Optional[bool]
+    description: ''
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, ext hours)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: filter Polygon 1-min bars for pre-market (04:00-09:30 ET) and after-hours (16:00-20:00 ET) windows.
+      Analyze volume and price patterns.'
+  - target_field: flow_confidence
+    target_type: DataConfidence
+    description: ''
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, ext hours)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: filter Polygon 1-min bars for pre-market (04:00-09:30 ET) and after-hours (16:00-20:00 ET) windows.
+      Analyze volume and price patterns.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: ''
+    source: Polygon + Derived
+    source_endpoint: GET /v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{from}/{to} (1-min, ext hours)
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: filter Polygon 1-min bars for pre-market (04:00-09:30 ET) and after-hours (16:00-20:00 ET) windows.
+      Analyze volume and price patterns.'
+audit_notes: 'AUDIT 2026-03-15: Polygon snapshot provides bid/ask spread data (ticker.lastQuote). Dark pool / ATS data from
+  FINRA weeklySummary endpoint (totalWeeklyShareQuantity). FINRA consolidatedShortInterest for volume-related metrics.'
