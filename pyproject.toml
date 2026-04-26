@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "alphamind"
 version = "0.1.0"
@@ -117,6 +121,9 @@ module = [
     "apscheduler.*",
 ]
 ignore_missing_imports = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/alphamind"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
