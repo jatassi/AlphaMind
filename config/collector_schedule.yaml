@@ -1,0 +1,22 @@
+# Per-collector cron schedules — one entry per row in runner.md § Cadence
+# Times are in US/Eastern per the timezone setting below.
+# Note: polygon.equity appears twice (market-hours + off-hours cadences).
+
+timezone: US/Eastern
+
+collectors:
+  polygon.equity:            { cron: "*/15 9-16 * * mon-fri" }
+  polygon.equity_offhrs:     { cron: "0 17-23,0-8 * * mon-fri" }
+  polygon.options:           { cron: "0,30 9-16 * * mon-fri" }
+  polygon.corporate_actions: { cron: "0 6 * * mon-fri" }
+  polygon.reference:         { cron: "0 6 * * sat" }
+  fred.macro:                { cron: "0 */4 * * *" }
+  eia.energy:                { cron: "0 */4 * * *" }
+  bls.macro:                 { cron: "0 9 * * *" }
+  treasury.auctions:         { cron: "0 17 * * mon-fri" }
+  finnhub.news:              { cron: "*/30 * * * *" }
+  finnhub.calendar:          { cron: "0 6 * * *" }
+  marketaux.news:            { cron: "*/30 * * * *" }
+  sec_edgar.rss:             { cron: "*/15 * * * *" }
+  polymarket:                { cron: "*/30 * * * *" }
+  kalshi:                    { cron: "*/30 * * * *" }

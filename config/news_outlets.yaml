@@ -1,0 +1,25 @@
+# News outlet credibility tiers per docs/design/01-data-layer/external/qualitative.md § 1
+# Tier 1: wire services and premium exclusives (algorithmic news-trading targets)
+# Tier 2: major financial outlets and specialized press
+# Tier 3: financial blogs, aggregators, social-media-first outlets
+
+outlets:
+  Reuters:        { tier: tier_1 }
+  Bloomberg:      { tier: tier_1 }
+  WSJ:            { tier: tier_1 }
+  AP:             { tier: tier_1 }
+  DowJones:       { tier: tier_1 }
+  FT:             { tier: tier_1 }
+
+  CNBC:           { tier: tier_2 }
+  MarketWatch:    { tier: tier_2 }
+  Barrons:        { tier: tier_2 }
+  TheInformation: { tier: tier_2 }
+  Semafor:        { tier: tier_2 }
+  SemiAnalysis:   { tier: tier_2 }
+  ArgusMedia:     { tier: tier_2 }
+  AmericanBanker: { tier: tier_2 }
+
+  SeekingAlpha:   { tier: tier_3 }
+  ZeroHedge:      { tier: tier_3 }
+  Benzinga:       { tier: tier_3 }

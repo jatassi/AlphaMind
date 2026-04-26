@@ -1,0 +1,158 @@
+# Data source registry — per provider and per category configuration.
+# Design: docs/design/configuration-management.md § data_sources.yaml
+# Vendors: docs/design/01-data-layer/collector/data-sources.md § Module layout
+# Failure tiers: docs/design/01-data-layer/api-failure-handling.md
+
+providers:
+  polygon:
+    api_key_env: POLYGON_API_KEY
+    rate_limit_per_minute: 100
+    retry_shape: critical
+
+  fred:
+    api_key_env: FRED_API_KEY
+    rate_limit_per_minute: 120
+    retry_shape: critical
+
+  eia:
+    api_key_env: EIA_API_KEY
+    rate_limit_per_minute: 100
+    retry_shape: important
+
+  bls:
+    api_key_env: BLS_API_KEY
+    rate_limit_per_minute: 100
+    retry_shape: important
+
+  treasury:                    # open access — no API key
+    rate_limit_per_minute: 60
+    retry_shape: important
+
+  finnhub:
+    api_key_env: FINNHUB_API_KEY
+    rate_limit_per_minute: 60
+    retry_shape: important
+
+  marketaux:
+    api_key_env: MARKETAUX_API_KEY
+    rate_limit_per_day: 100
+    retry_shape: optional
+
+  sec_edgar:                   # open access — User-Agent header only
+    rate_limit_per_minute: 10
+    retry_shape: important
+
+  polymarket:                  # open access — read-only
+    rate_limit_per_minute: 30
+    retry_shape: optional
+
+  kalshi:
+    api_key_env: KALSHI_EMAIL
+    rate_limit_per_minute: 30
+    retry_shape: optional
+
+  alpaca:                      # failover provider for Q1
+    api_key_env: ALPACA_PAPER_KEY
+    rate_limit_per_minute: 200
+    retry_shape: critical
+
+  stocktwits:
+    api_key_env: STOCKTWITS_API_KEY
+    rate_limit_per_minute: 60
+    retry_shape: optional
+
+retry_shapes:
+  critical:  { attempts: 3, backoff: exponential, failover: true  }
+  important: { attempts: 2, backoff: exponential, failover: false }
+  optional:  { attempts: 1, backoff: none,        failover: false }
+
+categories:
+  q1_price_volume:
+    tier: critical
+    freshness_max_seconds: 300
+    primary: polygon
+    failover: [alpaca]
+
+  q2_order_flow:
+    tier: important
+    freshness_max_seconds: 1800
+    primary: polygon
+    failover: []
+
+  q3_derivatives:
+    tier: important
+    freshness_max_seconds: 1800
+    primary: polygon
+    failover: []
+
+  q4_short_selling:
+    tier: optional
+    freshness_max_seconds: null
+    primary: sec_edgar
+    failover: []
+
+  q5_fundamentals:
+    tier: important
+    freshness_max_seconds: 86400
+    primary: finnhub
+    failover: []
+
+  q6_macro:
+    tier: critical
+    freshness_max_seconds: 3600
+    primary: fred
+    failover: []
+
+  q8_commodities:
+    tier: critical
+    freshness_max_seconds: 3600
+    primary: eia
+    failover: []
+
+  q10_corporate_actions:
+    tier: important
+    freshness_max_seconds: 86400
+    primary: polygon
+    failover: []
+
+  q12_corporate_actions:
+    tier: important
+    freshness_max_seconds: 86400
+    primary: polygon
+    failover: []
+
+  qual1_news:
+    tier: important
+    freshness_max_seconds: 3600
+    primary: finnhub
+    failover: []
+
+  qual2_social:
+    tier: optional
+    freshness_max_seconds: null
+    primary: stocktwits
+    failover: []
+
+  qual3_prediction_markets:
+    tier: optional
+    freshness_max_seconds: null
+    primary: polymarket
+    failover: [kalshi]
+
+  qual4_earnings_commentary:
+    tier: important
+    freshness_max_seconds: 3600
+    primary: finnhub
+    failover: []
+
+  qual5_regulatory:
+    tier: important
+    freshness_max_seconds: 86400
+    primary: sec_edgar
+    failover: []
+
+  qual6_sector_catalysts:
+    tier: important
+    freshness_max_seconds: 14400
+    primary: marketaux
+    failover: []
