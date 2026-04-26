@@ -16,4 +16,5 @@ Alert the user before disabling the linter or any rule in any form — including
 
 - For mechanical changes, use Sonnet
 - For all other changes, use Opus
+- Always spawn subagents asynchronously
 
