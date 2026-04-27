@@ -1,12 +1,12 @@
 # Proposal pre-processor bundle schema
 
-Formal JSON Schema (Draft 2020-12) for the [proposal pre-processor](proposal-pre-processor.md)'s output bundle. This is the machine-readable contract that corresponds to the prose data shapes in `proposal-pre-processor.md`. The [portfolio manager](portfolio-manager.md) consumes the bundle as its primary input package alongside the synthesizer brief, portfolio state, and the guardrail state header from [`state-delivery.md`](../06-risk-guardrails/state-delivery.md).
+Formal JSON Schema (Draft 2020-12) for the [proposal pre-processor](proposal-pre-processor.md)'s output bundle. Machine-readable contract for the data shapes in `proposal-pre-processor.md`. The [portfolio manager](portfolio-manager.md) consumes the bundle alongside the synthesizer brief, portfolio state, and the guardrail state header from [`state-delivery.md`](../06-risk-guardrails/state-delivery.md).
 
 ## Scope
 
 - **Contract surface:** one pre-processor invocation produces one bundle matching this schema.
-- **Inner records preserved:** `position_assessments[].assessment`, `pending_order_assessments[].pending_order_assessment`, `portfolio_level_observations`, `recommendations[].recommendation`, and `watchlist[]` entries are byte-for-byte the records the analyst and strategist emitted. They validate against [`analyst-output-schema.md`](analyst-output-schema.md) and [`strategist-output-schema.md`](strategist-output-schema.md) unmodified — the pre-processor does not edit them.
-- **Modes:** the bundle's `strategist_section.mode` and `analyst_section.mode` mirror the agents' modes. Halt mode produces `strategist_section.mode = "defensive_posture"` and `analyst_section.mode = "watchlist"`; the schema carries the agents' mode-conditional structure verbatim.
+- **Inner records preserved:** `position_assessments[].assessment`, `pending_order_assessments[].pending_order_assessment`, `portfolio_level_observations`, `recommendations[].recommendation`, and `watchlist[]` entries are byte-for-byte the records the analyst and strategist emitted. They validate against [`analyst-output-schema.md`](analyst-output-schema.md) and [`strategist-output-schema.md`](strategist-output-schema.md) unmodified.
+- **Modes:** `strategist_section.mode` and `analyst_section.mode` mirror the agents' modes. Halt mode produces `strategist_section.mode = "defensive_posture"` and `analyst_section.mode = "watchlist"`; the schema carries the agents' mode-conditional structure verbatim.
 - **Empty-input semantics:** all arrays accept zero-length values. A degenerate bundle with no proposals and no positions is structurally valid.
 
 ## Cross-references
@@ -427,24 +427,24 @@ Formal JSON Schema (Draft 2020-12) for the [proposal pre-processor](proposal-pre
 
 ## Notes on cross-field invariants
 
-Some invariants cannot be expressed cleanly in JSON Schema and must be enforced by the validation pipeline:
+Enforced by the validation pipeline rather than the schema:
 
-- **`invocation_id` consistency.** The bundle's `invocation_id` must equal the inner agent records' `invocation_id` values. The pre-processor reads both agents' outputs from the same invocation and copies the ID forward.
-- **Mode consistency with halt state.** When `strategist_section.mode = "defensive_posture"`, `analyst_section.mode` is `"watchlist"`; halt is a system-wide state that affects both agents simultaneously. When either is in its halt-mode value, the other's halt-mode value is required.
-- **Conflict cross-references resolve in-bundle.** Every `with_recommendation_id` value must match a `recommendation_id` of some `analyst_section.recommendations[].recommendation`. Every `with_assessment_id` must match an `assessment_id` of some `strategist_section.position_assessments[].assessment`. Every `with_pending_order_assessment_id` must match a `pending_order_assessment_id` of some `strategist_section.pending_order_assessments[].pending_order_assessment` whose `order_type` is `entry_limit` or `entry_stop_limit`.
-- **Mirror symmetry of conflicts.** A conflict appearing on the analyst side must have a corresponding entry on the strategist side with the same `underlying` and the same `conflict_type`. An analyst-side conflict using `with_assessment_id: "SA-N"` mirrors a conflict on `position_assessments[].pre_processor_annotations.conflicts` with `with_recommendation_id` pointing back; an analyst-side conflict using `with_pending_order_assessment_id: "SA-ORD-N"` mirrors a conflict on `pending_order_assessments[].pre_processor_annotations.conflicts` with `with_recommendation_id` pointing back.
-- **Pending-order conflict scope.** Conflict annotations on `pending_order_assessments` are populated only when `order_type` is `entry_limit` or `entry_stop_limit`. Bracket-leg pending orders (`bracket_target`, `bracket_price_stop`, `bracket_time_stop`, `bracket_event_stop`) carry an empty `conflicts` array — their conflicts are captured by the parent position's `position_assessment`.
-- **`combined_set_impact.basis.analyst_proposal_ids` consistency.** Every ID in this array must match a `recommendation_id` of some `analyst_section.recommendations[].recommendation`; the array's length need not equal `analyst_section.recommendations` length only when watchlist mode renders both sides empty.
-- **`combined_set_impact.basis.strategist_action_ids` consistency.** Every ID must match an `assessment_id` of some position assessment whose `recommended_action ≠ "hold"`. The complement (assessments where `recommended_action = "hold"`) is counted in `strategist_holds_excluded_count`; the sum equals `strategist_section.position_assessments` length.
-- **`combined_set_impact.breaches[].rule` correspondence.** Every breach entry's `rule` must match the `rule` of a `per_rule_entry` whose `status` is `FAIL`. Conversely, every `per_rule_entry` with `status: FAIL` must have a corresponding `breaches[]` entry.
-- **Contributor IDs valid.** `contributors[].proposal_id` values must match either an analyst recommendation ID or a strategist assessment ID present elsewhere in the bundle.
-- **`conviction_distribution.total` equals sum.** The sum of `by_level` counts must equal `total` and equal the length of `analyst_section.recommendations` (or zero in watchlist mode).
-- **`book_health_summary.total` consistency.** Equals the length of `strategist_section.position_assessments`. The sum of `by_thesis_status` counts must equal `total`; same for `by_recommended_action`.
+- **`invocation_id` consistency.** The bundle's `invocation_id` equals the inner agent records' `invocation_id`. The pre-processor copies the ID forward.
+- **Mode consistency with halt state.** Halt is system-wide: when `strategist_section.mode = "defensive_posture"`, `analyst_section.mode` is `"watchlist"`. When either is in its halt-mode value, the other's halt-mode value is required.
+- **Conflict cross-references resolve in-bundle.** Every `with_recommendation_id` matches a `recommendation_id` of some `analyst_section.recommendations[].recommendation`. Every `with_assessment_id` matches an `assessment_id` of some `strategist_section.position_assessments[].assessment`. Every `with_pending_order_assessment_id` matches a `pending_order_assessment_id` of some `strategist_section.pending_order_assessments[].pending_order_assessment` with `order_type` `entry_limit` or `entry_stop_limit`.
+- **Mirror symmetry of conflicts.** A conflict on the analyst side has a corresponding entry on the strategist side with the same `underlying` and `conflict_type`. An analyst-side `with_assessment_id: "SA-N"` mirrors a strategist-side `with_recommendation_id` pointing back; analyst-side `with_pending_order_assessment_id: "SA-ORD-N"` mirrors on `pending_order_assessments[].pre_processor_annotations.conflicts`.
+- **Pending-order conflict scope.** Conflict annotations on `pending_order_assessments` populate only when `order_type` is `entry_limit` or `entry_stop_limit`. Bracket-leg pending orders carry an empty `conflicts` array — their conflicts are captured by the parent position's assessment.
+- **`combined_set_impact.basis.analyst_proposal_ids` consistency.** Every ID matches a `recommendation_id` of some `analyst_section.recommendations[].recommendation`.
+- **`combined_set_impact.basis.strategist_action_ids` consistency.** Every ID matches an `assessment_id` of a position assessment whose `recommended_action ≠ "hold"`. Hold assessments are counted in `strategist_holds_excluded_count`; the sum equals `strategist_section.position_assessments` length.
+- **`combined_set_impact.breaches[].rule` correspondence.** Every breach entry's `rule` matches the `rule` of a `per_rule_entry` whose `status` is `FAIL`, and every `per_rule_entry` with `status: FAIL` has a corresponding `breaches[]` entry.
+- **Contributor IDs valid.** `contributors[].proposal_id` values match either an analyst recommendation ID or a strategist assessment ID present elsewhere in the bundle.
+- **`conviction_distribution.total` equals sum.** The sum of `by_level` counts equals `total` and equals `analyst_section.recommendations` length (zero in watchlist mode).
+- **`book_health_summary.total` consistency.** Equals `strategist_section.position_assessments` length. The sum of `by_thesis_status` counts equals `total`; same for `by_recommended_action`.
 - **`remedy_flagged_count` consistency.** Equals the count of `strategist_section.position_assessments[].assessment.remedy_flag` populated entries.
-- **`per_rule[].rule` set membership.** Rule identifiers must come from the canonical registry in [`rules-and-limits.md`](../06-risk-guardrails/rules-and-limits.md) and the active profile's rule subset.
+- **`per_rule[].rule` set membership.** Rule identifiers come from the canonical registry in [`rules-and-limits.md`](../06-risk-guardrails/rules-and-limits.md) and the active profile's rule subset.
 
 ---
 
 ## Evolution
 
-When new annotation types are added (e.g., pending-order conflict auto-detection, additional aggregate observations), they are added here first. This schema is the authoritative contract; prose updates in [`proposal-pre-processor.md`](proposal-pre-processor.md) follow.
+New annotation types are added here first; this schema is the authoritative contract. Prose updates in [`proposal-pre-processor.md`](proposal-pre-processor.md) follow.
