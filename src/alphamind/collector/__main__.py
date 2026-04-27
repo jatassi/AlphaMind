@@ -26,9 +26,7 @@ def _parse_args() -> argparse.Namespace:
 
     sub.add_parser("run", help="Start the long-running scheduler (blocks).")
 
-    bootstrap_p = sub.add_parser(
-        "bootstrap", help="One-time historical backfill."
-    )
+    bootstrap_p = sub.add_parser("bootstrap", help="One-time historical backfill.")
     bootstrap_p.add_argument(
         "--only",
         metavar="VENDOR",

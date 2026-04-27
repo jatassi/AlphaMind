@@ -51,9 +51,7 @@ log = logging.getLogger(__name__)
 # Known vendor names for --only dispatch validation
 # ---------------------------------------------------------------------------
 
-_KNOWN_VENDORS: frozenset[str] = frozenset(
-    {"polygon", "fred", "eia", "treasury", "bls", "finnhub"}
-)
+_KNOWN_VENDORS: frozenset[str] = frozenset({"polygon", "fred", "eia", "treasury", "bls", "finnhub"})
 
 # ---------------------------------------------------------------------------
 # FRED daily / monthly wrappers
@@ -191,12 +189,7 @@ def _run_step(label: str, fn: Any, *args: Any, **kwargs: Any) -> None:
         log.info("bootstrap: %s — done (%.1fs)", label, elapsed)
     except Exception:
         elapsed = time.monotonic() - t0
-        log.error(
-            "bootstrap: %s — failed after %.1fs",
-            label,
-            elapsed,
-            exc_info=True,
-        )
+        log.exception("bootstrap: %s — failed after %.1fs", label, elapsed)
 
 
 # ---------------------------------------------------------------------------
@@ -221,9 +214,7 @@ def run_all(only_vendor: str | None = None) -> None:
         If ``only_vendor`` is not a recognised vendor name.
     """
     if only_vendor is not None and only_vendor not in _KNOWN_VENDORS:
-        raise ValueError(
-            f"unknown vendor {only_vendor!r}; valid values: {sorted(_KNOWN_VENDORS)}"
-        )
+        raise ValueError(f"unknown vendor {only_vendor!r}; valid values: {sorted(_KNOWN_VENDORS)}")
 
     log.info("bootstrap: starting (only_vendor=%r)", only_vendor)
 
@@ -231,7 +222,7 @@ def run_all(only_vendor: str | None = None) -> None:
         return only_vendor is None or only_vendor == vendor
 
     # ------------------------------------------------------------------
-    # Steps 1–3 — Polygon: seed → reference → corporate actions → equity
+    # Steps 1-3 - Polygon: seed -> reference -> corporate actions -> equity
     # ------------------------------------------------------------------
     if _runs("polygon"):
         _run_step("assets.yaml seed", _seed_asset_universe)

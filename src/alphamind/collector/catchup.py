@@ -22,4 +22,4 @@ def run_all() -> None:
             fn(since=None)
             log.info("catch-up: collector=%s done", collector_id)
         except Exception:
-            log.error("catch-up: collector=%s error", collector_id, exc_info=True)
+            log.exception("catch-up: collector=%s error", collector_id)

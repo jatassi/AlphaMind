@@ -60,27 +60,35 @@ def _finnhub_calendar_fanout() -> None:
 # ---------------------------------------------------------------------------
 
 COLLECTORS: dict[str, Callable[..., object]] = {
-    "polygon.equity":            collect_universe_bars,
-    "polygon.equity_offhrs":     collect_universe_bars,
-    "polygon.options":           collect_options_chains,
+    "polygon.equity": collect_universe_bars,
+    "polygon.equity_offhrs": collect_universe_bars,
+    "polygon.options": collect_options_chains,
     "polygon.corporate_actions": collect_corporate_actions,
-    "polygon.reference":         collect_reference,
-    "fred.macro":                fred_macro_collect_series,
-    "eia.energy":                eia_energy_collect_series,
-    "bls.macro":                 bls_macro_collect_series,
-    "treasury.auctions":         collect_auctions,
-    "finnhub.news":              finnhub_news_collect_news,
-    "finnhub.calendar":          _finnhub_calendar_fanout,
-    "marketaux.news":            marketaux_news_collect_news,
-    "sec_edgar.rss":             collect_8k_filings,
-    "polymarket":                polymarket_collect_snapshots,
-    "kalshi":                    kalshi_collect_snapshots,
+    "polygon.reference": collect_reference,
+    "fred.macro": fred_macro_collect_series,
+    "eia.energy": eia_energy_collect_series,
+    "bls.macro": bls_macro_collect_series,
+    "treasury.auctions": collect_auctions,
+    "finnhub.news": finnhub_news_collect_news,
+    "finnhub.calendar": _finnhub_calendar_fanout,
+    "marketaux.news": marketaux_news_collect_news,
+    "sec_edgar.rss": collect_8k_filings,
+    "polymarket": polymarket_collect_snapshots,
+    "kalshi": kalshi_collect_snapshots,
 }
 
 # Vendors — each gets its own single-worker executor
 _VENDORS = [
-    "polygon", "fred", "eia", "bls", "treasury",
-    "finnhub", "marketaux", "sec_edgar", "polymarket", "kalshi",
+    "polygon",
+    "fred",
+    "eia",
+    "bls",
+    "treasury",
+    "finnhub",
+    "marketaux",
+    "sec_edgar",
+    "polymarket",
+    "kalshi",
 ]
 
 _SCHEDULE_PATH = Path(__file__).parents[3] / "config" / "collector_schedule.yaml"
@@ -111,9 +119,7 @@ def _configure_logging() -> None:
             backupCount=30,
             encoding="utf-8",
         )
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
         root.addHandler(handler)
 
 
@@ -135,7 +141,7 @@ def _make_job(cid: str, callable_fn: Callable[..., object]) -> Callable[[], None
             callable_fn()
             log.info("collector=%s done", cid)
         except Exception:
-            log.error("collector=%s error", cid, exc_info=True)
+            log.exception("collector=%s error", cid)
 
     return _job
 

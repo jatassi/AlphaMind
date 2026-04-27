@@ -12,7 +12,6 @@ from unittest.mock import MagicMock, patch
 
 import yaml
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -53,8 +52,16 @@ def test_build_scheduler_creates_one_executor_per_vendor():
     sched = build_scheduler()
     executor_names = set(sched._executors.keys())  # APScheduler 3.x internal
     expected_vendors = {
-        "polygon", "fred", "eia", "bls", "treasury",
-        "finnhub", "marketaux", "sec_edgar", "polymarket", "kalshi",
+        "polygon",
+        "fred",
+        "eia",
+        "bls",
+        "treasury",
+        "finnhub",
+        "marketaux",
+        "sec_edgar",
+        "polymarket",
+        "kalshi",
     }
     assert expected_vendors.issubset(executor_names), (
         f"Missing executors: {expected_vendors - executor_names}"
@@ -74,9 +81,7 @@ def test_register_jobs_registers_one_job_per_yaml_entry():
 
     yaml_keys = _yaml_collector_keys()
     job_ids = {job.id for job in sched.get_jobs()}
-    assert job_ids == set(yaml_keys), (
-        f"Registered job IDs {job_ids} != YAML keys {set(yaml_keys)}"
-    )
+    assert job_ids == set(yaml_keys), f"Registered job IDs {job_ids} != YAML keys {set(yaml_keys)}"
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +117,7 @@ def test_finnhub_calendar_wrapper_calls_all_four_in_order():
     def _make_side(name: str):
         def _fn(*args, **kwargs):
             call_order.append(name)
+
         return _fn
 
     # Patch in the scheduler module's namespace (where the names are bound)
@@ -134,6 +140,7 @@ def test_finnhub_calendar_wrapper_calls_all_four_in_order():
         ),
     ):
         from alphamind.collector.scheduler import _finnhub_calendar_fanout
+
         _finnhub_calendar_fanout()
 
     assert call_order == ["earnings", "economic", "ipo", "fda"], (
@@ -154,9 +161,8 @@ def test_catchup_run_all_calls_every_collector_with_since_none():
 
     with patch("alphamind.collector.catchup.COLLECTORS", mock_fns):
         from alphamind.collector.catchup import run_all
+
         run_all()
 
     for key, mock in mock_fns.items():
-        mock.assert_called_once_with(since=None), (
-            f"Expected {key} to be called with since=None"
-        )
+        mock.assert_called_once_with(since=None), (f"Expected {key} to be called with since=None")

@@ -42,13 +42,14 @@ def _patch_all_vendors():
 
 def test_run_all_is_callable():
     patches = _patch_all_vendors()
-    started = {k: p.__enter__() for k, p in patches.items()}
+    for p in patches.values():
+        p.__enter__()
     try:
         from alphamind.collector.bootstrap import run_all
 
         run_all()
     finally:
-        for k, p in patches.items():
+        for p in patches.values():
             p.__exit__(None, None, None)
 
 
@@ -384,9 +385,11 @@ def test_progress_logging_emits_start_and_end(caplog):
     assert any("polygon.reference" in m and "start" in m.lower() for m in messages), (
         "expected start log for polygon.reference"
     )
-    assert any("polygon.reference" in m and ("done" in m.lower() or "complete" in m.lower() or "finish" in m.lower()) for m in messages), (
-        "expected done log for polygon.reference"
-    )
+    assert any(
+        "polygon.reference" in m
+        and ("done" in m.lower() or "complete" in m.lower() or "finish" in m.lower())
+        for m in messages
+    ), "expected done log for polygon.reference"
 
 
 # ---------------------------------------------------------------------------

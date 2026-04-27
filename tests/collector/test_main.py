@@ -24,6 +24,7 @@ def test_bootstrap_subcommand_routes_to_run_all():
         mock_parse.return_value.only = None
 
         from alphamind.collector.__main__ import main
+
         main()
 
     mock_bootstrap.assert_called_once_with(only_vendor=None)
@@ -38,6 +39,7 @@ def test_bootstrap_subcommand_passes_only_vendor():
         mock_parse.return_value.only = "polygon"
 
         from alphamind.collector.__main__ import main
+
         main()
 
     mock_bootstrap.assert_called_once_with(only_vendor="polygon")
@@ -56,6 +58,7 @@ def test_catchup_subcommand_routes_to_catchup_run_all():
         mock_parse.return_value.subcommand = "catch-up"
 
         from alphamind.collector.__main__ import main
+
         main()
 
     mock_catchup.assert_called_once_with()
@@ -74,6 +77,7 @@ def test_run_subcommand_routes_to_start_blocking():
         mock_parse.return_value.subcommand = "run"
 
         from alphamind.collector.__main__ import main
+
         main()
 
     mock_start.assert_called_once_with()
