@@ -58,7 +58,7 @@ In scope: under `src/alphamind/analysis/domain_researchers/` —
 Out of scope:
 - The parallel orchestrator that calls this runner three times (story 11).
 - The end-to-end verification (story 12).
-- Per-invocation-type lookback / max-headlines tuning (deferred to per-run-type pipeline scoping in the backlog).
+- Per-invocation-type lookback / max-headlines tuning — wired via the [`run_types/` overlay](../../../design/configuration-management.md#run_typestriggeryaml) when the resolver lands; this story uses the default lookback.
 
 ## Notes
 

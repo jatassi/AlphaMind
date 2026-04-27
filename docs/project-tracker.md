@@ -37,6 +37,7 @@ Features below have full requirements landed in the design docs and zero outstan
 
 ### Analysis layer
 
+- [Adaptive research](design/03-analysis-layer/adaptive-research.md)
 - [Synthesizer](design/03-analysis-layer/synthesizer.md)
 - Domain researchers ([tech-semis](design/03-analysis-layer/domain-researchers/tech-semis.md), [financials](design/03-analysis-layer/domain-researchers/financials.md), [energy](design/03-analysis-layer/domain-researchers/energy.md))
 
@@ -314,34 +315,6 @@ _New infrastructure, cross-cutting consolidations, or UI surfaces._
 - **Medium → large.** All small→medium criteria, plus: (g) Execution-quality calibration validated — paper-harness slippage estimate within posterior band of realized live execution drag (the harness-is-calibrated principle made operational at the tier where market impact starts to matter). (h) Regime adaptation exercised — the operating window covered at least one regime transition with the strategist→PM remedy mechanism executed without drawdown tier-2 escalation.
 
 The thresholds are concrete, deterministic, and reachable from observed paper-and-then-live performance — calibrated, not pessimistic per the harness principle. The operator confirmation step uses the existing `/feedback-review` surface; the graduation artifact is the saved review note keyed to the tier transition. No new component names are introduced; every cited mechanism already exists in the design.
-
-#### Per-run-type pipeline scoping _(Pipeline orchestration)_
-
-- [ ] Define tailored pipeline configurations per invocation type (pre-open, intraday, pre-close, after-hours): agent depth, adaptive-research budget, qualitative sweep breadth. Cross-cuts the run_types/ overlay shape in configuration-management. _Source: [design/README.md](design/README.md), [configuration-management.md](design/configuration-management.md), [adaptive-research.md](design/03-analysis-layer/adaptive-research.md)._
-
-**Unblocks.**
-
-- [design/README.md](design/README.md) — co-blockers: _Weekend invocation cadence_.
-- [configuration-management.md](design/configuration-management.md) — co-blockers: _Profile-boundary detector_.
-- [adaptive-research.md](design/03-analysis-layer/adaptive-research.md) — sole remaining blocker.
-
-**Context.** The README's TODO (`design/README.md` line 47) calls for tailored configurations per invocation: pre-open expanded research, pre-close portfolio review and thesis invalidation, intraday monitoring with selective deep dives, after-hours light. `configuration-management.md` (lines 469–471) defers this as `run_types/` directory parallel to `modes/`, composed at resolution time based on the firing trigger. The scheduler already distinguishes triggers (`scheduler.yaml`: `market_hours_rolling`, `off_hours_rolling`, `pre_open`, `pre_close`, `weekend`), and the `invocations` table already records `run_type` (`command-center.md` line 141). The cost model (`cost-and-rate-limit-modeling.md`) treats every invocation as identical Opus-trio + Sonnet-7 today, with weekly Opus as the binding constraint — non-uniform run-type costs land directly on that constraint.
-
-**Options.**
-
-1. **`run_types/` overlay bundle, deterministic knobs only** — Add a fifth named bundle alongside profile/regime/mode/overlay. Each `run_types/<trigger>.yaml` carries deterministic scheduler-side knobs the resolver composes onto the resolved snapshot: adaptive-researcher `cumulative_tool_call_limit` and `cumulative_tool_token_budget`, qualitative-research news-digest `top_n_per_sector`, agent `latency_budget_seconds` and `output_token_budget`, and an `enabled_agents` list (e.g., omit adaptive on after-hours). Decision-layer agent prompts are unchanged; agent depth scales structurally via deterministic budgets (output-token caps, tool-call caps, retrieval-store availability) rather than via prompt instructions about run type.
-2. **Single `run_type` field on the resolved snapshot, agents read it from the prompt** — Resolver injects `run_type` as a single string; analyst/strategist/PM prompts branch on it ("on pre-open, expand counterargument depth", "on after-hours, prioritize thesis invalidation review"). Determinism stays in the scheduler; behavioral shaping is delegated to the LLM prompts.
-3. **Single profile, no per-run-type variation** — Treat every invocation identically. Anchored runs already have implicit emphasis from the synthesizer brief content (overnight news dominates pre-open, intraday flow dominates rolling, end-of-day price action dominates pre-close). The model decides per-invocation what to emphasize from the data.
-4. **Hybrid: `run_types/` overlay for budgets + agent-roster gate, no behavioral prompt branching** — Combination of A's structural scoping with explicit agent-roster control. The `run_types/` bundle decides which agents fire (after-hours skips adaptive-researcher entirely), and sets deterministic budgets, but no agent prompt receives a "you are running on a pre-open invocation" instruction. Behavioral consequences flow from the brief's data composition and the budget envelope.
-
-**Steelmans.**
-
-- *Option A.* `run_types/` is the natural extension of the existing four-bundle composition model. The bundle abstraction already proves itself for profile/regime/mode/overlay; adding a fifth dimension keyed off the firing trigger is mechanical. Determinism stays where determinism belongs — pipeline scheduler decides budgets, not the agents. The cost model gets first-class hooks: a weekend overlay can drop adaptive-researcher token budget by 80% without touching the analysis-layer prompt. Calibrated paper-trading data informs each run-type budget independently. Avoids the failure mode of LLM agents anchoring on "you're a pre-open invocation, expand depth" — they already get richer briefs on pre-open from data composition (overnight headlines, pre-market flow, FOMC overnight moves), and the structural budget envelope channels that into longer outputs without anchoring on numeric targets in the prompt.
-- *Option B.* Cheapest to implement — one config field, prompt edits. Agents are already reasoning about market context; telling them "this is pre-open" is no more anchoring than the regime label is. The synthesizer brief plus regime label already shapes behavior heavily; one more contextual flag fits in.
-- *Option C.* Honors *simplify before building*. The system runs a deterministic pipeline whose inputs differ by trigger time; that's all the differentiation needed. The pre-open brief has overnight news the 11:30 brief doesn't; the pre-close brief sees full-day flow the 9:30 brief can't. Run-type scoping is solving a problem the brief composition already solves. No new bundle, no new prompt branches, no per-run-type calibration table to maintain.
-- *Option D.* Compromise. Captures A's deterministic-cost benefit and explicit agent-roster gate (after-hours can omit adaptive entirely, dropping ~25 tool-calls and a Sonnet call from the workload) while explicitly refusing to inject run-type into LLM prompts — the user's anti-anchoring constraint applied at design time rather than as a fix later. The brief still shapes agent behavior; the budget envelope shapes output volume; the roster controls which agents even run.
-
-**Recommendation.** **Option D**. Use `run_types/` overlays for two deterministic surfaces: the agent roster (which agents fire on this trigger) and the budget envelope (per-agent latency/output-token budgets, adaptive-researcher tool-call and token caps, qualitative news-digest depth). Author one file per trigger key already declared in `scheduler.yaml`. No agent prompt receives a run-type instruction — behavioral shaping flows from the synthesizer brief's data composition and the structural budget envelope. This honors the cost-model hook (weekly Opus needs run-type-conditional accounting), avoids LLM anchoring on numeric targets, and respects the user's *simplify before building* constraint by keeping LLM prompts uniform across triggers.
 
 #### Pipeline/monitor wire format _(Command center)_
 

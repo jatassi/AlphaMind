@@ -89,7 +89,7 @@ Out of scope:
 
 The sector membership for ticker matching is read from `config/sectors.yaml` per story 02. The loader takes the sector membership as a constructor argument (or accepts a `sectors_config` parameter on the entry function) so tests can inject fixture membership without YAML.
 
-The 24-hour default lookback window on headlines is informed by `qualitative-research.md § News digest` (which uses an inter-invocation window). Domain researchers run on the same invocation cadence; 24 hours is a reasonable default that sees overnight developments. The harness can override per invocation type (pre-open might want longer; intraday might want shorter) once `pipeline-orchestration` per-run-type scoping lands (a deferred backlog item).
+The 24-hour default lookback window on headlines is informed by `qualitative-research.md § News digest` (which uses an inter-invocation window). Domain researchers run on the same invocation cadence; 24 hours is a reasonable default that sees overnight developments. The harness can override per invocation type (pre-open might want longer; intraday might want shorter) via the [`run_types/` overlay](../../../design/configuration-management.md#run_typestriggeryaml) once the resolver wiring lands.
 
 The `event_calendar` row may carry sectors as a `tags` field, an `applicable_sectors` array, or a separate join table — depending on the existing schema. Read the actual schema (story 03b of the collector work tree's persistence layer) and align. If the column does not exist, do not invent it silently — surface the gap as part of dispatch and add it as a small Alembic migration step within this story's scope.
 

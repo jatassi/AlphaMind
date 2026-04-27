@@ -44,7 +44,7 @@ The pipeline runs on a fixed schedule tied to US market hours (NYSE: 9:30 AM –
 
 **Overlap handling:** When an anchored run coincides with a rolling interval (e.g., pre-close at 3:30 overlaps the 2-hour cadence), the anchored run takes precedence and the rolling run is skipped. No double-invocations within 30 minutes.
 
-**TODO — Refine scope per run type:** Tailored pipeline configurations per invocation type. Pre-open warrants expanded adaptive research budget and broader qualitative sweep; pre-close prioritizes portfolio review and thesis invalidation; intraday runs are monitoring-heavy with selective deep dives; after-hours runs can be lighter. Scoped profiles also drive the cost model.
+**Per-run-type scoping.** Each invocation type carries a tailored pipeline configuration via the [`run_types/` overlay](configuration-management.md#run_typestriggeryaml): an agent roster (which of the nine LLM agents fire on this trigger) plus a budget envelope (per-agent latency and output-token caps, adaptive-research tool-call and token caps, qualitative news-digest depth). Pre-open and weekend-Sunday carry full rosters with expanded adaptive budget; pre-close and market-hours rolling carry full rosters at normal budget; off-hours rolling and weekend-Saturday omit the adaptive researcher entirely. Behavioral shaping flows from the synthesizer brief's data composition and the structural budget envelope — no agent prompt receives a run-type instruction.
 
 **Total daily invocations:** ~8–10 per trading day (4 market + 2 anchored + 3–4 off hours).
 
