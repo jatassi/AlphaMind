@@ -1,13 +1,13 @@
 # OMS command schema
 
-Formal JSON Schema (Draft 2020-12) for the five OMS command types that make up the engine's write API. Machine-readable counterpart to the prose field lists in [oms-commands.md](oms-commands.md). Every command submitted to the OMS — regardless of origin — must validate against this schema before processing.
+Formal JSON Schema (Draft 2020-12) for the five OMS command types that make up the engine's write API. Machine-readable counterpart to [oms-commands.md](oms-commands.md). Every command submitted to the OMS — regardless of origin — must validate against this schema before processing.
 
 ## Scope
 
 - **Contract surface:** one OMS command record. Commands compose into the `commands` array of an envelope. Two envelope schemas consume this one: [pm-envelope-schema.md](../04-decision-layer/pm-envelope-schema.md) (PM-originated, validated by the LLM output validator) and [engine-envelope-schema.md](engine-envelope-schema.md) (continuous-monitor-originated, validated by the OMS command intake layer).
-- **LLM vs. infrastructure populated:** `command_id` is assigned by the OMS command intake layer at envelope receipt from the envelope's structural position (see [oms-command-ids.md](../oms-command-ids.md)). The LLM produces envelopes with `command_id` absent; infrastructure fills the field. The persisted record always carries `command_id`; the LLM output validator checks PM envelopes with `command_id` omitted per the [PM envelope schema](../04-decision-layer/pm-envelope-schema.md). All other fields are produced by the command's originator.
+- **LLM vs. infrastructure populated:** `command_id` is assigned by the OMS command intake layer at envelope receipt from the envelope's structural position (see [oms-command-ids.md](../oms-command-ids.md)). The LLM produces envelopes with `command_id` absent; infrastructure fills it. Persisted records always carry `command_id`; the LLM output validator checks PM envelopes with `command_id` omitted per the [PM envelope schema](../04-decision-layer/pm-envelope-schema.md). All other fields come from the command's originator.
 - **Command origins:** both PM-originated and engine-originated commands validate against this schema. Per-origin restrictions on the `risk_management_subtype` value for CLOSE commands live in the envelope schemas.
-- **Feature-flag interaction:** the schema is a superset — it permits OPEN and ADD for options and strategies. The guardrail validation layer rejects commands whose instrument class is disabled by the active [portfolio profile](../06-risk-guardrails/rules-and-limits.md#dual-portfolio-profiles), with rejection reason `feature_disabled`.
+- **Feature-flag interaction:** the schema is a superset — permits OPEN and ADD for options and strategies. The guardrail validation layer rejects commands whose instrument class is disabled by the active [portfolio profile](../06-risk-guardrails/rules-and-limits.md#dual-portfolio-profiles), with rejection reason `feature_disabled`.
 
 ## Cross-references
 
@@ -586,9 +586,9 @@ Enum values and structural constraints trace back to these authoritative sources
 
 Invariants enforced by the validation pipeline, OMS command intake layer, or guardrail layer (not expressible in JSON Schema):
 
-- **Every bracket leg must have a corresponding thesis component** (mandatory coverage per [thesis-model.md](thesis-model.md#mandatory-coverage)). For OPEN: each `invalidation_legs[]` entry must have a matching `invalidation_rationale` component with a `linked_leg` pointing to it, plus at least one `entry_rationale` component and one `target_rationale` component. For ADJUST: after adjustment, every remaining bracket leg must still have a thesis component — unchanged from prior or updated via `thesis_component_updates`. Enforced at command receipt.
+- **Every bracket leg must have a corresponding thesis component** (mandatory coverage per [thesis-model.md](thesis-model.md#mandatory-coverage)). For OPEN: each `invalidation_legs[]` entry must have a matching `invalidation_rationale` component with a `linked_leg` pointing to it, plus at least one `entry_rationale` component and one `target_rationale` component. For ADJUST: after adjustment, every remaining bracket leg must still have a thesis component — unchanged or updated via `thesis_component_updates`. Enforced at command receipt.
 
-- **`position_id` must reference an open position** in the portfolio state at submission time. Applies to `close_command`, `adjust_command`, `add_command`.
+- **`position_id` must reference an open position** in portfolio state at submission time. Applies to `close_command`, `adjust_command`, `add_command`.
 
 - **`order_id` must reference an order in a cancellable state** (pending, not filled or expired). Applies to `cancel_command`.
 

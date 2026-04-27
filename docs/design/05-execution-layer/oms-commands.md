@@ -138,58 +138,58 @@ Withdraw a pending order that hasn't filled. Used when conditions have changed a
 
 ### ADD
 
-Increase an existing position — add shares or contracts because conviction has increased. Distinct from OPEN because it modifies an existing position rather than creating a new one: it changes the average cost basis, it references the existing thesis (with a new component), and it may modify the bracket.
+Increase an existing position — add shares or contracts because conviction has increased. Distinct from OPEN because it modifies an existing position rather than creating a new one: it changes the average cost basis, references the existing thesis (with a new component), and may modify the bracket.
 
 **Required parameters:**
 
 - **Position ID:** which position to add to
 - **Additional quantity:** shares/contracts to add, and equivalent dollar value
 - **Entry order:** order type and price parameters for the addition
-- **Thesis addition component:** a new thesis component explaining why conviction increased — what signal strengthened, what new information supports a larger position. This is appended to the existing thesis, not a replacement
+- **Thesis addition component:** a new thesis component explaining why conviction increased — what signal strengthened, what new information supports a larger position. Appended to the existing thesis, not a replacement
 - **Bracket adjustment** (optional but recommended): updated stop and/or target to reflect the new average cost basis. If the stop was set at a specific percentage below entry, adding at a different price changes the risk profile — the PM should explicitly decide whether to maintain the existing stop or adjust it
 
 **Guardrail validation:**
 
-- Same as OPEN: position size (now the combined total) against per-position limits, sector concentration, gross/net exposure, available capital
-- For options and strategies: greek computation at validation time follows the same process as OPEN (see "Greek computation at validation time" in the OPEN section). The guardrail layer computes greeks for the proposed addition and combines them with the existing position's current greeks to assess the enlarged position's total delta-adjusted exposure. The validation response includes the computed greeks for the addition
-- The enlarged position doesn't exceed any limit that the original position was within
+- Same as OPEN: combined position size against per-position limits, sector concentration, gross/net exposure, available capital
+- Options and strategies: greek computation at validation time follows the OPEN process. The guardrail layer computes greeks for the proposed addition and combines them with the existing position's current greeks to assess the enlarged position's total delta-adjusted exposure. The validation response includes the computed greeks for the addition
+- The enlarged position doesn't exceed any limit the original was within
 
-**On success:** the addition order is routed to the broker adapter. When it fills, the position's share count, average cost basis, and market value are updated. If bracket adjustments were specified, the existing protective orders are replaced. The thesis is updated with the new addition component. For options and strategies, the position's greeks are updated to reflect the combined position (existing greeks + addition greeks) and will be refreshed at the next scheduled greek refresh.
+**On success:** the addition order routes to the broker adapter. On fill, the position's share count, average cost basis, and market value update. Specified bracket adjustments replace existing protective orders. The thesis updates with the addition component. For options and strategies, position greeks update to reflect the combined position and refresh at the next scheduled greek refresh.
 
 ---
 
 ## Common patterns expressed through the five commands
 
-The following patterns were considered as dedicated compound commands and deliberately excluded (see [../design-decisions.md](../design-decisions.md)). Each is fully expressible through command sequences within a single invocation.
+These patterns were considered as compound commands and deliberately excluded (see [../design-decisions.md](../design-decisions.md)). Each is fully expressible through command sequences within a single invocation.
 
 ### Position replacement ("rolling")
 
 When a thesis remains valid but the instrument needs to change (e.g., options approaching expiration):
 
-1. **CLOSE** the existing position. Close rationale: *thesis invalidated — time component.* Invalidation reason: the specific timing reason (catalyst rescheduled, instrument expiring, etc.). The thesis is fully resolved — including component-level resolution — as an invalidation. The timing failure feeds the thesis duration accuracy metric.
-2. **OPEN** a new position with the replacement instrument. The thesis is independent and must stand on its own — full structured thesis, full bracket, full component coverage. The thesis may reference the same underlying reasoning, but it is a new thesis with a new time expectation.
+1. **CLOSE** the existing position. Close rationale: *thesis invalidated — time component.* Invalidation reason: the specific timing reason (catalyst rescheduled, instrument expiring). The thesis is fully resolved — including component-level resolution — as an invalidation. The timing failure feeds the thesis duration accuracy metric.
+2. **OPEN** a new position with the replacement instrument. The thesis stands independently — full structured thesis, full bracket, full component coverage. May reference the same underlying reasoning, but it is a new thesis with a new time expectation.
 
-The PM issues both commands in the same invocation. The sequential processing model credits capital from the CLOSE before validating the OPEN.
+The PM issues both commands in the same invocation. Sequential processing credits capital from the CLOSE before validating the OPEN.
 
 ### Hedging
 
 When an existing position needs protection from external risk:
 
-**OPEN** a new position whose thesis explains the hedging rationale. The thesis must articulate: what risk is being hedged, why the parent position's thesis is still valid, how the hedge is sized, and when the hedge should be removed. The hedge is an independent position with its own bracket — including a time-based invalidation to prevent the hedge from outliving its purpose. The PM manages the hedge lifecycle explicitly, closing it when the risk passes or the parent position is closed.
+**OPEN** a new position whose thesis explains the hedging rationale: what risk is being hedged, why the parent's thesis is still valid, how the hedge is sized, and when it should be removed. The hedge is an independent position with its own bracket — including a time-based invalidation to prevent it from outliving its purpose. The PM manages the hedge lifecycle explicitly, closing it when the risk passes or the parent closes.
 
-There is no automatic lifecycle binding between positions. If the PM closes the parent and forgets to close the hedge, the hedge's own bracket (specifically its time-based hard backstop) ensures it doesn't persist indefinitely.
+No automatic lifecycle binding between positions. If the PM closes the parent and forgets the hedge, the hedge's own time-based hard backstop ensures it doesn't persist indefinitely.
 
 ---
 
 ## Command origins
 
-Commands can originate from two sources, each with different authority and traceability mechanisms:
+Commands originate from two sources with different authority and traceability:
 
-**Portfolio manager (primary).** The PM issues OPEN, CLOSE, ADJUST, ADD, and CANCEL commands during the pipeline's execute phase. All five commands are available. Each command is wrapped in a PM-originated command envelope with full evaluation context. This is the normal path for all trading decisions.
+**Portfolio manager (primary).** Issues OPEN, CLOSE, ADJUST, ADD, and CANCEL during the pipeline's execute phase — all five available. Each command wraps in a PM-originated command envelope with full evaluation context. The normal path for all trading decisions.
 
-**Continuous monitor (protective only).** The continuous monitor may issue CLOSE commands between invocations when it detects a guardrail breach caused by market movement, regime changes, or margin events. Only CLOSE is permitted — the engine cannot open new positions, add to existing ones, or adjust brackets without PM involvement. Each command is wrapped in an engine-originated command envelope with a guardrail trigger record (breach rule, breach details, position selection logic). See [portfolio-manager.md](../04-decision-layer/portfolio-manager.md) for the envelope specification and [breach-behavior.md](../06-risk-guardrails/breach-behavior.md) for which breaches trigger engine-originated commands vs. which are deferred to the next invocation.
+**Continuous monitor (protective only).** May issue CLOSE commands between invocations on a guardrail breach from market movement, regime changes, or margin events. Only CLOSE — the engine cannot open positions, add, or adjust brackets without PM involvement. Each command wraps in an engine-originated envelope with a guardrail trigger record (breach rule, details, position selection logic). See [portfolio-manager.md](../04-decision-layer/portfolio-manager.md) for the envelope spec and [breach-behavior.md](../06-risk-guardrails/breach-behavior.md) for which breaches trigger engine-originated commands vs. which defer to the next invocation.
 
-**Guardrail validation:** Engine-originated CLOSE commands bypass the normal guardrail validation path (they are *curing* a breach, not creating exposure). However, the engine must verify that the CLOSE itself doesn't create a secondary breach — e.g., closing a short position that was providing directional balance could push net long exposure over the limit. If a secondary breach would result, the engine logs the conflict and selects an alternative position or defers to the PM at the next invocation.
+**Guardrail validation:** Engine-originated CLOSEs bypass the normal validation path — they cure a breach, not create exposure. The engine verifies the CLOSE itself doesn't create a secondary breach (e.g., closing a short providing directional balance could push net long over the limit). On secondary breach, the engine logs the conflict and selects an alternative position or defers to the PM at the next invocation.
 
 ---
 
@@ -197,7 +197,7 @@ Commands can originate from two sources, each with different authority and trace
 
 ### Sequencing within an invocation
 
-The portfolio manager may issue multiple commands in a single invocation. Commands are processed in the order issued. Each command's guardrail validation accounts for the cumulative impact of all prior commands in the same invocation — if the portfolio manager issues two OPEN commands, the second one's concentration check includes the exposure from the first. If the portfolio manager issues a CLOSE followed by an OPEN, the OPEN's capital check accounts for the capital released by the CLOSE.
+The PM may issue multiple commands in a single invocation. Commands process in order issued. Each command's guardrail validation accounts for the cumulative impact of all prior commands — if the PM issues two OPENs, the second's concentration check includes the first's exposure. A CLOSE followed by an OPEN: the OPEN's capital check accounts for capital released by the CLOSE.
 
 ### Conflicting commands
 
@@ -205,34 +205,34 @@ The engine detects and rejects conflicting commands issued in the same invocatio
 
 - CLOSE and ADD on the same position → rejected, PM must choose one
 - CANCEL on an order referenced by another command in the same batch → rejected, flag the conflict
-- Multiple ADJUSTs on the same position → only the last one takes effect, with a warning logged
+- Multiple ADJUSTs on the same position → only the last takes effect, with a warning logged
 
 ### Command IDs and duplicate handling
 
-Every command carries a unique identifier assigned deterministically by the OMS command intake layer from the envelope's structural position — the PM never generates command IDs. The full format and generation rules are specified in [oms-command-ids.md](../oms-command-ids.md).
+Every command carries a unique identifier assigned deterministically by the OMS command intake layer from the envelope's structural position — the PM never generates command IDs. Format and generation rules are in [oms-command-ids.md](../oms-command-ids.md).
 
-The in-process architecture (pipeline and OMS in a single Python process, atomic Phase 2 transactions, fail-closed mid-pipeline policy) rules out the scenarios that would motivate a dedup-and-return-stored-response mechanism. A duplicate `command_id` arriving at the OMS therefore indicates a structural bug — concurrent envelope mutation, an ID-derivation flaw, or upstream corruption — and is treated as an error: the OMS raises, the invocation aborts per fail-closed, and an alert is logged. See [oms-command-ids.md §Why not dedup](../oms-command-ids.md) for the full analysis.
+The in-process architecture (pipeline and OMS in a single Python process, atomic Phase 2 transactions, fail-closed mid-pipeline policy) rules out the scenarios that would motivate dedup-and-return-stored-response. A duplicate `command_id` arriving at the OMS indicates a structural bug — concurrent envelope mutation, an ID-derivation flaw, or upstream corruption — and is treated as an error: the OMS raises, the invocation aborts per fail-closed, an alert is logged. See [oms-command-ids.md §Why not dedup](../oms-command-ids.md).
 
-Broker submission failures are a separate concern handled in [broker-adapter.md](broker-adapter.md) and the submission-failure policy in [state-persistence.md](state-persistence.md) — a brief within-invocation retry window followed by abandonment, with surfacing to the originating agent at the next invocation.
+Broker submission failures are handled in [broker-adapter.md](broker-adapter.md) and the submission-failure policy in [state-persistence.md](state-persistence.md) — a brief within-invocation retry window followed by abandonment, surfacing to the originating agent at the next invocation.
 
 ### Rejection handling
 
-When a command is rejected by the guardrail layer, the rejection is returned **synchronously to the portfolio manager within the same invocation**. The PM retains agency to adjust and retry immediately — rejections are not deferred to the next invocation.
+When a command is rejected by the guardrail layer, the rejection returns **synchronously to the portfolio manager within the same invocation**. The PM retains agency to adjust and retry immediately — rejections are not deferred to the next invocation.
 
 **Rejection payload:**
 
 - The command that was rejected
 - Which specific guardrail(s) blocked it
-- The current limit value and headroom available for each violated rule
+- The current limit value and headroom for each violated rule
 - A suggested modification (e.g., "position size of $50,000 exceeds the per-position limit of $40,000; maximum allowable size is $38,500 given current exposure")
-- For options and strategies: the computed greeks and delta-adjusted exposure that caused the rejection
+- Options and strategies: the computed greeks and delta-adjusted exposure that caused the rejection
 
 **PM response options:**
 
-- Reissue the command with modified parameters (reduced size, different instrument) — the reissued command gets a fresh guardrail check
-- Skip the trade and proceed to the next command in the sequence
-- Re-evaluate remaining commands in light of the rejection (e.g., if available capital is lower than expected, deprioritize a marginal trade)
+- Reissue with modified parameters (reduced size, different instrument) — the reissued command gets a fresh guardrail check
+- Skip the trade and proceed to the next command
+- Re-evaluate remaining commands in light of the rejection (e.g., if capital is lower than expected, deprioritize a marginal trade)
 
-**Logging:** Rejections are logged in the activity log ([raw state 5b](../01-data-layer/internal/portfolio-state.md)) regardless of whether the PM retries. If the PM reissues a modified command that succeeds, both the original rejection and the successful retry are logged, providing full traceability. The command envelope is updated with a `guardrail_rejection_response` modification record — see [portfolio-manager.md](../04-decision-layer/portfolio-manager.md).
+**Logging:** Rejections log in the activity log ([raw state 5b](../01-data-layer/internal/portfolio-state.md)) regardless of retry. If the PM reissues a modified command that succeeds, both the original rejection and the successful retry are logged, providing full traceability. The command envelope is updated with a `guardrail_rejection_response` modification record — see [portfolio-manager.md](../04-decision-layer/portfolio-manager.md).
 
-**Context for this design:** The analyst and strategist pre-validate all proposals against guardrails before they reach the PM (see [analyst.md](../04-decision-layer/analyst.md)), and the PM validates its own sizing modifications before submitting commands. Execution-time rejections should be infrequent — they occur only when portfolio state shifts between upstream validation and command submission (market movement, fill resolution, regime changes). The synchronous feedback model ensures these edge cases are handled gracefully within the same invocation rather than discovered hours later.
+**Context for this design:** The analyst and strategist pre-validate proposals against guardrails before they reach the PM (see [analyst.md](../04-decision-layer/analyst.md)), and the PM validates its own sizing modifications. Execution-time rejections should be infrequent — they occur only when portfolio state shifts between upstream validation and command submission (market movement, fill resolution, regime changes). The synchronous feedback model handles these edge cases within the same invocation rather than hours later.
