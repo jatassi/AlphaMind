@@ -12,7 +12,7 @@ Scheduling, deployment, observability, and process supervision.
 
 ### Schedule definition
 
-The design spec defines five trigger types, all in US Eastern time:
+Five trigger types, all in US Eastern time:
 
 | Trigger | Schedule | APScheduler trigger type |
 |---------|----------|------------------------|
@@ -22,21 +22,21 @@ The design spec defines five trigger types, all in US Eastern time:
 | Pre-close (anchored) | 3:30 PM ET | `CronTrigger` (hour=15, minute=30) |
 | Weekend (reduced) | Every 6-8h Sat/Sun | `CronTrigger` with day_of_week filter |
 
-**Overlap deduplication:** When an anchored run coincides with a rolling run (e.g., pre-close at 3:30 overlaps the 2h rolling cadence), the anchored run takes precedence. Implemented by tagging each trigger with a run type and checking whether a run of any type completed within the last 30 minutes before firing a rolling trigger. APScheduler's `max_instances=1` prevents concurrent pipeline executions as a safety net.
+**Overlap deduplication:** When an anchored run coincides with a rolling run (e.g., pre-close at 3:30 overlaps the 2h rolling cadence), the anchored run takes precedence. Each trigger is tagged with a run type; before firing a rolling trigger, the scheduler checks whether a run of any type completed within the last 30 minutes. APScheduler's `max_instances=1` prevents concurrent pipeline executions as a safety net.
 
-**Market calendar:** Trading day detection (skip market holidays) via a lightweight calendar check before each trigger fires. The `exchange-calendars` or `pandas_market_calendars` library provides NYSE holiday schedules.
+**Market calendar:** Trading day detection (skip market holidays) via `exchange-calendars` or `pandas_market_calendars` for NYSE holiday schedules, checked before each trigger fires.
 
 ### Why APScheduler v3
 
 - Stable, actively maintained (v3.11.2, Dec 2025)
 - `AsyncIOScheduler` integrates with the pipeline's asyncio event loop
 - `CronTrigger` with timezone support handles the ET-anchored schedule natively
-- Missed-fire handling and coalescing for crash recovery (if the process was down during a scheduled run, it fires once on restart rather than queuing N missed runs)
-- Battle-tested DST transition handling (v3.11.2 specifically fixes a DST edge case)
+- Missed-fire handling and coalescing for crash recovery (if the process was down during a scheduled run, fires once on restart rather than queuing N missed runs)
+- Battle-tested DST transition handling (v3.11.2 fixes a DST edge case)
 
 ### Why not APScheduler v4
 
-v4 has been in alpha for 3.5 years (4.0.0a1 Aug 2022 → 4.0.0a6 Apr 2025). The maintainer explicitly warns against production use. Known issues include schedule disappearance (data integrity) and a shutdown bug with orphaned jobs. No beta or RC in sight, no published timeline for stable release. v3 is the right choice.
+v4 has been in alpha for 3.5 years (4.0.0a1 Aug 2022 → 4.0.0a6 Apr 2025). The maintainer warns against production use. Known issues: schedule disappearance (data integrity), shutdown bug with orphaned jobs. No beta, RC, or stable timeline.
 
 ---
 
@@ -44,7 +44,7 @@ v4 has been in alpha for 3.5 years (4.0.0a1 Aug 2022 → 4.0.0a6 Apr 2025). The 
 
 ### Decision
 
-**Local Windows trading machine.** Both processes run directly on the operator's Windows trading machine. No remote server, no cloud VM, no containers. The command center (Phase 4, [command-center.md](../design/command-center.md)) joins as a third long-running process on the same machine.
+**Local Windows trading machine.** Both processes run directly on the operator's Windows trading machine. No remote server, cloud VM, or containers. The command center (Phase 4, [command-center.md](../design/command-center.md)) joins as a third long-running process on the same machine.
 
 ### Process layout
 
@@ -62,26 +62,26 @@ Trading machine (Windows)
     └── alphamind.db        (SQLite, shared)
 ```
 
-During development, both processes are started manually from a PowerShell session. For unattended operation (paper trading evaluation runs), each process is registered as an NSSM-managed Windows Service that starts on boot and restarts on failure.
+During development, both processes start manually from a PowerShell session. For unattended operation (paper trading evaluation runs), each process is registered as an NSSM-managed Windows Service that starts on boot and restarts on failure.
 
 ### Why a local trading machine
 
-This is a paper trading system in its validation phase. There's no uptime SLA, no external users, and no reason to pay for or manage remote infrastructure. The resource requirements are trivial (< 200 MB RAM, < 1 second CPU per invocation, modest network). If the system demonstrates profitability and moves toward live trading, deployment to a dedicated server or VPS becomes relevant — but that's a future decision gated on paper trading results.
+This is a paper trading system in its validation phase. No uptime SLA, no external users, no reason to manage remote infrastructure. Resource requirements are trivial (< 200 MB RAM, < 1s CPU per invocation, modest network). Live trading would relocate deployment to a dedicated server or VPS — gated on paper trading results.
 
 ### Process supervision (when running unattended)
 
-NSSM (the Non-Sucking Service Manager) wraps each long-running process — pipeline, continuous monitor, and command center — as a Windows Service. NSSM is preferred over Task Scheduler (designed for one-shot or periodic commands; lacks a supervisor model with auto-restart) and over implementing the Service Control Manager interface natively via `pywin32` (forces service-control boilerplate into application code; NSSM keeps the same lifecycle external to the app).
+NSSM (the Non-Sucking Service Manager) wraps each long-running process — pipeline, continuous monitor, command center — as a Windows Service. Preferred over Task Scheduler (no supervisor model with auto-restart) and over implementing the Service Control Manager interface natively via `pywin32` (forces service-control boilerplate into application code).
 
 **Service configuration per process:**
 
-- **Restart on failure.** `AppExit Default Restart` with a throttle delay of 60 seconds, so a tight crash loop backs off rather than burning CPU.
+- **Restart on failure.** `AppExit Default Restart` with a 60-second throttle delay, so a tight crash loop backs off.
 - **Start type.** Automatic (delayed start) so services come up after Windows finishes its own boot-time service work.
-- **Log capture.** `AppStdout` and `AppStderr` redirect each process's stdout/stderr to `%USERPROFILE%\AlphaMind\logs\<service>.out.log` and `<service>.err.log`, alongside the application logs that the Python `logging` module writes to the same directory.
-- **Service account.** Each service runs under the operator's user account (not LocalSystem) so that `%USERPROFILE%` resolves to the operator's profile, the SQLite database under `%USERPROFILE%\AlphaMind\data\` is reachable, and the service inherits the operator's outbound network credentials.
+- **Log capture.** `AppStdout` and `AppStderr` redirect each process's stdout/stderr to `%USERPROFILE%\AlphaMind\logs\<service>.out.log` and `<service>.err.log`, alongside the Python `logging` module's application logs in the same directory.
+- **Service account.** Each service runs under the operator's user account (not LocalSystem) so `%USERPROFILE%` resolves to the operator's profile, the SQLite database under `%USERPROFILE%\AlphaMind\data\` is reachable, and the service inherits the operator's outbound network credentials.
 
-Standard Windows tooling applies once registered — `services.msc`, `sc start/stop`, or `nssm start/stop alphamind-pipeline`. Service start/stop transitions and crash-restart events are written to the Windows Event Log automatically.
+Standard Windows tooling applies once registered — `services.msc`, `sc start/stop`, or `nssm start/stop alphamind-pipeline`. Service transitions and crash-restart events go to the Windows Event Log automatically.
 
-During active development, NSSM is not needed — both processes run in PowerShell windows, with the same Python entry points the services would call.
+During active development, NSSM is not needed — both processes run in PowerShell windows with the same Python entry points the services would call.
 
 ---
 

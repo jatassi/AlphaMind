@@ -47,8 +47,14 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _finnhub_calendar_fanout() -> None:
-    """Invoke all four Finnhub calendar collectors in sequence."""
+def _finnhub_calendar_fanout(since: object = None) -> None:
+    """Invoke all four Finnhub calendar collectors in sequence.
+
+    Accepts ``since`` for runner-contract compatibility; the underlying
+    sub-collectors each have their own resume-from-latest defaults so the
+    value is not propagated.
+    """
+    del since  # accepted for runner-contract compatibility
     collect_earnings_calendar()
     collect_economic_calendar()
     collect_ipo_calendar()

@@ -1,6 +1,6 @@
 # Data sources library
 
-The shared collection library at `alphamind.data_sources`. Used both by the standalone [runner](runner.md) today and by the future pipeline's data-layer phase. Owns the vendor SDK boundary, retry semantics, rate limiting, and the idempotent collection functions that produce rows in the [storage schema](storage.md).
+The shared collection library at `alphamind.data_sources`. Used by the standalone [runner](runner.md) today and the future pipeline's data-layer phase. Owns the vendor SDK boundary, retry semantics, rate limiting, and the idempotent collection functions that produce rows in the [storage schema](storage.md).
 
 ## Module layout
 
@@ -25,7 +25,7 @@ src/alphamind/data_sources/
 └── alpaca/    { client.py, equity.py }   # failover, deferred
 ```
 
-Per-vendor packages own the HTTP/SDK boundary. Each `client.py` wraps the vendor SDK with `_common.py`'s retry-per-tier, rate-limit, and run-tracking primitives. Per-domain modules expose narrow collection functions.
+Per-vendor packages own the HTTP/SDK boundary. Each `client.py` wraps the vendor SDK with `_common.py`'s retry, rate-limit, and run-tracking primitives. Per-domain modules expose narrow collection functions.
 
 ## Collection function shape
 
@@ -47,7 +47,7 @@ since = max(latest_period_start_in_table_for(ticker, timeframe), now - default_l
 
 i.e., "since the latest row we have, falling back to a per-collector default lookback if the table is empty." Bootstrap, catch-up, and steady-state share the same code path with different `since` values — see [lifecycle.md](lifecycle.md).
 
-Functions are idempotent — every UPSERT is keyed on the natural composite key from [storage.md](storage.md). Re-running on the same window produces no duplicates. See [Idempotency contract](#idempotency-contract).
+Functions are idempotent — every UPSERT keys on the natural composite key from [storage.md](storage.md). See [Idempotency contract](#idempotency-contract).
 
 ## `_common.py` primitives
 
@@ -61,13 +61,13 @@ Three retry shapes per [api-failure-handling.md](../api-failure-handling.md), bo
 | `important` | limited | exponential | none |
 | `optional` | single | brief | none |
 
-The retry decorator wraps the SDK call. On exhausted retries, the function writes a `failed` row to `collection_runs` (via `track_run`, below) and raises. The runner catches the exception and continues with other jobs.
+The retry decorator wraps the SDK call. On exhausted retries, `track_run` writes a `failed` row to `collection_runs` and the function raises. The runner catches the exception and continues with other jobs.
 
 ### Rate limiting
 
-Token-bucket limiter per provider, driven by `data_sources.yaml.providers.<v>.rate_limit_per_minute`. Every API call within the library passes through it.
+Token-bucket limiter per provider, driven by `data_sources.yaml.providers.<v>.rate_limit_per_minute`. Every API call passes through it.
 
-Combined with the runner's vendor-serialized executors (one job per vendor at a time, see [runner.md](runner.md)), this keeps collection inside vendor rate budgets without per-job tuning. The two layers are complementary: vendor-serialization handles "no two collectors fight at once"; the rate limiter handles "individual jobs don't burst."
+Combined with the runner's vendor-serialized executors (one job per vendor at a time, see [runner.md](runner.md)), this keeps collection inside vendor rate budgets without per-job tuning. Vendor-serialization handles "no two collectors fight at once"; the rate limiter handles "individual jobs don't burst."
 
 ### Run tracking
 

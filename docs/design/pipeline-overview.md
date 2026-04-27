@@ -1,6 +1,6 @@
 # Pipeline architecture
 
-The system runs on a scheduled trigger (cron) and executes a sequential pipeline across five layers. Each LLM-powered stage operates in a fresh context window to prevent upstream biases from leaking downstream. Risk guardrails are enforced as a cross-cutting concern across the decision and execution layers.
+A scheduled trigger (cron) executes a sequential pipeline across five layers. Each LLM stage runs in a fresh context window to prevent upstream bias from leaking downstream. Risk guardrails cross-cut the decision and execution layers.
 
 ```
 Trigger → Data Layer → Distillation Layer → Analysis Layer → Decision Layer → Execution Layer

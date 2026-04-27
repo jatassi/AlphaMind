@@ -1,76 +1,74 @@
 # Breach behavior
 
-What happens when a constraint is hit or breached. Different rules have different severity profiles and appropriate responses. This document defines the escalation model, forced reduction policy, drawdown halt logic, margin cascade handling, and the per-rule classification of engine action vs. PM deferral.
+Defines the escalation model, forced reduction policy, drawdown halt logic, margin cascade handling, and per-rule engine-vs-PM-deferral classification.
 
 ---
 
 ## Escalation model
 
-Every guardrail rule has four proximity zones. The zone determines what information is surfaced and what mechanical actions are available. Zones are defined as percentages of the limit consumed.
+Every rule has four proximity zones, defined as percentages of the limit consumed. The zone determines what information is surfaced and what mechanical actions are available.
 
 | Zone | Threshold | Meaning | Action |
 |------|-----------|---------|--------|
-| **Normal** | 0–70% of limit | Comfortable headroom | Headroom reported in guardrail state headers. No special treatment. |
-| **Warning** | 70–85% of limit | Approaching capacity | Headroom highlighted in guardrail state headers with a `⚠ warning` flag. Analyst should avoid recommendations that would push into the critical zone. PM sees the flag alongside proposals. |
-| **Critical** | 85–95% of limit | Near breach | Headroom highlighted with `🔴 critical` flag. Analyst guardrail validation tool returns advisory warnings on proposals that would consume remaining headroom. PM receives explicit notification that this rule is near breach. |
-| **Hard block** | 95–100%+ of limit | At or beyond limit | Engine rejects any command that would increase exposure in the breaching direction. Existing positions may trigger forced reduction depending on rule classification (see below). |
+| **Normal** | 0–70% of limit | Comfortable headroom | Headroom reported in guardrail state headers. |
+| **Warning** | 70–85% of limit | Approaching capacity | Headroom flagged `⚠ warning`. Analyst should avoid pushing into the critical zone. |
+| **Critical** | 85–95% of limit | Near breach | Headroom flagged `🔴 critical`. Validation tool returns advisory warnings on proposals consuming remaining headroom. PM receives explicit near-breach notification. |
+| **Hard block** | 95–100%+ of limit | At or beyond limit | Engine rejects any command increasing exposure in the breaching direction. Existing positions may trigger forced reduction per rule classification (below). |
 
-**Threshold rationale:** The 70/85/95 breakpoints are chosen to give progressive warning at useful decision points. At 70%, the analyst has room for 1–2 more typical-sized positions before concern. At 85%, one more max-sized position would breach. At 95%, even a small position would breach. The 95% hard-block threshold (rather than 100%) provides a buffer against estimation error — delta computations, correlation estimates, and market prices all have lag, so blocking at 95% prevents the rare case where a command is approved at 99% and market movement pushes it over 100% before execution completes.
+**Threshold rationale:** 70/85/95 gives progressive warning at useful decision points: at 70%, room for 1–2 more typical positions; at 85%, one more max-sized position breaches; at 95%, even a small position breaches. The 95% hard block (rather than 100%) buffers against estimation error in delta, correlation, and price lag — preventing the case where a command approved at 99% pushes over 100% before execution completes.
 
-**Per-rule threshold overrides:** The 70/85/95 defaults are appropriate for most rules. Two exceptions:
+**Per-rule overrides:** Two exceptions to 70/85/95:
 
-- **Daily drawdown:** Uses 60/80/90 thresholds. Drawdown is the hardest constraint, and the consequences of hitting it (halt mode) are severe enough to warrant earlier warning. At 60% consumed (1.5% of the 2.5% limit), the PM should already be restricting new entries to only high-conviction opportunities.
-- **Cumulative drawdown:** Uses 50/70/85 thresholds. The cumulative limit affects system behavior for days or weeks, so earlier warning gives the PM more time to adjust strategy.
+- **Daily drawdown:** 60/80/90. Drawdown is the hardest constraint and triggers halt mode; earlier warning lets the PM restrict new entries to high-conviction opportunities at 60% consumed (1.5% of the 2.5% limit).
+- **Cumulative drawdown:** 50/70/85. The cumulative limit affects system behavior for days or weeks; earlier warning gives time to adjust strategy.
 
 ---
 
 ## Forced reduction policy
 
-When market movement causes a guardrail breach on existing positions — not from a new command, but from the market moving against the portfolio — the system must decide whether to reduce exposure mechanically or defer to the PM.
+When market movement causes a breach on existing positions, the system either reduces exposure mechanically or defers to the PM.
 
 ### Per-rule breach response classification
 
-Each rule is classified as **immediate engine action** or **deferred to strategist → PM** based on two criteria: (a) how quickly the breach can compound if left unaddressed, and (b) whether agent judgment (strategist for remedy proposals, PM for cross-constraint validation and execution) adds value to the response.
+Each rule is classified as **immediate engine action** or **deferred to strategist → PM** based on (a) how quickly the breach compounds if unaddressed, and (b) whether agent judgment adds value (strategist for remedy proposals, PM for cross-constraint validation).
 
 | Rule | Between-invocation response | Rationale |
 |------|----------------------------|-----------|
-| **Daily drawdown (hard block)** | **Immediate: halt mode** | Drawdown compounds in real time. Waiting 2 hours for the next invocation while the portfolio bleeds is unacceptable. See [halt mode](#drawdown-halt-mode) below. |
-| **Cumulative drawdown** | **Immediate: progressive reduction** | Same reasoning — cumulative drawdown is a survival constraint. Engine begins reducing risk immediately. |
-| **Position-level max loss** | **Immediate: close position** | A position at 30% loss (equity) or 80% loss (options) has exhausted its risk budget. The thesis is almost certainly wrong. No PM judgment adds value — close immediately. |
-| **Sector concentration** | **Deferred to strategist → PM** | Sector breaches from market movement (a sector rallies and existing positions grow beyond the limit) are not immediately dangerous — the positions are *winning*. The strategist proposes which position to trim based on thesis strength and target proximity; the PM reviews and executes. |
-| **Net long/short exposure** | **Deferred to strategist → PM** | Same reasoning as sector concentration. Directional exposure growing because positions are profitable is not an emergency. Strategist proposes remedy; PM reviews cross-constraint impact and executes. |
-| **Gross exposure** | **Deferred to strategist → PM** | Same reasoning. Gross exposure breaches from market movement are the result of winning positions growing. Strategist proposes remedy; PM executes. |
-| **Options delta exposure** | **Deferred to strategist → PM** | Delta changes as the underlying moves (gamma effect). A breach may self-correct if the underlying reverses. Strategist judgment on thesis and gamma dynamics proposes remedy; PM validates against cross-constraint interactions and executes. |
-| **Total short exposure** | **Immediate if > 110% of limit** / **Deferred if ≤ 110%** | Short exposure breaches are more dangerous than long exposure breaches because short squeezes can accelerate losses. A small overage (≤ 110% of limit) is deferred; a significant overage triggers immediate partial reduction of the most liquid short position. |
-| **Single short max size** | **Immediate: partial close** | A single short growing beyond its size cap (from the stock declining — the short is winning but oversized) should be trimmed to lock in profits and reduce squeeze risk. Engine trims to 95% of limit. |
+| **Daily drawdown (hard block)** | **Immediate: halt mode** | Drawdown compounds in real time; waiting for the next invocation is unacceptable. See [halt mode](#drawdown-halt-mode). |
+| **Cumulative drawdown** | **Immediate: progressive reduction** | Survival constraint. Engine begins reducing risk immediately. |
+| **Position-level max loss** | **Immediate: close position** | At 30% loss (equity) or 80% loss (options), the risk budget is exhausted and the thesis is almost certainly wrong. |
+| **Sector concentration** | **Deferred to strategist → PM** | Market-movement breaches mean positions are *winning* — not immediately dangerous. Strategist proposes which to trim based on thesis strength and target proximity. |
+| **Net long/short exposure** | **Deferred to strategist → PM** | Same reasoning — directional exposure growing from profitable positions is not an emergency. |
+| **Gross exposure** | **Deferred to strategist → PM** | Same reasoning. |
+| **Options delta exposure** | **Deferred to strategist → PM** | Delta changes via gamma as the underlying moves; the breach may self-correct on reversal. Strategist judgment on thesis and gamma dynamics proposes remedy. |
+| **Total short exposure** | **Immediate if > 110% of limit** / **Deferred if ≤ 110%** | Short squeezes accelerate losses. Small overage (≤ 110%) is deferred; significant overage triggers immediate partial reduction of the most liquid short. |
+| **Single short max size** | **Immediate: partial close** | A short growing past its cap (winning but oversized) is trimmed to 95% of limit to lock profits and reduce squeeze risk. |
 
 ### Position selection logic for forced reductions
 
-When the engine must close or trim a position to cure a breach, it applies deterministic selection criteria. The criteria vary by breach type:
+Deterministic selection criteria, varying by breach type.
 
 **Drawdown breaches (daily and cumulative):**
-1. Select positions with the largest unrealized loss (these are contributing most to the drawdown)
-2. Among tied positions, prefer the most liquid (highest ADV relative to position size) for fastest execution
-3. Close full positions rather than partial — partial closes leave residual risk and orphaned theses
+1. Largest unrealized loss (largest contributor to drawdown)
+2. Tiebreaker: most liquid (highest ADV relative to position size)
+3. Full closes — partial leaves residual risk and orphaned theses
 
-**Position-level max loss:**
-1. Close the specific position that breached — no selection logic needed
+**Position-level max loss:** Close the specific breaching position.
 
 **Short exposure breaches (when immediate action triggered):**
-1. Select the largest short position in the most liquid name
-2. Trim to 95% of the applicable limit (per-position or aggregate)
+1. Largest short position in the most liquid name
+2. Trim to 95% of the applicable limit
 
-**Single short max size:**
-1. Trim the breaching position to 95% of the per-position limit
+**Single short max size:** Trim the breaching position to 95% of the per-position limit.
 
 ### Secondary breach checking
 
-Before executing any forced reduction, the engine verifies the CLOSE or partial CLOSE wouldn't create a new breach in a different rule. The most common secondary breach scenario: closing a short position that was providing directional balance could push net long exposure beyond its limit.
+Before any forced reduction, the engine verifies the action wouldn't breach a different rule. Most common case: closing a short providing directional balance could push net long beyond its limit.
 
 **If a secondary breach would result:**
-1. Log the conflict with both the primary breach (the one being cured) and the secondary breach (the one the cure would create)
-2. Select an alternative position if one exists that cures the primary breach without creating a secondary breach
-3. If no clean cure exists, execute the forced reduction anyway — the primary breach takes priority, and the secondary breach is flagged for the PM at the next invocation. The rationale: a known, flagged, secondary breach is better than an unaddressed primary breach that's actively compounding
+1. Log the conflict with both the primary and secondary breach
+2. Select an alternative position that cures the primary without creating a secondary breach
+3. If no clean cure exists, execute anyway — the primary takes priority, and the secondary is flagged for the PM at the next invocation. A known, flagged secondary breach is better than an unaddressed primary breach that's actively compounding.
 
 ---
 

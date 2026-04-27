@@ -64,7 +64,7 @@ MONTHLY_SERIES: list[str] = [
     # Employment (monthly NFP-adjacent)
     "UNRATE",  # Civilian Unemployment Rate
     "PAYEMS",  # Total Nonfarm Payrolls (monthly change)
-    "AHETOT",  # Average Hourly Earnings of All Employees
+    "CES0500000003",  # Average Hourly Earnings of All Employees, Total Private
     # PMI / ISM proxies (monthly)
     "MANEMP",  # Manufacturing Sector Employment (proxy)
     # Consumer

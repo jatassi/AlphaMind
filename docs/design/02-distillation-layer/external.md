@@ -1,37 +1,37 @@
 # Programmatic distillation
 
-The bridge between raw API payloads and LLM-consumable signal. This layer is entirely deterministic — no LLM tokens are spent here. It takes the raw data collected by the ingestion layer and produces structured, token-efficient outputs optimized for the analysis pipeline's context windows.
+Deterministic layer — no LLM tokens. Takes raw ingestion payloads and emits structured, token-efficient outputs sized for the analysis pipeline's context windows.
 
-The distillation layer has four responsibilities, applied across all data categories:
+Four responsibilities, applied across all data categories:
 
 1. **Normalize** data into consistent formats and units
 2. **Compute** derived metrics and indicators from raw feeds
 3. **Detect anomalies** against recent baselines
 4. **Maintain state** — rolling baselines, trailing distributions, composites, and regime classifications that persist across invocations
 
-The anomaly flags are the critical output: they become the trigger inputs for the adaptive research layer in the analysis pipeline.
+Anomaly flags are the critical output: trigger inputs for the adaptive research layer.
 
-*Relationship to data ingestion docs:* The ingestion docs ([quantitative](../01-data-layer/external/quantitative.md), [qualitative](../01-data-layer/external/qualitative.md)) and [portfolio state](../01-data-layer/internal/portfolio-state.md) define *what* each signal is, *why* it matters, and *what fields* the system needs. This document defines *what the distillation layer computes* from those raw inputs. Cross-references to ingestion categories (e.g., "quant 1a") point to the data source; the computation spec lives here.
+The ingestion docs ([quantitative](../01-data-layer/external/quantitative.md), [qualitative](../01-data-layer/external/qualitative.md), [portfolio state](../01-data-layer/internal/portfolio-state.md)) define *what* each signal is and *what fields* the system needs. This doc defines *what is computed* from those inputs. Cross-references to ingestion categories (e.g., "quant 1a") point to the data source; computations live here.
 
-*Scope boundary with the analysis layer:* If a computation is deterministic and doesn't require LLM judgment, it belongs here. If it requires cross-referencing with qualitative context or making interpretive calls, it belongs in the analysis pipeline. There is one exception: some portfolio-state-aware computations (beta-adjusted exposure, position correlation matrices) are deterministic but require portfolio state inputs that this layer doesn't currently receive. Those are specified in [portfolio state — derived metrics](../01-data-layer/internal/portfolio-state.md) and should migrate here if the distillation layer's scope expands to include portfolio-aware computation.
+*Scope boundary with the analysis layer:* deterministic and judgment-free → here; cross-referencing qualitative context or interpretive calls → analysis. Exception: portfolio-state-aware deterministic computations (beta-adjusted exposure, position correlation matrices) are specified in [portfolio state — derived metrics](../01-data-layer/internal/portfolio-state.md) because they need inputs this layer doesn't currently receive; they migrate here if scope expands.
 
 ---
 
 ## 1. Normalization and formatting
 
-Applied to all incoming data. The goal: every downstream agent receives data in the same units, the same time frames, and the same format regardless of which vendor API produced it.
+Every downstream agent receives data in identical units, time frames, and format regardless of vendor API.
 
-- **Unit standardization:** All moves expressed in both absolute and ATR-relative terms where applicable (a 2% move on TSLA is normal, a 2% move on JPM is a big deal). Dollar values in consistent notation. Percentages and ratios in consistent decimal format
-- **Time alignment:** All timestamps normalized to ET. Multi-source data aligned to common time windows so agents can compare across sources without temporal mismatch
-- **Per-ticker volatility normalization:** Move magnitudes expressed as multiples of ATR so analyst agents can compare across tickers without adjusting for each name's volatility personality (from quant 1f)
-- **Extended-hours confidence discounting:** All extended-hours metrics (quant 1g, 2f) tagged with a reliability weight — moves in thin liquidity often overstate the regular session open. This is a blanket tag, not a per-metric judgment
-- **Macro surprise framing:** Macro data points (quant 6a–6g) expressed primarily in terms of deviation from expectations rather than absolute values. For the 4–72 hour horizon, the surprise component is almost always more actionable than the level
+- **Unit standardization:** Moves in both absolute and ATR-relative terms where applicable (2% on TSLA is normal; 2% on JPM is a big deal). Dollar values, percentages, and ratios in consistent notation
+- **Time alignment:** All timestamps in ET; multi-source data aligned to common windows
+- **Per-ticker volatility normalization:** Move magnitudes as multiples of ATR (from quant 1f) — cross-ticker comparison without per-name vol adjustment
+- **Extended-hours confidence discounting:** Extended-hours metrics (quant 1g, 2f) carry a reliability-weight tag — a blanket discount on thin-liquidity moves, not a per-metric judgment
+- **Macro surprise framing:** Macro points (quant 6a–6g) expressed as deviation from expectations rather than absolute level — at the 4–72 hour horizon the surprise is what's actionable
 
 ---
 
 ## 2. Technical indicators and derived metrics
 
-Computed from raw OHLCV and market data feeds. Organized by the ingestion category they derive from.
+Computed from raw OHLCV and market data feeds, organized by the ingestion category they derive from.
 
 ### From price and volume (quant 1)
 
@@ -40,27 +40,27 @@ Computed from raw OHLCV and market data feeds. Organized by the ingestion catego
 - Mean-reversion bands: Bollinger bands (position within bands, band width as vol proxy); Keltner channels
 - Trend-following: moving average slopes and crossovers (20/50/200 EMA); ADX (trend strength regardless of direction)
 - Volatility: ATR (14-period, absolute and as a normalizer); Bollinger bandwidth; ATR expansion/compression regime
-- **Multi-timeframe divergence flags:** Surface explicitly when indicators at different timeframes conflict — e.g., RSI bearish divergence on 4hr while daily RSI is still healthy. These are among the most actionable outputs for sector researchers
+- **Multi-timeframe divergence flags:** Explicit surfacing when indicators at different timeframes conflict — e.g., RSI bearish divergence on 4hr while daily RSI is still healthy. Among the most actionable outputs for sector researchers
 
 **Volume profile (quant 1b):**
 - Value area (price range where ~70% of volume transacted), point of control, high-volume and low-volume nodes
 - Developing vs. settled profile classification
 
 **Gap analysis (quant 1d):**
-- Overnight gaps expressed in both absolute and ATR-relative terms
+- Overnight gaps in absolute and ATR-relative terms
 - Gap classification: full vs. partial, with-trend vs. counter-trend
 - Historical gap-fill probability lookup per ticker and gap type
 
 **Relative performance (quant 1e):**
 - Rolling ratio of ticker price vs. sector ETF (XLK/XLF/XLE/SMH) and vs. SPY
-- Intra-sector ranking: where each name sits in its sector's daily performance distribution
-- Relative strength regime change detection: name shifting from sector leader to laggard (or vice versa) over multi-day windows
+- Intra-sector ranking: each name's position in its sector's daily performance distribution
+- Relative strength regime change detection: leader↔laggard transitions over multi-day windows
 
 **Trend state and regime (quant 1f):**
-- Per-timeframe trend state classification (trending up, trending down, range-bound) with composite multi-timeframe trend score
+- Per-timeframe trend state (trending up, trending down, range-bound) with composite multi-timeframe trend score
 - Position in 52-week range (percentile)
 - Distance from key moving averages in ATR terms
-- Volatility regime per name: low-vol compression (Bollinger squeeze) vs. high-vol expansion
+- Per-name volatility regime: low-vol compression (Bollinger squeeze) vs. high-vol expansion
 
 ### From order flow (quant 2)
 
@@ -71,16 +71,16 @@ Computed from raw OHLCV and market data feeds. Organized by the ingestion catego
 - Volume-weighted flow direction
 
 **Liquidity scoring (quant 2b):**
-- Composite liquidity score: spread + depth + fill probability for the system's typical position sizes
+- Composite liquidity score: spread + depth + fill probability at typical position sizes
 - Bid-ask spread trends over rolling windows
 
 **Block and institutional flow (quant 2c):**
-- Dark pool prints tagged with venue and, where possible, classified by likely participant type (institutional vs. retail-originated). Venue-level attribution: Sigma X (Goldman) skews institutional, IEX attracts informed flow, BATS dark carries more retail. Not always available (some venues report to FINRA TRF without venue-level granularity), but tagged when it is
-- Sustained dark pool buying/selling detection: rolling detection of one-sided dark pool flow above/below VWAP
+- Dark pool prints tagged with venue and, where available, classified by likely participant type. Venue attribution: Sigma X (Goldman) skews institutional, IEX attracts informed flow, BATS dark carries more retail. Not always available (some venues report to FINRA TRF without venue granularity), but tagged when it is
+- Sustained one-sided dark pool flow detection above/below VWAP
 
 **Extended-hours flow (quant 2f):**
-- Same aggregation as regular-session flow (net dollar flow, aggressor-side balance, trade size distribution) computed separately for pre-market and after-hours
-- **Regular-session confirmation flag:** Track whether extended-hours flow direction is confirmed or reversed in the first 30 minutes of regular trading. Maintain historical confirmation rate per ticker to calibrate weight on pre-market signals
+- Regular-session aggregations (net dollar flow, aggressor-side balance, trade size distribution) computed separately for pre-market and after-hours
+- **Regular-session confirmation flag:** Tracks whether extended-hours flow direction is confirmed or reversed in the first 30 minutes of regular trading. Per-ticker historical confirmation rate calibrates weight on pre-market signals
 
 ### From derivatives and options (quant 3)
 
@@ -90,39 +90,36 @@ Computed from raw OHLCV and market data feeds. Organized by the ingestion catego
 
 **Cross-ticker options signals (quant 3g, 3h):**
 - Pair trade signature detection: simultaneous bullish flow on one name + bearish flow on a correlated peer
-- Sector-wide sweep detection: same directional bet appearing across multiple names within a short window
-- **ETF IV vs. single-name IV composite divergence:** When IV on a sector ETF spikes but IV on the underlying names hasn't caught up (or vice versa) — signals the sector view hasn't propagated to individual names yet
-- **Index hedging vs. sector conviction classification:** When both SPY/QQQ put flow and sector ETF put flow appear simultaneously, distinguish macro hedging from sector-specific concern
+- Sector-wide sweep detection: same directional bet across multiple names within a short window
+- **ETF IV vs. single-name IV divergence:** Sector-ETF IV spikes ahead of underlying names (or vice versa) — sector view hasn't propagated yet
+- **Index hedging vs. sector conviction:** When SPY/QQQ put flow and sector-ETF put flow appear simultaneously, distinguish macro hedging from sector-specific concern
 
 ### From short selling (quant 4)
 
 **Real-time short interest estimation (quant 4a–4c):**
-- Triangulate across core subcategories: use daily short volume (fast) to estimate how short interest (slow) is changing between official bi-monthly FINRA reports, and use borrow cost spikes (fast) to infer utilization shifts before confirmation
-- **Directional vs. mechanical classification:** Flag when short volume appears directional (bearish conviction) vs. mechanical (market maker hedging and liquidity provision), using context from order flow data (quant 2)
+- Triangulate across subcategories: daily short volume (fast) estimates how short interest (slow) is changing between bi-monthly FINRA reports; borrow-cost spikes (fast) infer utilization shifts before confirmation
+- **Directional vs. mechanical classification:** Flag short volume as directional (bearish conviction) vs. mechanical (market-maker hedging and liquidity provision), using order-flow context (quant 2)
 
 ### From fundamental and earnings (quant 5)
 
 **Expectations vs. reality scorecard (quant 5a–5g):**
-- Running per-ticker scorecard tracking the gap between market expectations (consensus estimates, guidance, analyst targets) and incoming reality signals (estimate revisions, reported actuals, insider behavior)
-- Updates near-real-time as new estimates and ratings arrive; re-anchors quarterly when actuals land
-- Single output per ticker at any given moment: "Is the expectation gap widening, narrowing, or stable?"
-- **Revision-price lag detection:** Flag revisions that have landed since the last run but haven't yet been absorbed by price action — timestamps revisions to the hour, not just the day, and cross-references with price movement
+- Per-ticker scorecard tracking the gap between market expectations (consensus, guidance, analyst targets) and incoming reality signals (revisions, actuals, insider behavior)
+- Updates near-real-time as estimates and ratings arrive; re-anchors quarterly when actuals land
+- Single output per ticker: "expectation gap widening, narrowing, or stable?"
+- **Revision-price lag detection:** Flags revisions that landed since the last run but haven't been absorbed by price — timestamped to the hour and cross-referenced with price movement
 
 ### From macro and rates (quant 6)
 
-**Yield curve regime classification (quant 6a):**
-- Normal (upward sloping), flat, inverted, steepening, flattening — regime transitions flagged when they occur
+**Yield curve regime (quant 6a):** Normal (upward sloping), flat, inverted, steepening, flattening — transitions flagged when they occur
 
-**Inflation regime classification (quant 6c):**
-- Hot, cooling, stable, deflation risk — based on breakeven trends and data surprise patterns
+**Inflation regime (quant 6c):** Hot, cooling, stable, deflation risk — from breakeven trends and surprise patterns
 
-**Dollar move attribution (quant 6f):**
-- Classify each significant dollar move as rate-differential-driven, risk-sentiment-driven, or trade-flow-driven, since the equity implications differ for each
+**Dollar move attribution (quant 6f):** Each significant dollar move classified rate-differential-driven, risk-sentiment-driven, or trade-flow-driven — equity implications differ
 
 **Funding stress composite (quant 6e):**
-- Maintain composite of SOFR spread + repo-treasury spread + term repo premium + MMF flow direction
-- Single "funding market health" score readable as a systemic risk early warning
-- Elevated readings should trigger the adaptive research layer to investigate the specific source of stress
+- Composite of SOFR spread + repo-treasury spread + term repo premium + MMF flow direction
+- Single "funding market health" score as systemic risk early warning
+- Elevated readings trigger adaptive research to find the specific source
 
 ### From cross-asset and correlation (quant 7)
 

@@ -1,12 +1,12 @@
 # Analyst
 
-Operates in a fresh context window. **Mandate:** given current conditions, identify the highest-conviction asymmetric setups with a 4–72 hour time horizon. The analyst focuses exclusively on new trade opportunities; existing-position management (thesis re-evaluation, action recommendations, cross-position dynamics) is the [strategist's](strategist.md) job, run in parallel with the analyst.
+Operates in a fresh context window. **Mandate:** given current conditions, identify the highest-conviction asymmetric setups with a 4–72 hour time horizon. Focus is exclusively new trade opportunities; existing-position management is the [strategist's](strategist.md) job, run in parallel.
 
 ---
 
 ## Inputs
 
-The analyst's input bundle is delivered at invocation start with the structure below. Source documents in parentheses are authoritative for each input's content.
+The analyst's input bundle is delivered at invocation start. Source documents in parentheses are authoritative for each input's content.
 
 | Input | Source | Description |
 |---|---|---|
@@ -28,9 +28,9 @@ The volatility regime label is delivered as the `Regime:` line in the guardrail 
 
 ## Output
 
-The analyst's invocation output is a single document conforming to the [analyst output schema](analyst-output-schema.md) (formal JSON Schema, Draft 2020-12). The schema is the authoritative contract; the field lists below are the readable reference. Each trade recommendation is a structured record with typed fields classified as **structured** (machine-parseable, consumed by the [proposal pre-processor](proposal-pre-processor.md) and execution layer) or **narrative** (free-text reasoning, consumed by the [portfolio manager](portfolio-manager.md) for thesis quality evaluation). Both are required — structured fields enable deterministic processing; narrative fields give the PM the reasoning context to evaluate thesis quality.
+The output is a single document conforming to the [analyst output schema](analyst-output-schema.md) (formal JSON Schema, Draft 2020-12). The schema is the authoritative contract; the field lists below are the readable reference. Each trade recommendation is a structured record with **structured** fields (machine-parseable, consumed by the [proposal pre-processor](proposal-pre-processor.md) and execution layer) and **narrative** fields (free-text reasoning, consumed by the [portfolio manager](portfolio-manager.md) for thesis quality evaluation). Structured fields enable deterministic processing; narrative fields give the PM reasoning context.
 
-The output mode is `normal` (recommendations) under standard conditions and `watchlist` (lighter-weight entries with no sizing or bracket detail) under halt mode — see [state-delivery.md — Analyst — watchlist mode](../06-risk-guardrails/state-delivery.md#analyst--watchlist-mode).
+Mode is `normal` (recommendations) under standard conditions and `watchlist` (lighter-weight entries, no sizing or bracket detail) under halt mode — see [state-delivery.md — Analyst — watchlist mode](../06-risk-guardrails/state-delivery.md#analyst--watchlist-mode).
 
 **Structured fields:**
 
@@ -60,7 +60,7 @@ The output mode is `normal` (recommendations) under standard conditions and `wat
 
 ## Conviction scale
 
-Every recommendation must include a conviction level from 1 to 5. The scale is defined by signal characteristics — the quality and convergence of evidence — not by expected return magnitude. Each level maps to an advisory sizing band expressed as a percentage of portfolio value.
+Every recommendation includes a conviction level from 1 to 5, defined by signal characteristics — quality and convergence of evidence — not by expected return magnitude. Each level maps to an advisory sizing band expressed as a percentage of portfolio value.
 
 | Level | Label | Signal criteria | Advisory sizing band |
 |-------|-------|----------------|---------------------|
@@ -70,31 +70,31 @@ Every recommendation must include a conviction level from 1 to 5. The scale is d
 | 4 | **high** | Strong convergence across three or more independent signal types. No unresolved contradictions. Catalyst has a concrete, near-term timeline. | 2–4% |
 | 5 | **maximum** | Overwhelming signal convergence, hard catalyst within 24 hours, defined and asymmetric risk/reward, no credible counter-thesis. Should appear infrequently — if more than ~10% of recommendations are level 5, the scale is being applied too loosely. | 3–5% |
 
-**Bands overlap intentionally.** A moderate-conviction trade with defined risk (long options, max loss = premium) may justify the upper end of its band, while a moderate-conviction trade with open-ended risk (short equity) should sit at the lower end. The overlap gives room to express risk-profile nuance within a conviction level.
+**Bands overlap intentionally.** A moderate-conviction trade with defined risk (long options, max loss = premium) may justify the upper end of its band; a moderate-conviction trade with open-ended risk (short equity) should sit at the lower end. The overlap expresses risk-profile nuance within a conviction level.
 
-**Bands are advisory, not enforced.** The [portfolio manager](portfolio-manager.md) retains full discretion to size above or below the suggested band. Deviations are captured in the command envelope's modification mechanism — the `conviction_disagreement` adjustment category tracks cases where the PM disagrees with the analyst's conviction-to-size mapping. The feedback loop can then assess whether PM overrides improve or worsen outcomes.
+**Bands are advisory.** The [portfolio manager](portfolio-manager.md) retains full sizing discretion. Deviations are captured via the command envelope's modification mechanism — the `conviction_disagreement` adjustment category tracks cases where the PM disagrees with the analyst's conviction-to-size mapping, and the feedback loop assesses whether overrides improve or worsen outcomes.
 
-**Sizing bands express capital at risk, not notional.** For defined-risk instruments (long options where max loss = premium), the band refers to the premium at risk. For open-ended instruments (equity positions), the band refers to notional position value. The analyst's size rationale must make this mapping explicit — stating both the dollar amount and what percentage of portfolio it represents, and how the band was applied given the instrument's risk profile.
+**Sizing bands express capital at risk, not notional.** For defined-risk instruments (long options, max loss = premium), the band refers to premium at risk. For open-ended instruments (equity), the band refers to notional position value. The size rationale must make this mapping explicit — dollar amount, percentage of portfolio, and how the band was applied given the instrument's risk profile.
 
-**Calibration target:** A well-calibrated analyst should exhibit higher thesis validation rates at higher conviction levels. If level-4 and level-5 trades don't meaningfully outperform level-2 trades, the signal criteria definitions need tightening or the analyst's application of the scale has drifted. See [thesis quality trends](../01-data-layer/internal/portfolio-state.md) (category 6) for the conviction-level grouping that tracks this.
+**Calibration target:** A well-calibrated analyst exhibits higher thesis validation rates at higher conviction levels. If level-4/5 trades don't meaningfully outperform level-2 trades, signal criteria need tightening or scale application has drifted. See [thesis quality trends](../01-data-layer/internal/portfolio-state.md) (category 6).
 
 ---
 
 ## Entry window
 
-Recommendations may include an optional `entry_window` field that communicates when the entry should be executed and how the edge decays over time. This gives the [portfolio manager](portfolio-manager.md) concrete information for prioritization when evaluating multiple recommendations in a single invocation.
+The optional `entry_window` field communicates when the entry should be executed and how edge decays over time, giving the [portfolio manager](portfolio-manager.md) concrete information for prioritization across multiple recommendations.
 
 **Field structure:**
 
-- **`deadline`** — ISO 8601 timestamp by which the entry should be executed. Represents the analyst's assessment of when the setup's edge meaningfully degrades.
-- **`decay_type`** — how the edge degrades as the deadline approaches:
-  - `binary` — the setup exists before the deadline and doesn't exist after. Typical for event-driven trades where a catalyst has a hard timestamp (earnings, FOMC, data releases). Near the deadline, the entry should be executed or abandoned.
-  - `gradual` — the edge erodes progressively as the deadline approaches. Typical for technical setups, mean-reversion trades, or information edges that leak over time. Earlier entry captures more of the edge, but the trade may still be viable near the deadline at reduced attractiveness.
+- **`deadline`** — ISO 8601 timestamp; the analyst's assessment of when the setup's edge meaningfully degrades.
+- **`decay_type`** — how edge degrades:
+  - `binary` — setup exists before the deadline and not after. Typical for event-driven trades with a hard catalyst timestamp (earnings, FOMC, data releases). Near the deadline, execute or abandon.
+  - `gradual` — edge erodes progressively. Typical for technical setups, mean-reversion trades, or information edges that leak over time. Earlier entry captures more edge; the trade may remain viable near the deadline at reduced attractiveness.
 - **`rationale`** — why the window exists and what happens after it closes.
 
-**When to include:** The entry window should be included when the setup has a meaningful time constraint — a catalyst with a known timestamp, an options structure with accelerating theta, a technical level that weakens as other participants front-run it. Omit the field when the thesis has no inherent urgency (e.g., a structural sector rotation that plays out over weeks).
+**Include when:** the setup has a meaningful time constraint — a catalyst with a known timestamp, an options structure with accelerating theta, a technical level weakening as participants front-run. Omit when the thesis has no inherent urgency (e.g., a structural sector rotation playing out over weeks).
 
-**Entry window is advisory.** The portfolio manager retains discretion. A recommendation with a passed deadline might still be viable if market conditions haven't changed — the PM evaluates holistically rather than mechanically discarding expired entries.
+**Entry window is advisory.** The PM evaluates holistically; a passed deadline may still be viable if conditions haven't changed.
 
 ---
 

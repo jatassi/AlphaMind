@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This directory documents the technical architecture of AlphaMind: language choices, infrastructure decisions, component design, and the rationale behind each. The [design spec](../design/README.md) defines *what* the system does; this directory defines *how it is built*.
+Documents the technical architecture of AlphaMind: language, infrastructure, component design, and rationale. The [design spec](../design/README.md) defines *what* the system does; this directory defines *how it is built*.
 
 ---
 
@@ -27,12 +27,12 @@ This directory documents the technical architecture of AlphaMind: language choic
 
 ## Decision process
 
-Architecture decisions are documented bottom-up, starting from high-level system shape and working toward specific technology selection:
+Documented bottom-up, from system shape to specific technology:
 
-1. **System characterization** — what are we actually building?
-2. **Component boundaries** — what are the deployable units and how do they interact?
-3. **Language and runtime** — what languages fit the computational profiles?
-4. **Data and state** — how is state stored, queried, and shared across components?
-5. **LLM integration** — how do agents get orchestrated, prompted, and managed?
+1. **System characterization** — what are we building?
+2. **Component boundaries** — deployable units and their interactions
+3. **Language and runtime** — language fit for the computational profiles
+4. **Data and state** — storage, querying, and cross-component sharing
+5. **LLM integration** — agent orchestration, prompting, management
 6. **Infrastructure** — scheduling, deployment, observability, cost
-7. **Technology selection** — specific libraries, frameworks, and services
+7. **Technology selection** — specific libraries, frameworks, services

@@ -199,7 +199,14 @@ def collect_news(
         Injectable body-text base directory (for testing).
     """
     if _client is None:
-        raise RuntimeError("_client is required (use MarketauxClient)")
+        import os
+
+        from alphamind.data_sources.marketaux.client import MarketauxClient
+
+        api_key = os.environ.get("MARKETAUX_API_KEY")
+        if not api_key:
+            raise RuntimeError("MARKETAUX_API_KEY is not set in the environment")
+        _client = MarketauxClient(api_key=api_key)
 
     if _session_factory is None:
         _session_factory = default_session_factory()

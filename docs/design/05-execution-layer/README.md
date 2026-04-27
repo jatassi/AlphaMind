@@ -4,9 +4,9 @@ The system's operational core — responsible for order lifecycle management, po
 
 AlphaMind uses **Alpaca** as its broker for both paper and live trading. The switch between modes is a base-URL change (`paper-api.alpaca.markets` ↔ `api.alpaca.markets`), not a code change. The OMS consumes Alpaca's fill stream identically in both modes; a thin [paper-evaluation harness](paper-evaluation-harness.md) sits on top of paper-mode fills to produce calibrated live-execution estimates for go/no-go evaluation.
 
-*Design principle — parity over simulation.* A custom paper-trading simulator can never match a broker's API surface byte-for-byte, and any gap produces bugs that only appear at the paper-to-live transition — exactly when the cost of a bug is highest. Using Alpaca's paper environment trades some simulation fidelity for identical-API parity. On a 4–72h strategy where per-fill microstructure is not the edge, that is the right tradeoff.
+*Design principle — parity over simulation.* A custom paper-trading simulator can never match a broker's API surface byte-for-byte, and any gap produces bugs that only appear at the paper-to-live transition — when the cost of a bug is highest. Alpaca's paper environment trades some simulation fidelity for identical-API parity. On a 4–72h strategy where per-fill microstructure is not the edge, that is the right tradeoff.
 
-*Design principle — calibrated, not pessimistic.* The paper-evaluation harness estimates the slippage, market impact, and regulatory fees Alpaca's paper environment doesn't model, so paper P/L can be reported two ways: raw (what Alpaca said) and live-adjusted (what we'd expect at a real exchange). The goal is accurate live-estimation. Over-deflating paper P/L would make the go-live threshold unreachable without actually improving the system; the harness is tuned to estimate, not punish.
+*Design principle — calibrated, not pessimistic.* The harness estimates the slippage, market impact, and regulatory fees Alpaca's paper environment doesn't model, so paper P/L is reported two ways: raw (what Alpaca said) and live-adjusted (what we'd expect at a real exchange). Over-deflating paper P/L makes the go-live threshold unreachable without the system actually improving; the harness is tuned to estimate, not punish.
 
 ---
 
@@ -37,7 +37,7 @@ The engine has four components with distinct responsibilities, consumers, and fa
 | [Corporate actions](corporate-actions.md) | Designed | Position-layer mechanics for Alpaca-emitted CA events: per-action quantity/cost-basis/cash mutations, spin-off child positions, Phase 1 chronological merge with fills, idempotency ledger, activity log additions |
 | [Venue configuration](venue-configuration.md) | Designed | Alpaca-specific venue rules: settlement cycle, market sessions, PDT, Reg T margin percentages |
 
-**Note on data schemas:** The position model, thesis model, and orders & brackets documents serve double duty. They define execution behavior *and* the authoritative data schemas consumed by the [data layer](../01-data-layer/internal/README.md). The data layer's internal README cross-references these documents as the source of truth for how positions, theses, and orders are structured.
+**Note on data schemas:** The position, thesis, and orders & brackets documents serve double duty — they define execution behavior *and* the authoritative data schemas consumed by the [data layer](../01-data-layer/internal/README.md), which cross-references them as the source of truth.
 
 ---
 

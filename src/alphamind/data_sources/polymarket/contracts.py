@@ -12,6 +12,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
+
 from alphamind.data_sources._common import default_session_factory, resume_since, track_run
 from alphamind.persistence.models import (
     PredictionMarketContracts,
@@ -139,7 +141,15 @@ def _process_market(sess: Any, market: dict[str, Any], snapshot_ts: str) -> int:
             tags,
         )
 
-    prices = _fetch_prices(condition_id)
+    try:
+        prices = _fetch_prices(condition_id)
+    except httpx.HTTPStatusError as exc:
+        log.warning(
+            "polymarket: skipping contract %s — prices endpoint returned %s",
+            condition_id,
+            exc.response.status_code,
+        )
+        return 0
     if prices is None or "yes" not in prices:
         log.warning(
             "polymarket: skipping non-binary contract %s (no 'yes' price in response)",

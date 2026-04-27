@@ -202,6 +202,9 @@ def collect_news(
             overlap=timedelta(hours=1),
             session_factory=sf,
         )
+    if _rate_limiter is None:
+        _rate_limiter = RateLimiter()
+        _rate_limiter.set_limit(_PROVIDER, rate_per_minute=60)
 
     sdk = finnhub.Client(api_key=_get_api_key())
     outlets = _load_outlets()

@@ -56,12 +56,14 @@ def test_catchup_subcommand_routes_to_catchup_run_all():
         patch("alphamind.collector.__main__._parse_args") as mock_parse,
     ):
         mock_parse.return_value.subcommand = "catch-up"
+        mock_parse.return_value.only = None
+        mock_parse.return_value.skip = None
 
         from alphamind.collector.__main__ import main
 
         main()
 
-    mock_catchup.assert_called_once_with()
+    mock_catchup.assert_called_once_with(only=None, skip=None)
 
 
 # ---------------------------------------------------------------------------
