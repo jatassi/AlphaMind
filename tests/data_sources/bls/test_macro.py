@@ -173,7 +173,7 @@ class TestRevisionDetection:
     def test_revised_value_stored_with_incremented_revision_number(
         self, engine, session_factory
     ) -> None:
-        """If the stored value differs from the incoming value, insert a new row with revision_number+1."""
+        """If stored value differs from incoming value, insert a new row with revision_number+1."""
         # First collection: value = 3.7
         fake_client_1 = _fake_client([_make_bls_response("LNS14000000", [("2024", "M01", "3.7")])])
         with patch("alphamind.data_sources.bls.macro.BLSClient", return_value=fake_client_1):
@@ -269,14 +269,16 @@ class TestFailureBehavior:
             "500 Internal Server Error", request=request, response=response
         )
 
-        with patch("alphamind.data_sources.bls.macro.BLSClient", return_value=fake_client):
-            with pytest.raises(httpx.HTTPStatusError):
-                collect_series(
-                    series_ids=["LNS14000000"],
-                    since=date(2024, 1, 1),
-                    api_key="testkey",
-                    session_factory=session_factory,
-                )
+        with (
+            patch("alphamind.data_sources.bls.macro.BLSClient", return_value=fake_client),
+            pytest.raises(httpx.HTTPStatusError),
+        ):
+            collect_series(
+                series_ids=["LNS14000000"],
+                since=date(2024, 1, 1),
+                api_key="testkey",
+                session_factory=session_factory,
+            )
 
         with Session(engine) as sess:
             runs = sess.query(CollectionRuns).all()

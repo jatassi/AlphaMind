@@ -151,6 +151,6 @@ def bootstrap_auctions(
     _repo: Any = None,
 ) -> None:
     """Bootstrap 12 months of Treasury auction history."""
-    today = date.today()
+    today = datetime.now(UTC).date()
     twelve_months_ago = date(today.year - 1, today.month, today.day)
     collect_auctions(since=twelve_months_ago, _session_factory=_session_factory, _repo=_repo)

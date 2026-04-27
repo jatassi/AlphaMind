@@ -67,11 +67,11 @@ class TestPublicInterface:
         assert callable(lc)
 
     def test_exports_retry_shape_enum(self) -> None:
-        from alphamind.data_sources._common import RetryShape as RS
+        from alphamind.data_sources._common import RetryShape
 
-        assert RS.critical is not None
-        assert RS.important is not None
-        assert RS.optional is not None
+        assert RetryShape.critical is not None
+        assert RetryShape.important is not None
+        assert RetryShape.optional is not None
 
     def test_exports_with_retries(self) -> None:
         from alphamind.data_sources._common import with_retries as wr
@@ -79,9 +79,9 @@ class TestPublicInterface:
         assert callable(wr)
 
     def test_exports_rate_limiter(self) -> None:
-        from alphamind.data_sources._common import RateLimiter as RL
+        from alphamind.data_sources._common import RateLimiter
 
-        assert callable(RL)
+        assert callable(RateLimiter)
 
     def test_exports_track_run(self) -> None:
         from alphamind.data_sources._common import track_run as tr
@@ -457,14 +457,14 @@ class TestRateLimiter:
             assert released.is_set()
 
     def test_acquire_is_thread_safe_under_concurrent_calls(self) -> None:
-        """N concurrent threads racing on acquire() produce no over-issuance.
+        """50 concurrent threads racing on acquire() produce no over-issuance.
 
         Uses a very high rate limit so all threads complete quickly.
-        The post-condition: exactly N tokens are consumed from the bucket,
+        The post-condition: exactly n tokens are consumed from the bucket,
         not more — i.e. the token counter is never incremented by two threads
         simultaneously for the same token.
         """
-        N = 50
+        n = 50
         # High rate so tokens are available immediately and threads don't block
         rate = 6000  # tokens per minute = 100/sec — plenty for 50 threads
         limiter = RateLimiter()
@@ -483,7 +483,7 @@ class TestRateLimiter:
                 with list_lock:
                     errors.append(e)
 
-        threads = [threading.Thread(target=worker, name=f"w{i}") for i in range(N)]
+        threads = [threading.Thread(target=worker, name=f"w{i}") for i in range(n)]
         for t in threads:
             t.start()
         for t in threads:
@@ -491,9 +491,9 @@ class TestRateLimiter:
 
         assert not errors, f"Thread errors: {errors}"
         # Every thread completed successfully — no deadlock, no over-issuance
-        assert len(acquired) == N
+        assert len(acquired) == n
         # No thread acquired twice (each thread name is unique)
-        assert len(set(acquired)) == N
+        assert len(set(acquired)) == n
 
 
 # ---------------------------------------------------------------------------
@@ -538,9 +538,8 @@ class TestTrackRun:
     def test_exception_updates_to_failed_and_reraises(self) -> None:
         """On exception, updates to status='failed' and re-raises."""
         repo = self._make_repo()
-        with pytest.raises(RuntimeError, match="boom"):
-            with track_run("polygon.equity", _repo=repo):
-                raise RuntimeError("boom")
+        with pytest.raises(RuntimeError, match="boom"), track_run("polygon.equity", _repo=repo):
+            raise RuntimeError("boom")
 
         row = next(iter(repo.rows.values()))
         assert row["status"] == "failed"

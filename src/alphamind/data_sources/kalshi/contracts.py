@@ -7,7 +7,7 @@ via ``/trade-api/v2/markets?series_ticker=...``.
 UPSERTs into ``prediction_market_contracts``; writes
 ``prediction_market_snapshots`` per active market.
 
-``liquidity_usd`` is approximated as ``volume × last_price / 100`` (cents →
+``liquidity_usd`` is approximated as ``volume x last_price / 100`` (cents →
 dollars), since Kalshi does not expose open-interest directly in the markets
 endpoint.  This is noted in the module docstring so callers understand the
 proxy.
@@ -80,7 +80,7 @@ def _map_result(result: str | None) -> str | None:
 
 
 def collect_snapshots(
-    since: str,
+    _since: str,
     *,
     client: KalshiClient,
     session: Session,
@@ -97,7 +97,7 @@ def collect_snapshots(
 
     Parameters
     ----------
-    since:
+    _since:
         ISO 8601 timestamp used as a lower-bound filter hint (passed to the
         events endpoint; Kalshi ignores unknown query params gracefully).
     client:

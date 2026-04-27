@@ -38,9 +38,10 @@ class TreasuryClient:
                 timeout=10.0,
             )
             response.raise_for_status()
-            return True
         except httpx.HTTPError:
             return False
+        else:
+            return True
 
     @with_retries(RetryShape.critical)
     def get(self, path: str, params: dict[str, object] | None = None) -> dict[str, object]:

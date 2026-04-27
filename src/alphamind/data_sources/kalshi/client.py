@@ -137,7 +137,8 @@ class KalshiClient:
         """
         try:
             self._login()
-            return True
         except Exception:
             logger.exception("Kalshi connectivity check failed.")
             return False
+        else:
+            return True

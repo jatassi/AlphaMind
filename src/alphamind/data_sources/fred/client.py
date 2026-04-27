@@ -57,9 +57,10 @@ class FredClient:
         try:
             self._rl.acquire("fred")
             self._fred.get_series_info(_CONNECTIVITY_PROBE_SERIES)
-            return True
         except Exception:
             return False
+        else:
+            return True
 
     # ------------------------------------------------------------------
     # Rate-limited, retried SDK calls

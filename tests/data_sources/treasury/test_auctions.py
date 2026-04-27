@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
 from unittest.mock import patch
 
 import pytest
@@ -358,7 +358,7 @@ class TestBootstrapAuctions:
             auctions.bootstrap_auctions(_session_factory=session_factory, _repo=fake_repo)
 
         assert len(captured_since) == 1
-        today = date.today()
+        today = datetime.now(UTC).date()
         twelve_months_ago = date(today.year - 1, today.month, today.day)
         delta = abs((captured_since[0] - twelve_months_ago).days)
         assert delta <= 1  # within one day of 12 months back

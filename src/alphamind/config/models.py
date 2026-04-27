@@ -1,7 +1,7 @@
 """Pydantic configuration models for AlphaMind YAML config files (story 03a)."""
 
 import re
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, field_validator, model_validator
@@ -53,7 +53,7 @@ def _validate_cron(cron: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-class CredibilityTier(str, Enum):
+class CredibilityTier(StrEnum):
     tier_1 = "tier_1"
     tier_2 = "tier_2"
     tier_3 = "tier_3"
@@ -91,13 +91,13 @@ class CollectorScheduleConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class CriticalityTier(str, Enum):
+class CriticalityTier(StrEnum):
     critical = "critical"
     important = "important"
     optional = "optional"
 
 
-class BackoffStrategy(str, Enum):
+class BackoffStrategy(StrEnum):
     exponential = "exponential"
     none = "none"
 

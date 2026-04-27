@@ -280,7 +280,7 @@ def bootstrap_series(
     int
         Total new rows written across all series.
     """
-    today = date.today()
+    today = datetime.now(UTC).date()
     daily_since = today - timedelta(days=_DAILY_LOOKBACK_DAYS)
     monthly_since = date(today.year - _MONTHLY_LOOKBACK_YEARS, today.month, 1)
 

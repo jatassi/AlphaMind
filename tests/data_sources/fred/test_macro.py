@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -26,7 +26,7 @@ def engine():
 
 
 @pytest.fixture()
-def Session(engine):
+def session_factory(engine):
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
@@ -39,11 +39,11 @@ def mock_repo(engine):
     from alphamind.persistence.models import CollectionRuns
     from alphamind.persistence.session import make_session_factory
 
-    Session = make_session_factory(engine)
+    _sf = make_session_factory(engine)
 
     class Repo:
         def insert_running(self, run_id: str, collector: str, started_at: str) -> None:
-            with Session() as sess:
+            with _sf() as sess:
                 sess.add(
                     CollectionRuns(
                         run_id=run_id,
@@ -55,7 +55,7 @@ def mock_repo(engine):
                 sess.commit()
 
         def update_success(self, run_id: str, completed_at: str, rows_written: int) -> None:
-            with Session() as sess:
+            with _sf() as sess:
                 row = sess.get(CollectionRuns, run_id)
                 if row:
                     row.status = "success"
@@ -64,7 +64,7 @@ def mock_repo(engine):
                     sess.commit()
 
         def update_failed(self, run_id: str, error_summary: str) -> None:
-            with Session() as sess:
+            with _sf() as sess:
                 row = sess.get(CollectionRuns, run_id)
                 if row:
                     row.status = "failed"
@@ -101,7 +101,7 @@ def _make_series_info(frequency_short: str = "D", units: str = "Percent") -> pd.
 # ---------------------------------------------------------------------------
 
 
-def test_collect_series_writes_macro_observations(engine, Session, mock_repo) -> None:
+def test_collect_series_writes_macro_observations(engine, session_factory, mock_repo) -> None:
     """collect_series() writes one row per observation date."""
     from alphamind.data_sources.fred.macro import collect_series
 
@@ -117,11 +117,11 @@ def test_collect_series_writes_macro_observations(engine, Session, mock_repo) ->
         ["DGS10"],
         since=date(2026, 4, 24),
         client=mock_client,
-        session_factory=Session,
+        session_factory=session_factory,
         _repo=mock_repo,
     )
 
-    with Session() as sess:
+    with session_factory() as sess:
         rows = sess.query(MacroObservations).all()
 
     assert len(rows) == 2
@@ -136,7 +136,7 @@ def test_collect_series_writes_macro_observations(engine, Session, mock_repo) ->
 # ---------------------------------------------------------------------------
 
 
-def test_collect_series_sets_frequency_from_metadata(engine, Session, mock_repo) -> None:
+def test_collect_series_sets_frequency_from_metadata(engine, session_factory, mock_repo) -> None:
     """macro_observations.frequency is populated from FRED metadata."""
     from alphamind.data_sources.fred.macro import collect_series
 
@@ -151,11 +151,11 @@ def test_collect_series_sets_frequency_from_metadata(engine, Session, mock_repo)
         ["CPIAUCSL"],
         since=date(2026, 4, 1),
         client=mock_client,
-        session_factory=Session,
+        session_factory=session_factory,
         _repo=mock_repo,
     )
 
-    with Session() as sess:
+    with session_factory() as sess:
         row = sess.query(MacroObservations).first()
 
     assert row is not None
@@ -185,7 +185,7 @@ def test_collect_series_normalizes_units(
     fred_units: str,
     expected_short: str,
     engine: object,
-    Session: object,
+    session_factory: object,
     mock_repo: object,
 ) -> None:
     """macro_observations.units is normalized from verbose FRED units string."""
@@ -202,11 +202,11 @@ def test_collect_series_normalizes_units(
         ["TEST"],
         since=date(2026, 4, 25),
         client=mock_client,
-        session_factory=Session,
+        session_factory=session_factory,
         _repo=mock_repo,
     )
 
-    with Session() as sess:
+    with session_factory() as sess:
         row = sess.query(MacroObservations).first()
 
     assert row is not None
@@ -218,12 +218,14 @@ def test_collect_series_normalizes_units(
 # ---------------------------------------------------------------------------
 
 
-def test_collect_series_inserts_revision_when_value_differs(engine, Session, mock_repo) -> None:
+def test_collect_series_inserts_revision_when_value_differs(
+    engine, session_factory, mock_repo
+) -> None:
     """When a stored row's value differs, a new row with revision_number+1 is inserted."""
     from alphamind.data_sources.fred.macro import collect_series
 
     # Seed an existing row at revision 0
-    with Session() as sess:
+    with session_factory() as sess:
         sess.add(
             MacroObservations(
                 source="fred",
@@ -250,11 +252,11 @@ def test_collect_series_inserts_revision_when_value_differs(engine, Session, moc
         ["DGS10"],
         since=date(2026, 4, 24),
         client=mock_client,
-        session_factory=Session,
+        session_factory=session_factory,
         _repo=mock_repo,
     )
 
-    with Session() as sess:
+    with session_factory() as sess:
         rows = (
             sess.query(MacroObservations)
             .filter_by(series_id="DGS10", observation_date="2026-04-24")
@@ -269,11 +271,11 @@ def test_collect_series_inserts_revision_when_value_differs(engine, Session, moc
     assert rows[1].value == pytest.approx(4.25)
 
 
-def test_collect_series_no_revision_when_value_same(engine, Session, mock_repo) -> None:
+def test_collect_series_no_revision_when_value_same(engine, session_factory, mock_repo) -> None:
     """When the stored value matches the new pull, no revision row is inserted."""
     from alphamind.data_sources.fred.macro import collect_series
 
-    with Session() as sess:
+    with session_factory() as sess:
         sess.add(
             MacroObservations(
                 source="fred",
@@ -299,11 +301,11 @@ def test_collect_series_no_revision_when_value_same(engine, Session, mock_repo) 
         ["DGS10"],
         since=date(2026, 4, 24),
         client=mock_client,
-        session_factory=Session,
+        session_factory=session_factory,
         _repo=mock_repo,
     )
 
-    with Session() as sess:
+    with session_factory() as sess:
         rows = (
             sess.query(MacroObservations)
             .filter_by(series_id="DGS10", observation_date="2026-04-24")
@@ -318,7 +320,7 @@ def test_collect_series_no_revision_when_value_same(engine, Session, mock_repo) 
 # ---------------------------------------------------------------------------
 
 
-def test_collect_series_idempotent_on_same_window(engine, Session, mock_repo) -> None:
+def test_collect_series_idempotent_on_same_window(engine, session_factory, mock_repo) -> None:
     """Re-running collect_series on the same window produces no duplicate rows."""
     from alphamind.data_sources.fred.macro import collect_series
 
@@ -334,7 +336,7 @@ def test_collect_series_idempotent_on_same_window(engine, Session, mock_repo) ->
         series_ids=["DGS10"],
         since=date(2026, 4, 24),
         client=mock_client,
-        session_factory=Session,
+        session_factory=session_factory,
         _repo=mock_repo,
     )
 
@@ -345,7 +347,7 @@ def test_collect_series_idempotent_on_same_window(engine, Session, mock_repo) ->
     mock_client.get_series_info.return_value = series_info
     collect_series(**kwargs)
 
-    with Session() as sess:
+    with session_factory() as sess:
         rows = sess.query(MacroObservations).all()
 
     # Exactly 2 rows (one per date, no duplicates)
@@ -357,7 +359,7 @@ def test_collect_series_idempotent_on_same_window(engine, Session, mock_repo) ->
 # ---------------------------------------------------------------------------
 
 
-def test_collect_series_records_failed_on_full_error(engine, Session, mock_repo) -> None:
+def test_collect_series_records_failed_on_full_error(engine, session_factory, mock_repo) -> None:
     """On full failure, collection_runs records 'failed' and no data rows are written."""
     from alphamind.data_sources.fred.macro import collect_series
 
@@ -370,11 +372,11 @@ def test_collect_series_records_failed_on_full_error(engine, Session, mock_repo)
             ["DGS10"],
             since=date(2026, 4, 24),
             client=mock_client,
-            session_factory=Session,
+            session_factory=session_factory,
             _repo=mock_repo,
         )
 
-    with Session() as sess:
+    with session_factory() as sess:
         run = sess.query(CollectionRuns).first()
         macro_rows = sess.query(MacroObservations).all()
 
@@ -388,7 +390,7 @@ def test_collect_series_records_failed_on_full_error(engine, Session, mock_repo)
 # ---------------------------------------------------------------------------
 
 
-def test_bootstrap_series_uses_90_days_for_daily(engine, Session, mock_repo) -> None:
+def test_bootstrap_series_uses_90_days_for_daily(engine, session_factory, mock_repo) -> None:
     """bootstrap_series() requests ~90 days of history for daily series."""
     from alphamind.data_sources.fred.macro import (
         _DAILY_LOOKBACK_DAYS,
@@ -404,7 +406,7 @@ def test_bootstrap_series_uses_90_days_for_daily(engine, Session, mock_repo) -> 
         daily_series=DAILY_SERIES[:1],  # only one series to keep the test fast
         monthly_series=[],
         client=mock_client,
-        session_factory=Session,
+        session_factory=session_factory,
         _repo=mock_repo,
     )
 
@@ -413,11 +415,11 @@ def test_bootstrap_series_uses_90_days_for_daily(engine, Session, mock_repo) -> 
     obs_start = calls[0].kwargs.get("observation_start")
     assert obs_start is not None
     # The since date should be ~90 days in the past (within a 1-day tolerance)
-    expected = date.today() - timedelta(days=_DAILY_LOOKBACK_DAYS)
+    expected = datetime.now(UTC).date() - timedelta(days=_DAILY_LOOKBACK_DAYS)
     assert abs((obs_start - expected).days) <= 1
 
 
-def test_bootstrap_series_uses_24_months_for_monthly(engine, Session, mock_repo) -> None:
+def test_bootstrap_series_uses_24_months_for_monthly(engine, session_factory, mock_repo) -> None:
     """bootstrap_series() requests ~24 months of history for monthly series."""
     from alphamind.data_sources.fred.macro import bootstrap_series
     from alphamind.data_sources.fred.series import MONTHLY_SERIES
@@ -430,7 +432,7 @@ def test_bootstrap_series_uses_24_months_for_monthly(engine, Session, mock_repo)
         daily_series=[],
         monthly_series=MONTHLY_SERIES[:1],
         client=mock_client,
-        session_factory=Session,
+        session_factory=session_factory,
         _repo=mock_repo,
     )
 
@@ -440,7 +442,7 @@ def test_bootstrap_series_uses_24_months_for_monthly(engine, Session, mock_repo)
     assert obs_start is not None
 
     # 24 months back: obs_start should be around 2 years ago
-    today = date.today()
+    today = datetime.now(UTC).date()
     expected_year = today.year - 2
     expected_month = today.month
     expected = date(expected_year, expected_month, 1)

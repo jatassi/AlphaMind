@@ -18,7 +18,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -88,12 +88,13 @@ def load_config(
 
     # Validate that every api_key_env reference resolves
     for name, provider in data_sources.providers.items():
-        if provider.api_key_env is not None:
-            if provider.api_key_env not in env_values or env_values[provider.api_key_env] is None:
-                raise OSError(
-                    f"Provider {name!r} requires environment variable "
-                    f"{provider.api_key_env!r} but it is not set in {dot_env}"
-                )
+        if provider.api_key_env is not None and (
+            provider.api_key_env not in env_values or env_values[provider.api_key_env] is None
+        ):
+            raise OSError(
+                f"Provider {name!r} requires environment variable "
+                f"{provider.api_key_env!r} but it is not set in {dot_env}"
+            )
 
     return AlphaMindConfig(
         data_sources=data_sources,
@@ -107,7 +108,7 @@ def load_config(
 # ---------------------------------------------------------------------------
 
 
-class RetryShape(str, Enum):
+class RetryShape(StrEnum):
     """Retry tier matching api-failure-handling.md § Criticality tiers."""
 
     critical = "critical"

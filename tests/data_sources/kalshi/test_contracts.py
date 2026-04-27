@@ -24,8 +24,8 @@ def db_session():
     """Provide an in-memory SQLite session pre-populated with schema."""
     engine = make_engine(":memory:")
     Base.metadata.create_all(engine)
-    Session = make_session_factory(engine)
-    with Session() as sess:
+    session_factory = make_session_factory(engine)
+    with session_factory() as sess:
         yield sess
 
 

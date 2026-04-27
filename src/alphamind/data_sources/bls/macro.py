@@ -22,7 +22,7 @@ def _period_to_date(year: str, period: str) -> str:
     """Convert BLS year + period to an ISO date string (first of month).
 
     BLS monthly period format: ``M01`` (January) through ``M13`` (annual).
-    Only ``M01``–``M12`` are produced for monthly series.
+    Only ``M01``-``M12`` are produced for monthly series.
     """
     month = int(period[1:])
     return date(int(year), month, 1).isoformat()
