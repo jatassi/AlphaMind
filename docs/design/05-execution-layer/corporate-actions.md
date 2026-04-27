@@ -6,8 +6,6 @@ How the OMS integrates Alpaca-emitted corporate-action events into local positio
 
 ## Scope
 
-Covered:
-
 - Position quantity, cost basis, ticker, and status mutations from Alpaca CA activities
 - Cash credits and debits (long dividends, short dividend obligations, fractional cash-out, merger proceeds)
 - Spin-off child position creation
@@ -20,12 +18,12 @@ Covered:
 
 ## Source of truth: Alpaca
 
-Alpaca handles corporate actions natively ([broker-adapter.md § Known gaps](broker-adapter.md#known-gaps-relative-to-alphaminds-order-vocabulary)) — it computes split ratios, applies fractional-share cash-outs, allocates spin-off cost basis, etc. The OMS reads what Alpaca reports rather than deriving from market data or external CA calendars.
+Alpaca handles corporate actions natively ([broker-adapter.md § Known gaps](broker-adapter.md#known-gaps-relative-to-alphaminds-order-vocabulary)) — computing split ratios, applying fractional-share cash-outs, allocating spin-off cost basis. The OMS reads what Alpaca reports rather than deriving from market data or external CA calendars.
 
 Two Alpaca surfaces serve as inputs:
 
-1. **`GET /v2/account/activities`** — per-CA event records. Each carries the activity type (discriminator), ticker, transaction time, and per-action parameters (ratio for splits, amount for dividends, deal price for mergers, allocation for spin-offs). This is the trigger and parameter source.
-2. **`GET /v2/positions` and `GET /v2/account`** — post-adjustment authoritative state. Used at end of Phase 1 to reconcile local state against Alpaca's view. On any unexplained delta, local state moves to match Alpaca's per the existing reconciliation discipline ([broker-adapter.md § Account state queries](broker-adapter.md#account-state-queries)).
+1. **`GET /v2/account/activities`** — per-CA event records. Each carries the activity type (discriminator), ticker, transaction time, and per-action parameters (ratio for splits, amount for dividends, deal price for mergers, allocation for spin-offs). The trigger and parameter source.
+2. **`GET /v2/positions` and `GET /v2/account`** — post-adjustment authoritative state. Used at end of Phase 1 to reconcile local state against Alpaca's view. On any unexplained delta, local state moves to match Alpaca's per the reconciliation discipline ([broker-adapter.md § Account state queries](broker-adapter.md#account-state-queries)).
 
 The OMS reads, applies, and verifies — no parallel computation of Alpaca's behavior.
 
@@ -33,7 +31,7 @@ The OMS reads, applies, and verifies — no parallel computation of Alpaca's beh
 
 ## Per-action-type matrix
 
-Each row is one category of corporate action. The Alpaca activity-code column lists the relevant `activity_type` values from `/v2/account/activities`; the exact enum is verified against Alpaca's docs at implementation time and may include sub-codes (tax-classification variants, etc.) that route into the same handler.
+Each row is one category of corporate action. The Alpaca activity-code column lists the relevant `activity_type` values from `/v2/account/activities`; the exact enum is verified against Alpaca's docs at implementation time and may include sub-codes (tax-classification variants) that route into the same handler.
 
 | Action | Alpaca codes | Quantity | Cost basis | Ticker | Status | Cash impact | Activity log events |
 |---|---|---|---|---|---|---|---|
@@ -53,7 +51,7 @@ The `corporate_action_applied` entry carries a structured payload sufficient to 
 
 ## Spin-off child positions
 
-Spin-offs are the one structural exception to the otherwise-mandatory thesis and bracket bindings. On a `SPIN` activity, the parent retains its thesis and (now-cancelled) bracket; a new child position is created representing the spun-off shares with:
+Spin-offs are the one structural exception to the otherwise-mandatory thesis and bracket bindings. On a `SPIN` activity, the parent retains its thesis and (now-cancelled) bracket; a new child position represents the spun-off shares with:
 
 - Unique position ID
 - `instrument_type: equity`, `ticker:` spun-off symbol, `quantity:` Alpaca-reported allocation, `cost_basis:` Alpaca's allocated portion
@@ -71,7 +69,7 @@ If the spun-off ticker is in the asset universe and signals warrant, the analyst
 
 ## Phase 1 integration sequence
 
-Corporate action integration runs alongside fill integration in [Phase 1 of the invocation cycle](state-persistence.md#phase-1-write-path-fill-integration). The OMS:
+CA integration runs alongside fill integration in [Phase 1](state-persistence.md#phase-1-write-path-fill-integration). The OMS:
 
 1. **Query Alpaca for unprocessed activities.** `GET /v2/account/activities?after=<cursor>` returns all activities (fills, CAs, fees, etc.) since the last successful Phase 1. CA-related types are filtered into a separate processing queue.
 2. **Merge with unprocessed fills chronologically.** Each fill carries `fill_timestamp`; each CA activity carries `transaction_time`. Sort ascending. Ordering matters when a fill straddles an ex-date — fills before the CA reflect pre-action quantities, fills after reflect post-action. CAs typically apply outside market hours, but the ordering rule is unconditional.
@@ -79,7 +77,7 @@ Corporate action integration runs alongside fill integration in [Phase 1 of the 
 4. **Reconcile.** Compare local position state to `GET /v2/positions` and local cash to `GET /v2/account`. Unexplained deltas are logged as reconciliation alerts and resolved toward Alpaca.
 5. **Mark processed atomically.** Both unprocessed fills and unprocessed CA activities are marked processed as part of the Phase 1 transaction commit.
 
-The full sequence is one atomic transaction. If any step fails, the transaction rolls back; fills and CA activities remain unprocessed, and the next Phase 1 retries the full set. This matches the fail-closed mid-pipeline policy ([mid-pipeline-failure-handling.md](../mid-pipeline-failure-handling.md)) — no checkpoint, no partial commit.
+The full sequence is one atomic transaction. On any failure, the transaction rolls back; fills and CA activities remain unprocessed, and the next Phase 1 retries the full set. Matches the fail-closed mid-pipeline policy ([mid-pipeline-failure-handling.md](../mid-pipeline-failure-handling.md)) — no checkpoint, no partial commit.
 
 ---
 
@@ -87,7 +85,7 @@ The full sequence is one atomic transaction. If any step fails, the transaction 
 
 A `processed_corporate_actions` ledger tracks integrated Alpaca activity IDs. One row per CA activity keyed on `alpaca_activity_id` (deduplication anchor), with `processing_invocation_id`, `processing_timestamp`, and `processing_status` (`processed` after the Phase 1 transaction commits). On Phase 1 retry, the OMS skips activity IDs already in the ledger.
 
-This parallels the fill records' `processing_status` field. The narrow ledger keeps writes minimal — `/v2/account/activities` is queryable as the authoritative store, and the activity log entry written at integration time captures everything needed for audit.
+Parallels the fill records' `processing_status` field. The narrow ledger keeps writes minimal — `/v2/account/activities` is the authoritative queryable store, and the activity log entry at integration time captures everything needed for audit.
 
 ---
 
@@ -95,7 +93,7 @@ This parallels the fill records' `processing_status` field. The narrow ledger ke
 
 Per [orders-and-brackets.md § Corporate action handling](orders-and-brackets.md#corporate-action-handling), scheduled CAs are applied at the first scheduled invocation on or after ex-date. The 9:00 AM ET pre-open invocation is the normal case: position-level adjustments fire first in Phase 1, brackets are cancelled, and the strategist and PM run in Phase 2 with the flagged positions in context, producing fresh brackets before the 9:30 AM open.
 
-Detection: the `GET /v2/account/activities?after=<cursor>` query at the start of Phase 1 returns CA activities posted since the last invocation. Alpaca posts CA activities on or after ex-date on its own schedule; the OMS does not pre-fetch.
+Detection: the `GET /v2/account/activities?after=<cursor>` query at Phase 1 start returns CA activities posted since the last invocation. Alpaca posts CA activities on or after ex-date on its own schedule; the OMS does not pre-fetch.
 
 Mid-day intraday CAs are picked up at the next scheduled invocation. During the gap, the local position record is briefly stale; the position-level max-loss guardrail ([rules-and-limits.md](../06-risk-guardrails/rules-and-limits.md)) and the continuous monitor's breach detection ([architecture.md § 4b](architecture.md)) operate against the stale local quantity until the next Phase 1 reconciles. Trading halts, bankruptcies, and delistings are surfaced through different Alpaca channels.
 
@@ -105,9 +103,9 @@ Mid-day intraday CAs are picked up at the next scheduled invocation. During the 
 
 For options, Alpaca pre-adjusts strike, contract count, and contract multiplier per OCC standards on splits and stock dividends. The OMS reads post-adjustment values from `GET /v2/positions` and updates the local options position record. The cancel-and-review bracket policy applies — the monitor-managed underlying-stream stop is dropped, and the strategist proposes a fresh stop re-scaled to the new strike or a close.
 
-Mergers and spin-offs on optioned underlyings are messier: contracts may convert into adjusted contracts on a different underlying or into deliverable cash. Alpaca surfaces these as a sequence of activities; the OMS applies Alpaca's post-adjustment state, and the strategist's emphatic-default-close stance ([strategist.md § Corporate-action-pending positions](../04-decision-layer/strategist.md#corporate-action-pending-positions)) covers the thesis-survival question.
+Mergers and spin-offs on optioned underlyings are messier: contracts may convert into adjusted contracts on a different underlying or into deliverable cash. Alpaca surfaces these as a sequence of activities; the OMS applies Alpaca's post-adjustment state, and the strategist's default-close stance ([strategist.md § Corporate-action-pending positions](../04-decision-layer/strategist.md#corporate-action-pending-positions)) covers the thesis-survival question.
 
-Greeks on the post-CA position are recomputed at the next greeks refresh ([architecture.md § 4d](architecture.md)) using the new contract spec. Pre-CA greek values are stale and not migrated.
+Greeks on the post-CA position are recomputed at the next greeks refresh ([architecture.md § 4d](architecture.md)) using the new contract spec. Pre-CA greeks are stale and not migrated.
 
 ---
 

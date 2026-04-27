@@ -56,7 +56,7 @@ A first-class system component running persistently during market hours — peer
 
 The monitor subscribes to Alpaca's `trade_updates` websocket (via the [broker adapter](broker-adapter.md)) and writes every fill event into the fill buffer as it arrives. Paper and live mode work identically — same websocket shape, same event types; only the base URL differs. The OMS drains the buffer during Phase 1. Bracket lifecycle for equities — entry fill → protective leg activation → stop/target resolution → OCO cancellation — is handled natively by Alpaca and arrives as separate events the monitor passes through.
 
-**Disconnect recovery.** If the websocket disconnects, the monitor reconnects and queries `GET /v2/orders` with a `since` parameter to recover missed events. Alpaca's order state is authoritative; the OMS reconciles toward it and logs deltas.
+**Disconnect recovery.** On websocket disconnect, the monitor reconnects and queries `GET /v2/orders` with a `since` parameter to recover missed events. Alpaca's order state is authoritative; the OMS reconciles toward it and logs deltas.
 
 ### 4b. Guardrail breach detection and protective response
 
@@ -64,7 +64,7 @@ The monitor periodically evaluates portfolio state against guardrail limits usin
 
 **Response authority:** The monitor may issue CLOSE commands (only CLOSE — never OPEN, ADD, ADJUST, or CANCEL) to cure detected breaches. Each CLOSE is wrapped in an engine-originated command envelope with a guardrail trigger record. See [portfolio-manager.md](../04-decision-layer/portfolio-manager.md) for the envelope specification.
 
-**Secondary breach checking:** Before issuing a protective CLOSE, the monitor verifies the close wouldn't create a new breach (e.g., closing a short that was providing directional balance). If a secondary breach would result, the monitor logs the conflict and either selects an alternative position or defers to the strategist/PM.
+**Secondary breach checking:** Before issuing a protective CLOSE, the monitor verifies the close would not create a new breach (e.g., closing a short providing directional balance). If a secondary breach would result, the monitor logs the conflict and either selects an alternative position or defers to the strategist/PM.
 
 **Activity log integration:** Engine-originated envelopes use the same activity log structure as PM-originated envelopes — uniform audit trail regardless of command origin.
 
@@ -74,7 +74,7 @@ When market conditions deteriorate beyond what mechanical between-invocation act
 
 ### 4d. Greeks refresh orchestration
 
-For open option positions, the monitor maintains freshness of the greeks used for derived pricing and continuous guardrail evaluation. This supports 4e (options bracket derived-price evaluation and P/L-target firing) and 4b (continuous exposure monitoring for options). Options-fill execution itself is Alpaca's — see [broker-adapter.md § Supported instruments](broker-adapter.md).
+For open option positions, the monitor maintains freshness of the greeks used for derived pricing and continuous guardrail evaluation. Supports 4e (options bracket derived-price evaluation and P/L-target firing) and 4b (continuous exposure monitoring for options). Options-fill execution itself is Alpaca's — see [broker-adapter.md § Supported instruments](broker-adapter.md).
 
 **Refresh triggers (whichever fires first):**
 
@@ -85,7 +85,7 @@ For open option positions, the monitor maintains freshness of the greeks used fo
 
 **Failure semantics:** brief retry on IV fetch failure matching the adapter's submission retry pattern; on exhaustion, continue with the last successful greeks under a widened derivation uncertainty buffer and record `greeks_refresh_failed` in the activity log. If stale greeks leave a breach determination ambiguous, escalate to emergency invocation (4c) rather than act on uncertain data.
 
-**Off-hours:** the scheduled timer pauses outside market hours; the underlying stream stops producing ticks, so neither trigger fires. Greeks hold at the last in-session refresh. Theta decay still applies via the derivation formula (Δt is known from the clock); delta, gamma, and vega do not drift because the underlying isn't trading.
+**Off-hours:** the scheduled timer pauses outside market hours; the underlying stream stops producing ticks, so neither trigger fires. Greeks hold at the last in-session refresh. Theta decay still applies via the derivation formula (Δt is known from the clock); delta, gamma, and vega do not drift because the underlying is not trading.
 
 ### 4e. Options bracket-stop evaluation and P/L-target firing
 
