@@ -315,7 +315,7 @@ Each settings page corresponds to one config file or bundle (`profiles/<profile>
 | Cron expression | Structured "every N hours, anchored at HH:MM" picker with the equivalent cron string shown read-only |
 | Path | Text input with existence indicator |
 
-Inline validation shows the three layers from [configuration-management.md § Validation](configuration-management.md#validation):
+Inline validation surfaces the three layers from [configuration-management.md § Validation](configuration-management.md#validation):
 
 - **Parse-time errors** — red highlight on the offending field with the error message.
 - **Cross-reference errors** — page-level banner naming the broken reference (e.g., "active_profile names a profile that doesn't exist").
@@ -323,21 +323,21 @@ Inline validation shows the three layers from [configuration-management.md § Va
 
 Save is gated on all three layers passing. The save action writes the YAML file to disk; the next invocation picks it up via the standard reload path.
 
-Each setting carries a reload-policy badge — invocation-time-reload (most settings) or deploy-time-only (paths in `main.yaml`, SQLite pragmas, package versions, `.env` location) — so the operator knows whether a change requires a process restart. Deploy-time-only changes are saved with a banner explaining what restart is needed.
+Each setting carries a reload-policy badge — invocation-time-reload (most settings) or deploy-time-only (paths in `main.yaml`, SQLite pragmas, package versions, `.env` location). Deploy-time-only changes are saved with a banner explaining what restart is needed.
 
 #### Resolved config viewer
 
-A read-only view of the composed config that the most recent invocation actually consumed (profile base × regime multipliers × active overlays × mode behavioral transform). Side-by-side with the profile/regime/overlay sources that fed into it. The diff between consecutive invocations' resolved configs is one click away.
+Read-only view of the composed config the most recent invocation consumed (profile base × regime multipliers × active overlays × mode behavioral transform), side-by-side with the profile/regime/overlay sources. Diff between consecutive invocations' resolved configs is one click away.
 
 #### Config history and diff
 
-The `config/` tree is git-tracked; the command center shows the commit history per file with diff rendering. Useful for "when did I change the daily drawdown limit and what was the trigger." For files not in git (e.g., if an operator edits without committing), the view shows the last-modified timestamp and surfaces an "uncommitted changes" warning.
+The `config/` tree is git-tracked; the command center shows commit history per file with diff rendering. Useful for "when did I change the daily drawdown limit and what was the trigger." For files not in git, the view shows last-modified timestamp and surfaces an "uncommitted changes" warning.
 
 ### E. Risk and guardrails
 
 #### Guardrail dashboard
 
-The full state of all rules at the current snapshot.
+Full state of all rules at the current snapshot.
 
 | Pane | Content | Source |
 |---|---|---|
@@ -346,39 +346,39 @@ The full state of all rules at the current snapshot.
 | Drawdown state | Daily drawdown progress, cumulative drawdown progressive tier, halt-mode banner if active | `portfolio_summary`, halt-mode flag |
 | Recent breaches | Activity log filter for `guardrail_rejection`, `risk_limit_approached`, `risk_parameter_changed` over the last day | activity log |
 
-Click any rule row → drill-down showing per-position contribution, the breach response classification (immediate vs. deferred-to-strategist), and the cross-reference to that rule in [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md).
+Click any rule row → drill-down showing per-position contribution, breach response classification (immediate vs. deferred-to-strategist), and cross-reference to [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md).
 
 #### Regime and overlay timeline
 
-A chronological view of regime classifications, regime transitions (immediate-tightening on the way up, gradual loosening over three invocations on the way down), pre-event overlay activations, stress overlay activations. P/L drawdown and breach event markers are overlaid on the same timeline. Sourced from `risk_parameter_changed` activity log entries plus the per-invocation resolved-config snapshots.
+Chronological view of regime classifications, regime transitions (immediate-tightening up, gradual loosening over three invocations down), pre-event overlay activations, stress overlay activations. P/L drawdown and breach event markers overlay on the same timeline. Sourced from `risk_parameter_changed` activity log entries plus per-invocation resolved-config snapshots.
 
 ### F. Quality and feedback
 
-The rendering surface for the [feedback loop](feedback-loop.md). All views in this group are deterministic (no LLM tokens) and read from the persistence layer plus the [counterfactual replay engine](05-execution-layer/counterfactual-replay-engine.md) output. [Session mode](#review-sessions) overlays on top of these views without changing them.
+The rendering surface for the [feedback loop](feedback-loop.md). Views are deterministic (no LLM tokens) and read from the persistence layer plus [counterfactual replay engine](05-execution-layer/counterfactual-replay-engine.md) output. [Session mode](#review-sessions) overlays on top of these views without changing them.
 
 #### Weekly digest
 
-Single scrollable page, snapshotted weekly. Section content (headline outcomes, process pulse, trajectory sparklines, validation status, notable shifts, open validation queue) and per-section metric selection are specified in [feedback-loop.md § Dashboard and digest curation](feedback-loop.md#dashboard-and-digest-curation). The default landing view of `/feedback-review`.
+Single scrollable page, snapshotted weekly. Section content (headline outcomes, process pulse, trajectory sparklines, validation status, notable shifts, open validation queue) and per-section metric selection are in [feedback-loop.md § Dashboard and digest curation](feedback-loop.md#dashboard-and-digest-curation). Default landing view of `/feedback-review`.
 
 #### Validation evaluation view
 
-The dedicated view for evaluating a registered validation (the EVALUATE mode of [`/feedback-validate`](../../.claude/skills/feedback-validate/SKILL.md)). Designed for side-by-side pre/post comparison with the discipline the skill enforces.
+Dedicated view for evaluating a registered validation (the EVALUATE mode of [`/feedback-validate`](../../.claude/skills/feedback-validate/SKILL.md)). Designed for side-by-side pre/post comparison with the discipline the skill enforces.
 
 Layout, top to bottom:
 
-1. **Registration recap.** Verbatim re-display of the validation record (edited artifact, pre/post git SHAs, watched metric, window length, expected direction and magnitude, success criterion, failure criterion, registered timestamp). This is the anti-rationalization anchor the skill reads aloud at evaluation start.
-2. **Pre-edit window panel.** The watched metric over the registered pre-edit window. Shows: line chart with 80% credible band, sample size annotation, regime distribution overlay, active model version overlay, list of any other prompt edits that landed in the window.
+1. **Registration recap.** Verbatim re-display of the validation record (edited artifact, pre/post git SHAs, watched metric, window length, expected direction and magnitude, success criterion, failure criterion, registered timestamp). The anti-rationalization anchor the skill reads aloud at evaluation start.
+2. **Pre-edit window panel.** The watched metric over the registered pre-edit window: line chart with 80% credible band, sample size annotation, regime distribution overlay, active model version overlay, list of other prompt edits that landed in the window.
 3. **Post-edit window panel.** Same shape as the pre-edit panel, for the post-edit window.
-4. **Comparison summary.** Delta with credible-interval shape (overlapping vs. disjoint), confounder flags surfaced from the pre/post conditioning context (regime distribution mismatch, model version straddle, concurrent edits in window), and a non-binding suggested verdict (`improved` / `degraded` / `no_change` / `inconclusive`) — the operator and Claude make the call.
-5. **Verdict capture.** Form for the verdict and narrative; submits via `submit_validation_outcome()` and writes the validation outcome record per [state-persistence.md](05-execution-layer/state-persistence.md).
+4. **Comparison summary.** Delta with credible-interval shape (overlapping vs. disjoint), confounder flags surfaced from the pre/post conditioning context (regime distribution mismatch, model version straddle, concurrent edits in window), and a non-binding suggested verdict (`improved` / `degraded` / `no_change` / `inconclusive`).
+5. **Verdict capture.** Form for verdict and narrative; submits via `submit_validation_outcome()` and writes the validation outcome record per [state-persistence.md](05-execution-layer/state-persistence.md).
 
-Session-mode affordances specific to this view: `pin_pre_panel(metric_id)` and `pin_post_panel(metric_id)` keep a specific pre or post panel visible across navigation when the operator wants to drill into related metrics. Standard `highlight_metric`, `navigate_to_view`, `annotate`, `pin_for_comparison` work as elsewhere.
+Session-mode affordances specific to this view: `pin_pre_panel(metric_id)` and `pin_post_panel(metric_id)` keep a specific pre or post panel visible across navigation. Standard `highlight_metric`, `navigate_to_view`, `annotate`, `pin_for_comparison` work as elsewhere.
 
-Reachable from: the validation status row in the weekly digest, the `list_pending_validations()` results, and direct deep-link to a specific validation ID.
+Reachable from: the validation status row in the weekly digest, `list_pending_validations()` results, and direct deep-link to a specific validation ID.
 
 #### Monthly view
 
-Outcome-tier metrics with conditioning slices (regime, sector, conviction band, prompt version, model version), citation-chain visualizations, and anti-pattern accuracy curves. Specific layout drafted once resolved-thesis volume supports meaningful outcome-tier reading (per [feedback-loop.md § Pending](feedback-loop.md#pending)).
+Outcome-tier metrics with conditioning slices (regime, sector, conviction band, prompt version, model version), citation-chain visualizations, anti-pattern accuracy curves. Specific layout drafted once resolved-thesis volume supports meaningful outcome-tier reading (per [feedback-loop.md § Pending](feedback-loop.md#pending)).
 
 #### Retrospective view
 
@@ -386,17 +386,17 @@ Renders a `retrospective_reports` record's saved markdown plus the joining `retr
 
 #### Ad-hoc query surface
 
-For everything not on the curated views — direct query against the persistence layer with a SQL-like interface, filterable by date range, agent name, sector, regime, prompt version, and the conditioning dimensions defined in [feedback-loop.md](feedback-loop.md).
+For everything not on curated views — direct query against the persistence layer with a SQL-like interface, filterable by date range, agent name, sector, regime, prompt version, and conditioning dimensions defined in [feedback-loop.md](feedback-loop.md).
 
 ---
 
 ## Review sessions
 
-A capability that overlays on top of the standard views, activated when the operator opens a [feedback-loop](feedback-loop.md) review session via one of the Skills (`/feedback-review`, `/feedback-validate`, `/feedback-retrospective`). In session mode the dashboard becomes a shared canvas: Claude can highlight metrics, navigate to views, annotate chart points, and pin items for comparison; the operator continues using the dashboard normally and Claude reads the resulting state on demand. The integration model mirrors the Claude Code IDE pattern — Claude has *passive awareness* of what the operator is currently viewing and selecting and can query the dashboard's current state at any prompt turn.
+A capability overlaid on standard views, activated when the operator opens a [feedback-loop](feedback-loop.md) review session via one of the Skills (`/feedback-review`, `/feedback-validate`, `/feedback-retrospective`). In session mode the dashboard becomes a shared canvas: Claude can highlight metrics, navigate to views, annotate chart points, and pin items for comparison; the operator continues using the dashboard normally and Claude reads the resulting state on demand. Mirrors the Claude Code IDE pattern — Claude has *passive awareness* of what the operator is currently viewing and selecting, and can query the dashboard's current state at any prompt turn.
 
 ### Asymmetric model
 
-Claude writes via tool calls; Claude reads via tool calls; the operator interacts with the dashboard the same way they do in self-review mode. There is no reverse channel that triggers Claude on operator clicks. The session state on the backend is the single source of truth — both sides read and write it, and the dashboard renders from it via SSE.
+Claude writes via tool calls; Claude reads via tool calls; the operator interacts with the dashboard the same way they do in self-review mode. No reverse channel triggers Claude on operator clicks. The session state on the backend is the single source of truth — both sides read and write it, and the dashboard renders from it via SSE.
 
 ### Session lifecycle
 
@@ -408,11 +408,11 @@ Claude writes via tool calls; Claude reads via tool calls; the operator interact
 | `POST /review-sessions/{id}/control` | `{action, params}` | Claude-issued action; mutates the session state and pushes an SSE event to the subscribed dashboard |
 | `GET /review-sessions/{id}/events` | — | SSE stream the dashboard subscribes to; renders highlights, navigation, annotations, and pins as they arrive |
 
-Session state is **transient**: it lives in process memory on the command center backend and is dropped when the session is explicitly ended or the operator closes the dashboard tab for longer than a 30-second tolerance window (which absorbs page refreshes). Sessions are scoped to the browser tab; closing the tab ends the session.
+Session state is **transient**: it lives in process memory on the command center backend and is dropped when the session is explicitly ended or the operator closes the dashboard tab for longer than a 30-second tolerance window (which absorbs page refreshes). Sessions are scoped to the browser tab.
 
 ### v1 affordance vocabulary
 
-The `action` field on `POST /control` accepts the following:
+The `action` field on `POST /control` accepts:
 
 | Action | Params | Effect |
 |---|---|---|
@@ -425,7 +425,7 @@ The `action` field on `POST /control` accepts the following:
 | `clear_annotations` | — | Removes all Claude-set annotations from the current view |
 | `clear_pins` | — | Empties the comparison-pin tray |
 
-Multiple actions may be batched in a single `POST /control` call (the body accepts `{actions: [...]}` as the bulk form), reducing tool-call overhead when Claude wants to mark several things at once.
+Multiple actions may be batched in a single `POST /control` call (the body accepts `{actions: [...]}` as the bulk form), reducing tool-call overhead.
 
 ### Session state shape
 
@@ -455,7 +455,7 @@ The `GET /review-sessions/{id}/state` response:
 }
 ```
 
-`operator_selections` captures the operator's current and recent selections — table rows clicked, chart points hovered/clicked, metrics expanded — giving Claude the equivalent of the IDE's "currently viewing / currently selected" context. This is the load-bearing field for the IDE-pattern integration.
+`operator_selections` captures current and recent selections — table rows clicked, chart points hovered/clicked, metrics expanded — giving Claude the equivalent of the IDE's "currently viewing / currently selected" context. The load-bearing field for IDE-pattern integration.
 
 `recent_view_history` is bounded (last ~20 entries) and rolls; it gives Claude awareness of what the operator has been navigating through during the session.
 
@@ -464,25 +464,23 @@ The `GET /review-sessions/{id}/state` response:
 Each Skill (`/feedback-review`, `/feedback-validate`, `/feedback-retrospective`) follows the same shape:
 
 1. Skill invocation creates a session via `POST /review-sessions` and returns the dashboard URL to the operator.
-2. Operator opens the URL in their browser; the dashboard subscribes to the session's SSE stream.
+2. Operator opens the URL; the dashboard subscribes to the session's SSE stream.
 3. On each prompt turn, the skill calls `GET /review-sessions/{id}/state` to inject current dashboard state into Claude's context.
-4. Claude reasons about the state plus operator's message plus the activity log / agent_calls / counterfactual_replays / thesis records data, then issues `POST /review-sessions/{id}/control` calls to highlight or navigate as part of its response.
+4. Claude reasons about the state plus the operator's message plus the activity log / agent_calls / counterfactual_replays / thesis records data, then issues `POST /review-sessions/{id}/control` calls to highlight or navigate.
 5. Operator reads Claude's text and looks at the dashboard; responds verbally in the chat.
 6. Repeat until session end (`DELETE /review-sessions/{id}`).
 
-The Skill prompts that orchestrate this — when to highlight, when to navigate, how to phrase findings, how to handle pre-registration in `/feedback-validate`, how to drive the open-ended retrospective in `/feedback-retrospective` — are drafted as a follow-up to this surface.
+The Skill prompts that orchestrate this are drafted as a follow-up to this surface.
 
 ### Session persistence
 
-Review session state lives in process memory on the command center backend and is dropped on session end or browser disconnect (with the 30-second refresh tolerance). The artifacts the session reasons over (activity log, agent calls, counterfactual replays, thesis records) are persisted separately by the OMS and the counterfactual replay engine; the session is a viewing surface over them.
-
-This aligns with the [Persistence boundary](#persistence-boundary) discipline elsewhere in the dashboard — live screen state is not history.
+Review session state lives in process memory on the command center backend and is dropped on session end or browser disconnect (with the 30-second refresh tolerance). The artifacts the session reasons over (activity log, agent calls, counterfactual replays, thesis records) are persisted separately by the OMS and counterfactual replay engine; the session is a viewing surface over them.
 
 ---
 
 ## Operator actions
 
-State-mutating actions exposed in the UI. Each emits an activity-log entry with `source: operator_console`. Every action is gated on confirmation (a typed confirmation token for destructive actions, a single-click confirmation for non-destructive ones). All actions are subject to the same [authentication](#authentication-and-access) requirement as views.
+State-mutating actions exposed in the UI. Each emits an activity-log entry with `source: operator_console`. Every action is gated on confirmation (typed token for destructive actions, single-click for non-destructive). All actions require the same [authentication](#authentication-and-access) as views.
 
 | Action | What it does | Where it lands in state |
 |---|---|---|
@@ -495,7 +493,7 @@ State-mutating actions exposed in the UI. Each emits an activity-log entry with 
 | Run universe validation | Executes the `scripts/validate_universe.py` validation procedure against `config/universe.yaml` and renders the report inline | No state change unless the operator subsequently edits `universe.yaml` |
 | Acknowledge or snooze an alert | Updates the alert state | Alerts table |
 
-There is no operator action for editing prompts in `prompts/` from the UI — the spec deliberately keeps prompt iteration to a text-editor-and-git workflow. The command center provides a *viewer* for the active prompt per invocation as a diagnostic aid, sourced from the `agent_calls` table's `system_prompt_path`, `system_prompt_git_sha`, and `system_prompt_snapshot_reference` fields per [state-persistence.md § Agent calls](05-execution-layer/state-persistence.md).
+No operator action for editing prompts in `prompts/` from the UI — prompt iteration stays in a text-editor-and-git workflow. The command center provides a *viewer* for the active prompt per invocation as a diagnostic aid, sourced from the `agent_calls` table's `system_prompt_path`, `system_prompt_git_sha`, and `system_prompt_snapshot_reference` fields per [state-persistence.md § Agent calls](05-execution-layer/state-persistence.md).
 
 ---
 
@@ -503,7 +501,7 @@ There is no operator action for editing prompts in `prompts/` from the UI — th
 
 ### Alert rules
 
-An alert rule has four fields: a condition, a severity, a debounce window, and a set of channels. Conditions are predicates over the same state the views read; a rule fires when the predicate transitions from false to true. Severity drives the notification channel and the dashboard banner color.
+An alert rule has four fields: condition, severity, debounce window, channels. Conditions are predicates over the same state the views read; a rule fires when the predicate transitions from false to true. Severity drives the notification channel and dashboard banner color.
 
 **Severity tiers:**
 
@@ -513,7 +511,7 @@ An alert rule has four fields: a condition, a severity, a debounce window, and a
 | Important | Trading remains functional but operator review is warranted within the session | In-app banner + Discord webhook |
 | Operational | Information for trend analysis; no immediate action required | In-app banner only |
 
-**Default rule set** (initial population; the operator can add, edit, disable rules through the rule registry editor):
+**Default rule set** (initial population; the operator can add, edit, disable rules via the rule registry editor):
 
 | Rule | Condition | Severity |
 |---|---|---|
@@ -531,7 +529,7 @@ An alert rule has four fields: a condition, a severity, a debounce window, and a
 | Command abandoned | Activity log `command_abandoned` event | Operational |
 | Thesis resolved | Activity log `thesis_resolved` event (informational, for feedback loop tracking) | Operational |
 
-The rule registry is itself part of the configuration tree (`config/alerts.yaml`) and is edited via the same GUI config editor described above.
+The rule registry is part of the configuration tree (`config/alerts.yaml`), edited via the same GUI config editor.
 
 ### Notification channels
 
@@ -540,11 +538,11 @@ The rule registry is itself part of the configuration tree (`config/alerts.yaml`
 | In-app banner | Always present on every page; severity-color-coded; persists until acknowledged or snoozed | Title, one-line context, click-through to alert detail |
 | Discord webhook | Posts to a configured webhook URL on critical and important alerts | Embed with title, severity, context, link to the command center URL for the alert detail |
 
-The Discord webhook URL is a secret and lives in `.env` referenced from `config/alerts.yaml`. Additional channels (email, SMS, iMessage) are not in the initial scope; the channel registry is structured so a future channel adds without altering the alert-rule contract.
+The Discord webhook URL is a secret in `.env` referenced from `config/alerts.yaml`. Additional channels (email, SMS, iMessage) are not in initial scope; the channel registry is structured so a future channel adds without altering the alert-rule contract.
 
 ### Acknowledge and snooze
 
-Any alert can be acknowledged (clears the banner; the alert remains in history) or snoozed for a specified duration (suppresses re-firing of the same rule for the snooze window). Snoozes are scoped per rule, not global; an alert that was snoozed but whose underlying condition has cleared and re-armed during the snooze re-fires as soon as the snooze window expires. Acknowledges and snoozes themselves are activity-log events with `source: operator_console`.
+Any alert can be acknowledged (clears the banner; remains in history) or snoozed for a specified duration (suppresses re-firing of the same rule for the snooze window). Snoozes are per-rule. An alert that was snoozed but whose underlying condition cleared and re-armed during the snooze re-fires as soon as the window expires. Acknowledges and snoozes are activity-log events with `source: operator_console`.
 
 ---
 
@@ -552,19 +550,19 @@ Any alert can be acknowledged (clears the banner; the alert remains in history) 
 
 ### Identity model
 
-**Single user.** The command center serves exactly one operator. There is no multi-user provisioning, no role-based access control, no per-user audit segregation. All state-mutating actions are attributed to the single operator identity in the activity log via `source: operator_console`.
+**Single user.** The command center serves exactly one operator. No multi-user provisioning, role-based access control, or per-user audit segregation. All state-mutating actions are attributed to the single operator identity in the activity log via `source: operator_console`.
 
 ### Authentication
 
 **Passkey-based (WebAuthn).** No passwords. The operator registers one or more passkeys (resident credentials on phone, laptop, or hardware security key) at first launch, gated by a one-time setup token shown on the local console. Subsequent sessions are authenticated by passkey assertion only.
 
-Sessions are time-limited; the duration is configured in `config/security.yaml`. There is no "remember me" beyond the session lifetime.
+Sessions are time-limited; duration is configured in `config/security.yaml`. No "remember me" beyond the session lifetime.
 
 ### Access surfaces
 
-**Local access.** From the trading machine itself, the command center is reachable on `localhost` at its bound port. Local access is still subject to passkey authentication; there is no localhost bypass.
+**Local access.** From the trading machine, the command center is reachable on `localhost` at its bound port. Still subject to passkey authentication.
 
-**Remote access.** The trading machine joins the operator's existing VPS WireGuard hub (`wg0`, `10.8.0.0/24`) as a new peer. The command center backend binds to the trading machine's WG IP. The VPS Caddy reverse proxy adds a new site block for the chosen subdomain of `atassi.org` that proxies over the WG tunnel:
+**Remote access.** The trading machine joins the operator's existing VPS WireGuard hub (`wg0`, `10.8.0.0/24`) as a new peer. The command center backend binds to the trading machine's WG IP. The VPS Caddy reverse proxy adds a site block for the chosen subdomain of `atassi.org` that proxies over the WG tunnel:
 
 ```caddy
 commandcenter.atassi.org {
@@ -575,21 +573,21 @@ commandcenter.atassi.org {
 }
 ```
 
-The public path is browser → Cloudflare DNS (DNS-only, grey cloud) → VPS:443 → Caddy (TLS termination, security headers, rate limit) → WireGuard tunnel → command center on the trading machine. No WireGuard client is required on the operator's accessing devices; the VPS is the gateway. TLS terminates at the VPS; traffic between the VPS and the trading machine traverses the encrypted WG tunnel and does not require its own TLS layer, matching the existing pattern for the home media server services.
+The public path: browser → Cloudflare DNS (DNS-only, grey cloud) → VPS:443 → Caddy (TLS termination, security headers, rate limit) → WireGuard tunnel → command center on the trading machine. No WireGuard client required on accessing devices; the VPS is the gateway. TLS terminates at the VPS; traffic between VPS and trading machine traverses the encrypted WG tunnel.
 
-The VPS-side artifacts (WG peer entry in `/etc/wireguard/wg0.conf`, the new Caddyfile block) are operator-maintained alongside the existing VPS configuration and are not within this repository.
+VPS-side artifacts (WG peer entry in `/etc/wireguard/wg0.conf`, Caddyfile block) are operator-maintained alongside existing VPS configuration, outside this repository.
 
 ### Audit
 
-Every state-mutating endpoint logs an entry to the activity log with `source: operator_console`, the action name, the parameters, and the session timestamp. The activity log explorer surfaces these alongside system-originated events; a saved filter view named "Operator actions" is available by default.
+Every state-mutating endpoint logs an entry to the activity log with `source: operator_console`, action name, parameters, and session timestamp. The activity log explorer surfaces these alongside system-originated events; a saved filter view named "Operator actions" is available by default.
 
 ---
 
 ## Implementation status notes
 
-This is a Phase 4 design spec. The command center itself is unimplemented as of writing; the supporting primitives in [infrastructure.md § Observability](../architecture/infrastructure.md#observability) (the `invocations` table and the file archive) are also Phase-4-and-later implementation work.
+Phase 4 design spec. The command center is unimplemented as of writing; the supporting primitives in [infrastructure.md § Observability](../architecture/infrastructure.md#observability) (the `invocations` table and file archive) are also Phase-4-and-later work.
 
-One related work item is tracked separately in [project-tracker.md](../project-tracker.md):
+One related work item tracked in [project-tracker.md](../project-tracker.md):
 
 1. **Feedback-loop design.** The [Quality and feedback](#f-quality-and-feedback-stub) view section is stubbed; concrete metrics, time windows, and visualizations land alongside the feedback-loop spec.
 
