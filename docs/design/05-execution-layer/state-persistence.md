@@ -369,7 +369,7 @@ Identity fields:
 - PM decision envelope ID: foreign key to the originating `pm_decision` activity log entry's envelope_id
 - Replay kind: `rejection` (PM rejected the proposal — replay simulates the un-rejected form) or `modification_original_form` (PM modified the proposal — replay simulates the un-modified form alongside the actual modified-form trade)
 - Replay status: `evaluated` (the engine produced a counterfactual P/L) or `unevaluable` (the engine could not produce one)
-- Unevaluable reason: enum, set only when status is `unevaluable`: `unsupported_instrument` (options or multi-leg strategy proposals; v1 is equity-only), `data_missing` (historical price data not available over the replay window), `corporate_action_in_window` (a corporate action fired on the underlying during the replay window)
+- Unevaluable reason: enum, set only when status is `unevaluable`: `unsupported_instrument` (multi-leg strategy proposals — equity and single-leg options are both supported from v2), `unsupported_bracket_type` (option proposal whose hard-backstop leg is P/L-based on the option's own price; per-bar option pricing is not modeled), `data_missing` (historical underlying price data not available over the replay window, or for option proposals no IV-surface snapshot available at or before the entry or exit timestamp within the data pipeline's normal refresh interval), `corporate_action_in_window` (a corporate action fired on the underlying during the replay window)
 
 Entry simulation fields (set only when replay status is `evaluated`):
 - Entered: boolean — whether the simulated entry order would have filled within the entry window

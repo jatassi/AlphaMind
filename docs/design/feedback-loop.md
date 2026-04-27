@@ -308,7 +308,7 @@ The [counterfactual replay engine](05-execution-layer/counterfactual-replay-engi
 
 Unlocks: PM rejection accuracy, modification effectiveness, anti-pattern detector accuracy, sizing modification effectiveness.
 
-The engine is daily batch (with on-demand override via the command center or `/feedback-review` skill). Equity-only; options and multi-leg strategies are recorded as unevaluable. Low-confidence replays are persisted but excluded from aggregated metrics at query time.
+The engine is daily batch (with on-demand override via the command center or `/feedback-review` skill). Equity and single-leg option proposals are both replayed (option proposals via underlying-bar trigger evaluation with Black-Scholes pricing at entry and exit only — see [counterfactual-replay-engine.md § Option proposals](05-execution-layer/counterfactual-replay-engine.md#option-proposals)); multi-leg strategies are recorded as unevaluable. Low-confidence replays are persisted but excluded from aggregated metrics at query time.
 
 ---
 
@@ -436,7 +436,7 @@ Counterfactual replays produced this week, broken out:
 
 - Total replays attempted
 - By `replay_status`: evaluated / unevaluable
-- For unevaluable: by `unevaluable_reason` (unsupported_instrument / data_missing / corporate_action_in_window)
+- For unevaluable: by `unevaluable_reason` (unsupported_instrument / unsupported_bracket_type / data_missing / corporate_action_in_window)
 - For evaluated: by `confidence` (high / medium / low)
 
 Renders as a small stacked bar plus per-bucket counts. The operator scans this for a high `data_missing` rate (data layer issue) or `low` confidence rate (data quality issue).
