@@ -261,38 +261,6 @@ _New infrastructure, cross-cutting consolidations, or UI surfaces._
 
 **Recommendation.** **Option A — per-producer JSON Schema files.** The pipeline and monitor are separate producers of separate event taxonomies; conflating them via a shared variant union is exactly the per-producer-schema anti-pattern flagged in prior feedback. The JSON Schema convention matches every existing multi-producer contract (PM envelope, engine envelope, OMS command, analyst output) and feeds the existing `openapi-typescript` type-sharing path through FastAPI's automatic schema reuse. Option B's "use OpenAPI for HTTP" is right for the HTTP verbs but wrong for events; Option A unifies both surfaces under one convention without inventing a new doc shape.
 
-#### Validation methodology: interrupted-window handling _(Feedback loop)_
-
-- [ ] Specify how the validation skill handles a window interrupted partway through (e.g., a regime shift mid-validation). _Source: [feedback-loop.md](design/feedback-loop.md)._
-
-**Unblocks.**
-
-- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Ad-hoc query surface_, _Monthly outcome view_, _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
-
-**Context.** [`feedback-loop.md § Pending`](docs/design/feedback-loop.md#pending) flags the gap directly: "handling interrupted windows (regime shift or model update straddling the validation window mid-run)." Today, [`/feedback-validate` EVALUATE](.claude/skills/feedback-validate/SKILL.md) names regime-distribution mismatch and model-version straddle as confounders that should drive the verdict to `inconclusive`, but does not specify what happens when the regime shifts (or Anthropic ships a model update, or the operator lands a second prompt edit) *during* the registered window — should the validation be re-anchored, the window re-started, the verdict pre-committed to `inconclusive`, or the validation cancelled? The [validation entity in state-persistence](docs/design/05-execution-layer/state-persistence.md) carries no `cancelled` or `superseded` status field today; status is derived from the existence of a joining outcome record.
-
-**Options.**
-
-1. **Mid-window invalidation: any in-flight validation whose conditioning context shifts materially is auto-marked `superseded`; operator re-registers with a fresh window if the edit is still worth assessing.** A new `superseded_at` timestamp and `superseded_reason` field on the validation record (additive — not on the outcome record, since no outcome was reached). The dashboard's [validation status row](docs/design/feedback-loop.md#section-4--validation-status) surfaces superseded validations with their reason for visibility but they don't enter the `validation_outcomes` ledger.
-
-2. **Pre-commit `inconclusive` at evaluation time: the window completes regardless of mid-window events, but the EVALUATE walk surfaces the interruption as a structural confounder and the verdict is forced `inconclusive`.** No new fields; the existing confounder-conditioning step in EVALUATE step 4 promotes detected mid-window shifts from "consider for verdict" to "verdict is `inconclusive` if a qualifying shift occurred." Operator may then re-register.
-
-3. **Dynamic re-anchoring: detect the mid-window event, split the window into pre-shift and post-shift segments, and evaluate each segment against the success/failure criterion separately.** The outcome record carries per-segment posterior summaries; the verdict is some structural combination (e.g., `improved` only if both segments meet success).
-
-4. **Window-extension: detect the mid-window event and extend the validation window by the unaffected period to recover the lost data, capped at a configured maximum.** Window-end timestamp updates, operator notified, evaluation deferred.
-
-**Steelmans.**
-
-- *Option 1.* Cleanest separation — superseded validations are not validations that produced a `no_change` or `inconclusive` outcome, they are validations whose pre-registration contract was structurally broken. Distinct verdict ledgers (outcomes vs. supersessions) preserve the discipline that "inconclusive is a first-class verdict": a real `inconclusive` outcome means the data didn't move enough to distinguish, which is different from "we can't read this window because confounders contaminated it." Aligns with [`/feedback-validate § Anti-patterns`](.claude/skills/feedback-validate/SKILL.md#anti-patterns-in-evaluation): "stretching the window... requires explicit operator direction with a stated reason." Supersession is the operator-explicit mechanism.
-
-- *Option 2.* Strongest pre-registration discipline — the contract said "evaluate at window-end," so we evaluate at window-end and let the verdict reflect reality. Adding any new state to the validation record creates a new surface for confirmation bias ("I should keep this window alive because the edit is still working"); pre-committing to `inconclusive` on any qualifying shift mechanizes the decision and is structurally what the skill's confounder-conditioning step already implies. No new schema. The lowest-complexity option.
-
-- *Option 3.* Most information-preserving — a mid-window regime shift may itself be evidence about the edit's regime sensitivity. A prompt edit that improves PM rejection accuracy in normal regime but degrades it in elevated regime is a discovery the binary verdict obscures; per-segment evaluation surfaces it. The structural combination is mechanical and audit-friendly.
-
-- *Option 4.* The least operator burden — most edits are time-bounded only because the operator wants a meaningful sample, and an extension that recovers the unaffected window length restores the original sample target. Pre-registration discipline is preserved (criteria frozen, expected direction unchanged, just the clock moves).
-
-**Recommendation.** **Option 1.** Auto-supersede on a structural conditioning shift; operator re-registers if the edit is still worth assessing. The structural shifts that should trigger supersession are the ones already named in [`feedback-loop.md § Confounder management`](docs/design/feedback-loop.md#confounder-management) — regime transition (the distillation layer emits the label per invocation; supersession fires when the active regime at any point during the post-edit window differs from the regime at registration), Anthropic model version change (the `agent_calls` provenance fields capture model ID per call), or any other prompt edit landing on the watched artifact's git ancestry. Option 2 is structurally similar but conflates the supersession decision with the evaluation walk, which corrupts the operator-facing meaning of `inconclusive` — a verdict whose ledger answers "did the edit work" should not also carry "the window was unreadable." Option 3 imports a new analytical surface (per-segment posterior shapes, structural verdict combination) that propagates into the dashboard, the outcome schema, and the skill prompt — substantial scope creep against [`Simplify before building`](.claude/projects/-Users-jatassi-Git-AlphaMind/memory/feedback_simplify_before_building.md). Option 4 lets a clock slip silently, which the skill's anti-pattern list explicitly forbids. The supersession path adds two fields to the validation record (`superseded_at`, `superseded_reason`), one notable-shift dashboard row when a supersession fires (so the operator notices and can re-register if appropriate), and a single rule in the EVALUATE walk: detect supersession before reading the registration verbatim, and if superseded, the EVALUATE walk does not run — the operator either re-registers with a fresh post-shift window or accepts the supersession as the resolution. Confounders detected at evaluation time that didn't trigger automatic supersession during the window remain `inconclusive` material per the existing skill, preserving the layered defense.
-
 #### Earnings transcript NLP pipeline _(Analysis layer)_
 
 - [ ] Specify the transcript ingestion pipeline (Motley Fool scraping or Quartr API) and the NLP extraction pipeline (tone classification, Q&A clustering, non-answer detection, forward-looking statement extraction). _Source: [qualitative-research.md](design/03-analysis-layer/qualitative-research.md)._
@@ -323,7 +291,7 @@ _New infrastructure, cross-cutting consolidations, or UI surfaces._
 
 **Unblocks.**
 
-- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: interrupted-window handling_, _Monthly outcome view_, _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Monthly outcome view_, _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
 
 **Context.** Lives in the F. Quality and feedback view group of `command-center.md` and is named in `feedback-loop.md § Dashboard and digest curation` as "everything not on the curated views." The data substrate is fixed: `agent_calls`, `activity_log`, `theses`, `counterfactual_replays`, plus the conditioning provenance fields on `invocations` (regime, profile, mode, overlays, prompt versions, model versions). The same surface is hit by `/feedback-review` ad-hoc deep-dives and by `/feedback-retrospective` Phase 1 ingestion. Read shape only — never mutates anything.
 
@@ -347,7 +315,7 @@ _New infrastructure, cross-cutting consolidations, or UI surfaces._
 
 **Unblocks.**
 
-- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: interrupted-window handling_, _Ad-hoc query surface_, _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Ad-hoc query surface_, _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
 
 **Context.** `feedback-loop.md` names this view but defers layout until resolved-thesis volume supports meaningful posterior bands. `command-center.md § Monthly view` echoes the same deferral. The substrate exists today: counterfactual replays cover PM accuracy and modification effectiveness; conviction calibration, status calibration, and citation-chain metrics all join through `agent_calls.output_artifact_ref` parsing plus `theses` resolution outcomes. The conditioning surface (regime / sector / conviction band / prompt version / model version) is `feedback-loop.md § Conditioning surface` and is the primary affordance per `feedback-review` skill's monthly-mode walk.
 
@@ -371,7 +339,7 @@ _New infrastructure, cross-cutting consolidations, or UI surfaces._
 
 **Unblocks.**
 
-- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: interrupted-window handling_, _Ad-hoc query surface_, _Monthly outcome view_, _Backtest-for-deterministic-layer infrastructure_.
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Ad-hoc query surface_, _Monthly outcome view_, _Backtest-for-deterministic-layer infrastructure_.
 
 **Context.** [`feedback-loop.md § Pending`](docs/design/feedback-loop.md#pending) names the gap as "protocol for what evidence is sufficient to roll back a shipped change." Today, [`/feedback-validate` EVALUATE](.claude/skills/feedback-validate/SKILL.md) produces a verdict in `{improved, degraded, no_change, inconclusive}` and writes a `validation_outcomes` record, but the procedure following a `degraded` verdict is unspecified — does the operator immediately revert via git, register a new validation watching the revert, schedule a follow-up retrospective, or accept the degradation if the magnitude is small? The system is operator-driven per the [feedback-loop](docs/design/feedback-loop.md) preamble ("the operator is the agent of all changes"), so the protocol is decision-support, not automation.
 
@@ -403,7 +371,7 @@ _New infrastructure, cross-cutting consolidations, or UI surfaces._
 
 **Unblocks.**
 
-- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: interrupted-window handling_, _Ad-hoc query surface_, _Monthly outcome view_, _Validation methodology: rollback evidence protocol_.
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Ad-hoc query surface_, _Monthly outcome view_, _Validation methodology: rollback evidence protocol_.
 
 **Context.** [`feedback-loop.md § Confounder management`](docs/design/feedback-loop.md#confounder-management) names "Backtest as sanity check" for regime-sensitive changes, qualified parenthetically as open infrastructure work. The scope is constrained: replay the *deterministic* layer (Class A/B/C distillation thresholds and the Class B rolling state from [`threshold-calibration.md`](docs/design/02-distillation-layer/threshold-calibration.md)) against historical price/macro inputs to confirm a tuning change holds across multiple historical regimes — not a full LLM-pipeline backtest. The [counterfactual replay engine](docs/design/05-execution-layer/counterfactual-replay-engine.md) already exists for PM-decision counterfactuals on price data, and the [paper-evaluation harness](docs/design/05-execution-layer/paper-evaluation-harness.md) already provides shared spread/impact/fee primitives. Validation under [`/feedback-validate`](.claude/skills/feedback-validate/SKILL.md) is an LLM-driven session; the deterministic harness is an analytical input it consumes, not a peer to it.
 

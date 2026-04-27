@@ -385,9 +385,11 @@ Layout, top to bottom:
 4. **Comparison summary.** Delta with credible-interval shape (overlapping vs. disjoint), confounder flags surfaced from the pre/post conditioning context (regime distribution mismatch, model version straddle, concurrent edits in window), and a non-binding suggested verdict (`improved` / `degraded` / `no_change` / `inconclusive`).
 5. **Verdict capture.** Form for verdict and narrative; submits via `submit_validation_outcome()` and writes the validation outcome record per [state-persistence.md](05-execution-layer/state-persistence.md).
 
+When the validation has been auto-superseded per [feedback-loop.md § Mid-window supersession](feedback-loop.md#mid-window-supersession), the view replaces panels 2–5 with a supersession banner (registration recap remains): the supersession reason, the timestamp it fired, the conditioning shift that triggered it, and a "register a fresh validation" affordance that hands off to `/feedback-validate` REGISTER seeded with the prior registration's fields. The verdict form is suppressed — superseded validations do not produce outcome records.
+
 Session-mode affordances specific to this view: `pin_pre_panel(metric_id)` and `pin_post_panel(metric_id)` keep a specific pre or post panel visible across navigation. Standard `highlight_metric`, `navigate_to_view`, `annotate`, `pin_for_comparison` work as elsewhere.
 
-Reachable from: the validation status row in the weekly digest, `list_pending_validations()` results, and direct deep-link to a specific validation ID.
+Reachable from: the validation status row in the weekly digest, the supersession notable-shift row in the weekly digest, `list_pending_validations()` results, and direct deep-link to a specific validation ID.
 
 #### Monthly view
 
