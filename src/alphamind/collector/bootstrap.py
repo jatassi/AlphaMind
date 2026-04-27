@@ -42,6 +42,7 @@ from alphamind.data_sources.finnhub.calendar import (
     collect_fda_calendar,
     collect_ipo_calendar,
 )
+from alphamind.data_sources.finnhub.estimate_revisions import bootstrap_estimate_revisions
 from alphamind.data_sources.finra.short_interest import bootstrap_short_interest
 from alphamind.data_sources.finra.short_volume import bootstrap_short_volume
 from alphamind.data_sources.polygon.corporate_actions import bootstrap_corporate_actions
@@ -246,6 +247,7 @@ def _bootstrap_plan() -> list[tuple[str, list[tuple[str, Any]]]]:
                 ("finnhub.economic_calendar", bootstrap_economic_calendar),
                 ("finnhub.ipo_calendar", collect_ipo_calendar),
                 ("finnhub.fda_calendar", collect_fda_calendar),
+                ("finnhub.estimate_revisions", bootstrap_estimate_revisions),
             ],
         ),
     ]

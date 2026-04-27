@@ -26,6 +26,9 @@ from alphamind.data_sources.finnhub.calendar import (
     collect_fda_calendar,
     collect_ipo_calendar,
 )
+from alphamind.data_sources.finnhub.estimate_revisions import (
+    collect_estimate_revisions as finnhub_estimate_revisions,
+)
 from alphamind.data_sources.finnhub.news import collect_news as finnhub_news_collect_news
 from alphamind.data_sources.finra.short_interest import (
     collect_short_interest as finra_short_interest,
@@ -91,8 +94,7 @@ COLLECTORS: dict[str, Callable[..., object]] = {
     "finra.short_volume": finra_short_volume,
     "finra.short_interest": finra_short_interest,
     "iborrowdesk.borrow_cost": iborrowdesk_collect_borrow_cost,
-    # Story 05m — stub replaced when that story lands
-    "finnhub.estimate_revisions": lambda **_: None,
+    "finnhub.estimate_revisions": finnhub_estimate_revisions,
 }
 
 # Vendors — each gets its own single-worker executor

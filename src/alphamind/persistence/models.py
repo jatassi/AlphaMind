@@ -399,6 +399,47 @@ class EarningsEventDetails(Base):
 
 
 # ---------------------------------------------------------------------------
+# Estimate revisions — Q5
+# ---------------------------------------------------------------------------
+
+
+class EarningsEstimateRevisions(Base):
+    """
+    Analyst-estimate revision history reconstructed by daily diffing of Finnhub consensus.
+
+    One row per (ticker, fiscal_year, fiscal_period, metric) change event.
+    ``metric`` is ``'eps'`` or ``'revenue'``.
+    """
+
+    __tablename__ = "earnings_estimate_revisions"
+
+    revision_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    ticker: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("asset_universe.ticker", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    fiscal_year: Mapped[int] = mapped_column(Integer)
+    fiscal_period: Mapped[str] = mapped_column(Text)
+    metric: Mapped[str] = mapped_column(Text)
+    revised_at: Mapped[str] = mapped_column(Text)
+    prior_consensus_value: Mapped[float | None] = mapped_column(Float)
+    consensus_value: Mapped[float] = mapped_column(Float)
+    num_analysts: Mapped[int | None] = mapped_column(Integer)
+
+    __table_args__ = (
+        Index(
+            "ix_earnings_estimate_revisions_ticker_period_metric",
+            "ticker",
+            "fiscal_year",
+            "fiscal_period",
+            "metric",
+        ),
+        Index("ix_earnings_estimate_revisions_revised_at", "revised_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # News — Qual1
 # ---------------------------------------------------------------------------
 
