@@ -336,7 +336,7 @@ Discipline using that structure:
 - **One-change-at-a-time.** At most one prompt edit per evaluation window. If multiple edits are needed, they ship serially with one window's wait between, not as a batch.
 - **Pre-registration.** When a change is made, the operator and Claude write down the expected direction and rough magnitude of impact *before* observing post-change data. Defeats post-hoc rationalization.
 - **Hold-out periods.** When in doubt, wait another window.
-- **Backtest as sanity check** for regime-sensitive changes — if a change holds across multiple historical regimes, that's stronger evidence than forward observation alone. (Backtest-for-deterministic-layer is open infrastructure work.)
+- **Backtest as sanity check** for regime-sensitive changes — if a change holds across multiple historical regimes, that's stronger evidence than forward observation alone. The [distillation replay harness](02-distillation-layer/replay-harness.md) re-runs the deterministic layer against archived inputs under a candidate `config/distillation.yaml` and emits a per-regime flag-rate report consumed at the `/feedback-validate` REGISTER step.
 
 ---
 
