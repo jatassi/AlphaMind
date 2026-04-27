@@ -32,6 +32,9 @@ from alphamind.data_sources.finra.short_interest import (
 )
 from alphamind.data_sources.finra.short_volume import collect_short_volume as finra_short_volume
 from alphamind.data_sources.fred.macro import collect_series as fred_macro_collect_series
+from alphamind.data_sources.iborrowdesk.borrow_cost import (
+    collect_borrow_cost as iborrowdesk_collect_borrow_cost,
+)
 from alphamind.data_sources.kalshi.contracts import collect_snapshots as kalshi_collect_snapshots
 from alphamind.data_sources.marketaux.news import collect_news as marketaux_news_collect_news
 from alphamind.data_sources.polygon.corporate_actions import collect_corporate_actions
@@ -87,9 +90,9 @@ COLLECTORS: dict[str, Callable[..., object]] = {
     "kalshi": kalshi_collect_snapshots,
     "finra.short_volume": finra_short_volume,
     "finra.short_interest": finra_short_interest,
-    # Stories 05m and 05l — stubs replaced when those stories land
+    "iborrowdesk.borrow_cost": iborrowdesk_collect_borrow_cost,
+    # Story 05m — stub replaced when that story lands
     "finnhub.estimate_revisions": lambda **_: None,
-    "iborrowdesk.borrow_cost": lambda **_: None,
 }
 
 # Vendors — each gets its own single-worker executor

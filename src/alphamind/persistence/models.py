@@ -552,6 +552,56 @@ class ShortVolumeDaily(Base):
     __table_args__ = (Index("ix_short_volume_daily_ticker_date", "ticker", "trade_date"),)
 
 
+class BorrowCostDaily(Base):
+    """EOD borrow cost and availability from iBorrowDesk.
+
+    Primary key: (observation_date, ticker)
+    """
+
+    __tablename__ = "borrow_cost_daily"
+
+    observation_date: Mapped[str] = mapped_column(Text, primary_key=True)
+    ticker: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("asset_universe.ticker", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    fee_pct: Mapped[float | None] = mapped_column(Float)
+    rebate_pct: Mapped[float | None] = mapped_column(Float)
+    available_shares: Mapped[int | None] = mapped_column(Integer)
+    intraday_high_fee_pct: Mapped[float | None] = mapped_column(Float)
+    intraday_low_fee_pct: Mapped[float | None] = mapped_column(Float)
+    intraday_high_available_shares: Mapped[int | None] = mapped_column(Integer)
+    intraday_low_available_shares: Mapped[int | None] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(Text)
+    ingested_at: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (Index("ix_borrow_cost_daily_ticker_date", "ticker", "observation_date"),)
+
+
+class BorrowCostIntraday(Base):
+    """Intraday borrow cost snapshots from iBorrowDesk (~16-min cadence).
+
+    Primary key: (snapshot_at, ticker)
+    Rows older than 90 days are pruned by an ops-time policy.
+    """
+
+    __tablename__ = "borrow_cost_intraday"
+
+    snapshot_at: Mapped[str] = mapped_column(Text, primary_key=True)
+    ticker: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("asset_universe.ticker", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    fee_pct: Mapped[float | None] = mapped_column(Float)
+    available_shares: Mapped[int | None] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(Text)
+    ingested_at: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (Index("ix_borrow_cost_intraday_ticker_ts", "ticker", "snapshot_at"),)
+
+
 # ---------------------------------------------------------------------------
 # Operations
 # ---------------------------------------------------------------------------
