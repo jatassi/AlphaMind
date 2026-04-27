@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import threading
 import time
+import urllib.error
 import uuid
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -133,6 +134,9 @@ def _is_retryable(exc: BaseException) -> bool:
         status = exc.response.status_code
         # 429 and all 5xx are retryable; auth/permission 4xx are not
         return status == 429 or status >= 500
+    if isinstance(exc, urllib.error.HTTPError):
+        # fredapi raises urllib.error.HTTPError directly; mirror the httpx rule
+        return exc.code == 429 or exc.code >= 500
     return False
 
 

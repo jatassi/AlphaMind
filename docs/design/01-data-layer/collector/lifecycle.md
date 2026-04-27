@@ -73,13 +73,13 @@ The data layer provides history; calibration-state tagging and bootstrap policy 
 
 | Table | Approximate rows | Approximate size |
 |---|---|---|
-| `ohlcv_bars` (77 tickers × 5 timeframes × paired adj/unadj × 252 days) | ~600K | ~150 MB |
-| `corporate_actions` | ~3K | <1 MB |
-| `macro_observations` | ~50K | ~5 MB |
-| `treasury_auctions` | ~50 | <1 MB |
-| `event_calendar` (forward 90 days) | ~500 | <1 MB |
+| `ohlcv_bars` (~78 tickers × 5 timeframes × paired adj/unadj × 252 days) | ~525K | ~130 MB |
+| `corporate_actions` (252 trading days × universe, dividends + splits) | ~150 | <1 MB |
+| `macro_observations` (FRED 20×90d daily + 11×24m monthly, EIA, BLS) | ~2K | <1 MB |
+| `treasury_auctions` (12 months × 4 tenors) | ~50 | <1 MB |
+| `event_calendar` (forward 90 days, earnings + economic + IPO + FDA) | ~1.6K | <1 MB |
 
-Total post-bootstrap database size: ~150–200 MB.
+Total post-bootstrap database size: ~130–160 MB. Numbers reflect the bootstrap windows defined in [§ Per-category scope](#per-category-scope) above, not steady-state accumulation.
 
 ## Catch-up
 

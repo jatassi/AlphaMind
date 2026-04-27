@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 import time
+import urllib.error
 from unittest.mock import patch
 
 import httpx
@@ -292,6 +293,48 @@ class TestWithRetriesCritical:
         result = rate_limited()
         assert result == "ok"
         assert call_count == 2
+
+    def test_critical_retries_on_urllib_5xx(self) -> None:
+        """fredapi uses urllib directly; urllib.error.HTTPError 5xx is retryable."""
+        call_count = 0
+
+        @with_retries(RetryShape.critical, _sleep=lambda s: None)
+        def server_error() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise urllib.error.HTTPError(
+                    url="https://api.stlouisfed.org/fred/series",
+                    code=500,
+                    msg="Internal Server Error",
+                    hdrs=None,  # type: ignore[arg-type]
+                    fp=None,
+                )
+            return "ok"
+
+        result = server_error()
+        assert result == "ok"
+        assert call_count == 2
+
+    def test_critical_propagates_urllib_4xx_immediately(self) -> None:
+        """urllib.error.HTTPError 4xx (auth) must not be retried."""
+        call_count = 0
+
+        @with_retries(RetryShape.critical, _sleep=lambda s: None)
+        def unauthorized() -> str:
+            nonlocal call_count
+            call_count += 1
+            raise urllib.error.HTTPError(
+                url="https://api.stlouisfed.org/fred/series",
+                code=401,
+                msg="Unauthorized",
+                hdrs=None,  # type: ignore[arg-type]
+                fp=None,
+            )
+
+        with pytest.raises(urllib.error.HTTPError):
+            unauthorized()
+        assert call_count == 1
 
 
 # ---------------------------------------------------------------------------

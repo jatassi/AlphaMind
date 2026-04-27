@@ -25,7 +25,14 @@ from sqlalchemy import inspect, text
 from alphamind.persistence.session import make_engine
 
 # ---------------------------------------------------------------------------
-# Tolerance spec -- mirrors storage.md S Storage volume exactly
+# Tolerance spec -- mirrors storage.md S Storage volume.
+#
+# Targets reflect the bootstrap windows in lifecycle.md S Per-category scope
+# (252-day equity / corporate actions, 90-day daily macro, 24-month monthly
+# macro, 12-month treasury, 90-day forward calendar) on a ~78-ticker universe;
+# they are not steady-state accumulation. Tolerances are wide enough to
+# absorb universe-size drift and market-day variance, tight enough to flag a
+# silently-empty vendor.
 # ---------------------------------------------------------------------------
 
 
@@ -46,17 +53,17 @@ class TableSpec:
         return int(self.expected * (1 + self.tolerance_pct))
 
 
-# Reference tables: ~100 rows total split across 4 tables; +-50%
-_REFERENCE_TOTAL_EXPECTED = 100
+# Reference tables: ~150 rows total split across 4 tables; +-50%
+_REFERENCE_TOTAL_EXPECTED = 150
 _REFERENCE_TOTAL_TOLERANCE = 0.50
 
 # Per-table specs for the time-series / event tables
 TABLE_SPECS: list[TableSpec] = [
-    TableSpec("ohlcv_bars", 600_000, 0.20),
-    TableSpec("corporate_actions", 3_000, 0.50),
-    TableSpec("macro_observations", 50_000, 0.20),
+    TableSpec("ohlcv_bars", 525_000, 0.25),
+    TableSpec("corporate_actions", 150, 0.60),
+    TableSpec("macro_observations", 2_000, 0.35),
     TableSpec("treasury_auctions", 50, 0.50),
-    TableSpec("event_calendar", 500, 0.50),
+    TableSpec("event_calendar", 1_600, 0.50),
 ]
 
 # All tables that must exist (from storage.md S Tables)

@@ -393,18 +393,18 @@ When a deferred category lands, it gets its own table against the same cross-cut
 
 ## Storage volume
 
-After bootstrap (252-day equity / 24-month monthly macro / 90-day daily macro / no historical options or news):
+After bootstrap (252-day equity + corporate actions / 90-day daily macro / 24-month monthly macro / 12-month treasury / 90-day forward event calendar / no historical options or news):
 
 | Table family | Approximate rows | Approximate size |
 |---|---|---|
-| `ohlcv_bars` (universe + benchmarks, 5 timeframes, paired adj/unadj) | ~600K | ~150 MB |
-| `corporate_actions` | ~3K | <1 MB |
-| `macro_observations` | ~50K | ~5 MB |
-| `treasury_auctions` | ~50 | <1 MB |
-| `event_calendar` + `earnings_event_details` | ~500 | <1 MB |
-| Reference tables | ~100 | <1 MB |
+| `ohlcv_bars` (universe + benchmarks, 5 timeframes, paired adj/unadj) | ~525K | ~130 MB |
+| `corporate_actions` (252 trading days × ~78 tickers, dividends + splits) | ~150 | <1 MB |
+| `macro_observations` (FRED 20×90d daily + 11×24m monthly, EIA, BLS) | ~2K | <1 MB |
+| `treasury_auctions` (12 months × 4 tenors, weekly cadence) | ~50 | <1 MB |
+| `event_calendar` + `earnings_event_details` (forward 90d, all sources) | ~1.6K | <1 MB |
+| Reference tables | ~150 | <1 MB |
 
-Post-bootstrap: ~150–200 MB. Steady-state daily growth: ~25 MB/day (mostly `ohlcv_bars` + pre-prune `options_contract_snapshots` + `news_articles`). One year lands around 10 GB before retention pruning.
+Numbers reflect the bootstrap windows defined in [lifecycle.md § Per-category scope](lifecycle.md#per-category-scope), not steady-state accumulation. Post-bootstrap on-disk size is ~130–160 MB. Steady-state daily growth is ~25 MB/day (mostly `ohlcv_bars` + pre-prune `options_contract_snapshots` + `news_articles`); one year lands around 10 GB before retention pruning.
 
 ## Retention
 
