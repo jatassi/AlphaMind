@@ -2,13 +2,13 @@
 
 A deterministic offline simulator that walks PM-rejected and PM-modified proposals through historical underlying price data to produce hypothetical realized P/L. Substrate for measuring PM rejection accuracy, modification effectiveness, and per-anti-pattern detector accuracy in the feedback loop.
 
-The engine is an analysis tool — reads PM decisions and price data, writes counterfactual replay records, sits outside the trading hot path. It estimates, not punishes; same-bar disambiguation carries a small documented bias (see Process Step 3), otherwise unbiased measurement (per the parity-over-simulation principle from [paper-evaluation-harness.md](paper-evaluation-harness.md)).
+An analysis tool — reads PM decisions and price data, writes counterfactual replay records, sits outside the trading hot path. Estimates, not punishes; same-bar disambiguation carries a small documented bias (see Process Step 3), otherwise unbiased measurement (per the parity-over-simulation principle from [paper-evaluation-harness.md](paper-evaluation-harness.md)).
 
 ---
 
 ## Why the engine exists
 
-Every analyst and strategist proposal passes through PM evaluation per the rubric in [portfolio-manager.md](../04-decision-layer/portfolio-manager.md). Approved proposals become trades with observable outcomes; rejected and modified-away proposals leave no trail. Without recovering their counterfactual outcomes, PM evaluation quality is unmeasurable — we see *what* PM rejected but not whether the rejections were right.
+Every analyst and strategist proposal passes through PM evaluation per [portfolio-manager.md](../04-decision-layer/portfolio-manager.md). Approved proposals become trades with observable outcomes; rejected and modified-away proposals leave no trail. Without recovering their counterfactual outcomes, PM evaluation quality is unmeasurable — we see *what* PM rejected but not whether the rejections were right.
 
 The engine simulates what would have happened if a rejected proposal had been approved (or if a modified proposal had been approved in its original un-modified form), producing a hypothetical realized P/L joined to the originating PM envelope.
 
@@ -17,7 +17,7 @@ The engine simulates what would have happened if a rejected proposal had been ap
 ## Scope (v1)
 
 - **Equity proposals only.** Options and multi-leg strategies are skipped with `replay_status = unevaluable`, `unevaluable_reason = unsupported_instrument`. A v2 with Black-Scholes-derived option pricing is a possible follow-up.
-- **Rejections and modifications.** Rejections are replayed in the form the analyst originally proposed. Modifications are replayed in their *original un-modified form* alongside the actual modified-form trade — yielding the modification effectiveness measure (modified-form actual vs. original-form counterfactual).
+- **Rejections and modifications.** Rejections are replayed as the analyst originally proposed. Modifications are replayed in their *original un-modified form* alongside the actual modified-form trade — yielding the modification effectiveness measure (modified-form actual vs. original-form counterfactual).
 - **Daily batch + on-demand.** An APScheduler job runs once daily after market close. On-demand invocation is available via the [command center](../command-center.md) or a feedback-review skill. On-demand runs are idempotent — replays already present are skipped.
 
 ---
@@ -34,7 +34,7 @@ The engine simulates what would have happened if a rejected proposal had been ap
 
 ### Step 1 — Eligibility check
 
-Record `replay_status = unevaluable` and stop with the appropriate reason:
+Record `replay_status = unevaluable` with the appropriate reason and stop:
 
 - Instrument type not equity → `unsupported_instrument`
 - Historical price data not available over the window → `data_missing`
@@ -49,7 +49,7 @@ Walk forward through the price stream from `entry_window_start` to `entry_window
 
 Limit orders fill in full at the touch; partial fills are not modeled. Apply entry slippage and fees per harness primitives. Record `entered = true`, `entry_price`, `entry_timestamp`, `entry_slippage`, `entry_fees`.
 
-If no fill occurs within the entry window: record `entered = false`, `exit_leg = entry_window_expired_unfilled`, `realized_pl = 0`. Stop. The proposal is fully evaluated — the counterfactual answer is "would not have entered."
+If no fill within the entry window: record `entered = false`, `exit_leg = entry_window_expired_unfilled`, `realized_pl = 0`. Stop. The counterfactual answer is "would not have entered."
 
 ### Step 3 — Bracket simulation
 
@@ -59,9 +59,9 @@ Walk forward from the entry timestamp. For each bar, check trigger conditions:
 2. **Stop hit** — long: bar low ≤ stop. Short: bar high ≥ stop.
 3. **Time stop expired** — bar timestamp ≥ time-stop timestamp.
 
-**Same-bar target-and-stop ambiguity.** If both target and stop trigger within the same bar, the engine assumes the stop fills first — a conservative bias toward worse counterfactual P/L, surfaced as a metric caveat. Affects only narrow same-bar overlap cases; minute-bar resolution keeps the fraction small.
+**Same-bar target-and-stop ambiguity.** If both target and stop trigger within the same bar, the engine assumes the stop fills first — a conservative bias toward worse counterfactual P/L, surfaced as a metric caveat. Minute-bar resolution keeps the affected fraction small.
 
-**Trigger price recording.** Price-based exits record at the trigger price (target or stop level), not the bar's extreme — the assumption is the order fills at the trigger as it's crossed. Time-stop exits record at the bar open at the time-stop timestamp.
+**Trigger price recording.** Price-based exits record at the trigger price (target or stop level), not the bar's extreme — the order fills at the trigger as it's crossed. Time-stop exits record at the bar open at the time-stop timestamp.
 
 Apply exit slippage and fees per harness primitives. Record `exit_leg`, `exit_price`, `exit_timestamp`, `exit_slippage`, `exit_fees`.
 
@@ -91,13 +91,13 @@ Low-confidence replays are persisted but **excluded from aggregated PM accuracy 
 
 A `counterfactual_replays` entity in [state-persistence.md](state-persistence.md), one record per replay attempt, joined to the originating PM envelope via `pm_decision_envelope_id`. Schema specified there.
 
-One record per (proposal, replay_kind) tuple. Modifications produce one `modification_original_form` record ("what if PM had not modified"); rejections produce one `rejection` record ("what if PM had not rejected").
+One record per (proposal, replay_kind) tuple. Modifications produce a `modification_original_form` record ("what if PM had not modified"); rejections produce a `rejection` record ("what if PM had not rejected").
 
 ---
 
 ## On-demand invocation
 
-The operator can trigger the engine via:
+Operator triggers:
 - Command center action — runs a one-shot pass over the queue
 - Feedback-review skill — invoked at session start to ensure counterfactuals are fresh
 
@@ -113,9 +113,9 @@ The `replay_engine_version` field captures the algorithm version that produced e
 
 ## Activation
 
-The engine runs in both paper and live modes, using the harness primitives for slippage and fee drag in both. In live mode the slippage estimate represents what *would* have happened had the rejection been an approval.
+Runs in both paper and live modes, using harness primitives for slippage and fee drag. In live mode the slippage estimate represents what *would* have happened had the rejection been an approval.
 
-The engine is read-only on trading state — engine failure does not affect any pipeline invocation or monitor responsibility. Failed runs abort and retry on the next daily batch tick; operators are alerted via the standard channel if failures persist.
+Read-only on trading state — engine failure does not affect any pipeline invocation or monitor responsibility. Failed runs abort and retry on the next daily batch tick; operators are alerted if failures persist.
 
 ---
 

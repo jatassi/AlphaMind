@@ -1,6 +1,6 @@
 # Technology selection
 
-Consolidated dependency list and version constraints. Each choice traces to a decision in the preceding architecture documents.
+Consolidated dependency list and version constraints. Each choice traces to a preceding architecture document.
 
 ---
 
@@ -21,7 +21,7 @@ Consolidated dependency list and version constraints. Each choice traces to a de
 |---------|---------|----------------------|
 | `claude-agent-sdk` | Agent orchestration, tool-use loops, MCP tool registration | [LLM integration](llm-integration.md) |
 
-Authentication via `CLAUDE_CODE_OAUTH_TOKEN` (Claude Max subscription). The Agent SDK wraps `anthropic`; no direct dependency needed.
+Authentication via `CLAUDE_CODE_OAUTH_TOKEN` (Claude Max subscription). The Agent SDK wraps `anthropic`; no direct dependency.
 
 ### Database
 
@@ -30,7 +30,7 @@ Authentication via `CLAUDE_CODE_OAUTH_TOKEN` (Claude Max subscription). The Agen
 | `sqlalchemy` (2.0+) | ORM for portfolio state, Core for bulk data I/O | [Data and state](data-and-state.md) |
 | `alembic` | Schema migrations | [Data and state](data-and-state.md) |
 
-SQLite is the database engine (Python stdlib `sqlite3`); no additional driver needed.
+SQLite is the database engine (Python stdlib `sqlite3`); no additional driver.
 
 ### Configuration
 
@@ -61,7 +61,7 @@ SQLite is the database engine (Python stdlib `sqlite3`); no additional driver ne
 | `pandas` | Time-series manipulation, trailing window operations | [System characterization](system-characterization.md) |
 | `ta-lib` (via `TA-Lib` Python wrapper) | Technical indicators (RSI, MACD, Bollinger, etc.) | [System characterization](system-characterization.md) |
 
-**Note on TA-Lib:** Requires the C library `ta-lib` (`brew install ta-lib` on macOS); the Python package is a thin wrapper. If installation proves problematic, `pandas-ta` is a pure-Python fallback with the same indicators — slower but no C dependency.
+**Note on TA-Lib:** Requires the C library `ta-lib` (`brew install ta-lib` on macOS); the Python package is a thin wrapper. `pandas-ta` is a pure-Python fallback if installation proves problematic — slower but no C dependency.
 
 ### Market calendar
 
@@ -69,7 +69,7 @@ SQLite is the database engine (Python stdlib `sqlite3`); no additional driver ne
 |---------|---------|----------------------|
 | `exchange-calendars` | NYSE trading day detection, holiday schedules | [Infrastructure](infrastructure.md) |
 
-Used by the scheduler to skip market holidays and adjust weekend cadence.
+Used by the scheduler to skip holidays and adjust weekend cadence.
 
 ---
 
@@ -83,7 +83,7 @@ Used by the scheduler to skip market holidays and adjust weekend cadence.
 | Finnhub | Free | $0 | Analyst recommendations, earnings calendar, company news |
 | FINRA | Free | $0 | Short volume, ATS (dark pool) weekly data |
 
-Additional qualitative data sources (news APIs, sentiment, prediction markets) are TBD pending vendor selection. The data layer's adapter pattern keeps each source an independent integration.
+Additional qualitative sources (news APIs, sentiment, prediction markets) are TBD pending vendor selection. The data layer's adapter pattern keeps each source an independent integration.
 
 ---
 

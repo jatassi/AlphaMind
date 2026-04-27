@@ -1,17 +1,17 @@
 # Analyst output schema
 
-Formal JSON Schema (Draft 2020-12) for the analyst agent's invocation output. The machine-readable contract corresponding to the prose field list in [analyst.md](analyst.md). The [proposal pre-processor](proposal-pre-processor.md) reads the structured fields; the [portfolio manager](portfolio-manager.md) reads the narrative fields.
+Formal JSON Schema (Draft 2020-12) for the analyst agent's invocation output. Machine-readable contract for the field list in [analyst.md](analyst.md). The [proposal pre-processor](proposal-pre-processor.md) reads the structured fields; the [portfolio manager](portfolio-manager.md) reads the narrative fields.
 
 ## Scope
 
 - **Contract surface:** one analyst invocation produces one output document matching this schema.
-- **LLM vs. tool populated:** the analyst produces every field except `position_size.delta_adjusted_exposure` and `guardrail_validation_result`, populated by the [guardrail validation tool](../06-risk-guardrails/state-delivery.md#guardrail-validation-tool) at pre-submission check time (see [analyst.md](analyst.md#pre-submission-guardrail-validation)). The persisted output includes both.
-- **Modes:** `normal` (standard proposal generation) or `watchlist` (halt-mode operation — see [state-delivery.md](../06-risk-guardrails/state-delivery.md#analyst--watchlist-mode)). Exactly one of `recommendations` or `watchlist` is populated, keyed by `mode`.
+- **LLM vs. tool populated:** the analyst produces every field except `position_size.delta_adjusted_exposure` and `guardrail_validation_result`, populated by the [guardrail validation tool](../06-risk-guardrails/state-delivery.md#guardrail-validation-tool) at pre-submission check time (see [analyst.md](analyst.md#pre-submission-guardrail-validation)). Persisted output includes both.
+- **Modes:** `normal` (standard proposal generation) or `watchlist` (halt-mode — see [state-delivery.md](../06-risk-guardrails/state-delivery.md#analyst--watchlist-mode)). Exactly one of `recommendations` or `watchlist` is populated, keyed by `mode`.
 - **Feature-flag interaction:** the schema is a superset permitting options and strategy proposals; the guardrail validation tool returns `FAIL` with reason `feature_disabled` for instruments disabled by the active [portfolio profile](../06-risk-guardrails/rules-and-limits.md#dual-portfolio-profiles). The analyst's guardrail state header omits options/short sections when disabled, preventing disabled-feature proposals upstream.
 
 ## Cross-references
 
-Enum values and structural constraints trace back to these authoritative sources:
+Enum values and structural constraints trace back to these sources:
 
 | Field | Source |
 |---|---|
@@ -495,12 +495,12 @@ Enum values and structural constraints trace back to these authoritative sources
 
 ## Notes on cross-field invariants
 
-Invariants enforced by the validation pipeline rather than the schema:
+Enforced by the validation pipeline rather than the schema:
 
 - **`invalidation_rationale[].leg_id` must match an existing `invalidation_legs[].leg_id`** — referential check.
 - **At least one `invalidation_legs[]` entry must have `is_hard: true`** — encoded conditionally by type (price/time force hard, event forces soft); any recommendation with one price or time leg satisfies it.
 - **`underlying` must equal `instrument.ticker` for equity, or `instrument.underlying` for options/strategies** — denormalized for pre-processor convenience; pipeline verifies equality.
-- **`position_size.pct_of_portfolio` should fall within the advisory band for the declared `conviction_level`** unless `position_size_rationale` explains the deviation. Advisory only — see [analyst.md — conviction scale](analyst.md#conviction-scale).
+- **`position_size.pct_of_portfolio` should fall within the advisory band for the declared `conviction_level`** unless `position_size_rationale` explains the deviation. See [analyst.md — conviction scale](analyst.md#conviction-scale).
 - **`sector` must be in the active profile's `active_sectors`** — guardrail validation tool returns `FAIL` with reason `feature_disabled` for disabled sectors.
 - **`instrument.asset_type` must be permitted by the active profile** — guardrail validation tool returns `FAIL` with reason `feature_disabled` for options or shorts on the primary portfolio.
 
@@ -508,4 +508,4 @@ Invariants enforced by the validation pipeline rather than the schema:
 
 ## Evolution
 
-New fields are added here first. This schema is the authoritative contract; prose updates in [analyst.md](analyst.md) follow.
+New fields are added here first; this schema is the authoritative contract. Prose updates in [analyst.md](analyst.md) follow.

@@ -6,9 +6,9 @@ What kind of system AlphaMind is — before choosing how to build it.
 
 ## Summary
 
-AlphaMind is a **scheduled batch pipeline** dominated by LLM API latency, with a **real-time sidecar** (the continuous monitor consuming Alpaca's `trade_updates` websocket and watching price streams for options-stop and guardrail-breach detection), a **moderately complex state machine** (the OMS) managing position and order lifecycle, a **heavy data integration layer** across many external APIs, and a **numerical computation component** that is meaningful but not HPC-scale.
+AlphaMind is a **scheduled batch pipeline** dominated by LLM API latency, with a **real-time sidecar** (continuous monitor on Alpaca's `trade_updates` websocket plus price streams for options-stop and guardrail-breach detection), a **moderately complex state machine** (the OMS) for position and order lifecycle, a **heavy data integration layer**, and a **meaningful but not HPC-scale numerical component**.
 
-The layers are sequential stages in a single pipeline — not a low-latency trading system, streaming pipeline, or microservices architecture. Closest shape: a **sophisticated ETL/workflow system with LLM agents in the middle and an event-driven execution sidecar**.
+Layers are sequential stages in a single pipeline — not a low-latency trading system, streaming pipeline, or microservices architecture. Closest shape: a **sophisticated ETL/workflow system with LLM agents in the middle and an event-driven execution sidecar**.
 
 ---
 
@@ -16,7 +16,7 @@ The layers are sequential stages in a single pipeline — not a low-latency trad
 
 ### 1. The pipeline (batch, scheduled, 8-10x/day)
 
-The core loop. Triggered on schedule, runs sequentially through 5 layers. Each invocation is a single pass — no long-lived state within a run, no loops spanning invocations.
+The core loop. Triggered on schedule, runs sequentially through 5 layers — single pass, no long-lived state within a run, no loops spanning invocations.
 
 ```
 Trigger
@@ -27,11 +27,11 @@ Trigger
   → Execution             (CPU + I/O: validation, DB writes, order submission)
 ```
 
-**LLM API latency dominates.** Layers 1-2 and 5 are fast programmatic work; layers 3-4 wait on LLM responses.
+**LLM API latency dominates.** Layers 1-2 and 5 are fast programmatic work; 3-4 wait on LLM responses.
 
 ### 2. The continuous monitor (real-time, always-on)
 
-A **separate process** from the pipeline — runs 24/7 during market hours, subscribed to Alpaca's `trade_updates` websocket for fill events and to underlying equity streams for options bracket-stop and greeks-refresh triggers.
+A **separate process** running 24/7 during market hours, subscribed to Alpaca's `trade_updates` websocket and to underlying equity streams for options bracket-stop and greeks-refresh triggers.
 
 ```
 Alpaca trade_updates  → buffer fills for next pipeline collect
@@ -40,15 +40,15 @@ Underlying price feed → options stop trigger evaluation → close order via br
                       → guardrail breach detection
 ```
 
-An **event-driven, real-time system**. Low latency matters; maintains state (pending orders, bracket lifecycle for options, position greeks); shares the DB with the pipeline (pipeline reads during Phase 1; monitor writes continuously).
+**Event-driven, real-time.** Low latency matters; maintains state (pending orders, bracket lifecycle for options, position greeks); shares the DB with the pipeline (pipeline reads during Phase 1; monitor writes continuously).
 
 ### 3. The scheduler (control plane)
 
-Manages the invocation schedule: market-hours cadence (2h), off-hours cadence (4h), anchored runs (pre-open, pre-close), overlap deduplication. Requires market calendar awareness, time zones, and schedule conflict resolution.
+Manages the invocation schedule: market-hours (2h), off-hours (4h), anchored runs (pre-open, pre-close), overlap deduplication. Requires market calendar awareness and time zones.
 
 ### 4. Data ingestion infrastructure (I/O, rate-limited)
 
-External data collection across 12+ quantitative and 6+ qualitative data categories for 60-80 tickers — hundreds of API calls per invocation, each with rate limits, authentication, error handling, and varying refresh cadences. Websocket-based (monitor) and REST (batch pulls at invocation time).
+12+ quantitative and 6+ qualitative data categories across 60-80 tickers — hundreds of API calls per invocation with varied rate limits, auth, error handling, and refresh cadences. Websocket (monitor) and REST (batch pulls at invocation time).
 
 ---
 
@@ -58,11 +58,11 @@ These cut across the runtime profiles.
 
 ### A. Pipeline orchestration
 
-Sequencing layers, managing parallelism *within* layers (3 sector analysts + portfolio analyst + qualitative research run in parallel), handling partial failures, passing structured data between stages.
+Sequencing layers, parallelism *within* layers (3 sector analysts + portfolio analyst + qualitative research run in parallel), partial failure handling, structured data between stages.
 
 ### B. LLM agent management
 
-7-8 distinct LLM agents per invocation (3 sector analysts, portfolio analyst, qualitative researcher, adaptive researcher, synthesizer, trader, PM), each with its own context window, system prompt, and tool access. Some parallel, some sequential. The adaptive researcher has a nested agentic loop (tool use within tool use); decision layer agents have retrieval tools fetching from a brief store. The heart of the system's complexity.
+7-8 distinct agents per invocation (3 sector analysts, portfolio analyst, qualitative researcher, adaptive researcher, synthesizer, trader, PM), each with its own context window, system prompt, and tool access. Mix of parallel and sequential. Adaptive researcher has a nested agentic loop; decision layer agents have retrieval tools fetching from a brief store. The heart of the system's complexity.
 
 ### C. State management
 
@@ -83,4 +83,4 @@ Dozens of heterogeneous APIs (market data vendors, news, prediction markets) wit
 
 ### F. Observability and auditability
 
-Every trading decision must be traceable: PM approved → trader recommended → synthesizer highlighted → analyst flagged → distillation computed → raw data showed. Structured logging, brief archival, decision audit trails.
+Every decision must be traceable: PM approved → trader recommended → synthesizer highlighted → analyst flagged → distillation computed → raw data showed. Structured logging, brief archival, decision audit trails.

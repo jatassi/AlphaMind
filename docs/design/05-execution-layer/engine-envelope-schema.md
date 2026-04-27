@@ -1,6 +1,6 @@
 # Engine envelope schema
 
-Formal JSON Schema (Draft 2020-12) for engine-originated command envelopes produced by the continuous monitor between invocations. Machine-readable counterpart to the prose in [portfolio-manager.md — Engine-originated envelopes](../04-decision-layer/portfolio-manager.md#engine-originated-envelopes-engine_guardrail). One envelope per breach trigger; each carries exactly one protective CLOSE command. The OMS command intake layer validates every engine-originated envelope against this schema on receipt.
+Formal JSON Schema (Draft 2020-12) for engine-originated command envelopes produced by the continuous monitor between invocations. Machine-readable counterpart to [portfolio-manager.md — Engine-originated envelopes](../04-decision-layer/portfolio-manager.md#engine-originated-envelopes-engine_guardrail). One envelope per breach trigger; each carries exactly one protective CLOSE command. The OMS command intake layer validates every engine-originated envelope against this schema on receipt.
 
 PM-originated envelopes are specified in [pm-envelope-schema.md](../04-decision-layer/pm-envelope-schema.md).
 
@@ -9,7 +9,7 @@ PM-originated envelopes are specified in [pm-envelope-schema.md](../04-decision-
 - **Contract surface:** one envelope, one OMS command, plus the motivating guardrail trigger record. Cascades (margin call + forced reduction, primary + secondary breach) produce multiple envelopes linked by a shared `cascade_id`, not multiple commands per envelope.
 - **Producer:** the continuous monitor process ([architecture.md §4](architecture.md)). Deterministic code that evaluates live quote data against portfolio state, detects breaches per [breach-behavior.md](../06-risk-guardrails/breach-behavior.md), and issues protective CLOSE commands.
 - **Command shape:** every command is a CLOSE with `close_rationale_type: risk_management` and `risk_management_subtype: engine_guardrail`.
-- **Timing model:** envelopes are generated between pipeline invocations and inside an invocation's collect phase. They carry `trigger_timestamp` as the time anchor rather than `invocation_id`.
+- **Timing model:** envelopes generate between pipeline invocations and inside an invocation's collect phase. They carry `trigger_timestamp` as the time anchor rather than `invocation_id`.
 - **Feature-flag interaction:** none direct. The monitor can only close existing positions; closing is never rejected on instrument-class grounds even when the portfolio profile disables that instrument class for new entries.
 
 ## Cross-references

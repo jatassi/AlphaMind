@@ -6,38 +6,38 @@ Two processes sharing a database. No further decomposition.
 
 ## Decision
 
-The system is split into **two processes**:
+**Two processes:**
 
-1. **The pipeline process** — invocation-driven. Wakes on schedule, runs the five-layer pipeline (data collection → distillation → analysis → decision → execution command submission), then exits or sleeps until the next invocation.
+1. **The pipeline process** — invocation-driven. Wakes on schedule, runs the five-layer pipeline (data collection → distillation → analysis → decision → execution command submission), then exits or sleeps.
 
-2. **The continuous monitor** — long-running. Watches real-time price feeds via websocket, resolves pending orders as trigger conditions are met, buffers fills for the next pipeline invocation's collect phase.
+2. **The continuous monitor** — long-running. Watches real-time price feeds via websocket, resolves pending orders on trigger conditions, buffers fills for the next pipeline invocation's collect phase.
 
-A shared database sits between them: the pipeline writes orders and reads fills; the monitor reads orders and writes fills. Portfolio state, distillation state, and brief storage also live in this database.
+A shared database between them: pipeline writes orders and reads fills; monitor reads orders and writes fills. Portfolio state, distillation state, and brief storage also live there.
 
-The **scheduler** is embedded in the pipeline process (in-process timer) or an OS-level cron that invokes the pipeline. Scheduling logic — market-hours cadence, anchored runs, `max_instances=1` enforcement with emergency triggers pre-empting any in-progress rolling invocation — is simple enough not to warrant its own runtime. See [breach-behavior.md § Emergency invocation trigger](../design/06-risk-guardrails/breach-behavior.md#emergency-invocation-trigger) for the emergency-vs-rolling interaction contract.
+The **scheduler** is embedded in the pipeline process (in-process timer) or an OS-level cron — not a separate runtime. Scheduling logic (market-hours cadence, anchored runs, `max_instances=1` with emergency triggers pre-empting in-progress rolling invocations) is simple enough to live in-process. See [breach-behavior.md § Emergency invocation trigger](../design/06-risk-guardrails/breach-behavior.md#emergency-invocation-trigger) for the emergency-vs-rolling interaction contract.
 
 ---
 
 ## Rationale
 
-### Why not a monolith (single process)?
+### Why not a monolith?
 
-Different runtime characteristics: the pipeline is **episodic** (3-10 minutes, 8-10x/day, then idles); the monitor is **always-on** (websocket connections, continuous trigger evaluation). In a single process each lifecycle constrains the other. Separate processes also give independent failure modes — a pipeline crash doesn't stop order resolution; a monitor restart doesn't disrupt the next pipeline invocation.
+The pipeline is **episodic** (3-10 minutes, 8-10x/day, then idles); the monitor is **always-on** (websocket connections, continuous trigger evaluation). In one process each lifecycle constrains the other. Separation also gives independent failure modes — a pipeline crash doesn't stop order resolution; a monitor restart doesn't disrupt the next invocation.
 
 ### Why not more than two processes?
 
-No computational pressure for further decomposition:
+No computational pressure to decompose further:
 
 - **Pre-LLM pipeline** (data collection + distillation): 7-20s wall-clock, < 1s CPU, < 200 MB RAM. I/O-bound on external APIs.
-- **LLM pipeline** (analysis + decision): 3-8 min wall-clock, near-zero local CPU. Parallelism via concurrent async API calls within a single process.
-- **Execution** (OMS command processing): milliseconds. Negligible.
+- **LLM pipeline** (analysis + decision): 3-8 min wall-clock, near-zero local CPU. Parallelism via concurrent async API calls in one process.
+- **Execution** (OMS commands): milliseconds.
 - **Continuous monitor**: lightweight event loop watching 5-20 pending orders. Negligible CPU.
 
-The entire system runs comfortably on 4 cores / 8 GB RAM. Splitting further would add operational complexity (IPC, deployment coordination, failure cascading) with no performance benefit.
+The system runs comfortably on 4 cores / 8 GB RAM. Splitting further adds operational complexity (IPC, deployment coordination, failure cascading) with no benefit.
 
 ### Why a shared database instead of IPC?
 
-The processes interact at well-defined, low-frequency boundaries: pipeline → monitor sends new orders to watch (end of Phase 2, 8-10x/day); monitor → pipeline sends fills (start of Phase 1, 8-10x/day). A natural write-rows / read-rows pattern — no message queues, RPC, or shared memory. The database also provides durability across either process's restart.
+Processes interact at low-frequency boundaries: pipeline → monitor sends new orders (end of Phase 2, 8-10x/day); monitor → pipeline sends fills (start of Phase 1, 8-10x/day). A natural write-rows / read-rows pattern, durable across either process's restart.
 
 ---
 

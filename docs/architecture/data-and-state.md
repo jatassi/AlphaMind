@@ -16,40 +16,38 @@ All persistent and semi-persistent state lives in a **single SQLite database fil
 
 ### Why SQLite
 
-- **Zero operational overhead.** No server process, configuration, connection pooling, or port management. The database is a file; backup is `cp`.
+- **Zero operational overhead.** No server process, config, pooling, or ports. The database is a file; backup is `cp`.
 - **Two-process concurrency is fine.** WAL mode allows concurrent readers with a single writer. Pipeline writes in bursts (8-10x/day); monitor writes fills intermittently. Rare overlaps resolve via brief writer retries.
-- **Data volume is modest.** Hundreds of MB, tens of thousands of rows in the largest tables (trailing market data). Well within SQLite's range.
-- **Atomic transactions** wrap portfolio state updates (position changes, P/L recalculations, thesis status transitions, cash adjustments).
-- **Python ships with it.** No external dependencies for the core data layer.
+- **Modest data volume.** Hundreds of MB, tens of thousands of rows in the largest tables (trailing market data) — well within SQLite's range.
+- **Atomic transactions** wrap portfolio state updates (position changes, P/L recalculations, thesis transitions, cash adjustments).
+- **Python ships with it.**
 
 ### Why not PostgreSQL
 
-PostgreSQL adds a server process, connection management, and operational surface area unjustified at this scale; its advantages (advanced query planning, concurrent write scaling, row-level locking, extensions) don't address any AlphaMind bottleneck.
+PostgreSQL adds a server process, connection management, and operational surface unjustified at this scale; its advantages (advanced query planning, concurrent write scaling, row-level locking, extensions) don't address any AlphaMind bottleneck.
 
-If the system ever needs multiple machines or significantly higher write concurrency, PostgreSQL is the natural migration target — a connection-string change plus minor dialect adjustments, not a rewrite.
+If the system ever needs multiple machines or higher write concurrency, PostgreSQL is the natural migration — connection-string change plus minor dialect adjustments, not a rewrite.
 
 ### Why SQLAlchemy (split usage)
 
-Two distinct data access patterns:
+**ORM models for portfolio state.** Positions, theses, orders, cash, and the activity log have real relationships (order → thesis → position, bracket → parent order) and lifecycle logic (read, check state, update, log). SQLAlchemy 2.0's mapped classes give typed attributes, IDE autocomplete, and static analysis; Alembic handles migrations.
 
-**ORM models for portfolio state.** Positions, theses, orders, cash, and the activity log have real relationships (order → thesis → position, bracket → parent order) and lifecycle logic (read a position, check state, update fields, write an activity log entry). SQLAlchemy 2.0's mapped classes give typed attributes, IDE autocomplete, and static analysis; Alembic handles migrations.
+**Core / raw SQL for market data and distillation state.** Bulk I/O — load 60 days of bars for 70 tickers, write 70 rows of updated baselines. Expression builder or raw SQL is more natural and efficient.
 
-**Core / raw SQL for market data and distillation state.** Bulk I/O — load 60 days of bars for 70 tickers, write 70 rows of updated baselines. SQLAlchemy Core's expression builder or raw SQL is more natural and efficient for batch operations.
-
-**The existing dataclasses are a separate concern.** The Python dataclasses in the schema package are *LLM presentation models* — denormalized, token-optimized payloads serialized into agent context windows. A thin mapping layer converts between ORM models / query results and the dataclasses agents consume. The presentation layer is a future design topic.
+**Dataclasses are a separate concern.** The Python dataclasses in the schema package are *LLM presentation models* — denormalized, token-optimized payloads serialized into agent context windows. A thin mapping layer converts between ORM models / query results and what agents consume; the presentation layer is a future design topic.
 
 ---
 
 ## Four state categories
 
-All in the same SQLite database but logically distinct, each with its own lifecycle.
+Logically distinct lifecycles, all in the same SQLite database.
 
 ### 1. Portfolio state (persistent, authoritative)
 
 The system's memory across invocations — positions, theses, orders, cash, P/L, activity log, historical resolutions. Defined by the execution layer spec ([categories 1-6](../design/01-data-layer/internal/portfolio-state.md)).
 
-**Writers:** Pipeline (Phase 1: portfolio state updates from fills; Phase 2: new order submissions, thesis creation). The continuous monitor writes fills to the fill buffer, never to portfolio state directly.
-**Readers:** Pipeline (data layer at invocation start; guardrail checks throughout; distillation for internal metrics). Continuous monitor reads pending orders.
+**Writers:** Pipeline (Phase 1: state updates from fills; Phase 2: new orders, thesis creation). Continuous monitor writes fills to the fill buffer, not portfolio state directly.
+**Readers:** Pipeline (data layer at invocation start; guardrails; distillation for internal metrics). Continuous monitor reads pending orders.
 
 **Key tables (conceptual):**
 - `positions` — open and closed positions with instrument details, entry/exit data
@@ -71,10 +69,10 @@ Fills produced by the continuous monitor between invocations. Rows accumulate (m
 
 ### 3. Brief store (per-invocation, read-heavy)
 
-Analysis briefs keyed by reference ID. Built during analysis, consumed during decision, retained for audit/debugging.
+Analysis briefs keyed by reference ID — built during analysis, consumed during decision, retained for audit.
 
-**Writers:** Pipeline (analysis layer writes briefs as each agent completes).
-**Readers:** Pipeline (decision layer retrieval tool fetches briefs by reference ID).
+**Writers:** Pipeline (analysis writes briefs as each agent completes).
+**Readers:** Pipeline (decision layer retrieval tool fetches by reference ID).
 
 **Key tables:**
 - `briefs` — invocation ID, reference prefix (SA-TECH, QR, AR, etc.), reference index, content, created timestamp
@@ -96,7 +94,7 @@ Rolling baselines, regime classifications, composite signals. Each invocation re
 
 ## Market data storage
 
-Raw and historical market data (OHLCV bars, options data, macro series) also lives in SQLite. Distillation needs trailing 20-60 day windows for baseline computation and correlation matrices.
+Raw and historical market data (OHLCV bars, options, macro series) also lives in SQLite. Distillation needs trailing 20-60 day windows for baselines and correlation matrices.
 
 **Volume:** 70 tickers × 5 timeframes × 60 days × ~200 bytes/bar ≈ 4 MB for price data; with order flow, options, and macro, 50-100 MB total.
 
@@ -129,12 +127,9 @@ Raw and historical market data (OHLCV bars, options data, macro series) also liv
 
 ## Concurrency model
 
-- **WAL mode** enabled at database creation. Both processes open the same file.
-- Pipeline is the dominant writer; pipeline writes happen in per-phase transactions.
-- Monitor writes are infrequent (fills) and small (single row inserts).
-- Read-read: unlimited in WAL mode.
-- Read-write: readers never block writers and vice versa in WAL mode.
-- Write-write contention is effectively zero; rare overlaps resolve via SQLite's busy timeout.
+- **WAL mode** enabled at database creation; both processes open the same file.
+- Pipeline is the dominant writer (per-phase transactions). Monitor writes are infrequent and small (single-row fill inserts).
+- WAL: reads never block writes or each other. Write-write contention effectively zero; rare overlaps resolve via SQLite's busy timeout.
 - **Busy timeout** set to 5-10 seconds on both connections as a safety net.
 
 ---

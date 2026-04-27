@@ -1,6 +1,6 @@
 # Strategist
 
-Operates in a fresh context window. **Mandate:** evaluate every open position against current market conditions and recommend portfolio actions. Connects new information from the synthesizer to existing thesis narratives, classifies thesis health, identifies cross-position dynamics, and recommends actions with rationale. The sole agent responsible for thesis-status assessment — on-track, at-risk, stale, or invalidated.
+Operates in a fresh context window. **Mandate:** evaluate every open position against current market conditions and recommend portfolio actions. Connects synthesizer information to existing thesis narratives, classifies thesis health, identifies cross-position dynamics, and recommends actions with rationale. Sole agent responsible for thesis-status assessment.
 
 Runs in parallel with the [analyst](analyst.md). Outputs converge at the [portfolio manager](portfolio-manager.md), which evaluates both holistically.
 
@@ -8,35 +8,35 @@ Runs in parallel with the [analyst](analyst.md). Outputs converge at the [portfo
 
 ## Inputs
 
-The input bundle is delivered at invocation start. Source documents in parentheses are authoritative for each input's content.
+Delivered at invocation start. Source documents are authoritative for each input's content.
 
 | Input | Source | Description |
 |---|---|---|
 | Synthesizer brief | [synthesizer.md](../03-analysis-layer/synthesizer.md) | Prose synthesis with embedded `[SA-*]`, `[QR-*]`, `[AR-*]`, `[CR-*]` references — the new information against which existing theses are evaluated |
-| Full thesis records (component level) | [portfolio-state.md §3a](../01-data-layer/internal/portfolio-state.md), [thesis-model.md](../05-execution-layer/thesis-model.md) | Every active thesis at component level (entry rationale, target rationale, invalidation rationale per leg, key assumptions, `prior_status`). Strategist is the sole consumer that receives components inline because thesis-status classification is per-component |
-| Position details | [portfolio-state.md §1a, §2a](../01-data-layer/internal/portfolio-state.md), [position-model.md](../05-execution-layer/position-model.md) | Per-position P/L trajectory, current market value, position age, distance to target, distance to stop, risk/reward ratio at current price |
-| Activity log | [portfolio-state.md §5](../01-data-layer/internal/portfolio-state.md) | Intra-invocation changelog (5a), PM decision log sliding window (5b), and per-position modification trail (5c) — provides continuity with prior invocation decisions and surfaces engine-originated actions |
-| Pending orders | [portfolio-state.md §4b](../01-data-layer/internal/portfolio-state.md) | Unfilled orders with age, fill-probability context, and the thesis that justified them. Drives [Pending order review](#pending-order-review) |
-| Strategist guardrail state header | [state-delivery.md — Strategist guardrail state header](../06-risk-guardrails/state-delivery.md#strategist-guardrail-state-header) | Formatted text block at the top of the prompt: regime label, sector/directional headroom, position-level constraint proximity, sector exposure breakdown, drawdown state, regime-transition breaches with `BREACH-N` IDs, hard blocks |
-| Abandoned openings block | [state-delivery.md — Strategist guardrail state header](../06-risk-guardrails/state-delivery.md#strategist-guardrail-state-header) (abandoned-openings section) | Prior-invocation OPEN abandonments — surfaced as portfolio-awareness context; analyst owns re-evaluation |
-| Abandoned position actions block | [state-delivery.md — Strategist guardrail state header](../06-risk-guardrails/state-delivery.md#strategist-guardrail-state-header) (abandoned-position-actions section) | Prior-invocation ADD / ADJUST / CLOSE / CANCEL abandonments — surfaced for re-evaluation on current grounds. See [Abandoned position actions from prior invocation](#abandoned-position-actions-from-prior-invocation) |
+| Full thesis records (component level) | [portfolio-state.md §3a](../01-data-layer/internal/portfolio-state.md), [thesis-model.md](../05-execution-layer/thesis-model.md) | Every active thesis at component level (entry rationale, target rationale, invalidation rationale per leg, key assumptions, `prior_status`). Strategist is the sole consumer that receives components inline — thesis-status classification is per-component |
+| Position details | [portfolio-state.md §1a, §2a](../01-data-layer/internal/portfolio-state.md), [position-model.md](../05-execution-layer/position-model.md) | Per-position P/L trajectory, current market value, position age, distance to target/stop, risk/reward ratio at current price |
+| Activity log | [portfolio-state.md §5](../01-data-layer/internal/portfolio-state.md) | Intra-invocation changelog (5a), PM decision log sliding window (5b), per-position modification trail (5c) — continuity with prior invocations and engine-originated actions |
+| Pending orders | [portfolio-state.md §4b](../01-data-layer/internal/portfolio-state.md) | Unfilled orders with age, fill-probability context, and the justifying thesis. Drives [Pending order review](#pending-order-review) |
+| Strategist guardrail state header | [state-delivery.md — Strategist guardrail state header](../06-risk-guardrails/state-delivery.md#strategist-guardrail-state-header) | Formatted text block at top of prompt: regime label, sector/directional headroom, position-level constraint proximity, sector exposure breakdown, drawdown state, regime-transition breaches with `BREACH-N` IDs, hard blocks |
+| Abandoned openings block | [state-delivery.md — Strategist guardrail state header](../06-risk-guardrails/state-delivery.md#strategist-guardrail-state-header) (abandoned-openings section) | Prior-invocation OPEN abandonments — portfolio-awareness context; analyst owns re-evaluation |
+| Abandoned position actions block | [state-delivery.md — Strategist guardrail state header](../06-risk-guardrails/state-delivery.md#strategist-guardrail-state-header) (abandoned-position-actions section) | Prior-invocation ADD / ADJUST / CLOSE / CANCEL abandonments — for re-evaluation on current grounds. See [Abandoned position actions from prior invocation](#abandoned-position-actions-from-prior-invocation) |
 
 Tools available during reasoning:
 
 | Tool | Source | Use |
 |---|---|---|
-| Source-brief retrieval | [decision-layer overview — Information flow](README.md#information-flow) | Pull a section of an analysis brief by reference ID from the synthesizer's retrieval store. See [Source brief retrieval](#source-brief-retrieval) |
+| Source-brief retrieval | [decision-layer overview — Information flow](README.md#information-flow) | Pull a section of an analysis brief by reference ID. See [Source brief retrieval](#source-brief-retrieval) |
 | Guardrail validation tool | [state-delivery.md — Guardrail validation tool](../06-risk-guardrails/state-delivery.md#guardrail-validation-tool) | Deterministic pre-submission check on exposure-changing proposals. See [Pre-submission guardrail validation](#pre-submission-guardrail-validation) |
 
-The volatility regime label is delivered as the `Regime:` line in the guardrail state header (not as a separate broadcast).
+The volatility regime label is delivered as the `Regime:` line in the guardrail state header.
 
-**Token budget:** the input bundle scales with portfolio complexity — target ranges are 400–700 tokens for the primary portfolio (1–4 positions) and 1,500–2,500 tokens for the full-system portfolio (6–15 positions), excluding the shared synthesizer brief. See [Presentation order and token budget](#presentation-order-and-token-budget).
+**Token budget:** the input bundle scales with portfolio complexity — 400–700 tokens for primary portfolio (1–4 positions), 1,500–2,500 tokens for full-system portfolio (6–15 positions), excluding the synthesizer brief. See [Presentation order and token budget](#presentation-order-and-token-budget).
 
 ---
 
 ## Output
 
-A single document conforming to the [strategist output schema](strategist-output-schema.md) (formal JSON Schema, Draft 2020-12). The schema is the authoritative contract; the field lists in [Output structure](#output-structure) are the readable reference. Each per-position assessment carries **structured fields** (machine-parseable, consumed by the [proposal pre-processor](proposal-pre-processor.md)) and **narrative fields** (free-text reasoning, consumed by the [portfolio manager](portfolio-manager.md)). The output also carries pending-order assessments and portfolio-level observations.
+A single document conforming to the [strategist output schema](strategist-output-schema.md) (Draft 2020-12). The schema is the authoritative contract; the field lists in [Output structure](#output-structure) are the readable reference. Each per-position assessment carries **structured fields** (consumed by the [proposal pre-processor](proposal-pre-processor.md)) and **narrative fields** (consumed by the [portfolio manager](portfolio-manager.md)). The output also carries pending-order assessments and portfolio-level observations.
 
 Mode is `normal` under standard conditions, `defensive_posture` under halt mode — see [Halt mode and defensive-posture behavior](#halt-mode-and-defensive-posture-behavior).
 
@@ -44,10 +44,10 @@ Mode is `normal` under standard conditions, `defensive_posture` under halt mode 
 
 ## Responsibilities
 
-- **Thesis status classification.** For each open position, assess thesis health by cross-referencing thesis narrative and key assumptions against the synthesizer's current context. Classify each thesis as on-track, partially-realized, at-risk, stale, or invalidated (see [thesis-model.md](../05-execution-layer/thesis-model.md)). Signal-level reasoning — e.g., "`[QR-7]` directly contradicts the supply chain signal that supported entry, moving thesis from on-track to at-risk."
-- **Action recommendation.** For each position, recommend hold, reduce, close, adjust-bracket, or add. Non-hold recommendations include concrete parameters (quantity, order type, bracket changes, close rationale type).
-- **Cross-position reasoning.** Identify portfolio-level dynamics no single-position assessment would catch: correlation shifts between held positions, shared-catalyst dependency overlaps, sector concentration trends, rebalance opportunities.
-- **Pending order review.** Evaluate unfilled orders from prior invocations — maintain, modify, or cancel given current conditions.
+- **Thesis status classification.** For each open position, assess thesis health by cross-referencing thesis narrative and key assumptions against current context. Classify on-track, partially-realized, at-risk, stale, or invalidated (see [thesis-model.md](../05-execution-layer/thesis-model.md)). Signal-level reasoning — e.g., "`[QR-7]` directly contradicts the supply chain signal that supported entry, moving thesis from on-track to at-risk."
+- **Action recommendation.** Recommend hold, reduce, close, adjust-bracket, or add. Non-hold recommendations include concrete parameters (quantity, order type, bracket changes, close rationale type).
+- **Cross-position reasoning.** Identify portfolio-level dynamics no single-position assessment would catch: correlation shifts, shared-catalyst dependency overlaps, sector concentration trends, rebalance opportunities.
+- **Pending order review.** Evaluate unfilled orders — maintain, modify, or cancel given current conditions.
 
 ---
 

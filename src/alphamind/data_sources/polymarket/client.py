@@ -1,10 +1,13 @@
 """
-Polymarket HTTP client — Gamma API + CLOB API.
+Polymarket HTTP client — Gamma API.
 
-No auth required.  All endpoints are public read-only.
+No auth required. All endpoints are public read-only. The collector reads
+prices and order-book stats directly from Gamma's ``/markets`` response
+(``outcomePrices``, ``bestBid``, ``bestAsk``); the CLOB ``/prices``
+endpoint requires per-outcome ``token_id`` values rather than the
+``conditionId`` Gamma exposes, so that path is intentionally not used.
 
 Gamma API base: https://gamma-api.polymarket.com
-CLOB API base:  https://clob.polymarket.com
 """
 
 from __future__ import annotations
@@ -18,7 +21,6 @@ import httpx
 from alphamind.data_sources._common import RateLimiter, RetryShape, with_retries
 
 _GAMMA_BASE = "https://gamma-api.polymarket.com"
-_CLOB_BASE = "https://clob.polymarket.com"
 
 _PROVIDER = "polymarket"
 
@@ -109,23 +111,3 @@ class PolymarketClient:
         resp = self._get_with_retry(f"{_GAMMA_BASE}/markets", params=params)
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
-
-    # ------------------------------------------------------------------
-    # CLOB API
-    # ------------------------------------------------------------------
-
-    def get_prices(self, condition_id: str) -> dict[str, Any] | None:
-        """
-        Fetch current YES/NO prices for *condition_id* from ``/prices``.
-
-        Returns the price dict or None when the contract is not found.
-        """
-        self.rate_limiter.acquire(_PROVIDER)
-        try:
-            resp = self._get_with_retry(f"{_CLOB_BASE}/prices", params={"token_id": condition_id})
-            resp.raise_for_status()
-            return resp.json()  # type: ignore[no-any-return]
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 404:
-                return None
-            raise

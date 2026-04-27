@@ -2,9 +2,9 @@
 
 Concrete risk constraints. Each rule has a default value, a portfolio-grounded rationale, and an enforcement-layer specification.
 
-**Dual portfolio approach:** Two parallel portfolios validate the system at deployment scale and full-capability scale. Guardrail percentages apply identically; differences are in available features and practical position counts. See [dual portfolio profiles](#dual-portfolio-profiles).
+**Dual portfolio approach:** Two parallel portfolios validate at deployment scale and full-capability scale. Guardrail percentages apply identically; differences are in available features and practical position counts. See [dual portfolio profiles](#dual-portfolio-profiles).
 
-- **Primary portfolio ($1,500):** Validates strategy at real deployment capital — the confidence-building portfolio.
+- **Primary portfolio ($1,500):** Validates strategy at real deployment capital.
 - **Full-system portfolio ($100,000):** Validates complete system — options, multi-sector diversification, full position counts.
 
 **Risk philosophy:** Moderate — balance return capture with capital preservation. Survive a bad week without existential damage while retaining freedom for high-conviction opportunities.
@@ -19,7 +19,7 @@ Every rule is checked at one or more of three additive tiers — a T3 rule is al
 |------|-------|-------|---------|
 | T1 | Analyst / Strategist | **Advisory** | Headroom in state header. Agent self-constrains and validates against the [guardrail validation tool](state-delivery.md#guardrail-validation-tool). Violations caught downstream. |
 | T2 | Portfolio Manager | **Judgment-informed** | Headroom surfaced alongside pre-processor annotations. PM validates its own modifications via the same tool. Makes sizing tradeoffs but cannot override engine limits. |
-| T3 | Engine | **Authoritative** | Deterministic check on every OMS command. Hard rejection — no override. Safety net even if T1 and T2 fail. Rejections return synchronously with per-rule detail and suggested modification. |
+| T3 | Engine | **Authoritative** | Deterministic check on every OMS command. Hard rejection, no override. Rejections return synchronously with per-rule detail and suggested modification. |
 
 A rule's "enforcement tier" below means which tiers check it. T3 rules are mechanically enforced; T1/T2-only rules rely on agent judgment with tool support.
 
@@ -37,7 +37,7 @@ A rule's "enforcement tier" below means which tiers check it. T3 rules are mecha
 
 **Enforcement:** T1 + T2 + T3
 
-**Rationale:** Aligns with the conviction scale's top sizing band (level 5: 3–5%). A total loss on a max-sized equity position costs 5% — painful but not catastrophic. At 5%, the system can hold up to 20 max-sized positions, though most will be 1–3% (conviction 2–4). "Premium at risk" applies to options since the entire premium can be lost.
+**Rationale:** Aligns with the conviction scale's top sizing band (level 5: 3–5%). A total loss on a max-sized equity position costs 5% — painful but not catastrophic. At 5%, up to 20 max-sized positions are possible; most will be 1–3% (conviction 2–4). "Premium at risk" applies to options since the entire premium can be lost.
 
 **Concretely:** At $100K, max-size equity = $5,000 (~6 shares of NVDA at $850, ~13 of AVGO at $380). Max-size options = $5,000 premium (5 contracts of a $10 option). Conviction 2–3 positions land at $1,000–3,000.
 
@@ -53,7 +53,7 @@ A rule's "enforcement tier" below means which tiers check it. T3 rules are mecha
 
 **Rationale:** Capital protection complementing thesis-based bracket stops. Bracket stops trigger on underlying price (thesis invalidation); this guardrail triggers on position P/L (mechanical loss control). Separation matters most for options, where IV crush, theta decay, or gamma effects erode value without an underlying move sufficient to trigger price-based stops.
 
-The 30% equity threshold is wider than typical bracket stops (5–15% of underlying price) — this is a backstop for cases where bracket stops fail or gap through, not the primary mechanism. The 80% options threshold acknowledges higher options variance; an 80% loss on a $2,000 position is $1,600, survivable.
+The 30% equity threshold is wider than typical bracket stops (5–15% of underlying price) — a backstop for cases where bracket stops fail or gap through. The 80% options threshold acknowledges higher options variance; an 80% loss on a $2,000 position is $1,600, survivable.
 
 ---
 
@@ -81,9 +81,9 @@ Delta-adjusted exposure is used rather than notional. An OTM call at 0.3 delta c
 
 **Enforcement:** T1 + T2 + T3
 
-**Rationale:** The system's asset universe and time horizon create a natural long bias — most of the high-information-density setups in tech, semis, and financials are directional long theses. The 60% long cap allows a meaningful directional book while ensuring at least 40% of portfolio value remains as either cash, offsetting shorts, or unused capacity. The 30% short cap is tighter because: (a) short positions have theoretically unlimited loss, (b) short squeezes can create outsized drawdowns on the 4–72 hour horizon, and (c) borrow risk adds a non-thesis-related source of forced exits.
+**Rationale:** The asset universe and time horizon create a natural long bias — most high-information-density setups in tech, semis, and financials are directional long theses. The 60% long cap allows a meaningful directional book while ensuring at least 40% remains as cash, offsetting shorts, or unused capacity. The 30% short cap is tighter because (a) short positions have theoretically unlimited loss, (b) short squeezes create outsized drawdowns on the 4–72 hour horizon, and (c) borrow risk adds a non-thesis-related source of forced exits.
 
-The asymmetry (60% long vs. 30% short) reflects the empirical reality that equities drift upward over time, making sustained net short portfolios a structural headwind. The system should short individual names on conviction, not run a net short portfolio.
+The asymmetry reflects equities drifting upward over time, making sustained net short portfolios a structural headwind. The system shorts individual names on conviction; it does not run a net short portfolio.
 
 ---
 
@@ -95,9 +95,9 @@ The asymmetry (60% long vs. 30% short) reflects the empirical reality that equit
 
 **Enforcement:** T1 + T2 + T3
 
-**Rationale:** Gross exposure = total long + total short. A 120% limit means the system can deploy up to 1.2× its capital through a combination of longs, shorts, and the implicit leverage in options. At $100K, this means up to $120K of delta-adjusted exposure. This provides room for paired trades (long + short in the same sector) without allowing excessive leverage. The 20% headroom above 100% exists primarily because options create fractional leverage — a small premium buys significant delta exposure, and the system should be able to hold options alongside equity positions without constantly bumping the ceiling.
+**Rationale:** Gross = total long + total short. The 120% limit allows up to 1.2× capital deployed through longs, shorts, and options leverage. At $100K, $120K of delta-adjusted exposure. Provides room for paired trades (long + short in the same sector) without excessive leverage. The 20% headroom above 100% exists because options create fractional leverage — a small premium buys significant delta exposure, and the system should hold options alongside equity positions without constantly bumping the ceiling.
 
-Gross exposure is the simplest leverage proxy. A system at 100% long with no shorts is fully invested with no leverage. A system at 60% long and 40% short is 100% gross (no leverage) but has significant directional positions. A system at 80% long and 40% short is 120% gross — fully utilizing the limit.
+Gross is the simplest leverage proxy. 100% long / 0% short is fully invested with no leverage. 60% long / 40% short is 100% gross (no leverage) with significant directional positions. 80% long / 40% short is 120% gross — fully utilizing the limit.
 
 ---
 
@@ -111,9 +111,9 @@ Gross exposure is the simplest leverage proxy. A system at 100% long with no sho
 
 **Enforcement:** T3 (engine-authoritative, triggers halt mode — see [breach-behavior.md](breach-behavior.md))
 
-**Rationale:** At $100K, 2.5% = $2,500. This is the hardest constraint in the system — the line where mechanical risk reduction takes priority over all thesis reasoning. On the 4–72 hour time horizon, a 2.5% daily loss represents a significant adverse event that suggests either the market is doing something the system's theses didn't anticipate, or multiple theses are wrong simultaneously. In either case, adding new risk is wrong.
+**Rationale:** At $100K, 2.5% = $2,500. The hardest constraint in the system — the line where mechanical risk reduction takes priority over thesis reasoning. On the 4–72 hour horizon, a 2.5% daily loss represents a significant adverse event suggesting either the market is doing something the system's theses didn't anticipate, or multiple theses are wrong simultaneously. Either way, adding new risk is wrong.
 
-The 2.5% level is calibrated to be painful but not panic-inducing. It's approximately 2× the expected daily P/L volatility of a moderately positioned portfolio, making it rare enough that hitting it represents genuine adversity rather than normal fluctuation.
+Calibrated to be painful but not panic-inducing — roughly 2× the expected daily P/L volatility of a moderately positioned portfolio.
 
 ### Cumulative drawdown
 
@@ -123,7 +123,7 @@ The 2.5% level is calibrated to be painful but not panic-inducing. It's approxim
 
 **Enforcement:** T3 (engine-authoritative, triggers progressive risk reduction — see [breach-behavior.md](breach-behavior.md))
 
-**Rationale:** At $100K, 8% = $8,000 from peak equity. The cumulative limit provides a second, longer-term safety net beyond the daily limit. A system that loses 1.5% on four consecutive days (each under the daily limit) would be down 6% — close to the cumulative limit. This forces a strategic reassessment before losses compound into a recovery-impairing drawdown. The 8% level means the system needs approximately a 8.7% gain to recover to the prior high-water mark — challenging but achievable over weeks of good execution.
+**Rationale:** At $100K, 8% = $8,000 from peak equity. A second, longer-term safety net beyond the daily limit. A system losing 1.5% on four consecutive days (each under the daily limit) would be down 6% — close to the cumulative limit. Forces strategic reassessment before losses compound into a recovery-impairing drawdown. Recovery from 8% requires ~8.7% gain — challenging but achievable over weeks of good execution.
 
 ---
 
@@ -135,11 +135,11 @@ The 2.5% level is calibrated to be painful but not panic-inducing. It's approxim
 
 **Enforcement:** T1 + T2 (advisory and PM-judgment — **not** T3)
 
-**Rationale:** Correlation enforcement is deliberately excluded from the engine-authoritative tier because correlation estimates are inherently noisy — a 20-day trailing correlation can shift significantly with a few days of data, and blocking trades based on a noisy estimate creates more problems than it solves. Instead, the correlation state is surfaced to the analyst (who should avoid adding correlated positions) and the PM (who can assess whether the correlation is structural or transient).
+**Rationale:** Excluded from T3 because correlation estimates are inherently noisy — a 20-day trailing correlation can shift significantly with a few days of data, and blocking trades on a noisy estimate creates more problems than it solves. Surfaced to the analyst (avoid adding correlated positions) and PM (assess structural vs. transient correlation).
 
-The 0.70 threshold flags portfolios where "diversification" is illusory — positions that nominally span multiple names or sectors but actually move together. This is particularly relevant for the tech/semis sector pair, where AI-narrative-driven names can temporarily correlate at 0.8+ despite being in different sectors.
+The 0.70 threshold flags portfolios where "diversification" is illusory — positions nominally spanning multiple names or sectors that actually move together. Particularly relevant for the tech/semis pair, where AI-narrative-driven names can temporarily correlate at 0.8+ despite being in different sectors.
 
-The weighted average uses position weight as the weighting factor, so larger positions contribute more to the correlation measure. A small speculative position in a correlated name is less concerning than a full-sized position.
+Weighted average uses position weight as the weighting factor, so larger positions contribute more. A small speculative position in a correlated name is less concerning than a full-sized one.
 
 ---
 
@@ -153,7 +153,7 @@ The weighted average uses position weight as the weighting factor, so larger pos
 
 **Enforcement:** T1 + T2 + T3
 
-**Rationale:** Options provide implicit leverage — a $2,000 premium can control $50,000 of underlying exposure. The delta-adjusted limit ensures that the portfolio's effective directional exposure from options stays bounded even when premium spent is modest. At 40%, options can provide significant directional exposure but can't dominate the portfolio's risk profile. This limit interacts with (but is independent of) the per-sector and gross exposure limits.
+**Rationale:** Options provide implicit leverage — a $2,000 premium can control $50,000 of underlying exposure. The delta-adjusted limit bounds effective directional exposure from options even when premium is modest. At 40%, options provide significant directional exposure without dominating the portfolio's risk profile. Independent of per-sector and gross exposure limits.
 
 ### Theta exposure
 
@@ -163,7 +163,7 @@ The weighted average uses position weight as the weighting factor, so larger pos
 
 **Enforcement:** T1 + T2 + T3
 
-**Rationale:** At $100K, 0.15% = $150/day in time decay. Theta is a guaranteed daily cost for long options positions. On the 4–72 hour time horizon, excessive theta creates a headwind that requires larger moves to overcome. The 0.15% cap ensures the portfolio doesn't bleed more than approximately 3% per month from time decay alone, leaving room for position-level theta to be meaningful while keeping portfolio-level theta from becoming a structural drag.
+**Rationale:** At $100K, 0.15% = $150/day in time decay. Theta is a guaranteed daily cost for long options. On the 4–72 hour horizon, excessive theta creates a headwind requiring larger moves to overcome. The 0.15% cap limits portfolio bleed to ~3%/month from time decay alone — meaningful position-level theta without structural drag.
 
 ### Vega exposure
 
@@ -173,7 +173,7 @@ The weighted average uses position weight as the weighting factor, so larger pos
 
 **Enforcement:** T1 + T2 + T3
 
-**Rationale:** At $100K, 1.0% means a 1-point move in IV across the portfolio's options positions creates a $1,000 P/L swing. This caps the portfolio's sensitivity to implied volatility changes, which are especially relevant around events (earnings, FOMC) where IV can crush 5+ points overnight. At the 1.0% cap, a 5-point IV crush costs at most $5,000 (5% of portfolio) — painful but within the cumulative drawdown envelope.
+**Rationale:** At $100K, 1.0% means a 1-point IV move creates a $1,000 P/L swing. Caps sensitivity to IV changes, especially relevant around events (earnings, FOMC) where IV can crush 5+ points overnight. At the cap, a 5-point IV crush costs at most $5,000 (5% of portfolio) — painful but within the cumulative drawdown envelope.
 
 ---
 
@@ -187,9 +187,9 @@ The weighted average uses position weight as the weighting factor, so larger pos
 
 **Enforcement:** T1 + T2 + T3
 
-**Rationale:** Short exposure is capped at 30% (matching the net short directional limit) because short positions carry asymmetric risk — losses are theoretically unlimited and short squeezes can cause 20%+ moves in a single session. The per-position cap for shorts (3%) is tighter than the general 5% position cap because a short squeeze on a single name can move much faster than a long position declining.
+**Rationale:** Short exposure capped at 30% (matching the net short directional limit) because short positions carry asymmetric risk — theoretically unlimited losses, and short squeezes can cause 20%+ moves in a single session. The per-position cap (3%) is tighter than the general 5% because a short squeeze moves faster than a long-side decline.
 
-The borrow cost budget (0.05% of portfolio/day = $50/day at $100K) prevents the system from accumulating expensive-to-borrow shorts that bleed cost. At an annualized 18% borrow rate, $50/day supports approximately $100K in short exposure — well above the 30% gross short limit. The budget becomes binding only for hard-to-borrow names where annualized rates spike to 50%+, which is the desired behavior — the system should avoid expensive borrows unless the thesis is exceptionally compelling.
+The borrow cost budget (0.05% of portfolio/day = $50/day at $100K) prevents accumulating expensive-to-borrow shorts that bleed cost. At an 18% annualized borrow rate, $50/day supports ~$100K in short exposure — well above the 30% gross short limit. Binds only for hard-to-borrow names with 50%+ annualized rates, the intended behavior.
 
 ---
 
@@ -202,7 +202,7 @@ The borrow cost budget (0.05% of portfolio/day = $50/day at $100K) prevents the 
 
 **Enforcement:** T3 (engine-authoritative)
 
-**Rationale:** The 10% cash reserve ensures the system always has dry powder for high-conviction opportunities and margin requirements. A system that deploys 100% of capital is fragile — a single margin call or an unexpected opportunity with no available capital is a structural failure. The 30% pending order cap prevents the system from committing excessive capital to limit orders that may never fill, preserving flexibility.
+**Rationale:** The 10% cash reserve ensures dry powder for high-conviction opportunities and margin requirements. 100% deployment is fragile — a single margin call or unexpected opportunity with no available capital is a structural failure. The 30% pending order cap prevents over-committing capital to limit orders that may never fill.
 
 ---
 
@@ -228,17 +228,17 @@ The borrow cost budget (0.05% of portfolio/day = $50/day at $100K) prevents the 
 | Min cash reserve | — | ✓ (context) | ✓ | — |
 | Pending order capital | — | — | ✓ | N/A (command-time only) |
 
-**"Breach detection between invocations"** indicates whether the continuous monitor checks this rule against live market data between pipeline invocations. Rules marked with ✓ can be breached by market movement (price changes shift exposure, drawdowns accumulate) and the continuous monitor must detect and potentially respond to these breaches. Rules marked N/A or — are only relevant at command-submission time or change too slowly to require continuous monitoring.
+**"Breach detection between invocations"** indicates whether the continuous monitor checks this rule against live market data between invocations. ✓ rules can be breached by market movement (price changes shift exposure, drawdowns accumulate); N/A and — rules are only relevant at command-submission time or change too slowly to require continuous monitoring.
 
 ---
 
 ## Portfolio size profiles
 
-Guardrail rules don't scale uniformly across portfolio sizes. [Scenario testing](scenario-tests.md) revealed that at small portfolios, percentage-based exposure and drawdown rules are structurally inert (the portfolio can't deploy enough capital to reach them), while at large portfolios, structural constraints like position count are redundant (exposure rules prevent over-deployment). The nature of what constrains the portfolio changes categorically with scale — small portfolios are constrained by economics (minimum viable position size, transaction cost proportionality, feature viability), large portfolios by exposure (concentration, leverage, correlation, drawdown).
+Guardrail rules don't scale uniformly across portfolio sizes. [Scenario testing](scenario-tests.md) revealed that at small portfolios, percentage-based exposure and drawdown rules are structurally inert (the portfolio can't deploy enough capital to reach them); at large portfolios, structural constraints like position count are redundant (exposure rules prevent over-deployment). What constrains the portfolio changes categorically with scale — small portfolios are constrained by economics (minimum viable position size, transaction cost proportionality, feature viability), large portfolios by exposure (concentration, leverage, correlation, drawdown).
 
-Each profile defines which features are enabled, which structural constraints apply, and which of the 17 rules above are **binding** (the actual risk protection at this scale), **active but non-binding** (enforced for completeness but unlikely to trigger under normal operation), or **disabled** (feature not available, rule omitted from guardrail state headers entirely). This classification is separate from the enforcement tier (T1/T2/T3) — a binding rule is still checked at all its designated tiers.
+Each profile defines which features are enabled, which structural constraints apply, and which of the 17 rules are **binding** (active risk protection at this scale), **active but non-binding** (enforced for completeness but unlikely to trigger under normal operation), or **disabled** (feature unavailable, rule omitted from guardrail state headers). Independent of enforcement tier — a binding rule is still checked at all its designated tiers.
 
-The system runs one profile at a time during both paper trading and live trading. Profiles are validated sequentially: paper trade at a tier → tune until profitable → deploy real capital → accumulate results → paper trade at the next tier. Each tier's graduation is gated on demonstrated profitability with real capital at the current tier, not just paper trading results. Only one decision layer runs at a time (no cost multiplier during validation), and each tier's guardrail profile is informed by real market feedback from the previous tier rather than being designed in a vacuum.
+One profile runs at a time during both paper trading and live trading. Profiles are validated sequentially: paper trade at a tier → tune until profitable → deploy real capital → accumulate results → paper trade at the next tier. Tier graduation is gated on demonstrated profitability with real capital at the current tier, not paper trading results. Each tier's guardrail profile is informed by real market feedback from the previous tier.
 
 ### Profile: Micro ($1,500)
 

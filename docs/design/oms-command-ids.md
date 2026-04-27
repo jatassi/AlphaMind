@@ -1,6 +1,6 @@
 # OMS command IDs
 
-Deterministic identifiers for every OMS command. Specifies generation, format, uniqueness, and error handling for duplicates. Purpose is traceability and audit-log correlation, not network-style deduplication — the architecture rules out the scenarios that would require dedup ([§Why not dedup](#why-not-dedup)).
+Deterministic identifiers for every OMS command. Specifies generation, format, uniqueness, and error handling for duplicates. Purpose is traceability and audit-log correlation; the architecture rules out the scenarios that would require network-style dedup ([§Why not dedup](#why-not-dedup)).
 
 ---
 
@@ -17,7 +17,7 @@ Out of scope: broker submission retry semantics and surfacing of failed submissi
 
 ## PM-originated command IDs
 
-Derived by the OMS command intake layer at envelope receipt time from the envelope's structural position. The PM never generates, reads, or reasons about command IDs — it produces envelopes; infrastructure assigns identifiers. Parallels the principle in [oms-commands.md](05-execution-layer/oms-commands.md) that keeps LLMs from providing hallucinable values (the guardrail layer computes greeks internally rather than accepting them from the PM; same logic for IDs).
+Derived by the OMS command intake layer at envelope receipt time from the envelope's structural position. The PM never generates, reads, or reasons about command IDs — it produces envelopes; infrastructure assigns identifiers. Parallels the principle in [oms-commands.md](05-execution-layer/oms-commands.md) that keeps LLMs from providing hallucinable values.
 
 ### Format
 
@@ -43,14 +43,14 @@ The envelope's `modifications` array contains entries from two phases:
 
 Computation: `attempt_seq = count(modifications where phase == "post_rejection")`. The envelope carries its own attempt history; no side state.
 
-The schema partitions phases via an explicit `phase: "pre_submission" | "post_rejection"` enum on each entry rather than relying on category-name convention. Formalized in [pm-envelope-schema.md](04-decision-layer/pm-envelope-schema.md): `guardrail_rejection_response` entries are always `post_rejection`; all other categories are always `pre_submission`.
+The schema partitions phases via an explicit `phase: "pre_submission" | "post_rejection"` enum on each entry. Formalized in [pm-envelope-schema.md](04-decision-layer/pm-envelope-schema.md): `guardrail_rejection_response` entries are always `post_rejection`; all other categories are always `pre_submission`.
 
 ### Retry and modification model
 
 Each envelope retry is a *new* command with a new ID:
 
 - **Modified retry after guardrail rejection.** PM appends a `guardrail_rejection_response` entry, revises the embedded command (smaller size, different strike), pipeline resubmits. OMS sees one more `post_rejection` entry → `attempt_seq` increments → new `command_id`. New command, validated against fresh state.
-- **Same-content retry.** Not part of this design. The architecture (in-process pipeline and OMS, atomic transactions, fail-closed mid-pipeline policy) produces no same-ID resubmission pathway — see [§Why not dedup](#why-not-dedup).
+- **Same-content retry.** The architecture (in-process pipeline and OMS, atomic transactions, fail-closed mid-pipeline policy) produces no same-ID resubmission pathway — see [§Why not dedup](#why-not-dedup).
 
 ### Worked example
 
@@ -61,7 +61,7 @@ Invocation `inv-2026-04-23T14-30Z`. Analyst produces `REC-2`; PM emits envelope 
 3. PM appends `{phase: "post_rejection", category: "guardrail_rejection_response", ...}` to `ENV-REC-2.modifications`, revises the OPEN to 1.5%.
 4. Pipeline resubmits. Post-rejection count: 1 → `attempt_seq = 1`. ID: `inv-2026-04-23T14-30Z.ENV-REC-2.0.1`. Different command, different ID, fresh validation.
 
-If step 4 succeeds, activity log reflects both attempts. If step 4 is rejected, `attempt_seq` goes to 2. Each attempt is a first-class command for audit and feedback-loop purposes.
+If step 4 succeeds, activity log reflects both attempts. If rejected, `attempt_seq` goes to 2. Each attempt is a first-class command for audit and feedback-loop purposes.
 
 ---
 
@@ -85,9 +85,9 @@ MON.{monitor_session_id}.{trigger_id}.{command_ordinal}
 The monitor does not retry with modification. If a protective CLOSE submission fails cleanly, the next scheduled breach evaluation either:
 
 - Re-detects the breach → fresh `trigger_id` → new command, or
-- Finds the breach resolved (position moved back inside limit, or the pipeline's own close executed) → no action.
+- Finds the breach resolved (position moved back inside limit, or pipeline's own close executed) → no action.
 
-This keeps the monitor mechanical. Retry-with-modification is reserved for the PM.
+Retry-with-modification is reserved for the PM.
 
 ---
 
@@ -109,19 +109,19 @@ Engine-originated IDs include `monitor_session_id`, unique per monitor process l
 
 Abort the invocation (PM-originated) or fail the monitor action (engine-originated), log a structural error, raise an alert.
 
-A duplicate is a bug — concurrent envelope state mutation, flawed ID derivation, reused session ID, or upstream corruption. None safe to paper over by returning a stored response or silently accepting. Fail-closed discipline applied at the command-intake seam.
+A duplicate is a bug — concurrent envelope state mutation, flawed ID derivation, reused session ID, or upstream corruption. Fail-closed discipline applied at the command-intake seam.
 
 ---
 
 ## Invocation-level idempotency
 
-Scenario: an invocation runs twice (scheduler bug, operator re-run, supervisor confusion). Already addressed by existing infrastructure:
+Scenario: an invocation runs twice (scheduler bug, operator re-run, supervisor confusion). Addressed by existing infrastructure:
 
 - **APScheduler `max_instances=1`** ([infrastructure.md](../architecture/infrastructure.md)) suppresses concurrent invocations at the scheduler layer.
 - **Monotonically increasing `invocation_id`** ([state-persistence.md §Invocation records](05-execution-layer/state-persistence.md)) — restart or re-run generates a fresh ID; collision impossible by construction.
 - **Uniqueness constraint on the invocation record** catches any accidental reuse at the write layer — the second attempt errors before any agents run.
 
-If any of these fail, it is a bug in the named component, not a case for command-level compensation.
+If any of these fail, it's a bug in the named component, not a case for command-level compensation.
 
 ---
 
@@ -130,9 +130,9 @@ If any of these fail, it is a bug in the named component, not a case for command
 Conventional distributed-systems idempotency stores a command ID → response mapping and returns the stored response on duplicates. AlphaMind doesn't need this because the architecture rules out duplicate scenarios:
 
 - **Pipeline and OMS are in-process** ([infrastructure.md](../architecture/infrastructure.md), [component-boundaries.md](../architecture/component-boundaries.md)). PM→OMS is a function call, not a network RPC. Either the call returns or raises — no "submitted but response unknown" state.
-- **State mutations are atomic transactions** ([state-persistence.md §Phase 2 write path](05-execution-layer/state-persistence.md) — *"Each command's state mutations are committed atomically. If a command fails mid-processing, the transaction rolls back"*). No partial commits.
+- **State mutations are atomic transactions** ([state-persistence.md §Phase 2 write path](05-execution-layer/state-persistence.md) — *"Each command's state mutations are committed atomically. If a command fails mid-processing, the transaction rolls back"*).
 - **Fail-closed policy** ([llm-agent-failure-handling.md](llm-agent-failure-handling.md), [mid-pipeline-failure-handling.md](mid-pipeline-failure-handling.md)): OMS raises → pipeline aborts. No retry loop.
-- **No resume after abort** ([mid-pipeline-failure-handling.md](mid-pipeline-failure-handling.md)). Mid-invocation crash discards in-flight state; the next invocation starts fresh with a different `invocation_id`.
+- **No resume after abort** ([mid-pipeline-failure-handling.md](mid-pipeline-failure-handling.md)). Mid-invocation crash discards in-flight state; next invocation starts fresh with a different `invocation_id`.
 
 Scenarios that motivate dedup elsewhere:
 
@@ -145,7 +145,7 @@ Scenarios that motivate dedup elsewhere:
 | Scheduler re-runs same invocation | Prevented by `max_instances=1`, monotonic `invocation_id`, uniqueness constraint. |
 | Monitor restart re-detects breach | New `monitor_session_id` → new command ID. Correct behavior, not a duplicate. |
 
-None produce a same-ID resubmission. A duplicate arrival is a behavioral or implementation bug, treated as an error (see [§What happens if a duplicate command ID arrives](#what-happens-if-a-duplicate-command-id-arrives)).
+A duplicate arrival is a behavioral or implementation bug, treated as an error (see [§What happens if a duplicate command ID arrives](#what-happens-if-a-duplicate-command-id-arrives)).
 
 ---
 

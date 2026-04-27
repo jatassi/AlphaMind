@@ -1,14 +1,12 @@
 # Asset universe validation
 
-How the asset universe is verified, persisted as machine-readable config, and updated over time. [asset-universe.md](asset-universe.md) defines eligibility criteria (liquidity, coverage, beta, market cap, options chain). This doc makes them operationally precise — backing data per criterion, threshold values, re-evaluation cadence, and the operator add/remove workflow.
-
-[asset-universe.md](asset-universe.md) is descriptive (sector composition, rationale, prose criteria). This doc is procedural (measurement specs, YAML schema, operator workflow).
+How the asset universe is verified, persisted as machine-readable config, and updated over time. [asset-universe.md](asset-universe.md) defines eligibility criteria (liquidity, coverage, beta, market cap, options chain) descriptively. This doc makes them operationally precise — backing data per criterion, threshold values, re-evaluation cadence, operator add/remove workflow, YAML schema.
 
 ---
 
 ## Scope
 
-**In scope.** Per-criterion measurement gates; the config file holding the resolved ticker list; the validation procedure; re-evaluation cadence; add/remove procedure including held-position interaction.
+**In scope.** Per-criterion measurement gates; the config file holding the resolved ticker list; validation procedure; re-evaluation cadence; add/remove procedure including held-position interaction.
 
 **Out of scope** (owned elsewhere):
 
@@ -57,15 +55,15 @@ benchmarks:
 
 The `discovery_sources` block names a sector ETF per sector to drive [Candidate discovery](#candidate-discovery). Each entry specifies the ETF ticker, the vendor (`spdr` or `ishares`), and — for iShares — the product ID encoded in the holdings-CSV URL.
 
-The universe is universe-wide — no per-profile composition. A profile selects which sectors are active via `active_sectors`; within an active sector, every ticker in `assets.yaml` is in scope. Dual portfolio profiles ([rules-and-limits.md § Dual portfolio profiles](06-risk-guardrails/rules-and-limits.md#dual-portfolio-profiles)) differ in capital and feature flags, not in tickers.
+The universe is universe-wide. A profile selects which sectors are active via `active_sectors`; within an active sector, every ticker in `assets.yaml` is in scope. Dual portfolio profiles ([rules-and-limits.md § Dual portfolio profiles](06-risk-guardrails/rules-and-limits.md#dual-portfolio-profiles)) differ in capital and feature flags, not tickers.
 
-`last_full_validation` records the calendar date validation last ran against every ticker and every ticker passed. Per-ticker history (when a name was added, when a single name was re-validated mid-cycle) lives in git, not the YAML.
+`last_full_validation` records the calendar date validation last ran against every ticker and every ticker passed. Per-ticker history (when a name was added, when a single name was re-validated mid-cycle) lives in git.
 
 ---
 
 ## Validation criteria
 
-Five criteria gate inclusion, all universe-wide. The criteria apply to `sectors[*]` entries only — `benchmarks` are reference instruments for cross-asset distillation, not subject to selection criteria.
+Five criteria gate inclusion, all universe-wide. Apply to `sectors[*]` entries only — `benchmarks` are reference instruments for cross-asset distillation, not subject to selection criteria.
 
 ### Average daily volume
 
@@ -75,7 +73,7 @@ Five criteria gate inclusion, all universe-wide. The criteria apply to `sectors[
 | Lookback | 60 trading days ending on the validation date |
 | Computation | `mean(volume)` and `mean(volume * close)` over the window |
 | Threshold | `mean(volume) > 2,000,000` shares OR `mean(volume * close) > $50,000,000` notional |
-| Rationale | Either condition satisfies fill realism for the system's position sizes. The OR lets lower-priced names qualify on share volume and higher-priced names on notional. Sixty trading days smooths earnings spikes and quiet weeks while remaining responsive to structural liquidity changes. |
+| Rationale | Either condition satisfies fill realism for the system's position sizes. The OR lets lower-priced names qualify on share volume and higher-priced names on notional. Sixty days smooths earnings spikes while remaining responsive to structural liquidity changes. |
 
 ### Analyst coverage
 
@@ -85,7 +83,7 @@ Five criteria gate inclusion, all universe-wide. The criteria apply to `sectors[
 | Lookback | Most recent month-end snapshot |
 | Computation | `sum(strongBuy + buy + hold + sell + strongSell)` |
 | Threshold | `total >= 10` |
-| Rationale | Ten-plus analysts ensures news density, earnings-estimate breadth, and revision flow sufficient for the analyst agent. Below ten, a single house's view dominates the consensus signal — undesirable for an information-synthesis edge that depends on disagreement and revision flow. |
+| Rationale | Ten-plus analysts ensures news density, earnings-estimate breadth, and revision flow sufficient for the analyst agent. Below ten, a single house's view dominates the consensus — undesirable for an information-synthesis edge that depends on disagreement and revision flow. |
 
 ### Beta
 
@@ -93,9 +91,9 @@ Five criteria gate inclusion, all universe-wide. The criteria apply to `sectors[
 |---|---|
 | Data source | Polygon daily bars for `{ticker}` and SPY |
 | Lookback | 90 trading days ending on the validation date |
-| Computation | `cov(return_ticker, return_spy) / var(return_spy)` over the window, returns computed close-to-close |
+| Computation | `cov(return_ticker, return_spy) / var(return_spy)`, close-to-close returns |
 | Threshold | `abs(beta) >= 0.6` |
-| Rationale | The purpose is tradable intra-window dispersion at 4–72h, which absolute beta measures. Signed beta conflates dispersion magnitude with correlation direction — β = −0.7 has the same tradable dispersion as +0.7 and is arguably more useful for a swing system (independent catalyst structure, hedge value). The 0.6 floor drops names with genuinely small returns in either direction (low-vol infrastructure, utility-like names) while admitting negatively-correlated names with their own catalyst structure (energy on commodities, defensives). |
+| Rationale | The purpose is tradable intra-window dispersion at 4–72h, which absolute beta measures. β = −0.7 has the same tradable dispersion as +0.7 and is arguably more useful for a swing system (independent catalyst structure, hedge value). The 0.6 floor drops names with genuinely small returns in either direction (low-vol infrastructure, utility-like names) while admitting negatively-correlated names with their own catalyst structure (energy on commodities, defensives). |
 
 ### Market capitalization
 
@@ -104,27 +102,27 @@ Five criteria gate inclusion, all universe-wide. The criteria apply to `sectors[
 | Data source | Polygon `/v3/reference/tickers/{ticker}` `market_cap` field |
 | Lookback | None — point-in-time |
 | Threshold | `market_cap >= $10,000,000,000` |
-| Rationale | Ten-billion-dollar floor establishes institutional coverage density and absorbs the system's position sizes without per-trade impact. Also filters small-caps where information environments are thin and idiosyncratic news (one executive, one product line) dominates. |
+| Rationale | Ten-billion-dollar floor establishes institutional coverage density and absorbs the system's position sizes without per-trade impact. Filters small-caps where information environments are thin and idiosyncratic news (one executive, one product line) dominates. |
 
 ### Options chain liquidity
 
 | Field | Value |
 |---|---|
 | Data source | Polygon `/v3/snapshot/options/{ticker}` |
-| Reference expiry | The nearest standard monthly expiry within 45 calendar days of the validation date |
+| Reference expiry | Nearest standard monthly expiry within 45 calendar days of the validation date |
 | Computation | Sum of open interest across all contracts (calls + puts) within ±10% of spot at the reference expiry |
 | Threshold | `total_oi >= 5,000` contracts |
-| Rationale | 5,000 NTM OI carries options-flow signals (category 3 in [external/quantitative.md](01-data-layer/external/quantitative.md)) above the noise floor of single-counterparty hedging on sparse chains. Also implies tradable liquidity for options-enabled profiles at their position sizes. |
+| Rationale | 5,000 NTM OI carries options-flow signals (category 3 in [external/quantitative.md](01-data-layer/external/quantitative.md)) above the noise floor of single-counterparty hedging on sparse chains. Implies tradable liquidity for options-enabled profiles at their position sizes. |
 
 ---
 
 ## Validation procedure
 
-An offline operator workflow run on the cadence below. Per ticker in `config/assets.yaml`:
+Offline operator workflow run on the cadence below. Per ticker in `config/assets.yaml`:
 
 1. Pull the data sources named in [Validation criteria](#validation-criteria).
 2. Compute each criterion's value.
-3. Compare each value against its threshold.
+3. Compare against its threshold.
 4. Record pass/fail per criterion with the computed value.
 
 The output is a per-ticker report with one row per criterion. Example:

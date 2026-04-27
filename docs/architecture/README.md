@@ -7,7 +7,7 @@
 
 ## Purpose
 
-Documents the technical architecture of AlphaMind: language, infrastructure, component design, and rationale. The [design spec](../design/README.md) defines *what* the system does; this directory defines *how it is built*.
+Technical architecture: language, infrastructure, component design, and rationale. The [design spec](../design/README.md) defines *what* the system does; this directory defines *how it is built*.
 
 ---
 

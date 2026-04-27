@@ -2,7 +2,7 @@
 
 An LLM reads quant anomaly flags from the [programmatic distillation layer](../02-distillation-layer/external.md) and sector-researcher flagged anomalies, then *decides what to investigate*. The system's "curiosity" layer — different questions each cycle based on what the data is doing.
 
-This is where the LLM's reasoning capability is most defensible as an edge. No traditional systematic strategy can dynamically generate research questions based on what the data is doing right now. See [design-decisions.md](../design-decisions.md).
+This is where the LLM's reasoning capability is most defensible as an edge: no traditional systematic strategy can dynamically generate research questions based on what the data is doing right now. See [design-decisions.md](../design-decisions.md).
 
 ---
 
@@ -10,14 +10,11 @@ This is where the LLM's reasoning capability is most defensible as an edge. No t
 
 Two anomaly streams plus the universal volatility regime label:
 
-**Distillation layer anomaly flags** (from [external.md](../02-distillation-layer/external.md) §3):
-Purely quantitative detections — volume spikes, price-flow divergences, correlation breakdowns, lead-lag gaps, short-interest anomalies, earnings revision clusters, macro surprises, funding-stress alerts. Binary flags with magnitude, not interpretations.
+**Distillation layer anomaly flags** (from [external.md](../02-distillation-layer/external.md) §3): Purely quantitative detections — volume spikes, price-flow divergences, correlation breakdowns, lead-lag gaps, short-interest anomalies, earnings revision clusters, macro surprises, funding-stress alerts. Binary flags with magnitude, not interpretations.
 
-**Sector-researcher flagged anomalies** (from [domain-researchers](domain-researchers/)):
-Items sector researchers marked for further investigation. May overlap with distillation flags but can also surface patterns distillation's statistical detection missed — e.g., "energy is responding to the EIA report differently than the last three weeks," contextual pattern recognition not captured by a z-score threshold.
+**Sector-researcher flagged anomalies** (from [domain-researchers](domain-researchers/)): Items sector researchers marked for further investigation. May overlap with distillation flags but can also surface patterns statistical detection missed — e.g., "energy is responding to the EIA report differently than the last three weeks," contextual pattern recognition not captured by a z-score threshold.
 
-**Volatility regime label** (from [distillation external.md §4](../02-distillation-layer/external.md)):
-Universal context — current regime (low-vol compression, vol expansion, crisis/spike, vol normalization) plus transition flag. Weights triage: a funding-stress flag is far more actionable in vol-expansion or crisis than in low-vol compression.
+**Volatility regime label** (from [distillation external.md §4](../02-distillation-layer/external.md)): Universal context — current regime (low-vol compression, vol expansion, crisis/spike, vol normalization) plus transition flag. Weights triage: a funding-stress flag is far more actionable in vol-expansion or crisis than in low-vol compression.
 
 ---
 
@@ -31,7 +28,7 @@ Good triage instincts — signal vs. noise — are the agent's primary value-add
 - **Signal density:** Multi-flag anomalies are more likely signal than noise. A volume spike alone is weakly interesting; a volume spike with no price movement, divergent options flow, and a sector-researcher flag is strongly interesting.
 - **Portfolio relevance:** Anomalies affecting held names or thesis candidates get priority.
 
-**Few-shot examples** of signal vs. noise calibrate triage instinct in the prompt. Updated as the system accumulates a track record of which threads produced actionable findings.
+**Few-shot examples** of signal vs. noise calibrate triage in the prompt; updated as the system accumulates a track record of which threads produced actionable findings.
 
 **Example research threads:**
 - "NVDA volume is 4x average with no price movement — news or institutional repositioning?"

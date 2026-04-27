@@ -8,11 +8,10 @@ prediction_market_snapshots row per active contract per invocation.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
-
-import httpx
 
 from alphamind.data_sources._common import default_session_factory, resume_since, track_run
 from alphamind.persistence.models import (
@@ -99,21 +98,31 @@ def _fetch_markets(_since: datetime) -> list[dict[str, Any]]:
     return results
 
 
-def _fetch_prices(condition_id: str) -> dict[str, Any] | None:
-    """
-    Fetch YES/NO prices for a contract from the CLOB API.
-
-    Production implementation — replaced by patch in tests.
-    """
-    from alphamind.data_sources.polymarket.client import PolymarketClient
-
-    client = PolymarketClient()
-    return client.get_prices(condition_id)
-
-
 def _now() -> datetime:
     """Return current UTC time.  Replaced by patch in tests."""
     return datetime.now(UTC)
+
+
+def _yes_probability(market: dict[str, Any]) -> float | None:
+    """Parse YES probability from Gamma's ``outcomePrices`` field.
+
+    The field arrives as a JSON-encoded string like ``'["0.535", "0.465"]'``
+    where the array is parallel to ``outcomes`` (typically ``["Yes", "No"]``).
+    Returns None for non-binary markets or when prices are absent.
+    """
+    raw = market.get("outcomePrices")
+    if not raw:
+        return None
+    try:
+        prices = json.loads(raw) if isinstance(raw, str) else list(raw)
+    except (TypeError, ValueError):
+        return None
+    if not prices:
+        return None
+    try:
+        return float(prices[0])
+    except (TypeError, ValueError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -141,25 +150,18 @@ def _process_market(sess: Any, market: dict[str, Any], snapshot_ts: str) -> int:
             tags,
         )
 
-    try:
-        prices = _fetch_prices(condition_id)
-    except httpx.HTTPStatusError as exc:
+    yes_prob = _yes_probability(market)
+    if yes_prob is None:
         log.warning(
-            "polymarket: skipping contract %s — prices endpoint returned %s",
-            condition_id,
-            exc.response.status_code,
-        )
-        return 0
-    if prices is None or "yes" not in prices:
-        log.warning(
-            "polymarket: skipping non-binary contract %s (no 'yes' price in response)",
+            "polymarket: skipping contract %s — no parsable outcomePrices",
             condition_id,
         )
         return 0
 
-    yes_prob: float = float(prices["yes"])
-    bid: float | None = float(prices["bid"]) if prices.get("bid") is not None else None
-    ask: float | None = float(prices["ask"]) if prices.get("ask") is not None else None
+    raw_bid = market.get("bestBid")
+    raw_ask = market.get("bestAsk")
+    bid: float | None = float(raw_bid) if raw_bid is not None else None
+    ask: float | None = float(raw_ask) if raw_ask is not None else None
     volume_24h: float | None = float(market.get("volume24hr") or 0.0) or None
 
     is_closed: bool = bool(market.get("closed", False))
