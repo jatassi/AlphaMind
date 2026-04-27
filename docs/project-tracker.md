@@ -6,6 +6,77 @@ Phases 0–4 are the design pass — defining contracts before writing code, ord
 
 ---
 
+## Ready for implementation
+
+Features below have full requirements landed in the design docs and zero outstanding [Backlog](#backlog) items — implementation can proceed against the existing specs without further design work.
+
+### Architecture
+
+- [Component boundaries](architecture/component-boundaries.md)
+- [Data and state](architecture/data-and-state.md)
+- [Infrastructure](architecture/infrastructure.md)
+- [Language and runtime](architecture/language-and-runtime.md)
+- [LLM integration](architecture/llm-integration.md)
+- [System characterization](architecture/system-characterization.md)
+
+### Data layer
+
+- [Collector lifecycle](design/01-data-layer/collector/lifecycle.md)
+- [Collector runner](design/01-data-layer/collector/runner.md)
+- [API key inventory](design/01-data-layer/api-key-checklist.md)
+
+### Distillation layer
+
+- [External distillation](design/02-distillation-layer/external.md)
+- [Threshold calibration framework](design/02-distillation-layer/threshold-calibration.md)
+
+### Analysis layer
+
+- [Synthesizer](design/03-analysis-layer/synthesizer.md)
+- Domain researchers ([tech-semis](design/03-analysis-layer/domain-researchers/tech-semis.md), [financials](design/03-analysis-layer/domain-researchers/financials.md), [energy](design/03-analysis-layer/domain-researchers/energy.md))
+
+### Decision layer
+
+- [Analyst](design/04-decision-layer/analyst.md) ([output schema](design/04-decision-layer/analyst-output-schema.md))
+- [Proposal pre-processor](design/04-decision-layer/proposal-pre-processor.md) ([bundle schema](design/04-decision-layer/proposal-pre-processor-bundle-schema.md))
+
+### Execution layer
+
+- [OMS commands](design/05-execution-layer/oms-commands.md) ([command schema](design/05-execution-layer/oms-command-schema.md), [engine envelope schema](design/05-execution-layer/engine-envelope-schema.md))
+- [OMS command IDs](design/oms-command-ids.md)
+- [Position model](design/05-execution-layer/position-model.md)
+- [Thesis model](design/05-execution-layer/thesis-model.md)
+- [Orders & brackets](design/05-execution-layer/orders-and-brackets.md)
+- [State persistence](design/05-execution-layer/state-persistence.md)
+- [Corporate actions](design/05-execution-layer/corporate-actions.md)
+- [Paper-evaluation harness](design/05-execution-layer/paper-evaluation-harness.md)
+- [Continuous monitor](design/05-execution-layer/architecture.md)
+- [Guardrail enforcement layer](design/05-execution-layer/architecture.md)
+
+### Risk guardrails
+
+- [Regime adaptation](design/06-risk-guardrails/regime-adaptation.md)
+- [Breach behavior](design/06-risk-guardrails/breach-behavior.md)
+- [State delivery](design/06-risk-guardrails/state-delivery.md)
+- [Guardrail evaluation primitives](design/06-risk-guardrails/guardrail-evaluation.md)
+- [Scenario tests](design/06-risk-guardrails/scenario-tests.md)
+
+### Cross-cutting
+
+- [LLM agent failure handling](design/llm-agent-failure-handling.md)
+- [Mid-pipeline failure handling](design/mid-pipeline-failure-handling.md)
+- [Cost & rate-limit modeling](design/cost-and-rate-limit-modeling.md)
+- [Asset universe + validation methodology](design/asset-universe-validation.md)
+- [Design decisions](design/design-decisions.md)
+
+### Testing
+
+- [Unit test plan](design/testing/unit-test-plan.md)
+- [Integration test plan](design/testing/integration-test-plan.md)
+- [LLM output validation](design/testing/llm-output-validation.md)
+
+---
+
 ## Phase 0 — Tracer bullet (do first, before locking anything)
 
 A lightweight validation exercise. Pick one concrete scenario (e.g., a tech earnings catalyst trade) and walk it end-to-end through the pipeline: what data the analyst sees, what output it produces, how the portfolio manager evaluates it, what OMS commands result, how guardrails interact. The goal is to verify that the surrounding contracts are shaped correctly before finalizing them.
@@ -140,9 +211,7 @@ With the constraint surface fully defined, these become "given X inputs and Y ac
 
 ## Backlog
 
-Outstanding work surfaced by the design audit on 2026-04-26. Grouped by area; within each area, features are alphabetical. Items defer from Phase 0–4 either because they require empirical data to specify (paper-trading calibration), depend on infrastructure not yet built (dashboard, backtest harness), or were intentionally scoped out of v1.
-
-Areas with no entries (Phase 0–4 fully landed, no outstanding work): risk-guardrails rule values themselves (regime adaptation, breach behavior, state delivery, guardrail evaluation, scenario tests), the OMS command vocabulary and execution-layer core (commands, command IDs, position model, thesis model, orders & brackets, state persistence, corporate actions, paper-evaluation harness, continuous monitor, guardrail enforcement layer), the testing plans, the synthesizer and domain-researcher contracts, and the cross-cutting failure-handling and cost-modeling docs.
+Outstanding work surfaced by the design audit on 2026-04-26. Grouped by area; within each area, features are alphabetical. Items defer from Phase 0–4 either because they require empirical data to specify (paper-trading calibration), depend on infrastructure not yet built (dashboard, backtest harness), or were intentionally scoped out of v1. Features absent from this section are listed in [Ready for implementation](#ready-for-implementation).
 
 ### Architecture
 
