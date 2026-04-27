@@ -241,37 +241,13 @@ _Schema additions, well-scoped multi-file edits, or single-component contributio
 
 _New infrastructure, cross-cutting consolidations, or UI surfaces._
 
-#### Ad-hoc query surface _(Command center)_
-
-- [ ] Design filter dimensions, query input shape, result rendering, and export flow for the operator's ad-hoc query surface in the feedback view group. Drafted alongside the dashboard frontend. _Source: [feedback-loop.md](design/feedback-loop.md)._
-
-**Unblocks.**
-
-- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Monthly outcome view_, _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
-
-**Context.** Lives in the F. Quality and feedback view group of `command-center.md` and is named in `feedback-loop.md § Dashboard and digest curation` as "everything not on the curated views." The data substrate is fixed: `agent_calls`, `activity_log`, `theses`, `counterfactual_replays`, plus the conditioning provenance fields on `invocations` (regime, profile, mode, overlays, prompt versions, model versions). The same surface is hit by `/feedback-review` ad-hoc deep-dives and by `/feedback-retrospective` Phase 1 ingestion. Read shape only — never mutates anything.
-
-**Options.**
-
-1. **Saved-view builder over a fixed entity catalog.** The operator picks an entity (PM envelopes, anti-pattern occurrences, agent calls, theses, counterfactual replays), gets a structured filter form keyed to that entity's columns plus the conditioning surface (regime, sector, conviction band, prompt version, model version, time range), and the result renders as a typed table with row-expansion to the underlying record. Saved views persist by name in a small `saved_queries` table on the command-center backend. Export is a one-click CSV of the rendered table.
-2. **Free-form SQL console with a schema sidebar.** A SQLAlchemy-text query box, schema-aware autocomplete sourced from the existing ORM models, results in a generic table renderer, single-click CSV export. No saved-view layer; operator pastes from a personal scratch pad. Mirrors what the operator would otherwise do via `sqlite3` CLI.
-3. **Hybrid — structured form composes to inspectable SQL, console accepts edits.** Default surface is the entity-keyed form from Option 1; "show as SQL" reveals the composed query in an editable console (Option 2 surface) the operator can refine before re-running. Saved views save the composed SQL string, not the form state — so a query that started in the form survives later schema evolution as plain SQL.
-
-**Steelmans.**
-
-- *Option A.* The conditioning slices in `feedback-loop.md § Conditioning surface` are fixed and discoverable; an entity-keyed form makes them clickable instead of remembered. Row-expansion to the underlying record gives the same diagnostic depth as the per-invocation detail view without a custom query. Saved views are the natural unit the operator reuses week-to-week (e.g., "this quarter's PM rejections in elevated regime on the strategist prompt v3"). No SQL competence needed for the 80% case.
-- *Option B.* The metric inventory is large and growing; any structured form will have escape valves the operator wants and the form doesn't expose. SQL is the lingua franca for SQLite, the operator already reads the schema in `state-persistence.md`, and feedback-loop questions are open-ended by design — `/feedback-retrospective` Phase 1 is described as "open-ended pattern discovery" and a fixed form constrains exactly that. Smallest surface to build.
-- *Option C.* Form-to-SQL gives the discoverable conditioning surface for routine queries and the unconstrained tail for novel investigation in one place. Saving the composed SQL means saved queries don't break when entity-form layouts evolve. The "show as SQL" pane teaches the operator the schema as they go, lowering the cost of dropping into pure SQL when needed.
-
-**Recommendation.** **Option C — hybrid form-to-SQL.** The form covers the routine conditioning slices that `/feedback-review` and the weekly digest already lean on, while the SQL drop-down preserves the open-ended investigation `/feedback-retrospective` Phase 1 needs. Saving as SQL strings keeps saved views durable across schema work. The "structured form composes to SQL" pattern is one component (form + SQL pane sharing a query model), not two — minimal incremental complexity over Option A.
-
 #### Monthly outcome view _(Command center)_
 
 - [ ] Specify the metric subset, slice-comparison UI, and layout for the monthly outcome view; ships once resolved-thesis count crosses the threshold. _Source: [feedback-loop.md](design/feedback-loop.md)._
 
 **Unblocks.**
 
-- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Ad-hoc query surface_, _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
 
 **Context.** `feedback-loop.md` names this view but defers layout until resolved-thesis volume supports meaningful posterior bands. `command-center.md § Monthly view` echoes the same deferral. The substrate exists today: counterfactual replays cover PM accuracy and modification effectiveness; conviction calibration, status calibration, and citation-chain metrics all join through `agent_calls.output_artifact_ref` parsing plus `theses` resolution outcomes. The conditioning surface (regime / sector / conviction band / prompt version / model version) is `feedback-loop.md § Conditioning surface` and is the primary affordance per `feedback-review` skill's monthly-mode walk.
 
@@ -295,7 +271,7 @@ _New infrastructure, cross-cutting consolidations, or UI surfaces._
 
 **Unblocks.**
 
-- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Ad-hoc query surface_, _Monthly outcome view_, _Backtest-for-deterministic-layer infrastructure_.
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Monthly outcome view_, _Backtest-for-deterministic-layer infrastructure_.
 
 **Context.** [`feedback-loop.md § Pending`](docs/design/feedback-loop.md#pending) names the gap as "protocol for what evidence is sufficient to roll back a shipped change." Today, [`/feedback-validate` EVALUATE](.claude/skills/feedback-validate/SKILL.md) produces a verdict in `{improved, degraded, no_change, inconclusive}` and writes a `validation_outcomes` record, but the procedure following a `degraded` verdict is unspecified — does the operator immediately revert via git, register a new validation watching the revert, schedule a follow-up retrospective, or accept the degradation if the magnitude is small? The system is operator-driven per the [feedback-loop](docs/design/feedback-loop.md) preamble ("the operator is the agent of all changes"), so the protocol is decision-support, not automation.
 
@@ -327,7 +303,7 @@ _New infrastructure, cross-cutting consolidations, or UI surfaces._
 
 **Unblocks.**
 
-- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Ad-hoc query surface_, _Monthly outcome view_, _Validation methodology: rollback evidence protocol_.
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Monthly outcome view_, _Validation methodology: rollback evidence protocol_.
 
 **Context.** [`feedback-loop.md § Confounder management`](docs/design/feedback-loop.md#confounder-management) names "Backtest as sanity check" for regime-sensitive changes, qualified parenthetically as open infrastructure work. The scope is constrained: replay the *deterministic* layer (Class A/B/C distillation thresholds and the Class B rolling state from [`threshold-calibration.md`](docs/design/02-distillation-layer/threshold-calibration.md)) against historical price/macro inputs to confirm a tuning change holds across multiple historical regimes — not a full LLM-pipeline backtest. The [counterfactual replay engine](docs/design/05-execution-layer/counterfactual-replay-engine.md) already exists for PM-decision counterfactuals on price data, and the [paper-evaluation harness](docs/design/05-execution-layer/paper-evaluation-harness.md) already provides shared spread/impact/fee primitives. Validation under [`/feedback-validate`](.claude/skills/feedback-validate/SKILL.md) is an LLM-driven session; the deterministic harness is an analytical input it consumes, not a peer to it.
 

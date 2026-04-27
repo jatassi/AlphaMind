@@ -448,7 +448,7 @@ Roughly 25 deterministic numbers across six sections plus variable rows in Secti
 
 A **monthly view** — outcome-tier metrics, conditioning slices (regime, sector, conviction band, prompt version, model version), citation-chain visualizations, anti-pattern accuracy curves. Trajectory visualizations are the primary affordance. Layout drafted once enough resolved-thesis volume exists for outcome metrics to carry meaningful credible bands.
 
-An **ad-hoc query surface** — for everything not on the curated views.
+An **ad-hoc query surface** — for everything not on the curated views. A hybrid form-to-SQL surface keyed to an entity catalog (agent calls, activity log, PM envelopes, theses, counterfactual replays, invocations, validations, retrospective decisions); the form composes to canonical SQL the operator can drop into and edit, saved views persist as SQL strings, results render as a typed table with row-expansion to the underlying record, and CSV export is one click. Read-only by construction. Specified in [command-center.md § Ad-hoc query surface](command-center.md#ad-hoc-query-surface).
 
 ### Session mode overlay
 
@@ -482,17 +482,13 @@ The supersession detector runs against active validations on each pipeline invoc
 
 ## Pending
 
-Items waiting on data accumulation, dashboard build, or operating the system.
+Items waiting on data accumulation or operating the system.
 
 ### Waiting on data accumulation
 
 Outcome-tier surfaces need real resolved-thesis volume before the design is meaningful.
 
 - **Monthly view metric set and conditioning-slice UI.** Structure named in [Dashboard and digest curation](#dashboard-and-digest-curation); specific layout, metric subset, and slice-comparison UI ship once resolved-thesis count crosses the threshold for meaningful credible bands.
-
-### Waiting on the dashboard build
-
-- **Ad-hoc query surface UI.** Filter dimensions, query input shape, result rendering, export. Drafted with the dashboard frontend.
 
 ### Waiting on operating the system
 
