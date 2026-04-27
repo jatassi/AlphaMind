@@ -61,7 +61,7 @@ SQLite is the database engine (Python stdlib `sqlite3`); no additional driver.
 | `pandas` | Time-series manipulation, trailing window operations | [System characterization](system-characterization.md) |
 | `ta-lib` (via `TA-Lib` Python wrapper) | Technical indicators (RSI, MACD, Bollinger, etc.) | [System characterization](system-characterization.md) |
 
-**Note on TA-Lib:** Requires the C library `ta-lib` (`brew install ta-lib` on macOS); the Python package is a thin wrapper. `pandas-ta` is a pure-Python fallback if installation proves problematic — slower but no C dependency.
+**Note on TA-Lib:** Requires the C library `ta-lib` (`brew install ta-lib` on macOS); the Python package is a thin wrapper. `pandas-ta` is a pure-Python fallback — slower, no C dependency.
 
 ### Market calendar
 
@@ -83,7 +83,7 @@ Used by the scheduler to skip holidays and adjust weekend cadence.
 | Finnhub | Free | $0 | Analyst recommendations, earnings calendar, company news |
 | FINRA | Free | $0 | Short volume, ATS (dark pool) weekly data |
 
-Additional qualitative sources (news APIs, sentiment, prediction markets) are TBD pending vendor selection. The data layer's adapter pattern keeps each source an independent integration.
+Additional qualitative sources (news APIs, sentiment, prediction markets) are TBD. The data layer's adapter pattern keeps each source an independent integration.
 
 ---
 
