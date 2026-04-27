@@ -389,32 +389,32 @@ None. All 17 rules are binding. First profile where no rules are excluded.
 
 ### Profile: Large ($100,000+)
 
-**Purpose:** Fourth deployment tier. The risk management priority at this scale is **exposure management plus execution quality**. The rule set and feature flags are identical to medium — all 17 rules, all features enabled, same percentage values. What changes is that scale introduces two risks that don't exist at medium: market impact and the psychological weight of real dollar losses.
+**Purpose:** Fourth deployment tier. Risk management priority is **exposure management plus execution quality**. Rule set and feature flags identical to medium — all 17 rules, all features enabled, same percentages. What changes: market impact becomes meaningful, and real dollar losses carry psychological weight.
 
-A $5,000 position (5% of $100K) in a mid-cap name is no longer invisible to the order book. The [paper-evaluation harness](../05-execution-layer/paper-evaluation-harness.md)'s slippage and impact estimates — which were conservative-but-ignorable at medium sizing — start producing meaningful live-execution drag at large. A $2,500 daily drawdown halt ($100K × 2.5%) is the same percentage as medium's $1,250 halt, but the absolute number tests whether the system (and operator) can maintain discipline when the losses feel larger.
+A $5,000 position (5% of $100K) in a mid-cap name is no longer invisible to the order book. The [paper-evaluation harness](../05-execution-layer/paper-evaluation-harness.md)'s slippage and impact estimates — conservative-but-ignorable at medium sizing — produce meaningful live-execution drag at large. A $2,500 daily drawdown halt is the same percentage as medium's $1,250 halt, but the absolute number tests whether the system (and operator) maintain discipline when losses feel larger.
 
 **Feature flags:**
 
 | Flag | Value | Rationale |
 |---|---|---|
-| `options_enabled` | `true` | Full options capability including multi-leg strategies. At $100K, 5% premium at risk = $5,000 — comfortable for any single-leg or multi-leg strategy in the asset universe. |
-| `short_selling_enabled` | `true` | Full short book. 30% exposure = $30K in shorts — a substantial short portfolio supporting 5–10 positions. |
-| `fractional_shares_required` | `false` | Position sizes are comfortably above whole-share thresholds for all asset universe names. |
+| `options_enabled` | `true` | Full options capability including multi-leg strategies. 5% premium at risk = $5,000 — comfortable for any strategy. |
+| `short_selling_enabled` | `true` | Full short book. 30% exposure = $30K — supports 5–10 positions. |
+| `fractional_shares_required` | `false` | Position sizes comfortably above whole-share thresholds for all asset universe names. |
 | `active_sectors` | `[tech, semis, financials, energy]` | Full 4-sector coverage, same as medium. |
-| `max_concurrent_positions` | None | Exposure rules are the binding constraints. Position count naturally lands at 12–20 depending on sizing. |
-| `min_position_size` | `$100` | At $100K, $100 is 0.1% of portfolio. The higher floor (vs. $75 at medium) reflects that at this scale, a position below $100 generates negligible P/L relative to the portfolio and doesn't justify thesis-tracking overhead. A 10% move on a $100 position is $10 — barely registering on a $100K portfolio. |
+| `max_concurrent_positions` | None | Exposure rules are the binding constraints. Position count naturally lands at 12–20. |
+| `min_position_size` | `$100` | 0.1% of portfolio. Higher than medium's $75 floor — a position below $100 generates negligible P/L relative to a $100K portfolio. A 10% move on $100 is $10. |
 
-**Rules:** All 17 rules are present and binding, with the same values and justifications as the medium profile. Every rule that serves exposure management at $25–50K serves it at $100K+ with proportionally larger absolute dollar amounts. Regime adaptation is fully consequential — crisis mode cutting gross from $120K to $60K forces liquidation of roughly half the portfolio's exposure.
+**Rules:** All 17 rules binding, same values and justifications as medium with proportionally larger absolute amounts. Regime adaptation fully consequential — crisis cutting gross from $120K to $60K forces liquidation of roughly half the portfolio's exposure.
 
 **What distinguishes large from medium:**
 
 The large profile validates three things medium can't:
 
-1. **Execution quality under market impact.** At $100K, a 5% position is $5,000 — large enough in mid-cap names (e.g., some energy or financial names) that the order book is visibly affected. The paper-evaluation harness's impact estimate, which produced negligible adjustments at medium's $1,250–2,500 position sizes, starts producing 5–15bp of estimated drag at $5,000. This validates that the system's thesis targets account for realistic execution costs at scale. If a thesis targets a 3% move but execution friction eats 0.3%, the effective target is 2.7% — the system needs to know this.
+1. **Execution quality under market impact.** At $100K, a 5% position is $5,000 — large enough in mid-cap names that the order book is visibly affected. The paper-evaluation harness's impact estimate produces 5–15bp of estimated drag at $5,000 (vs. negligible at medium). Validates that thesis targets account for realistic execution costs — if a thesis targets a 3% move but friction eats 0.3%, the effective target is 2.7%.
 
-2. **Margin pressure at scale.** At $100K with 30% short exposure ($30K), margin requirements are a real capital constraint. A 10% adverse move on $30K of shorts requires $3,000 in additional margin. Combined with the cash reserve (10% = $10K), margin calls can create genuine capital squeezes that force the PM to make hard choices between maintaining hedges and preserving cash. The margin cascade machinery gets its most realistic workout here.
+2. **Margin pressure at scale.** With 30% short exposure ($30K), margin is a real capital constraint. A 10% adverse move on $30K shorts requires $3,000 additional margin. Combined with the 10% cash reserve, margin calls can create genuine capital squeezes forcing hard PM choices between maintaining hedges and preserving cash. The margin cascade machinery gets its most realistic workout here.
 
-3. **Operator confidence under real dollar pressure.** In live trading (post paper-trade graduation), the absolute dollar amounts at $100K test whether the operator trusts the system's judgment. A 2.5% daily drawdown is $2,500 — gone in an afternoon. An 8% cumulative drawdown is $8,000 from peak. The regime-transition deferral that lets the strategist and PM take 2 hours to resolve breaches feels very different when the portfolio is bleeding $100/minute during a selloff. This isn't a guardrail design concern, but it's the reason the large tier exists as a separate validation stage rather than just "medium with more money."
+3. **Operator confidence under real dollar pressure.** In live trading, $100K's absolute amounts test whether the operator trusts the system. A 2.5% daily drawdown is $2,500 — gone in an afternoon. An 8% cumulative drawdown is $8,000 from peak. The regime-transition deferral letting the strategist and PM take 2 hours to resolve breaches feels different when the portfolio bleeds $100/minute during a selloff. Not a guardrail design concern, but the reason large is a separate validation stage rather than "medium with more money."
 
 ### Profile comparison summary
 
@@ -438,16 +438,16 @@ The large profile validates three things medium can't:
 Profiles are validated and deployed sequentially:
 
 1. **Paper trade at micro** → tune until confidence established → **deploy real capital at micro**
-2. Accumulate real P/L data at micro → **paper trade at small** (informed by micro lessons) → tune → **deploy real capital at small**
+2. Accumulate real P/L data at micro → **paper trade at small** → tune → **deploy real capital at small**
 3. Repeat for medium and large tiers
 
 Each tier graduation is gated on demonstrated profitability with real capital at the current tier. Exact profitability criteria TBD.
 
 ### Transitioning between profiles
 
-When the portfolio's capital grows past a tier boundary (e.g., from $15K into the medium tier), the profile transition is **manual, not automatic**. The operator reviews the current portfolio state, confirms readiness for the expanded feature set, and switches the active profile. This prevents a scenario where a lucky week pushes capital past a boundary and the system suddenly enables shorts or removes the position count cap before the operator is comfortable with those features.
+Profile transition is **manual, not automatic** when capital crosses a tier boundary. The operator reviews portfolio state, confirms readiness for the expanded feature set, and switches the active profile. Prevents a lucky week pushing capital past a boundary and suddenly enabling shorts or removing the position count cap before the operator is comfortable.
 
-On the way down — if capital shrinks below the current tier's lower bound — the system generates a **profile downgrade advisory** but does not automatically switch. The operator decides whether to tighten the profile or continue at the current tier with reduced capital. Automatic downgrade could force-close positions in features that become disabled (e.g., options positions when dropping from small to micro), which should be an operator decision, not a mechanical one.
+If capital shrinks below the current tier's lower bound, the system generates a **profile downgrade advisory** but does not automatically switch. The operator decides whether to tighten or continue at the current tier with reduced capital. Automatic downgrade could force-close positions in newly-disabled features (e.g., options when dropping from small to micro) — an operator decision, not mechanical.
 
 ---
 
