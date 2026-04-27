@@ -1,6 +1,6 @@
 # Data layer
 
-Foundation of the AlphaMind pipeline. Owns all raw data that downstream layers will factor into LLM decisions. No computation, no interpretation — collection and structured storage only.
+Foundation of the AlphaMind pipeline. Owns all raw data that downstream layers factor into LLM decisions. Collection and structured storage only — no computation, no interpretation.
 
 Two sources:
 
@@ -26,10 +26,10 @@ The ticker universe scoping external data collection is defined in [asset-univer
 
 The system's internal memory — positions, performance, theses, available capital. See [internal/README.md](internal/README.md) for the full specification including ingestion frequency, consumer map, and cross-reference map.
 
-Portfolio state is the only data category where the system is both producer and consumer. The [execution layer](../05-execution-layer/README.md) writes it; the data layer reads it back at invocation start. The execution layer's own source of truth is reconciled against Alpaca's account endpoints and `trade_updates` websocket — see [broker-adapter.md § Account state queries](../05-execution-layer/broker-adapter.md).
+Portfolio state is the only data category where the system is both producer and consumer. The [execution layer](../05-execution-layer/README.md) writes it; the data layer reads it back at invocation start. The execution layer's source of truth is reconciled against Alpaca's account endpoints and `trade_updates` websocket — see [broker-adapter.md § Account state queries](../05-execution-layer/broker-adapter.md).
 
-**Data schemas:** Authoritative data model definitions for positions, theses, and orders live in the execution layer ([position-model.md](../05-execution-layer/position-model.md), [thesis-model.md](../05-execution-layer/thesis-model.md), [orders-and-brackets.md](../05-execution-layer/orders-and-brackets.md)) because they are tightly coupled with execution behavior. The internal data documents here describe what downstream layers consume, not how it is produced.
+**Data schemas:** Authoritative model definitions for positions, theses, and orders live in the execution layer ([position-model.md](../05-execution-layer/position-model.md), [thesis-model.md](../05-execution-layer/thesis-model.md), [orders-and-brackets.md](../05-execution-layer/orders-and-brackets.md)) — tightly coupled with execution behavior. The internal data documents here describe what downstream layers consume.
 
-**API failure handling:** External API failures are handled per tier (Critical / Important / Optional) with fresh-or-abort semantics — no stale data propagates. See [api-failure-handling.md](api-failure-handling.md).
+**API failure handling:** External API failures are handled per tier (Critical / Important / Optional) with fresh-or-abort semantics. See [api-failure-handling.md](api-failure-handling.md).
 
 **Collection process:** External data lands in the database via a long-running collector process supervised by NSSM. See [collector/README.md](collector/README.md) for storage schema, vendor adapters, runner/scheduler, lifecycle, and operator workflow.

@@ -1,6 +1,6 @@
 # API key & vendor inventory
 
-Reference inventory of every external data provider AlphaMind reads from: authentication model, AlphaMind data domains served, and the specific endpoints each adapter touches. Used by the data-layer collector and as the lookup when keys need rotation.
+Inventory of every external data provider AlphaMind reads from: authentication model, AlphaMind data domains served, and the specific endpoints each adapter touches. Used by the data-layer collector and as the lookup when keys need rotation.
 
 ---
 
