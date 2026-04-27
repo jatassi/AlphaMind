@@ -8,90 +8,72 @@ Phases 0–4 are the design pass — defining contracts before writing code, ord
 
 ## Ready for implementation
 
-Features below have full requirements landed in the design docs and zero outstanding [Backlog](#backlog) items — implementation can proceed against the existing specs without further design work.
+Each entry is a feature ready to have its implementation requirements defined as user stories under `docs/implementation/`. Items are listed in rough dependency order — earlier items unblock later ones.
 
-### Architecture
+Status:
 
-- [Component boundaries](architecture/component-boundaries.md)
-- [Data and state](architecture/data-and-state.md)
-- [Infrastructure](architecture/infrastructure.md)
-- [Language and runtime](architecture/language-and-runtime.md)
-- [LLM integration](architecture/llm-integration.md)
-- [System characterization](architecture/system-characterization.md)
-- [Technology selection](architecture/technology-selection.md)
+- _requirements pending_ — needs user stories drafted
+- _stories drafted_ — user stories exist; implementation has not begun
+- _in progress_ — some stories complete
+- _done_ — all stories complete and verified
+
+Cross-cutting policies and reference specs that constrain implementation but aren't features themselves — architecture decisions, failure-handling policies, asset universe methodology, source-to-target mappings, API key inventory, scenario tests, and the unit/integration test plans — live under `docs/architecture/` and `docs/design/` and are linked from the design docs of the features that consume them.
+
+### Foundation
+
+- [ ] **Configuration management** — _requirements pending_ — [design](design/configuration-management.md)
 
 ### Data layer
 
-- [Collector lifecycle](design/01-data-layer/collector/lifecycle.md)
-- [Collector runner](design/01-data-layer/collector/runner.md)
-- [Data sources library](design/01-data-layer/collector/data-sources.md)
-- [Portfolio state](design/01-data-layer/internal/portfolio-state.md)
-- [API key inventory](design/01-data-layer/api-key-checklist.md)
-- [Source-to-target mappings](design/01-data-layer/mappings/README.md)
+- [ ] **Collector** — _in progress (21/22 stories done)_ — [design](design/01-data-layer/collector/), [stories](implementation/01-data-layer/collector/)
+- [ ] **Portfolio state** — _requirements pending_ — [design](design/01-data-layer/internal/portfolio-state.md)
 
 ### Distillation layer
 
-- [External distillation](design/02-distillation-layer/external.md)
-- [Internal distillation](design/02-distillation-layer/internal.md)
-- [Threshold calibration framework](design/02-distillation-layer/threshold-calibration.md)
-- [Replay harness](design/02-distillation-layer/replay-harness.md)
-
-### Analysis layer
-
-- [Adaptive research](design/03-analysis-layer/adaptive-research.md)
-- [Synthesizer](design/03-analysis-layer/synthesizer.md)
-- Domain researchers ([tech-semis](design/03-analysis-layer/domain-researchers/tech-semis.md), [financials](design/03-analysis-layer/domain-researchers/financials.md), [energy](design/03-analysis-layer/domain-researchers/energy.md))
-
-### Decision layer
-
-- [Analyst](design/04-decision-layer/analyst.md) ([output schema](design/04-decision-layer/analyst-output-schema.md))
-- [Portfolio manager](design/04-decision-layer/portfolio-manager.md) ([envelope schema](design/04-decision-layer/pm-envelope-schema.md), [submit_envelope tool schema](design/04-decision-layer/submit-envelope-tool-schema.md))
-- [Proposal pre-processor](design/04-decision-layer/proposal-pre-processor.md) ([bundle schema](design/04-decision-layer/proposal-pre-processor-bundle-schema.md))
-- [Strategist](design/04-decision-layer/strategist.md) ([output schema](design/04-decision-layer/strategist-output-schema.md))
-
-### Execution layer
-
-- [OMS commands](design/05-execution-layer/oms-commands.md) ([command schema](design/05-execution-layer/oms-command-schema.md), [engine envelope schema](design/05-execution-layer/engine-envelope-schema.md))
-- [OMS command IDs](design/oms-command-ids.md)
-- [Position model](design/05-execution-layer/position-model.md)
-- [Thesis model](design/05-execution-layer/thesis-model.md)
-- [Orders & brackets](design/05-execution-layer/orders-and-brackets.md)
-- [State persistence](design/05-execution-layer/state-persistence.md)
-- [Corporate actions](design/05-execution-layer/corporate-actions.md)
-- [Paper-evaluation harness](design/05-execution-layer/paper-evaluation-harness.md)
-- [Counterfactual replay engine](design/05-execution-layer/counterfactual-replay-engine.md)
-- [Continuous monitor](design/05-execution-layer/architecture.md)
-- [Guardrail enforcement layer](design/05-execution-layer/architecture.md)
-- [Broker adapter](design/05-execution-layer/broker-adapter.md)
-- [Venue configuration](design/05-execution-layer/venue-configuration.md)
-- [Reg T margin attribution](design/05-execution-layer/regt-margin-attribution.md)
+- [ ] **Distillation** — _stories drafted_ — [external](design/02-distillation-layer/external.md), [internal](design/02-distillation-layer/internal.md), [stories](implementation/02-distillation-layer/)
+- [ ] **Threshold calibration framework** — _requirements pending_ — [design](design/02-distillation-layer/threshold-calibration.md)
+- [ ] **Replay harness** — _requirements pending_ — [design](design/02-distillation-layer/replay-harness.md)
 
 ### Risk guardrails
 
-- [Regime adaptation](design/06-risk-guardrails/regime-adaptation.md)
-- [Breach behavior](design/06-risk-guardrails/breach-behavior.md)
-- [State delivery](design/06-risk-guardrails/state-delivery.md)
-- [Guardrail evaluation primitives](design/06-risk-guardrails/guardrail-evaluation.md)
-- [Scenario tests](design/06-risk-guardrails/scenario-tests.md)
+- [ ] **Rules & limits** — _requirements pending_ — [design](design/06-risk-guardrails/rules-and-limits.md)
+- [ ] **Guardrail evaluation primitives** — _requirements pending_ — [design](design/06-risk-guardrails/guardrail-evaluation.md)
+- [ ] **State delivery** — _requirements pending_ — [design](design/06-risk-guardrails/state-delivery.md)
+- [ ] **Regime adaptation** — _requirements pending_ — [design](design/06-risk-guardrails/regime-adaptation.md)
+- [ ] **Breach behavior** — _requirements pending_ — [design](design/06-risk-guardrails/breach-behavior.md)
 
-### Command center
+### Analysis layer
 
-- [Command center](design/command-center.md) ([pipeline wire format schema](design/pipeline-control-and-events-schema.md), [monitor wire format schema](design/monitor-control-and-events-schema.md))
+- [ ] **Domain researchers** — _stories drafted_ — [tech-semis](design/03-analysis-layer/domain-researchers/tech-semis.md), [financials](design/03-analysis-layer/domain-researchers/financials.md), [energy](design/03-analysis-layer/domain-researchers/energy.md), [stories](implementation/03-analysis-layer/domain-researchers/)
+- [ ] **Qualitative research** — _requirements pending_ — [design](design/03-analysis-layer/qualitative-research.md)
+- [ ] **Adaptive research** — _requirements pending_ — [design](design/03-analysis-layer/adaptive-research.md)
+- [ ] **Synthesizer** — _stories drafted_ — [design](design/03-analysis-layer/synthesizer.md), [stories](implementation/03-analysis-layer/synthesizer/)
 
-### Cross-cutting
+### Decision layer
 
-- [LLM agent failure handling](design/llm-agent-failure-handling.md)
-- [Mid-pipeline failure handling](design/mid-pipeline-failure-handling.md)
-- [Cost & rate-limit modeling](design/cost-and-rate-limit-modeling.md)
-- [Asset universe + validation methodology](design/asset-universe-validation.md)
-- [Feedback loop](design/feedback-loop.md)
-- [Design decisions](design/design-decisions.md)
+- [ ] **Analyst** — _requirements pending_ — [design](design/04-decision-layer/analyst.md), [output schema](design/04-decision-layer/analyst-output-schema.md)
+- [ ] **Strategist** — _requirements pending_ — [design](design/04-decision-layer/strategist.md), [output schema](design/04-decision-layer/strategist-output-schema.md)
+- [ ] **Proposal pre-processor** — _requirements pending_ — [design](design/04-decision-layer/proposal-pre-processor.md), [bundle schema](design/04-decision-layer/proposal-pre-processor-bundle-schema.md)
+- [ ] **Portfolio manager** — _requirements pending_ — [design](design/04-decision-layer/portfolio-manager.md), [envelope schema](design/04-decision-layer/pm-envelope-schema.md), [submit_envelope tool schema](design/04-decision-layer/submit-envelope-tool-schema.md)
 
-### Testing
+### Execution layer
 
-- [Unit test plan](design/testing/unit-test-plan.md)
-- [Integration test plan](design/testing/integration-test-plan.md)
-- [LLM output validation](design/testing/llm-output-validation.md)
+- [ ] **Position & thesis model** — _requirements pending_ — [position model](design/05-execution-layer/position-model.md), [thesis model](design/05-execution-layer/thesis-model.md), [orders & brackets](design/05-execution-layer/orders-and-brackets.md)
+- [ ] **State persistence** — _requirements pending_ — [design](design/05-execution-layer/state-persistence.md)
+- [ ] **OMS commands** — _requirements pending_ — [design](design/05-execution-layer/oms-commands.md), [command schema](design/05-execution-layer/oms-command-schema.md), [engine envelope schema](design/05-execution-layer/engine-envelope-schema.md), [command IDs](design/oms-command-ids.md)
+- [ ] **Broker adapter** — _requirements pending_ — [design](design/05-execution-layer/broker-adapter.md), [venue configuration](design/05-execution-layer/venue-configuration.md)
+- [ ] **Guardrail enforcement layer** — _requirements pending_ — [design](design/05-execution-layer/architecture.md)
+- [ ] **Corporate actions** — _requirements pending_ — [design](design/05-execution-layer/corporate-actions.md)
+- [ ] **Reg T margin attribution** — _requirements pending_ — [design](design/05-execution-layer/regt-margin-attribution.md)
+- [ ] **Continuous monitor** — _requirements pending_ — [design](design/05-execution-layer/architecture.md)
+
+### Operational tooling
+
+- [ ] **LLM output validation** — _requirements pending_ — [design](design/testing/llm-output-validation.md)
+- [ ] **Paper-evaluation harness** — _requirements pending_ — [design](design/05-execution-layer/paper-evaluation-harness.md)
+- [ ] **Counterfactual replay engine** — _requirements pending_ — [design](design/05-execution-layer/counterfactual-replay-engine.md)
+- [ ] **Command center** — _requirements pending_ — [design](design/command-center.md), [pipeline schema](design/pipeline-control-and-events-schema.md), [monitor schema](design/monitor-control-and-events-schema.md)
+- [ ] **Feedback loop** — _requirements pending_ — [design](design/feedback-loop.md)
 
 ---
 

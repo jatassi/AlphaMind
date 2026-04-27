@@ -14,3 +14,14 @@ LLM agents interpret outputs from the [data](../01-data-layer/README.md) and [di
 *Upstream relationship:* [Data layer](../01-data-layer/README.md) defines *what raw data is collected*; [distillation](../02-distillation-layer/README.md) defines *what is computed*; this layer defines *what LLM agents interpret*. Portfolio state (raw and derived metrics specified in the [data](../01-data-layer/internal/README.md) and [distillation](../02-distillation-layer/internal.md) layers) is consumed directly by decision-layer agents via tools; the [synthesizer](synthesizer.md) has lightweight portfolio-state tools for on-demand context during cross-domain synthesis.
 
 **Universal context broadcast:** Every analysis-layer agent (downstream — trader, PM) receives the volatility regime label from [distillation external.md §4](../02-distillation-layer/external.md). This flag changes how each agent interprets its data and decides.
+
+---
+
+## Cross-cutting concerns
+
+These policies and budgets apply to every LLM agent in this layer; they should be read alongside any individual agent doc when defining implementation requirements.
+
+- [LLM agent failure handling](../llm-agent-failure-handling.md) — uniform fail-closed policy (timeout, malformed output, context overflow, model API error, tool-use error)
+- [LLM output validation](../testing/llm-output-validation.md) — schema validation, referential integrity, corrective retry
+- [Cost & rate-limit modeling](../cost-and-rate-limit-modeling.md) — per-agent token budget, model assignment, cap-pressure response
+- [Mid-pipeline failure handling](../mid-pipeline-failure-handling.md) — no-checkpoint policy when an invocation aborts

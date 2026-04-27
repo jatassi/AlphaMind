@@ -82,3 +82,14 @@ The [risk guardrails](../06-risk-guardrails/README.md) operate at multiple level
 1. **Analyst and strategist pre-submission validation.** Both agents receive headroom in their [guardrail state headers](../06-risk-guardrails/state-delivery.md) and self-constrain during proposal generation. Before finalizing, each calls a deterministic guardrail validation tool that checks every proposal against all applicable rules (including delta-adjusted exposure for options) and revises failures. Proposals reaching the PM are guardrail-compliant at check time. See [analyst.md](analyst.md) and [strategist.md](strategist.md).
 2. **PM modification validation.** When the PM adjusts parameters (e.g., sizing), modifications are validated against guardrails using the same tool before becoming commands.
 3. **Engine authoritative (synchronous).** The [execution layer](../05-execution-layer/README.md) performs a final guardrail check on every OMS command at execution time — the authoritative backstop, since portfolio state can shift between upstream validation and execution (market movement, fill resolution, regime changes). Rejections return synchronously to the PM within the same invocation; see [portfolio-manager.md](portfolio-manager.md).
+
+---
+
+## Cross-cutting concerns
+
+These policies and budgets apply to every LLM agent in this layer; they should be read alongside any individual agent doc when defining implementation requirements.
+
+- [LLM agent failure handling](../llm-agent-failure-handling.md) — uniform fail-closed policy (timeout, malformed output, context overflow, model API error, tool-use error)
+- [LLM output validation](../testing/llm-output-validation.md) — schema validation, referential integrity, corrective retry
+- [Cost & rate-limit modeling](../cost-and-rate-limit-modeling.md) — per-agent token budget, model assignment, cap-pressure response
+- [Mid-pipeline failure handling](../mid-pipeline-failure-handling.md) — no-checkpoint policy when an invocation aborts
