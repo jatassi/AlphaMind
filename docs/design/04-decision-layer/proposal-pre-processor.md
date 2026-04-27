@@ -1,10 +1,10 @@
 # Proposal pre-processor
 
-A deterministic processing step between the analyst/strategist outputs and the portfolio manager. Reads the structured fields from both agents' outputs, computes cross-proposal observations, wraps each agent's outputs with per-recommendation annotations, and delivers the consolidated bundle to the PM. No LLM reasoning — pure computation on typed data.
+Deterministic processing step between analyst/strategist outputs and the portfolio manager. Reads the structured fields from both agents' outputs, computes cross-proposal observations, wraps each agent's outputs with per-recommendation annotations, and delivers the consolidated bundle to the PM. Pure computation on typed data.
 
-The formal JSON Schema for the bundle is in [proposal-pre-processor-bundle-schema.md](proposal-pre-processor-bundle-schema.md). The data shapes below are the readable reference; the schema is the authoritative contract.
+Formal JSON Schema: [proposal-pre-processor-bundle-schema.md](proposal-pre-processor-bundle-schema.md). The data shapes below are the readable reference.
 
-**Why this exists:** Without the pre-processor, the PM would mentally cross-reference proposals from two agents to detect conflicts, compute cumulative capital and exposure impact, and assess aggregate book health. These are mechanical operations that an LLM can get wrong under cognitive load (especially in busy invocations with many proposals). The pre-processor makes them deterministic so the PM can focus on judgment — thesis quality, portfolio coherence, sizing.
+**Why this exists:** Without the pre-processor, the PM would mentally cross-reference proposals from two agents to detect conflicts, compute cumulative capital and exposure impact, and assess aggregate book health. These mechanical operations an LLM can get wrong under cognitive load. The pre-processor makes them deterministic so the PM can focus on judgment — thesis quality, portfolio coherence, sizing.
 
 ---
 
@@ -18,17 +18,17 @@ The formal JSON Schema for the bundle is in [proposal-pre-processor-bundle-schem
 
 ## Output
 
-The pre-processor emits a single bundle to the PM with three top-level sections:
+A single bundle to the PM with three top-level sections:
 
 | Section | Content |
 |---|---|
-| **§1 Aggregate observations** | Three deterministic observations computed across the combined proposal set: combined-set impact, conviction distribution, book health summary |
-| **§2 Strategist section** | The strategist's mode, position assessments and pending-order assessments each wrapped with per-record annotations, and portfolio-level observations passed through. Preserves the strategist's presentation order |
+| **§1 Aggregate observations** | Three deterministic observations across the combined proposal set: combined-set impact, conviction distribution, book health summary |
+| **§2 Strategist section** | The strategist's mode, position assessments and pending-order assessments wrapped with per-record annotations, and portfolio-level observations passed through. Preserves the strategist's presentation order |
 | **§3 Analyst section** | The analyst's mode plus mode-conditional content: wrapped recommendations (normal mode) or watchlist entries passed through (watchlist mode). Preserves the analyst's presentation order |
 
-Strategist before analyst: existing-book decisions (close/reduce/add) change capital and headroom that new entries fit into. The PM's natural workflow is "manage the book, then evaluate additions."
+Strategist before analyst: existing-book decisions (close/reduce/add) change capital and headroom new entries fit into. The PM's natural workflow is "manage the book, then evaluate additions."
 
-The pre-processor never modifies, filters, or reorders the underlying agent outputs. Wrappers preserve the inner record verbatim — it remains independently validatable against the agent's output schema.
+Wrappers preserve the inner record verbatim — it remains independently validatable against the agent's output schema.
 
 ```json
 {
@@ -52,11 +52,11 @@ The pre-processor never modifies, filters, or reorders the underlying agent outp
 
 ## §1 — Aggregate observations
 
-Three observations, all derived deterministically from the combined set.
+Three observations derived deterministically from the combined set.
 
 ### §1.A `combined_set_impact`
 
-Per-rule projection of the combined set's effect on guardrail state, computed via the shared [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md) — the same primitives the agent-side validation tool uses. The per-rule output shape is the library's canonical output object.
+Per-rule projection of the combined set's effect on guardrail state, computed via the shared [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md) — the same primitives the agent-side validation tool uses. The per-rule shape is the library's canonical output object.
 
 ```json
 {
@@ -101,10 +101,10 @@ Per-rule projection of the combined set's effect on guardrail state, computed vi
 }
 ```
 
-- **`basis`** identifies what's included in the projection. Strategist holds are excluded from the math (no exposure change); the count is reported for context.
-- **`per_rule`** carries one entry per rule active under the current portfolio profile and regime. Rule IDs are the canonical names from [`rules-and-limits.md`](../06-risk-guardrails/rules-and-limits.md). The `status` enum (`PASS | WARNING | FAIL`) and remaining fields match the validation tool's per-rule shape.
-- **`breaches`** is the slice of `per_rule` where `status ≠ PASS`, augmented with `contributors` — signed per-proposal attribution that only makes sense in batch (the validation tool computes one proposal at a time and doesn't attribute across multiple). Negative contributions indicate proposals that pull the rule away from breach (e.g., a close on a long position contributes negatively to net long exposure).
-- Capital sits in `per_rule` like any other rule (e.g., `available_capital`). The combined-set projection covers it the same way it covers sector concentration, directional exposure, gross exposure, and Greeks.
+- **`basis`** identifies what's included. Strategist holds are excluded from the math (no exposure change); the count is reported for context.
+- **`per_rule`** has one entry per rule active under the current portfolio profile and regime. Rule IDs come from [`rules-and-limits.md`](../06-risk-guardrails/rules-and-limits.md). The `status` enum (`PASS | WARNING | FAIL`) and remaining fields match the validation tool's per-rule shape.
+- **`breaches`** is the slice of `per_rule` where `status ≠ PASS`, augmented with `contributors` — signed per-proposal attribution that only makes sense in batch. Negative contributions indicate proposals pulling the rule away from breach (e.g., a close on a long contributes negatively to net long exposure).
+- Capital sits in `per_rule` like any other rule (`available_capital`). The combined-set projection covers it the same way it covers sector concentration, directional exposure, gross exposure, and Greeks.
 
 ### §1.B `conviction_distribution`
 
@@ -140,7 +140,7 @@ Histogram of analyst recommendations by conviction level. Calibration drift is t
 }
 ```
 
-Two histograms over the strategist's per-position assessments plus a remedy-flagged count. The at-a-glance scoreboard the PM reads before diving into individual assessments. Status × action correlation is read by the PM directly from §2.
+Two histograms over the strategist's per-position assessments plus a remedy-flagged count. An at-a-glance scoreboard the PM reads before diving into individual assessments. Status × action correlation is read directly from §2.
 
 ---
 
@@ -175,9 +175,9 @@ Two histograms over the strategist's per-position assessments plus a remedy-flag
 }
 ```
 
-`mode` is read from the strategist's output. `position_assessments` are wrapped with conflict annotations against analyst recommendations. `pending_order_assessments` are wrapped with the same annotation envelope; auto-detection runs for unfilled entry orders (`order_type` values `entry_limit` and `entry_stop_limit`) and skips bracket legs (`bracket_target`, `bracket_price_stop`, `bracket_time_stop`, `bracket_event_stop`) — bracket-leg conflicts are captured by the parent position's assessment. `portfolio_level_observations` are passed through verbatim (narrative content; no annotations apply).
+`mode` is read from the strategist's output. `position_assessments` are wrapped with conflict annotations against analyst recommendations. `pending_order_assessments` use the same annotation envelope; auto-detection runs for unfilled entry orders (`entry_limit`, `entry_stop_limit`) and skips bracket legs (`bracket_target`, `bracket_price_stop`, `bracket_time_stop`, `bracket_event_stop`) — bracket-leg conflicts are captured by the parent position's assessment. `portfolio_level_observations` is passed through verbatim.
 
-§2 preserves the [strategist's presentation order](strategist.md#presentation-order-and-token-budget) (status severity → action urgency → portfolio weight, with remedy-flagged first within tier; pending orders by action then age). The pre-processor does no reordering.
+§2 preserves the [strategist's presentation order](strategist.md#presentation-order-and-token-budget) (status severity → action urgency → portfolio weight, with remedy-flagged first within tier; pending orders by action then age).
 
 ## §3 — Analyst section
 
@@ -212,21 +212,21 @@ In watchlist mode (halt active):
 }
 ```
 
-Watchlist entries don't carry full proposal detail (no sizing, entry, bracket); conflict detection does not apply.
+Watchlist entries don't carry full proposal detail; conflict detection does not apply.
 
-§3 preserves the [analyst's presentation order](analyst.md#presentation-order) (conviction descending → entry-window urgency tiebreaker → risk asymmetry tiebreaker). The pre-processor does no reordering.
+§3 preserves the [analyst's presentation order](analyst.md#presentation-order) (conviction descending → entry-window urgency → risk asymmetry).
 
 ## Wrap pattern and conflicts annotation
 
 The wrap pattern keeps "what the agent said" structurally distinct from "what the pre-processor computed about it." The PM's evaluation framework treats agent claims (subject to skepticism, source-brief verification) and infrastructural facts (deterministic) as different epistemological objects; wrapping makes that distinction visible at the data layer.
 
-Conflict annotations are inline, mirror-symmetric, with no separate catalog. Three fields per conflict entry:
+Conflict annotations are inline, mirror-symmetric, with no separate catalog. Three fields per entry:
 
 | Field | Description |
 |---|---|
-| Cross-reference | Analyst side: `with_assessment_id` (conflict with a position assessment) or `with_pending_order_assessment_id` (conflict with an unfilled entry order). Strategist side: `with_recommendation_id` |
-| `underlying` | Root ticker the conflict is on |
-| `conflict_type` | Enum classifying the interaction (see below) |
+| Cross-reference | Analyst side: `with_assessment_id` (position assessment) or `with_pending_order_assessment_id` (unfilled entry order). Strategist side: `with_recommendation_id` |
+| `underlying` | Root ticker |
+| `conflict_type` | Enum classifying the interaction (below) |
 
 `conflict_type` enum:
 
@@ -240,13 +240,13 @@ Conflict annotations are inline, mirror-symmetric, with no separate catalog. Thr
 | `entry_vs_pending_modify` | Analyst proposes a new entry on the same underlying as an unfilled entry order whose strategist assessment is `modify` |
 | `entry_vs_pending_cancel` | Analyst proposes a new entry on the same underlying as an unfilled entry order whose strategist assessment is `cancel` |
 
-The `conflicts` array is `[]` when there are no same-underlying interactions for that proposal/assessment. The PM uses the cross-reference IDs to read the linked record in the same bundle; the conflict entry itself is a flag, not a substitute for reading the proposals.
+The `conflicts` array is `[]` when there are no same-underlying interactions. The PM uses cross-reference IDs to read the linked record; the conflict entry is a flag, not a substitute for reading the proposals.
 
 ---
 
 ## Edge cases
 
-The bundle structure handles degenerate inputs via empty arrays and zero counts.
+Degenerate inputs handled via empty arrays and zero counts.
 
 | Case | Effect |
 |---|---|
@@ -260,22 +260,22 @@ The bundle structure handles degenerate inputs via empty arrays and zero counts.
 
 ## Token budget
 
-Sizing targets for pipeline orchestration; not behavioral targets for any agent.
+Sizing targets for pipeline orchestration; not behavioral targets.
 
 | Portfolio profile | §1 aggregate observations | Per-entry wrap overhead | Total bundle overhead beyond raw agent outputs |
 |---|---|---|---|
 | Primary ($1,500, 8–12 active rules) | ~330–530 tokens | ~20–40 tokens | ~360–800 tokens |
 | Full-system ($100K, 12–17 active rules) | ~500–750 tokens | ~20–40 tokens | ~700–1,350 tokens |
 
-§1.A dominates the §1 cost — its `per_rule` list scales with the number of rules active under the profile + regime, plus 0–3 breach detail entries (~50 tokens each). §1.B and §1.C are small and fixed (~30 and ~80 tokens respectively).
+§1.A dominates §1 — `per_rule` scales with rules active under profile + regime, plus 0–3 breach detail entries (~50 tokens each). §1.B and §1.C are small and fixed (~30 and ~80 tokens).
 
-The wrappers add minimal overhead because the conflicts annotation is small (3 fields per conflict) and `[]` in the typical case. The wrapped record itself is whatever the agent emitted — see [analyst.md token budget](analyst.md) and [strategist.md token budget](strategist.md#presentation-order-and-token-budget).
+Wrappers add minimal overhead — the conflicts annotation is small (3 fields per conflict) and `[]` in the typical case. See [analyst.md token budget](analyst.md) and [strategist.md token budget](strategist.md#presentation-order-and-token-budget).
 
 ---
 
 ## Validation
 
-The pre-processor is deterministic, so unit tests target correctness of the cross-proposal computations and the wrap/annotation orchestration. Heavier math (delta-adjusted exposure, per-rule evaluation, regime parameter resolution) lives in the shared [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md) and is tested at the library level.
+Unit tests target the cross-proposal computations and wrap/annotation orchestration. Heavier math (delta-adjusted exposure, per-rule evaluation, regime parameter resolution) lives in the shared [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md) and is tested at the library level.
 
 | Category | Concern |
 |---|---|

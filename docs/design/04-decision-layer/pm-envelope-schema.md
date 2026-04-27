@@ -1,20 +1,20 @@
 # PM envelope schema
 
-Formal JSON Schema (Draft 2020-12) for the command envelopes the portfolio manager agent produces. This is the machine-readable contract that corresponds to the prose specification in [portfolio-manager.md — Envelope structure](portfolio-manager.md#envelope-structure). Every envelope the PM emits must validate against this schema at the LLM output validation seam before its commands reach the OMS.
+Formal JSON Schema (Draft 2020-12) for the command envelopes the portfolio manager produces. Machine-readable contract for [portfolio-manager.md — Envelope structure](portfolio-manager.md#envelope-structure). Every envelope must validate against this schema at the LLM output validation seam before commands reach the OMS.
 
-Engine-originated envelopes are specified in [engine-envelope-schema.md](../05-execution-layer/engine-envelope-schema.md).
+Engine-originated envelopes: [engine-envelope-schema.md](../05-execution-layer/engine-envelope-schema.md).
 
 ## Scope
 
-- **Contract surface:** one PM envelope at a time. Envelopes carry zero or more OMS commands plus the PM's evaluation context that produced them. The PM emits one envelope per source proposal (analyst recommendation, strategist position assessment, strategist pending-order assessment). A single PM invocation typically produces several envelopes.
-- **LLM vs. infrastructure populated:** the PM agent produces every field except `command_id` on embedded commands (assigned by the OMS command intake layer per [oms-command-ids.md](../oms-command-ids.md)). The LLM output validator checks envelopes with `command_id` omitted from embedded commands.
-- **Source provenance variants:** two discriminated variants — `pm_analyst` (evaluating an analyst new-entry proposal) and `pm_strategist` (evaluating a strategist position or pending-order assessment). The `source_provenance` field discriminates; each variant has distinct required fields.
-- **Rejection envelopes are first-class.** Envelopes with `verdict: reject` carry an empty `commands` array and a populated `concerns` and `rationale_narrative`. The feedback loop reads rejections as structured records; they are not optional.
-- **Feature-flag interaction:** the envelope schema is superset — it permits commands for any instrument class. The guardrail validation layer rejects commands whose instrument class is disabled by the active [portfolio profile](../06-risk-guardrails/rules-and-limits.md#dual-portfolio-profiles).
+- **Contract surface:** one PM envelope at a time. Envelopes carry zero or more OMS commands plus the PM's evaluation context. The PM emits one envelope per source proposal (analyst recommendation, strategist position assessment, strategist pending-order assessment). A single invocation typically produces several.
+- **LLM vs. infrastructure populated:** the PM produces every field except `command_id` on embedded commands (assigned by the OMS command intake layer per [oms-command-ids.md](../oms-command-ids.md)). The LLM output validator checks envelopes with `command_id` omitted.
+- **Source provenance variants:** `pm_analyst` (evaluating an analyst new-entry proposal) and `pm_strategist` (evaluating a strategist position or pending-order assessment). Each variant has distinct required fields.
+- **Rejection envelopes are first-class.** Envelopes with `verdict: reject` carry an empty `commands` array and populated `concerns` and `rationale_narrative`. The feedback loop reads rejections as structured records.
+- **Feature-flag interaction:** the schema permits commands for any instrument class. The guardrail validation layer rejects commands whose instrument class is disabled by the active [portfolio profile](../06-risk-guardrails/rules-and-limits.md#dual-portfolio-profiles).
 
 ## Cross-references
 
-Enum values and structural constraints trace back to these authoritative sources:
+Enum values and structural constraints trace back to these sources:
 
 | Field | Source |
 |---|---|
@@ -379,47 +379,47 @@ Enum values and structural constraints trace back to these authoritative sources
 
 ## Notes on cross-field invariants
 
-Some invariants cannot be expressed cleanly in JSON Schema and must be enforced by the OMS command intake layer:
+Enforced by the OMS command intake layer rather than the schema:
 
-- **`envelope_id` source-ID correspondence.** The integer portion of an `ENV-REC-<n>` / `ENV-SA-<n>` / `ENV-SA-ORD-<n>` envelope ID must match the integer portion of its `source_recommendation_id`. The bijection lets the OMS command intake layer derive the envelope ID from the source ID without additional metadata.
+- **`envelope_id` source-ID correspondence.** The integer portion of an `ENV-REC-<n>` / `ENV-SA-<n>` / `ENV-SA-ORD-<n>` envelope ID matches the integer portion of its `source_recommendation_id`. The bijection lets the intake layer derive the envelope ID from the source ID without additional metadata.
 
-- **`source_recommendation_id` must exist in the current invocation's source output.** For `pm_analyst`, the `REC-<n>` must match a recommendation_id in the analyst output. For `pm_strategist`, the `SA-<n>` or `SA-ORD-<n>` must match an assessment_id in the strategist output.
+- **`source_recommendation_id` must exist in the current invocation's source output.** For `pm_analyst`, `REC-<n>` matches a recommendation_id in the analyst output. For `pm_strategist`, `SA-<n>` or `SA-ORD-<n>` matches an assessment_id in the strategist output.
 
-- **`position_id` must reference an open position** in the portfolio state for `pm_strategist` envelopes and for commands inside any envelope that reference positions.
+- **`position_id` must reference an open position** for `pm_strategist` envelopes and for commands referencing positions.
 
-- **`recommendation_type: pending_order_assessment` envelopes carry `cancel` or `adjust` commands, not `close` or `add`.** A pending-order assessment acts on an order, not on a position; the command-type restriction follows from the strategist's pending-order action enum (`maintain` / `modify` / `cancel` per [strategist-output-schema.md](strategist-output-schema.md), translating to omit-envelope / `adjust` command / `cancel` command).
+- **`recommendation_type: pending_order_assessment` envelopes carry `cancel` or `adjust` commands, not `close` or `add`.** A pending-order assessment acts on an order, not a position; the restriction follows from the strategist's pending-order action enum (`maintain` / `modify` / `cancel` per [strategist-output-schema.md](strategist-output-schema.md), translating to omit-envelope / `adjust` command / `cancel` command).
 
-- **`attempt_seq` on embedded command IDs corresponds to the envelope's `post_rejection` modification count.** Assigned by the OMS command intake layer at receipt per [oms-command-ids.md §attempt_seq computation](../oms-command-ids.md#attempt_seq-computation). A mismatch is a structural error and aborts the invocation.
+- **`attempt_seq` on embedded command IDs corresponds to the envelope's `post_rejection` modification count.** Assigned by the intake layer at receipt per [oms-command-ids.md §attempt_seq computation](../oms-command-ids.md#attempt_seq-computation). A mismatch aborts the invocation.
 
-- **PM-originated CLOSE commands with `close_rationale_type: risk_management` use `risk_management_subtype: pm_directed`.** The schema enforces this via a conditional on embedded commands.
+- **PM-originated CLOSE commands with `close_rationale_type: risk_management` use `risk_management_subtype: pm_directed`.** Schema-enforced via a conditional on embedded commands.
 
-- **Anti-pattern names match the canonical strings used across the system.** The `anti_patterns_identified` enum is the single authoritative list aggregated on by the feedback loop. Drift between the strategist's self-identification, the PM's detection, and this schema would silently fragment the aggregation surface.
+- **Anti-pattern names match the canonical strings used across the system.** The `anti_patterns_identified` enum is the single authoritative list aggregated on by the feedback loop. Drift between strategist self-identification, PM detection, and this schema would silently fragment the aggregation surface.
 
-- **Rejection envelopes should populate at least one `concerns` entry.** A rejection with no structured concerns is a structural failure — the feedback loop's analysis of "what proposals does the PM reject and why" depends on every rejection carrying its failure structure. This is not enforced in the schema because an empty concerns list is technically valid per criterion semantics (the PM can reject on an "other"-source concern not tied to a criterion); a concerns-array validation rule enforcing `minItems: 1` on reject verdicts is an appropriate addition once the edge case is fully characterized.
+- **Rejection envelopes should populate at least one `concerns` entry.** A rejection with no structured concerns is a structural failure — the feedback loop's "what proposals does the PM reject and why" depends on every rejection carrying its failure structure. Not yet schema-enforced (an empty concerns list is technically valid per criterion semantics — the PM can reject on an "other"-source concern); a `minItems: 1` rule on reject verdicts is an appropriate addition once the edge case is fully characterized.
 
 ---
 
 ## Evolution
 
-When envelope semantics change — a new adjustment category, a new anti-pattern name, a new verdict option — they are added here first. This schema is the authoritative contract; prose updates in [portfolio-manager.md](portfolio-manager.md) follow.
+When envelope semantics change — a new adjustment category, anti-pattern name, or verdict option — they are added here first; this schema is the authoritative contract. Prose updates in [portfolio-manager.md](portfolio-manager.md) follow.
 
-Adding a new `adjustment_category` requires updating both the enum and the conditional phase-association rule. The current rule (`guardrail_rejection_response` is post-submission; everything else is pre-submission) is structural — the phase partition is what lets the OMS command intake layer derive `attempt_seq` without side state.
+Adding a new `adjustment_category` requires updating both the enum and the conditional phase-association rule. The current rule (`guardrail_rejection_response` is post-submission; everything else is pre-submission) is structural — the phase partition lets the intake layer derive `attempt_seq` without side state.
 
 Adding a new anti-pattern requires coordinated updates to:
 - [portfolio-manager.md — Anti-patterns](portfolio-manager.md#anti-patterns-the-pm-is-watching-for) (prose)
 - [strategist.md — LLM failure mode avoidance](strategist.md#llm-failure-mode-avoidance) (self-identification list if applicable)
 - This schema's `anti_patterns_identified` enum
-- [engine-envelope-schema.md](../05-execution-layer/engine-envelope-schema.md) if the new pattern is engine-observable
-- Any Phase 4 feedback-loop aggregation that consumes the string
+- [engine-envelope-schema.md](../05-execution-layer/engine-envelope-schema.md) if engine-observable
+- Any Phase 4 feedback-loop aggregation consuming the string
 
 ---
 
 ## Cross-references
 
 - PM envelope prose contract: [portfolio-manager.md](portfolio-manager.md)
-- Engine-originated envelope schema (sibling contract for the continuous monitor): [../05-execution-layer/engine-envelope-schema.md](../05-execution-layer/engine-envelope-schema.md)
-- OMS command schema (what embedded commands must conform to): [../05-execution-layer/oms-command-schema.md](../05-execution-layer/oms-command-schema.md)
+- Engine-originated envelope schema: [../05-execution-layer/engine-envelope-schema.md](../05-execution-layer/engine-envelope-schema.md)
+- OMS command schema: [../05-execution-layer/oms-command-schema.md](../05-execution-layer/oms-command-schema.md)
 - Command ID discipline and envelope bijection: [../oms-command-ids.md](../oms-command-ids.md)
-- Analyst output schema (source of REC-N IDs and recommendation shape): [analyst-output-schema.md](analyst-output-schema.md)
-- Strategist output schema (source of SA-N and SA-ORD-N IDs and assessment shape): [strategist-output-schema.md](strategist-output-schema.md)
-- LLM output validation mechanism (runs this schema at the PM output seam): [../testing/llm-output-validation.md](../testing/llm-output-validation.md)
+- Analyst output schema (REC-N IDs): [analyst-output-schema.md](analyst-output-schema.md)
+- Strategist output schema (SA-N and SA-ORD-N IDs): [strategist-output-schema.md](strategist-output-schema.md)
+- LLM output validation mechanism: [../testing/llm-output-validation.md](../testing/llm-output-validation.md)
