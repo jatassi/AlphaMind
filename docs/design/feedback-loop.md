@@ -445,7 +445,7 @@ Renders as a small stacked bar plus per-bucket counts. The operator scans this f
 
 Roughly 25 deterministic numbers across six sections plus variable rows in Sections 4 and 5. Process metrics dominate; outcome metrics in Section 3 carry explicit credible bands and sample-threshold annotations. Pull-only.
 
-A **monthly view** — outcome-tier metrics, conditioning slices (regime, sector, conviction band, prompt version, model version), citation-chain visualizations, anti-pattern accuracy curves. Trajectory visualizations are the primary affordance. Layout drafted once enough resolved-thesis volume exists for outcome metrics to carry meaningful credible bands.
+A **monthly view** — outcome-tier trajectory curves with a global conditioning control bar (regime, sector, conviction band, prompt version, model version, period), calibration-first layout, citation-chain and anti-pattern accuracy panels below. Layout in [command-center.md § Monthly view](command-center.md#monthly-view); panels render before resolved-thesis volume crosses the configured minimum, with credible bands faded and a sample-size banner overlaying the panel until the read becomes meaningful.
 
 An **ad-hoc query surface** — for everything not on the curated views.
 
@@ -465,13 +465,7 @@ Validation is operationalized through the [`/feedback-validate` skill](#skills):
 
 ## Pending
 
-Items waiting on data accumulation, dashboard build, or operating the system.
-
-### Waiting on data accumulation
-
-Outcome-tier surfaces need real resolved-thesis volume before the design is meaningful.
-
-- **Monthly view metric set and conditioning-slice UI.** Structure named in [Dashboard and digest curation](#dashboard-and-digest-curation); specific layout, metric subset, and slice-comparison UI ship once resolved-thesis count crosses the threshold for meaningful credible bands.
+Items waiting on dashboard build or operating the system.
 
 ### Waiting on the dashboard build
 

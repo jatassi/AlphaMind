@@ -373,7 +373,7 @@ The thresholds are concrete, deterministic, and reachable from observed paper-an
 
 **Unblocks.**
 
-- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Ad-hoc query surface_, _Monthly outcome view_, _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Ad-hoc query surface_, _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
 
 **Context.** [`feedback-loop.md § Pending`](docs/design/feedback-loop.md#pending) flags the gap directly: "handling interrupted windows (regime shift or model update straddling the validation window mid-run)." Today, [`/feedback-validate` EVALUATE](.claude/skills/feedback-validate/SKILL.md) names regime-distribution mismatch and model-version straddle as confounders that should drive the verdict to `inconclusive`, but does not specify what happens when the regime shifts (or Anthropic ships a model update, or the operator lands a second prompt edit) *during* the registered window — should the validation be re-anchored, the window re-started, the verdict pre-committed to `inconclusive`, or the validation cancelled? The [validation entity in state-persistence](docs/design/05-execution-layer/state-persistence.md) carries no `cancelled` or `superseded` status field today; status is derived from the existence of a joining outcome record.
 
@@ -429,7 +429,7 @@ The thresholds are concrete, deterministic, and reachable from observed paper-an
 
 **Unblocks.**
 
-- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: interrupted-window handling_, _Monthly outcome view_, _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: interrupted-window handling_, _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
 
 **Context.** Lives in the F. Quality and feedback view group of `command-center.md` and is named in `feedback-loop.md § Dashboard and digest curation` as "everything not on the curated views." The data substrate is fixed: `agent_calls`, `activity_log`, `theses`, `counterfactual_replays`, plus the conditioning provenance fields on `invocations` (regime, profile, mode, overlays, prompt versions, model versions). The same surface is hit by `/feedback-review` ad-hoc deep-dives and by `/feedback-retrospective` Phase 1 ingestion. Read shape only — never mutates anything.
 
@@ -447,37 +447,13 @@ The thresholds are concrete, deterministic, and reachable from observed paper-an
 
 **Recommendation.** **Option C — hybrid form-to-SQL.** The form covers the routine conditioning slices that `/feedback-review` and the weekly digest already lean on, while the SQL drop-down preserves the open-ended investigation `/feedback-retrospective` Phase 1 needs. Saving as SQL strings keeps saved views durable across schema work. The "structured form composes to SQL" pattern is one component (form + SQL pane sharing a query model), not two — minimal incremental complexity over Option A.
 
-#### Monthly outcome view _(Command center)_
-
-- [ ] Specify the metric subset, slice-comparison UI, and layout for the monthly outcome view; ships once resolved-thesis count crosses the threshold. _Source: [feedback-loop.md](design/feedback-loop.md)._
-
-**Unblocks.**
-
-- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: interrupted-window handling_, _Ad-hoc query surface_, _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
-
-**Context.** `feedback-loop.md` names this view but defers layout until resolved-thesis volume supports meaningful posterior bands. `command-center.md § Monthly view` echoes the same deferral. The substrate exists today: counterfactual replays cover PM accuracy and modification effectiveness; conviction calibration, status calibration, and citation-chain metrics all join through `agent_calls.output_artifact_ref` parsing plus `theses` resolution outcomes. The conditioning surface (regime / sector / conviction band / prompt version / model version) is `feedback-loop.md § Conditioning surface` and is the primary affordance per `feedback-review` skill's monthly-mode walk.
-
-**Options.**
-
-1. **Calibration-first layout.** Top of view: conviction calibration (analyst) and status calibration (strategist) curves with posterior bands. Middle: PM rejection accuracy and modification effectiveness curves from counterfactual replays. Bottom: citation-chain trajectory (per-source signal survival rate, synthesizer recall) and anti-pattern detector accuracy curves. Conditioning slices applied via a single global control bar (regime, sector, conviction band, prompt version, model version) that re-renders all panels. One-click "vs. prior month" toggle overlays last month's curves underneath.
-2. **Citation-chain-first layout.** Top of view: the citation-chain panel as the flagship — per-source signal survival rate, synthesizer recall, decision-layer citation rate per source, all on a single multi-line chart with source-as-color. Middle: calibration curves. Bottom: PM accuracy and anti-pattern detector accuracy. Reasoning: `feedback-loop.md § Citation-chain metrics — the cross-layer flagship` is the section the doc itself anchors as load-bearing.
-3. **Per-agent rollup grid.** Six tiles in a grid, one per LLM agent (analyst, strategist, PM, synthesizer, three sector researchers consolidated, qualitative+adaptive consolidated). Each tile shows that agent's process metrics on top, outcome metrics below, with conditioning controls scoped to the tile. The view is the agent-centric counterpart of the layer-centric digest.
-
-**Steelmans.**
-
-- *Option A.* Calibration is the metric the operator tunes against most directly — conviction calibration drives analyst prompt edits, status calibration drives strategist prompt edits, PM rejection accuracy drives PM prompt edits. Putting these at the top and letting the operator slice across regime/sector/prompt-version is the affordance `/feedback-review` monthly mode walks through. Single global control bar matches the dashboard's other multi-panel views.
-- *Option B.* Citation-chain is the highest-leverage diagnostic for analysis-layer prompt revisions per `/feedback-review` monthly walk. It's the unique thing the monthly view can show (digest is process-only); leading with it enforces the "outcome metrics need the monthly cadence" framing rather than letting calibration steal focus.
-- *Option C.* Operator iteration is per-prompt, not per-metric. The natural question is "is the strategist getting better?", not "is calibration improving?". A per-agent rollup answers the operator's actual question shape. Consolidating at the agent level pre-joins the right metric subset for each agent and keeps the conditioning controls local instead of global, which prevents the "I sliced regime here but not there" inconsistency.
-
-**Recommendation.** **Option A — calibration-first layout with a global conditioning control bar.** Calibration metrics are the highest-stakes structural-revision signal per `feedback-loop.md § Process vs. outcome metrics`, and a global slice control matches the unconditioned-aggregates-are-misleading discipline `/feedback-validate` and `/feedback-review` enforce. Citation-chain gets a primary panel below calibration, not the lead — the doc's "flagship" framing is about cross-layer reach, not display priority. The per-agent rollup of Option C is real value, but lives more naturally as drill-down from each calibration panel ("click conviction calibration → analyst rollup") than as the primary layout.
-
 #### Validation methodology: rollback evidence protocol _(Feedback loop)_
 
 - [ ] Specify what evidence is sufficient to roll back a previously-shipped change (validation evaluation outcome). _Source: [feedback-loop.md](design/feedback-loop.md)._
 
 **Unblocks.**
 
-- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: interrupted-window handling_, _Ad-hoc query surface_, _Monthly outcome view_, _Backtest-for-deterministic-layer infrastructure_.
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: interrupted-window handling_, _Ad-hoc query surface_, _Backtest-for-deterministic-layer infrastructure_.
 
 **Context.** [`feedback-loop.md § Pending`](docs/design/feedback-loop.md#pending) names the gap as "protocol for what evidence is sufficient to roll back a shipped change." Today, [`/feedback-validate` EVALUATE](.claude/skills/feedback-validate/SKILL.md) produces a verdict in `{improved, degraded, no_change, inconclusive}` and writes a `validation_outcomes` record, but the procedure following a `degraded` verdict is unspecified — does the operator immediately revert via git, register a new validation watching the revert, schedule a follow-up retrospective, or accept the degradation if the magnitude is small? The system is operator-driven per the [feedback-loop](docs/design/feedback-loop.md) preamble ("the operator is the agent of all changes"), so the protocol is decision-support, not automation.
 
@@ -509,7 +485,7 @@ The thresholds are concrete, deterministic, and reachable from observed paper-an
 
 **Unblocks.**
 
-- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: interrupted-window handling_, _Ad-hoc query surface_, _Monthly outcome view_, _Validation methodology: rollback evidence protocol_.
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: interrupted-window handling_, _Ad-hoc query surface_, _Validation methodology: rollback evidence protocol_.
 
 **Context.** [`feedback-loop.md § Confounder management`](docs/design/feedback-loop.md#confounder-management) names "Backtest as sanity check" for regime-sensitive changes, qualified parenthetically as open infrastructure work. The scope is constrained: replay the *deterministic* layer (Class A/B/C distillation thresholds and the Class B rolling state from [`threshold-calibration.md`](docs/design/02-distillation-layer/threshold-calibration.md)) against historical price/macro inputs to confirm a tuning change holds across multiple historical regimes — not a full LLM-pipeline backtest. The [counterfactual replay engine](docs/design/05-execution-layer/counterfactual-replay-engine.md) already exists for PM-decision counterfactuals on price data, and the [paper-evaluation harness](docs/design/05-execution-layer/paper-evaluation-harness.md) already provides shared spread/impact/fee primitives. Validation under [`/feedback-validate`](.claude/skills/feedback-validate/SKILL.md) is an LLM-driven session; the deterministic harness is an analytical input it consumes, not a peer to it.
 
