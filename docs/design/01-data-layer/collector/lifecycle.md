@@ -6,7 +6,7 @@ How the data layer comes up on first deploy, recovers from downtime, and eventua
 
 A one-time historical backfill on first deploy. Two facts force it (per [threshold-calibration.md § Bootstrap policy](../../02-distillation-layer/threshold-calibration.md#bootstrap-policy)):
 
-1. Distillation's per-ticker baselines have lookback windows of 20–252 days. Waiting for full forward calibration would block paper trading for a year on `gap_fill_baseline_days` alone.
+1. Distillation's per-ticker baselines have lookback windows of 20–252 days. Waiting for forward calibration would block paper trading for a year on `gap_fill_baseline_days` alone.
 2. Decisions on missing data are worse than skipped decisions.
 
 Bootstrap provides enough history that high-frequency baselines reach `calibrated` immediately; long-tail event-driven baselines start with sector-pooled fallbacks.
@@ -49,7 +49,7 @@ A single orchestrator calls each `data_sources.<vendor>.<domain>.bootstrap_*()` 
 
 Bootstrap pulls bars through the last *completed* trading day. The current day's bars are collected by the ongoing 15-min `polygon.equity` schedule once the runner starts.
 
-Idempotent (UPSERT on natural keys per [data-sources.md § Idempotency contract](data-sources.md#idempotency-contract)) and interrupt-safe — re-running resumes. Expected runtime 30–60 min, dominated by the equity OHLCV pull.
+Idempotent (UPSERT on natural keys per [data-sources.md § Idempotency contract](data-sources.md#idempotency-contract)) and interrupt-safe. Expected runtime 30–60 min, dominated by the equity OHLCV pull.
 
 ### Distillation interaction
 
@@ -89,11 +89,9 @@ Steady-state accommodates downtime gaps without a separate code path. Each colle
 since = max(latest_period_start_in_table_for(ticker, timeframe), now - default_lookback)
 ```
 
-Bootstrap, ongoing collection, and catch-up share the same code path with different `since` values.
+`python -m alphamind.collector catch-up` runs every collection function once with `since=None`, then exits. Used after extended downtime when the operator wants a single sweep before re-starting the runner.
 
-`python -m alphamind.collector catch-up` runs every collection function once with `since=None`, then exits. Used after extended downtime when the operator wants a single sweep before re-starting the long-running runner.
-
-Principle: **forward-only by default; targeted single-record revisions acceptable; no routine bulk historical sweeps.** Bootstrap is the one-time exception. Catch-up is bounded by what's missing, so it's targeted-by-construction.
+Principle: **forward-only by default; targeted single-record revisions acceptable; no routine bulk historical sweeps.** Bootstrap is the one-time exception; catch-up is bounded by what's missing.
 
 ## Operator workflow on first deploy
 
@@ -110,7 +108,7 @@ Revoked-key drill — revoke one provider's key, verify the runner logs the fail
 When the pipeline's data-layer phase comes online, roles split:
 
 - Pipeline owns invocation-time pulls of high-frequency, freshness-critical sources (Q1 equity, Q3 options) that need <5 min currency at decision time.
-- Runner continues handling slow-cadence sources (FRED, BLS, calendar, corporate actions) — pulling them every invocation is wasteful.
+- Runner continues handling slow-cadence sources (FRED, BLS, calendar, corporate actions).
 
 Both processes import the same [data sources library](data-sources.md), write to the same tables, and share the same idempotency contract. The split is configuration, not architecture.
 
@@ -121,7 +119,7 @@ Migration:
 3. Runner restarts; schedules only slow-cadence sources.
 4. Pipeline and runner coexist as long-running services.
 
-No data migration. Both processes share the SQLite database via WAL mode per [data-and-state.md § Concurrency model](../../../architecture/data-and-state.md#concurrency-model).
+Both processes share the SQLite database via WAL mode per [data-and-state.md § Concurrency model](../../../architecture/data-and-state.md#concurrency-model).
 
 ---
 

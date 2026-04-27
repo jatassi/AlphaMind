@@ -1,6 +1,6 @@
 # Runner
 
-The thin process that schedules and dispatches calls into the [data sources library](data-sources.md). Wrapped by NSSM as `alphamind-collector` for unattended operation.
+The process that schedules and dispatches calls into the [data sources library](data-sources.md). Wrapped by NSSM as `alphamind-collector` for unattended operation.
 
 ## Process model
 
@@ -35,7 +35,7 @@ scheduler.add_job(polygon.options.collect_chains,
 
 `max_instances=1` per job prevents same-job overlap — if a long-running cycle is still in flight when the next fire arrives, APScheduler skips and logs.
 
-Vendor-serialization handles "no two collectors fight at once." The library's per-call rate limiter (see [data-sources.md § Rate limiting](data-sources.md#rate-limiting)) handles "individual jobs don't burst."
+Vendor-serialization handles "no two collectors fight at once"; the library's per-call rate limiter (see [data-sources.md § Rate limiting](data-sources.md#rate-limiting)) handles "individual jobs don't burst."
 
 ## Cadence
 
@@ -70,7 +70,7 @@ This cadence accepts staleness against the pipeline's freshness targets (Q1 nomi
 | `python -m alphamind.collector bootstrap` | One-time historical backfill. See [lifecycle.md § Bootstrap](lifecycle.md#bootstrap). |
 | `python -m alphamind.collector catch-up` | One-shot sweep: invokes every collection function with `since=None`, exits. |
 
-`run` and `catch-up` both call into the same `data_sources` library functions; only the scope and `since` parameter differ.
+`run` and `catch-up` both call into the same `data_sources` library functions; only the scope and `since` differ.
 
 ## Process supervision
 
@@ -98,7 +98,7 @@ Errors, scheduler events, and collection-run summaries are logged. Per-API-call 
 | `config/assets.yaml` | Trading universe + benchmark tickers. Read by the data sources library to scope collection. |
 | `.env` | API keys and secrets. Loaded via `python-dotenv` at process start. |
 
-Config changes require a runner restart — APScheduler doesn't reload mid-run. `nssm restart alphamind-collector` picks up changes.
+Config changes require a runner restart — APScheduler doesn't reload mid-run. `nssm restart alphamind-collector` applies changes.
 
 ---
 

@@ -4,7 +4,7 @@ Schema spec — tables, columns, cross-cutting rules, retention. Defines what th
 
 ## Storage choice
 
-SQLite (WAL mode) via SQLAlchemy; migrations via Alembic. Models live in `alphamind.persistence.models`. Coexists with the eventual portfolio-state schema ([state-persistence.md](../../05-execution-layer/state-persistence.md)) in `%USERPROFILE%\AlphaMind\data\alphamind.db` — table names are disjoint.
+SQLite (WAL mode) via SQLAlchemy; migrations via Alembic. Models live in `alphamind.persistence.models`. Coexists with the portfolio-state schema ([state-persistence.md](../../05-execution-layer/state-persistence.md)) in `%USERPROFILE%\AlphaMind\data\alphamind.db` — table names are disjoint.
 
 Pragma settings inherit from [data-and-state.md](../../../architecture/data-and-state.md): `journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=ON`, `synchronous=NORMAL`.
 
@@ -28,7 +28,7 @@ Pragma settings inherit from [data-and-state.md](../../../architecture/data-and-
 
 #### `asset_universe`
 
-One row per ticker. Includes both trading-universe entries (`asset_role='universe'`, populated from `assets.yaml`'s `sectors:`) and benchmark instruments (`asset_role='benchmark'`, populated from `assets.yaml`'s `benchmarks:`).
+One row per ticker. Includes trading-universe entries (`asset_role='universe'`, from `assets.yaml`'s `sectors:`) and benchmark instruments (`asset_role='benchmark'`, from `assets.yaml`'s `benchmarks:`).
 
 | Column | Type | Notes |
 |---|---|---|
@@ -137,7 +137,7 @@ Primary key: `(ticker, timeframe, period_start)`. Indexes: SQLite's clustered PK
 
 #### `corporate_actions`
 
-Dividends, splits, spin-offs, mergers, symbol changes. Required for adjusted-bar correctness on backfilled history and for the OMS layer's eventual corporate-action handling per [corporate-actions.md](../../05-execution-layer/corporate-actions.md).
+Dividends, splits, spin-offs, mergers, symbol changes. Required for adjusted-bar correctness on backfilled history and for OMS corporate-action handling per [corporate-actions.md](../../05-execution-layer/corporate-actions.md).
 
 | Column | Type | Notes |
 |---|---|---|
@@ -163,7 +163,7 @@ Indexes: `(ticker, ex_date)`, `(action_type, ex_date)`.
 
 #### `options_contracts`
 
-Per-contract reference (slow-changing). Populated from Polygon `/v3/reference/options/contracts`. Reference rows are not pruned.
+Per-contract reference (slow-changing). Populated from Polygon `/v3/reference/options/contracts`. Not pruned.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -180,7 +180,7 @@ Indexes: `(underlying_ticker, expiration_date)`.
 
 #### `options_contract_snapshots`
 
-Time-series. Populated from Polygon `/v3/snapshot/options/{ticker}`. Rows older than 120 days are pruned by an ops-time policy; per-ticker daily ATM-IV history (for IV-rank's 252-day window) is maintained separately by the distillation layer in its own state tables per [threshold-calibration.md](../../02-distillation-layer/threshold-calibration.md).
+Time-series. Populated from Polygon `/v3/snapshot/options/{ticker}`. Rows older than 120 days are pruned by an ops-time policy. Per-ticker daily ATM-IV history (for IV-rank's 252-day window) is maintained separately by distillation in its own state tables per [threshold-calibration.md](../../02-distillation-layer/threshold-calibration.md).
 
 | Column | Type | Notes |
 |---|---|---|
@@ -289,7 +289,7 @@ Indexes: `(ticker, fiscal_year, fiscal_period)`.
 
 #### `news_articles`
 
-Article metadata. Body text stored on disk at `%USERPROFILE%\AlphaMind\data\news\<YYYY>\<MM>\<article_id>.txt` to keep it `grep`-able by adaptive-research agents (per [qualitative.md § 1](../external/qualitative.md)).
+Article metadata. Body text stored on disk at `%USERPROFILE%\AlphaMind\data\news\<YYYY>\<MM>\<article_id>.txt` to keep it `grep`-able by adaptive-research agents (see [qualitative.md § 1](../external/qualitative.md)).
 
 | Column | Type | Notes |
 |---|---|---|
@@ -377,7 +377,7 @@ Indexes: `(collector, started_at)`.
 
 ## Deferred categories
 
-Categories the [SESSION-BRIEF](../SESSION-BRIEF.md) flagged as deferrable, not implemented in v1:
+Categories not implemented in v1 (per [SESSION-BRIEF](../SESSION-BRIEF.md)):
 
 | Category | Reason |
 |---|---|
@@ -389,7 +389,7 @@ Categories the [SESSION-BRIEF](../SESSION-BRIEF.md) flagged as deferrable, not i
 | Qual4 earnings transcripts | Hybrid pattern: metadata in DB, transcript text on disk per Qual1's news pattern. |
 | Qual6 sector-specific qualitative catalysts | LLM-derived; lands when the qualitative research layer is built. |
 
-When a deferred category lands, it gets its own table designed against the same cross-cutting rules.
+When a deferred category lands, it gets its own table against the same cross-cutting rules.
 
 ## Storage volume
 
@@ -404,7 +404,7 @@ After bootstrap (252-day equity / 24-month monthly macro / 90-day daily macro / 
 | `event_calendar` + `earnings_event_details` | ~500 | <1 MB |
 | Reference tables | ~100 | <1 MB |
 
-Post-bootstrap: ~150–200 MB. Steady-state daily growth: ~25 MB/day (mostly `ohlcv_bars` + pre-prune `options_contract_snapshots` + `news_articles`). One year lands around 10 GB before retention.
+Post-bootstrap: ~150–200 MB. Steady-state daily growth: ~25 MB/day (mostly `ohlcv_bars` + pre-prune `options_contract_snapshots` + `news_articles`). One year lands around 10 GB before retention pruning.
 
 ## Retention
 

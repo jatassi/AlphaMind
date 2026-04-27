@@ -19,7 +19,7 @@ The decision layer consumes the [analysis layer](../03-analysis-layer/README.md)
 
 **Primary input: Synthesizer brief.** The [synthesizer](../03-analysis-layer/synthesizer.md) produces a unified market snapshot loaded into context for all three agents. The brief carries cross-domain findings with typed source references (e.g., `[SA-TECH-3]`, `[QR-4]`, `[AR-2]`) and flags contradictions and uncertainty rather than resolving them.
 
-**On-demand retrieval: Source briefs.** All three agents have a retrieval tool that accepts reference IDs and returns the corresponding section from the original analysis brief — drill-down without loading all source material into context.
+**On-demand retrieval: Source briefs.** All three agents have a retrieval tool that accepts reference IDs and returns the corresponding section from the original analysis brief — drill-down without loading source material into context.
 
 **Reference ID format:**
 
