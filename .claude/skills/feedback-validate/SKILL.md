@@ -57,6 +57,10 @@ Walk the operator through capturing each:
 - **Watching the wrong tier.** Outcome metrics over short windows give noise, not signal. If the operator wants a 1-week window on conviction calibration, suggest a process metric instead, or stretch the window.
 - **Missing failure criterion.** If the operator can't say what would count as failure, the registration isn't actionable. Push for it explicitly.
 
+### Regime-conditioned evidence for `config/distillation.yaml` edits
+
+When the edited artifact is `config/distillation.yaml`, surface the [distillation replay harness](../../../docs/design/02-distillation-layer/replay-harness.md) as a recommended evidence step before capturing expected direction and magnitude. The harness re-runs the deterministic layer against archived regime-stratified inputs under the candidate config and emits a per-regime flag-rate report at `data/replay_reports/{report_id}/report.md`; cite the `report_id` in the registration's `expected_magnitude` or `success_criterion` so the pre-registered expectation's regime grounding is verbatim-readable at EVALUATE time.
+
 ### Confirmation
 
 When all fields are captured, call `register_validation(...)` (writes a validation entity per [state-persistence.md § Validations](../../../docs/design/05-execution-layer/state-persistence.md)) and confirm the projected evaluation date to the operator. The validation is now active and will surface in `list_pending_validations()` when the window elapses.

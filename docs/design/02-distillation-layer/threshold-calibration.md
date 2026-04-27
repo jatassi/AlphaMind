@@ -214,7 +214,8 @@ Default cadence: **monthly** during paper trading, **quarterly** once live, plus
 1. Examine the activity log and adaptive-research outputs over 2–4 weeks of paper-trading data.
 2. Compute the empirical flagging rate for the threshold class (flags per ticker per day, or flags per cycle for global thresholds).
 3. Compare the empirical rate to the expected rate at the configured value.
-4. Adjust; reload validation runs at the next invocation; change takes effect.
+4. For regime-sensitive edits (anomaly thresholds, regime boundaries, persistence windows), run the [replay harness](replay-harness.md) against the candidate config to surface per-regime flag-rate distributions before registering the edit's expected impact in `/feedback-validate`.
+5. Adjust; reload validation runs at the next invocation; change takes effect.
 
 No automated tuning. The Phase 4 feedback loop is the natural source of empirical inputs at step 2 once it ships; the edit itself remains an operator action — the trade-off (flag rate vs. signal quality) depends on the system's current capacity to investigate.
 

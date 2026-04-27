@@ -34,6 +34,7 @@ Features below have full requirements landed in the design docs and zero outstan
 - [External distillation](design/02-distillation-layer/external.md)
 - [Internal distillation](design/02-distillation-layer/internal.md)
 - [Threshold calibration framework](design/02-distillation-layer/threshold-calibration.md)
+- [Replay harness](design/02-distillation-layer/replay-harness.md)
 
 ### Analysis layer
 
@@ -83,6 +84,7 @@ Features below have full requirements landed in the design docs and zero outstan
 - [Mid-pipeline failure handling](design/mid-pipeline-failure-handling.md)
 - [Cost & rate-limit modeling](design/cost-and-rate-limit-modeling.md)
 - [Asset universe + validation methodology](design/asset-universe-validation.md)
+- [Feedback loop](design/feedback-loop.md)
 - [Design decisions](design/design-decisions.md)
 
 ### Testing
@@ -240,38 +242,6 @@ _Schema additions, well-scoped multi-file edits, or single-component contributio
 ### Substantial
 
 _New infrastructure, cross-cutting consolidations, or UI surfaces._
-
-#### Backtest-for-deterministic-layer infrastructure _(Feedback loop)_
-
-- [ ] Stand up the backtest harness needed for regime-sensitive prompt validation (deterministic-layer replay, not full-pipeline backtest). _Source: [feedback-loop.md](design/feedback-loop.md)._
-
-**Unblocks.**
-
-- [feedback-loop.md](design/feedback-loop.md) — sole remaining blocker.
-
-**Context.** [`feedback-loop.md § Confounder management`](docs/design/feedback-loop.md#confounder-management) names "Backtest as sanity check" for regime-sensitive changes, qualified parenthetically as open infrastructure work. The scope is constrained: replay the *deterministic* layer (Class A/B/C distillation thresholds and the Class B rolling state from [`threshold-calibration.md`](docs/design/02-distillation-layer/threshold-calibration.md)) against historical price/macro inputs to confirm a tuning change holds across multiple historical regimes — not a full LLM-pipeline backtest. The [counterfactual replay engine](docs/design/05-execution-layer/counterfactual-replay-engine.md) already exists for PM-decision counterfactuals on price data, and the [paper-evaluation harness](docs/design/05-execution-layer/paper-evaluation-harness.md) already provides shared spread/impact/fee primitives. Validation under [`/feedback-validate`](.claude/skills/feedback-validate/SKILL.md) is an LLM-driven session; the deterministic harness is an analytical input it consumes, not a peer to it.
-
-**Options.**
-
-1. **Extend the counterfactual replay engine with a distillation-replay mode.** Add a second `replay_kind` family alongside `rejection` and `modification_original_form` — a per-invocation distillation replay that re-runs `config/distillation.yaml` against historical Q1/Q6/Q11 inputs and emits the resulting anomaly flags, regime label, and Class B baselines for a configured historical window. Reuses the engine's eligibility cursor, persistence pattern (`replay_engine_version`, confidence tag), and on-demand command-center trigger.
-
-2. **Build a standalone distillation-replay harness in `tests/replay/` (or `tools/replay/`) that consumes archived inputs and the `config/distillation.yaml` under test.** A separate command-line tool with its own fixture store of historical regime-stratified input slices (one slice per canonical regime: low-vol, normal, elevated, crisis), reading the same `Class A` threshold contracts and the same Class B baseline computation code paths the live distillation phase uses. Output is a per-regime flagging-rate report and side-by-side diff against a baseline config snapshot.
-
-3. **Repurpose the paper-evaluation harness's primitives plus a new replay loop driven by historical data fetched fresh on demand.** The harness's spread/impact/fee sub-models already share calibration discipline; bolt a distillation-replay loop on top that pulls historical price/macro on demand from Polygon/FRED rather than maintaining a fixture store.
-
-4. **Defer until the feedback loop has surfaced the first concrete tuning need; ship inline-in-skill ad-hoc replays via the existing command-center ad-hoc query surface.** Operator and Claude run config-diff replays as scratch SQL/Python over the activity log + archived distillation outputs, no new infrastructure.
-
-**Steelmans.**
-
-- *Option 1.* Maximum reuse of the engine the system already runs daily — same persistence schema, same on-demand trigger, same confidence-tagging convention. The replay record joins to invocation provenance the same way counterfactuals do, and the command center already renders aggregated counterfactual results in [Quality and feedback](docs/design/command-center.md#f-quality-and-feedback). One engine, two replay families, one versioning lineage.
-
-- *Option 2.* Strongest separation of concerns — the counterfactual engine answers PM decision questions, the distillation harness answers threshold-tuning questions, and conflating them risks accidental coupling (the replay-engine versioning rolls forward when the distillation tuner ships, invalidating PM counterfactuals). A standalone harness has its own regime-stratified fixture store curated by the operator, which is structurally what regime-sensitivity sanity-checking requires; archived live data has no guarantee of crisis-regime coverage in the first year of paper trading. Aligns with [`unit-test-plan.md § Distillation layer`](docs/design/testing/unit-test-plan.md#distillation-layer)'s threshold-crossing discipline.
-
-- *Option 3.* Minimum new infrastructure — paper-evaluation already owns the calibrated drag estimates the deterministic layer's distillation outputs eventually feed (anomaly→adaptive→thesis→fill drag); aligning the replay loop with its sub-models keeps the calibration story unified. Live data fetch on demand sidesteps the fixture-curation problem entirely.
-
-- *Option 4.* The most honest reading of [`Simplify before building`](docs/design/feedback-loop.md#confounder-management) — backtesting is named as "sanity check," not gate. Phase 4 is paper-trading-driven maturation; the backtest harness is an answer to a class of question that may not arrive in the form the spec anticipated, and ad-hoc command-center queries plus the `validate_universe.py`-style tooling pattern have served other Phase-4 needs. Defer until empirical demand shapes the right surface.
-
-**Recommendation.** **Option 2.** Standalone distillation-replay harness, with a regime-stratified fixture store curated from archived live invocation inputs and supplemented by hand-selected historical windows for regime coverage paper trading hasn't yet observed. The counterfactual replay engine answers a different question (PM-decision outcomes against forward price data) and conflating it with config-tuning sanity checks couples version lineages that should evolve independently — Option 1's reuse is superficial. Option 3's live-fetch-on-demand contaminates regime-sensitivity testing with vendor availability and rate-limit variance, which is exactly what regime-stratified fixtures exist to remove. Option 4 is tempting under simplify-first, but the [confounder list](docs/design/feedback-loop.md#confounder-management) names "calibration appears to drift but regime moved" as the biggest confounder; an ad-hoc query surface forces the operator to reconstruct the regime-sensitivity argument every time, which is the discipline failure the harness exists to prevent. The harness reuses the harness primitives from [`paper-evaluation-harness.md § Sub-models`](docs/design/05-execution-layer/paper-evaluation-harness.md#sub-models) where applicable (regulatory-fee table, spread/impact coefficients) so calibration stays unified, runs against archived `config/distillation.yaml` snapshots and the Class B baseline tables in [`threshold-calibration.md § Where each threshold lives`](docs/design/02-distillation-layer/threshold-calibration.md#where-each-threshold-lives), and emits a per-regime flag-rate report consumed as evidence by the operator-and-Claude `/feedback-validate` REGISTER step. Calibrated, not pessimistic — the harness uses the same primitives the live system uses, and surfaces flag-rate distributions per regime without adding conservatism on top.
 
 ### Deferred
 
