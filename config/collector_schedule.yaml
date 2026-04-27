@@ -17,7 +17,7 @@ collectors:
   finnhub.news:              { cron: "*/30 * * * *" }
   finnhub.calendar:          { cron: "0 6 * * *" }
   finnhub.estimate_revisions: { cron: "0 8 * * *" }
-  marketaux.news:            { cron: "*/30 * * * *" }
+  marketaux.news:            { cron: "0 */4 * * *" }   # 6 fires/day x ~13 reqs ~= 78/day vs 100/day free-tier quota
   sec_edgar.rss:             { cron: "*/15 * * * *" }
   polymarket:                { cron: "*/30 * * * *" }
   kalshi:                    { cron: "*/30 * * * *" }

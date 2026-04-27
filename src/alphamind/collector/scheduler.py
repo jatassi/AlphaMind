@@ -97,21 +97,25 @@ COLLECTORS: dict[str, Callable[..., object]] = {
     "finnhub.estimate_revisions": finnhub_estimate_revisions,
 }
 
-# Vendors — each gets its own single-worker executor
-_VENDORS = [
-    "polygon",
-    "fred",
-    "eia",
-    "bls",
-    "treasury",
-    "finnhub",
-    "marketaux",
-    "sec_edgar",
-    "polymarket",
-    "kalshi",
-    "finra",
-    "iborrowdesk",
-]
+# Per-vendor executor sizing. Default is 1 (serialise to respect rate limits).
+# polygon needs 2: polygon.equity holds the executor 6-13 min per market-hours
+# fire while polygon.options is supposed to fire every 30 min; with one worker
+# polygon.options gets misfired every cycle. polygon's 100/min API budget
+# easily absorbs two concurrent collectors.
+_VENDOR_WORKERS: dict[str, int] = {
+    "polygon": 2,
+    "fred": 1,
+    "eia": 1,
+    "bls": 1,
+    "treasury": 1,
+    "finnhub": 1,
+    "marketaux": 1,
+    "sec_edgar": 1,
+    "polymarket": 1,
+    "kalshi": 1,
+    "finra": 1,
+    "iborrowdesk": 1,
+}
 
 _SCHEDULE_PATH = Path(__file__).parents[3] / "config" / "collector_schedule.yaml"
 
@@ -151,8 +155,8 @@ def _configure_logging() -> None:
 
 
 def build_scheduler() -> BlockingScheduler:
-    """Construct a ``BlockingScheduler`` with one executor per vendor."""
-    executors = {v: ThreadPoolExecutor(max_workers=1) for v in _VENDORS}
+    """Construct a ``BlockingScheduler`` with a per-vendor executor."""
+    executors = {v: ThreadPoolExecutor(max_workers=w) for v, w in _VENDOR_WORKERS.items()}
     return BlockingScheduler(executors=executors)
 
 

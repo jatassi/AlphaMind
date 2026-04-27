@@ -126,6 +126,15 @@ class RetryShape(StrEnum):
 # ---------------------------------------------------------------------------
 
 
+_FREDAPI_RETRYABLE_MESSAGES: tuple[str, ...] = (
+    "internal server error",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "too many requests",
+)
+
+
 def _is_retryable(exc: BaseException) -> bool:
     """Return True when ``exc`` is a transient error worth retrying."""
     if isinstance(exc, httpx.TimeoutException):
@@ -135,8 +144,13 @@ def _is_retryable(exc: BaseException) -> bool:
         # 429 and all 5xx are retryable; auth/permission 4xx are not
         return status == 429 or status >= 500
     if isinstance(exc, urllib.error.HTTPError):
-        # fredapi raises urllib.error.HTTPError directly; mirror the httpx rule
+        # fredapi may raise urllib.error.HTTPError directly; mirror the httpx rule
         return exc.code == 429 or exc.code >= 500
+    if isinstance(exc, ValueError):
+        # fredapi catches urllib.HTTPError internally and re-raises as ValueError
+        # carrying the FRED API's text status. Match the standard 5xx/429 names.
+        msg = str(exc).lower()
+        return any(p in msg for p in _FREDAPI_RETRYABLE_MESSAGES)
     return False
 
 
@@ -338,6 +352,7 @@ class _DefaultRepo:
             if row is not None:
                 row.status = "failed"
                 row.error_summary = error_summary
+                row.completed_at = datetime.now(UTC).isoformat()
                 sess.commit()
 
 

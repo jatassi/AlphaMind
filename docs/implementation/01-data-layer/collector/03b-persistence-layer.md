@@ -33,7 +33,7 @@ In scope:
   - `prediction_market_contracts`, `prediction_market_snapshots`
   - `collection_runs`
 - Composite primary keys, foreign keys, indexes, and `NOT NULL` constraints exactly as specified in `storage.md`.
-- `src/alphamind/persistence/session.py` exposing an `engine` constructor and a `Session` factory. The engine accepts a database path (resolved from `main.yaml` or a `DATABASE_PATH` env override), opens with the four pragmas from `data-and-state.md` (`journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=ON`, `synchronous=NORMAL`).
+- `src/alphamind/persistence/session.py` exposing an `engine` constructor and a `Session` factory. The engine accepts a database path (resolved from `main.yaml` or a `DATABASE_PATH` env override), opens with the four pragmas from `data-and-state.md` (`journal_mode=WAL`, `busy_timeout=60000`, `foreign_keys=ON`, `synchronous=NORMAL`).
 - Alembic configured under `src/alphamind/persistence/migrations/`. Initial migration creates every table.
 - Unit tests:
   - Round-trip every model against an in-memory SQLite database.
@@ -73,5 +73,5 @@ Database path resolution: `DATABASE_PATH` env var > `main.yaml` `paths.database`
 - [ ] Unit test covers round-trip insert + select for every table.
 - [ ] Unit test verifies composite-key uniqueness on `ohlcv_bars`, `macro_observations`, `options_contract_snapshots`.
 - [ ] Unit test verifies a foreign-key violation raises `IntegrityError`.
-- [ ] Unit test verifies `PRAGMA journal_mode` returns `wal`, `PRAGMA foreign_keys` returns `1`, `PRAGMA busy_timeout` returns `5000`.
+- [ ] Unit test verifies `PRAGMA journal_mode` returns `wal`, `PRAGMA foreign_keys` returns `1`, `PRAGMA busy_timeout` returns `60000`.
 - [ ] `uv run pytest` passes.

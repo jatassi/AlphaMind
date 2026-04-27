@@ -10,6 +10,7 @@ from __future__ import annotations
 import threading
 import time
 import urllib.error
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import httpx
@@ -55,7 +56,11 @@ class _FakeRunRepo:
         )
 
     def update_failed(self, run_id: str, error_summary: str) -> None:
-        self.rows[run_id].update(status="failed", error_summary=error_summary)
+        self.rows[run_id].update(
+            status="failed",
+            error_summary=error_summary,
+            completed_at=datetime.now(UTC).isoformat(),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -336,6 +341,36 @@ class TestWithRetriesCritical:
             unauthorized()
         assert call_count == 1
 
+    def test_critical_retries_on_fredapi_value_error_5xx(self) -> None:
+        """fredapi catches urllib HTTPError and re-raises as ValueError; 5xx is retryable."""
+        call_count = 0
+
+        @with_retries(RetryShape.critical, _sleep=lambda s: None)
+        def fred_500() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise ValueError("Internal Server Error")
+            return "ok"
+
+        result = fred_500()
+        assert result == "ok"
+        assert call_count == 2
+
+    def test_critical_propagates_unrelated_value_error(self) -> None:
+        """A ValueError without a transient-HTTP message must not be retried."""
+        call_count = 0
+
+        @with_retries(RetryShape.critical, _sleep=lambda s: None)
+        def bad_input() -> str:
+            nonlocal call_count
+            call_count += 1
+            raise ValueError("invalid literal for int()")
+
+        with pytest.raises(ValueError):
+            bad_input()
+        assert call_count == 1
+
 
 # ---------------------------------------------------------------------------
 # AC: with_retries — important shape (limited attempts)
@@ -599,6 +634,16 @@ class TestTrackRun:
 
         row = next(iter(repo.rows.values()))
         assert "bad data from api" in row["error_summary"]
+
+    def test_failed_row_has_completed_at(self) -> None:
+        """completed_at is set on failure too — operators need a fixed end-time."""
+        repo = self._make_repo()
+        with pytest.raises(RuntimeError), track_run("polygon.equity", _repo=repo):
+            raise RuntimeError("boom")
+
+        row = next(iter(repo.rows.values()))
+        assert row["status"] == "failed"
+        assert row["completed_at"] is not None
 
     def test_run_object_has_rows_written_attribute(self) -> None:
         """The run object yielded by track_run has a mutable rows_written."""
