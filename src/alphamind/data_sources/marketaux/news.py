@@ -224,7 +224,8 @@ def collect_news(
             overlap=timedelta(hours=1),
             session_factory=_session_factory,
         )
-        since = _since_dt.isoformat()
+        # Marketaux rejects ISO timestamps with sub-second precision; truncate.
+        since = _since_dt.replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%S")
 
     body_dir = _body_dir if _body_dir is not None else _default_body_dir()
     outlets = _load_outlets()

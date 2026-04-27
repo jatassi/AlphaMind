@@ -1,19 +1,19 @@
 # Regime adaptation
 
-How guardrail parameters change based on market conditions. A fixed set of risk limits is either too tight in calm markets (leaving returns on the table) or too loose in volatile markets (allowing excessive risk). Regime-adaptive guardrails solve this by defining multiple parameter sets and switching between them based on the volatility regime classification from the distillation layer.
+Guardrail parameters adjust to market conditions. A fixed limit set is either too tight in calm markets or too loose in volatile ones; regime-adaptive guardrails define multiple parameter sets and switch between them based on the distillation layer's volatility classification.
 
 ---
 
 ## Regime classification mapping
 
-The distillation layer maintains a volatility regime classification (quant 11f in [external.md](../02-distillation-layer/external.md)) based on VIX level, VIX term structure, VVIX, and realized volatility. The four regime labels map directly to guardrail parameter sets:
+The distillation layer's volatility regime classification (quant 11f in [external.md](../02-distillation-layer/external.md)) uses VIX level, term structure, VVIX, and realized volatility. The four labels map to parameter sets:
 
 | Regime label | Typical VIX range | Market character | Guardrail philosophy |
 |---|---|---|---|
-| **Low-vol compression** | VIX < 14 | Calm, trending, low realized vol. Steep VIX contango. Risk of complacency — calm markets can break violently. | Slightly loosened limits to capture compressed premium and trending opportunities. Modest increase in allowed exposure. |
-| **Normal** | VIX 14–22 | Typical volatility. Normal term structure. Most of the operating time. | Base parameter set as defined in [rules-and-limits.md](rules-and-limits.md). All defaults apply. |
-| **Elevated** | VIX 22–35 | Above-average volatility. Term structure flattening. Wider daily ranges, more gap risk, higher options premium. | Tightened limits to reduce exposure. The wider daily ranges mean existing position sizes create more dollar risk. |
-| **Crisis** | VIX > 35 | Extreme volatility. VIX in backwardation. Correlation spikes, liquidity dries up, gap risk is severe. | Heavily tightened limits. The system should have minimal new exposure and focus on capital preservation. |
+| **Low-vol compression** | VIX < 14 | Calm, trending, low realized vol. Steep VIX contango. Calm markets can break violently. | Slightly loosened limits to capture compressed premium and trending opportunities. |
+| **Normal** | VIX 14–22 | Typical volatility. Most of the operating time. | Base parameter set from [rules-and-limits.md](rules-and-limits.md). |
+| **Elevated** | VIX 22–35 | Above-average volatility. Term structure flattening. Wider daily ranges, more gap risk. | Tightened limits — wider daily ranges mean existing position sizes create more dollar risk. |
+| **Crisis** | VIX > 35 | Extreme volatility. VIX backwardation. Correlation spikes, liquidity dries up, severe gap risk. | Heavily tightened limits. Minimal new exposure, focus on capital preservation. |
 
 ---
 
@@ -40,17 +40,17 @@ Each regime defines a multiplier applied to the base (normal) parameter value fr
 | **Min cash reserve** | 10% | 8% (×0.8) | 15% (×1.5) | 25% (×2.5) |
 | **Correlation limit** | 0.70 | 0.75 | 0.60 | 0.50 |
 
-**Design rationale for specific multiplier choices:**
+**Design rationale for multiplier choices:**
 
-**Low-vol loosening is modest (5–20% wider).** The calm-market adjustment is intentionally gentle. Low-vol environments feel safe but can break suddenly (VIX historically doubles faster than it halves). The loosening provides room for the system to run a slightly larger book when conditions support it, but doesn't create a position set that would be catastrophic if volatility spikes overnight.
+**Low-vol loosening is modest (5–20% wider).** Low-vol environments can break suddenly (VIX historically doubles faster than it halves); modest loosening provides room without creating a position set catastrophic to an overnight spike.
 
-**Elevated tightening is moderate (20–30% tighter).** The system can still operate — it's not shut down — but position sizes and exposure caps are meaningfully reduced. This matches the reality that elevated-vol markets still offer good opportunities (wider swings create more setups), but each position carries more risk per dollar deployed.
+**Elevated tightening is moderate (20–30% tighter).** The system still operates but with meaningfully reduced sizes and caps. Elevated-vol markets still offer opportunities (wider swings create setups), but each dollar carries more risk.
 
-**Crisis tightening is aggressive (40–60% tighter).** In crisis mode, the system is in capital preservation. Gross exposure drops to 60%, position sizes halve, and options exposure is cut to a fraction. The system can still trade — a level-5 conviction thesis in a crisis should be actionable — but the sizing ensures that even a wrong-footed trade costs a small fraction of portfolio value.
+**Crisis tightening is aggressive (40–60% tighter).** Capital preservation mode: gross exposure drops to 60%, position sizes halve, options exposure cut to a fraction. A level-5 conviction thesis is still actionable but sized so even a wrong-footed trade costs a small fraction of portfolio value.
 
-**Drawdown limits don't loosen in low-vol.** The daily and cumulative drawdown limits stay at base levels regardless of regime. The reasoning: drawdown limits are survival constraints. Loosening them in calm markets creates the scenario where a sudden vol spike hits a system that was already running a deeper drawdown, compounding the damage. The drawdown budget is regime-invariant; the exposure limits that determine how much daily P/L can swing are regime-adaptive.
+**Drawdown limits don't loosen in low-vol.** Drawdown limits are survival constraints. Loosening them in calm markets creates the scenario where a sudden vol spike hits a system already running deeper drawdown, compounding damage. The drawdown budget is regime-invariant; the exposure limits that drive daily P/L swings are regime-adaptive.
 
-**Cash reserve increases in crisis.** The min cash reserve rises to 25% in crisis mode, ensuring the system has substantial dry powder for either recovery trades or meeting margin calls. This is the most aggressive regime-adaptive change and intentionally constraining — in a crisis, the system should be mostly in cash.
+**Cash reserve increases in crisis.** Min cash rises to 25%, ensuring dry powder for recovery trades or margin calls. The most aggressive regime-adaptive change — in crisis, the system should be mostly in cash.
 
 ---
 
@@ -58,15 +58,15 @@ Each regime defines a multiplier applied to the base (normal) parameter value fr
 
 ### Tightening (toward higher vol regime)
 
-**Speed: immediate.** When the distillation layer classifies a regime transition from normal → elevated or elevated → crisis, the tighter parameter set takes effect at the start of the next pipeline invocation. No gradual phase-in.
+**Speed: immediate.** Tighter parameters take effect at the start of the next invocation; no phase-in.
 
-**Rationale:** Vol regime transitions toward crisis are typically driven by sudden events (market selloffs, geopolitical shocks, systemic stress). The system needs to be operating under tighter limits before the next set of trades, not gradually tightening over the next 3 invocations while the market is falling apart.
+**Rationale:** Tightening transitions are driven by sudden events (selloffs, geopolitical shocks). The system needs tighter limits before the next trades, not gradual tightening while the market falls apart.
 
-**Implementation:** The guardrail layer reads the active regime label from the distillation layer's output at the start of each invocation. If the regime has tightened since the last invocation, the new (tighter) parameter set is loaded and all subsequent guardrail checks — guardrail state header generation, validation tool checks, and engine-authoritative checks — use the tighter values.
+**Implementation:** The guardrail layer reads the active regime at invocation start. On tightening, the new parameter set loads and all subsequent checks (state headers, validation tool, engine T3) use it.
 
 ### Loosening (toward lower vol regime)
 
-**Speed: gradual over 3 invocations.** When the distillation layer classifies a regime transition from crisis → elevated or elevated → normal, the loosened parameter set phases in over 3 pipeline invocations using linear interpolation.
+**Speed: gradual over 3 invocations.** Linear interpolation:
 
 | Invocation | Parameter value |
 |---|---|
@@ -74,13 +74,13 @@ Each regime defines a multiplier applied to the base (normal) parameter value fr
 | +1 invocation | 67% of the way |
 | +2 invocations | Full new (looser) limit |
 
-**Rationale:** Vol regime transitions toward calm are often false signals — VIX can decline for a day and then spike again. Gradual loosening prevents the system from aggressively expanding its book on a one-day VIX decline, only to be caught overexposed when volatility returns. Three invocations (approximately 6 hours at the 2-hour invocation cadence, or across 2 trading sessions if crossing overnight) provides enough confirmation time without excessively delaying the system's return to normal operating capacity.
+**Rationale:** Loosening signals are often false — VIX can decline for a day and spike again. Gradual loosening prevents aggressive book expansion on a one-day decline. Three invocations (approximately 6 hours, or 2 sessions overnight) provides enough confirmation without excessively delaying recovery.
 
-**Implementation:** During the transition window, the guardrail layer computes the active limit as: `old_limit + (new_limit - old_limit) × (invocations_since_transition / 3)`. If a new tightening transition occurs during a loosening phase, the tightening takes effect immediately (tightening always overrides loosening).
+**Implementation:** Active limit = `old_limit + (new_limit - old_limit) × (invocations_since_transition / 3)`. A new tightening during loosening takes effect immediately; tightening always overrides loosening.
 
 ### Transition logging
 
-Every regime transition — tightening or loosening — is logged as a risk/guardrail event in the activity log with: previous regime, new regime, transition direction (tightening/loosening), and a snapshot of the old and new parameter sets. The PM and strategist see this in their guardrail state headers with a `regime_changed` flag.
+Every transition is logged as a risk/guardrail activity log event with previous regime, new regime, direction, and snapshot of old/new parameter sets. PM and strategist see it in their state headers with a `regime_changed` flag.
 
 ---
 

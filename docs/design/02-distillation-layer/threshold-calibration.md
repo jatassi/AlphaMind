@@ -1,16 +1,16 @@
 # Threshold calibration
 
-How the distillation layer's tunable thresholds are set, how they update, and how the layer behaves before its rolling state has accumulated. The distillation layer is deterministic — its outputs depend on threshold choices that consumers downstream treat as given. This doc makes those choices explicit, separates the static from the rolling, and defines the warm-up behavior so the system can produce useful outputs from day one rather than waiting weeks for baselines to mature.
+How the distillation layer's tunable thresholds are set, refreshed, and validated, and how the layer behaves before rolling state has accumulated. The layer is deterministic; its outputs depend on threshold choices consumers treat as given. This doc separates static from rolling and defines warm-up behavior so the system produces useful outputs from day one.
 
-The companion docs cover *what* the layer computes ([external.md](external.md), [internal.md](internal.md)). This doc covers *how* the threshold values that gate those computations are chosen, refreshed, and validated.
+Companion docs cover *what* is computed ([external.md](external.md), [internal.md](internal.md)).
 
 ---
 
 ## Scope
 
-**In scope.** Every numeric or categorical threshold inside the distillation layer that gates an anomaly flag, a regime classification, a persistence baseline, or a divergence detection — and that doesn't have a single canonical home in another spec.
+**In scope.** Every numeric or categorical threshold inside the distillation layer that gates an anomaly flag, regime classification, persistence baseline, or divergence detection — and that doesn't have a canonical home elsewhere.
 
-**Out of scope** (owned by other docs, not duplicated here):
+**Out of scope** (owned elsewhere):
 
 | Threshold class | Authoritative spec |
 |---|---|
@@ -26,29 +26,29 @@ The companion docs cover *what* the layer computes ([external.md](external.md), 
 
 ## Calibration classes
 
-Every threshold falls into one of three classes. The class determines where it lives, how it's set, and how it changes.
+Every threshold falls into one of three classes determining where it lives, how it's set, and how it changes.
 
 ### Class A — Static configuration constants
 
-Operator-tunable scalars with a single value per universe. Live in `config/distillation.yaml` and reload at the start of each invocation per [configuration-management.md § Reload model](../configuration-management.md#reload-model). Examples: anomaly z-score thresholds, regime VIX boundaries, the 5pp prediction-market delta, lookback windows.
+Operator-tunable scalars, one value per universe. Live in `config/distillation.yaml`, reload at the start of each invocation per [configuration-management.md § Reload model](../configuration-management.md#reload-model). Examples: anomaly z-score thresholds, regime VIX boundaries, the 5pp prediction-market delta, lookback windows.
 
-These are the values the operator reviews on a calibration cadence (see [Update process](#update-process)). They never auto-tune.
+Reviewed by the operator on a calibration cadence (see [Update process](#update-process)); never auto-tuned.
 
 ### Class B — Computed rolling state
 
-Per-ticker, per-pair, or per-contract baselines produced by the distillation layer itself and persisted in the database between invocations. Refreshed at the start of each invocation's distillation phase. Examples: 20-day trailing volume average per ticker, trailing sentiment distribution per ticker, lead-lag timing estimates per pair, prediction-market deltas per contract.
+Per-ticker, per-pair, or per-contract baselines the layer itself produces and persists between invocations. Refreshed at the start of each invocation's distillation phase. Examples: 20-day trailing volume average per ticker, trailing sentiment distribution per ticker, lead-lag timing per pair, prediction-market deltas per contract.
 
-These are not configured — they are derived. The lookback window that drives the computation *is* configured (Class A).
+Not configured — derived. The lookback driving the computation *is* configured (Class A).
 
 ### Class C — Hybrid
 
-A computation with a Class A lookback window producing Class B state, then evaluated against a Class A threshold to produce a Class B flag. Most anomaly detections are Class C: "volume exceeds *N* standard deviations from the *W*-day trailing mean," where *N* and *W* are Class A and the resulting flag is Class B.
+Class A lookback window produces Class B state, evaluated against a Class A threshold to produce a Class B flag. Most anomaly detections are Class C: "volume exceeds *N* stdevs from the *W*-day trailing mean," where *N* and *W* are Class A and the resulting flag is Class B.
 
 ---
 
 ## Static configuration thresholds
 
-All values land in `config/distillation.yaml`. Values are universe-wide — there is no per-profile distillation calibration. The dual portfolio profiles ([rules-and-limits.md § Dual portfolio profiles](../06-risk-guardrails/rules-and-limits.md#dual-portfolio-profiles)) differ in capital and feature flags, not in what the distillation layer computes.
+All values in `config/distillation.yaml`, universe-wide. Dual portfolio profiles ([rules-and-limits.md § Dual portfolio profiles](../06-risk-guardrails/rules-and-limits.md#dual-portfolio-profiles)) differ in capital and feature flags, not in what the layer computes.
 
 ### Anomaly detection thresholds
 

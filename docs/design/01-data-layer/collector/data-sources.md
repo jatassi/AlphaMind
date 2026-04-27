@@ -90,35 +90,33 @@ Behavior:
 
 Every collection function is idempotent — re-running on the same window produces no duplicates. Mechanisms:
 
-- All time-series UPSERTs are keyed on the natural composite key from [storage.md](storage.md) (e.g., `(ticker, timeframe, period_start)` for OHLCV, `(source, series_id, observation_date, revision_number)` for macro).
+- Time-series UPSERTs key on the natural composite key from [storage.md](storage.md) (e.g., `(ticker, timeframe, period_start)` for OHLCV, `(source, series_id, observation_date, revision_number)` for macro).
 - Reference-table writes use INSERT...ON CONFLICT UPDATE on the appropriate unique column.
-- Multi-row writes inside a single function call are wrapped in a single transaction so partial failures don't leave half-written state.
+- Multi-row writes within a single function call are wrapped in a single transaction so partial failures don't leave half-written state.
 
-Bootstrap is interrupt-safe by extension: re-running picks up at the next un-written row; partial completion is not rolled back.
+Bootstrap is interrupt-safe by extension: re-running resumes at the next un-written row; partial completion is not rolled back.
 
 ## Failure semantics
 
-When a collection function fails after exhausting its retry policy:
+When a collection function exhausts its retry policy:
 
 1. The retry decorator raises the underlying SDK exception.
 2. `track_run` catches, writes `error_summary` to `collection_runs`, re-raises.
-3. The caller (runner or REPL) sees the exception and decides how to proceed. The runner's APScheduler isolates the exception and continues other jobs.
+3. The caller (runner or REPL) handles the exception. APScheduler isolates it and continues other jobs.
 
-**No sentinel rows are written to data tables.** Distillation reads what is there; absence is interpreted by the existing fail-closed policy in [api-failure-handling.md](../api-failure-handling.md).
+Distillation reads what is in the data tables; absence is interpreted by the fail-closed policy in [api-failure-handling.md](../api-failure-handling.md).
 
-**Partial responses commit successfully.** When a collection call returns rows for some scope items and fails on others (e.g., 50 of 70 tickers succeed in a single Polygon batch), the successful rows are written within the function's transaction and the failed scope is recorded in `collection_runs.error_summary`. The next scheduled fire targets only the missing scope via the `since`-based catch-up mechanism. There is no quarantine table — partial successes are not held back pending a full-batch retry.
+**Partial responses commit.** When a call returns rows for some scope items and fails on others (e.g., 50 of 70 tickers succeed in a Polygon batch), the successful rows are written within the function's transaction and the failed scope is recorded in `collection_runs.error_summary`. The next scheduled fire targets only the missing scope via the `since`-based catch-up mechanism.
 
 ## Multi-source failover
 
-Deferred for v1. `data_sources.yaml` lists `primary` and `failover` providers per category, and the `critical` retry shape carries `failover: true`. Initial collectors implement only the primary path. Failover dispatch — fall through to the configured fallback when the primary's exhausted retries fire — lands inside per-vendor `client.py` modules when a provider's reliability proves it necessary.
-
-This is a per-collector code change inside the shared library, not a schema change.
+Deferred for v1. `data_sources.yaml` lists `primary` and `failover` providers per category; the `critical` retry shape carries `failover: true`. Initial collectors implement only the primary path. Failover dispatch lands inside per-vendor `client.py` modules when a provider's reliability proves it necessary — a per-collector code change, not a schema change.
 
 ## Future pipeline reuse
 
 When the pipeline's data-layer phase comes online, it imports the same `collect_*` functions and calls them at invocation start with `since=None` (catch-up semantics) or a specific window. The pipeline brings its own scheduling — APScheduler `AsyncIOScheduler` per [infrastructure.md](../../../architecture/infrastructure.md) — but the collection contract (function shape, idempotency, retry, rate limits) is shared.
 
-The split between standalone collector and pipeline at that point is a configuration question (which sources stay on the standalone schedule, which move to invocation-driven), not an architectural one. See [lifecycle.md § Eventual pipeline integration](lifecycle.md#eventual-pipeline-integration).
+Splitting work between standalone collector and pipeline is a configuration question (which sources stay on the standalone schedule vs. move to invocation-driven), not architectural. See [lifecycle.md § Eventual pipeline integration](lifecycle.md#eventual-pipeline-integration).
 
 ---
 

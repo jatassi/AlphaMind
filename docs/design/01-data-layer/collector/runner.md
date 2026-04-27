@@ -4,15 +4,15 @@ The thin process that schedules and dispatches calls into the [data sources libr
 
 ## Process model
 
-A single Python process running `python -m alphamind.collector run`. Roughly fifty lines of code:
+A single Python process running `python -m alphamind.collector run`. Roughly fifty lines:
 
 1. Load `.env` via `python-dotenv`.
-2. Load `config/collector_schedule.yaml` (per-collector cron expressions) and `config/data_sources.yaml` (per-provider rate limits and retry shapes).
+2. Load `config/collector_schedule.yaml` (per-collector cron) and `config/data_sources.yaml` (per-provider rate limits and retry shapes).
 3. Construct APScheduler `BlockingScheduler` with one `ThreadPoolExecutor(max_workers=1)` per vendor.
 4. Register one job per `(vendor, domain)` pair, with the cron trigger from the schedule file and the executor matching the vendor.
 5. Call `scheduler.start()`.
 
-Anything beyond this lives in the shared library or the storage layer.
+Anything beyond this lives in the shared library or storage layer.
 
 ## Vendor-serialized executors
 
@@ -33,9 +33,9 @@ scheduler.add_job(polygon.options.collect_chains,
 
 `max_workers=1` per executor serializes calls within a vendor — `polygon.equity` and `polygon.options` never run concurrently. Different vendors run in parallel.
 
-`max_instances=1` per job prevents an overlap of the same job — if a long-running `polygon.equity` cycle is still in flight when the next 15-minute fire arrives, APScheduler skips the new fire and logs.
+`max_instances=1` per job prevents same-job overlap — if a long-running cycle is still in flight when the next fire arrives, APScheduler skips and logs.
 
-The vendor-serialization layer handles "no two collectors fight at once." The library's per-call rate limiter (see [data-sources.md § Rate limiting](data-sources.md#rate-limiting)) handles "individual jobs don't burst." Together they keep collection inside vendor budgets without per-job tuning.
+Vendor-serialization handles "no two collectors fight at once." The library's per-call rate limiter (see [data-sources.md § Rate limiting](data-sources.md#rate-limiting)) handles "individual jobs don't burst."
 
 ## Cadence
 
@@ -58,9 +58,9 @@ The vendor-serialization layer handles "no two collectors fight at once." The li
 | `polymarket` | `*/30 * * * *` | 30 min |
 | `kalshi` | `*/30 * * * *` | 30 min |
 
-Times are in `US/Eastern` per the timezone setting in `scheduler.yaml`; the runner inherits the same convention.
+Times are `US/Eastern` per `scheduler.yaml`.
 
-This cadence accepts staleness against the pipeline's freshness targets (Q1 nominally <5 min, Q3 <30 min). The standalone collector runs the whole day at the same cadence rather than burst-pulling at invocation time. When the pipeline's data-layer phase comes online, the high-frequency collectors move under invocation-driven pulls and the runner's role narrows to slow-cadence sources — see [lifecycle.md § Eventual pipeline integration](lifecycle.md#eventual-pipeline-integration).
+This cadence accepts staleness against the pipeline's freshness targets (Q1 nominally <5 min, Q3 <30 min). The standalone collector runs the whole day at fixed cadence rather than burst-pulling at invocation time. When the pipeline's data-layer phase comes online, high-frequency collectors move under invocation-driven pulls and the runner narrows to slow-cadence sources — see [lifecycle.md § Eventual pipeline integration](lifecycle.md#eventual-pipeline-integration).
 
 ## Entry points
 
@@ -77,17 +77,17 @@ This cadence accepts staleness against the pipeline's freshness targets (Q1 nomi
 NSSM-managed Windows Service `alphamind-collector`, configured per [infrastructure.md](../../../architecture/infrastructure.md):
 
 - `AppExit Default Restart` with 60 s throttle.
-- `Start Automatic (delayed)` so the service comes up after Windows finishes its boot-time work.
+- `Start Automatic (delayed)` so the service comes up after Windows boot-time work.
 - `AppStdout` / `AppStderr` redirect to `%USERPROFILE%\AlphaMind\logs\collector.out.log` and `collector.err.log`.
-- Service runs under the operator's user account so `%USERPROFILE%` resolves to the operator's profile and outbound network credentials are inherited.
+- Service runs under the operator's user account so `%USERPROFILE%` resolves correctly and outbound network credentials are inherited.
 
-During development, the runner runs in a PowerShell window via the same `python -m alphamind.collector run` command — no NSSM needed.
+During development, the runner runs in a PowerShell window via the same command — no NSSM needed.
 
 ## Logging
 
-Python `logging` with `TimedRotatingFileHandler` (daily rotation, 30-day retention) writes to `%USERPROFILE%\AlphaMind\logs\collector.log`. Per-collector log lines are tagged with the collector name (`polygon.equity`, `fred.macro`, etc.) for grep filtering.
+Python `logging` with `TimedRotatingFileHandler` (daily rotation, 30-day retention) writes to `%USERPROFILE%\AlphaMind\logs\collector.log`. Lines are tagged with the collector name (`polygon.equity`, `fred.macro`, etc.) for grep filtering.
 
-Errors, scheduler events, and collection-run summaries are logged. Per-API-call detail is not logged by default — that level lives in `collection_runs.error_summary` on failure. Raise log level via `LOG_LEVEL=DEBUG` env var during development.
+Errors, scheduler events, and collection-run summaries are logged. Per-API-call detail lives in `collection_runs.error_summary` on failure. Raise level via `LOG_LEVEL=DEBUG`.
 
 ## Configuration files
 
@@ -98,7 +98,7 @@ Errors, scheduler events, and collection-run summaries are logged. Per-API-call 
 | `config/assets.yaml` | Trading universe + benchmark tickers. Read by the data sources library to scope collection. |
 | `.env` | API keys and secrets. Loaded via `python-dotenv` at process start. |
 
-Configuration changes require a runner restart — APScheduler doesn't reload mid-run. `nssm restart alphamind-collector` picks up changes.
+Config changes require a runner restart — APScheduler doesn't reload mid-run. `nssm restart alphamind-collector` picks up changes.
 
 ---
 

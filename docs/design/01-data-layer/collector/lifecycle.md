@@ -1,6 +1,6 @@
 # Lifecycle
 
-How the data layer comes up on first deploy, recovers from downtime, and eventually splits responsibilities with the pipeline's data-layer phase. The shared [data sources library](data-sources.md) and the [runner](runner.md) provide the mechanism; this document specifies the policy.
+How the data layer comes up on first deploy, recovers from downtime, and eventually splits responsibilities with the pipeline's data-layer phase. The shared [data sources library](data-sources.md) and [runner](runner.md) provide the mechanism; this document specifies the policy.
 
 ## Bootstrap
 
@@ -9,7 +9,7 @@ A one-time historical backfill on first deploy. Two facts force it (per [thresho
 1. Distillation's per-ticker baselines have lookback windows of 20–252 days. Waiting for full forward calibration would block paper trading for a year on `gap_fill_baseline_days` alone.
 2. Decisions on missing data are worse than skipped decisions.
 
-Bootstrap provides enough history that the high-frequency baselines reach `calibrated` immediately and the long-tail event-driven baselines start with sector-pooled fallbacks per the existing policy.
+Bootstrap provides enough history that high-frequency baselines reach `calibrated` immediately; long-tail event-driven baselines start with sector-pooled fallbacks.
 
 ### Per-category scope
 
@@ -45,11 +45,11 @@ Steps 3 / 4 / 5 run in parallel across vendors via the standard executor split. 
 python -m alphamind.collector bootstrap [--only <vendor>]
 ```
 
-A single orchestrator function calls each `data_sources.<vendor>.<domain>.bootstrap_*()` in dependency order with progress logging. `--only` runs a single vendor's bootstrap. Per-source functions remain callable directly from a Python REPL.
+A single orchestrator calls each `data_sources.<vendor>.<domain>.bootstrap_*()` in dependency order with progress logging. `--only` runs one vendor. Per-source functions remain callable from a Python REPL.
 
 Bootstrap pulls bars through the last *completed* trading day. The current day's bars are collected by the ongoing 15-min `polygon.equity` schedule once the runner starts.
 
-Idempotent (UPSERT on natural keys per [data-sources.md § Idempotency contract](data-sources.md#idempotency-contract)). Interrupt-safe — re-running resumes; partial completion is not rolled back. Expected runtime 30–60 min, dominated by the equity OHLCV pull.
+Idempotent (UPSERT on natural keys per [data-sources.md § Idempotency contract](data-sources.md#idempotency-contract)) and interrupt-safe — re-running resumes. Expected runtime 30–60 min, dominated by the equity OHLCV pull.
 
 ### Distillation interaction
 
@@ -67,7 +67,7 @@ After bootstrap completes, the calibration states the distillation layer assigns
 | Lead-lag pair estimates (≥10 events) | `bootstrap` for ~1–2 months. |
 | Prediction-market delta | `calibrated` (universe-wide 5pp threshold; no per-contract calibration). |
 
-The data layer's responsibility ends at providing enough history. Calibration-state tagging and bootstrap policy are owned by distillation per [threshold-calibration.md](../../02-distillation-layer/threshold-calibration.md).
+The data layer provides history; calibration-state tagging and bootstrap policy are owned by distillation per [threshold-calibration.md](../../02-distillation-layer/threshold-calibration.md).
 
 ### Volume after bootstrap
 
@@ -83,42 +83,42 @@ Total post-bootstrap database size: ~150–200 MB.
 
 ## Catch-up
 
-Steady-state operation accommodates downtime gaps without a separate code path. Each collection function defaults `since` to:
+Steady-state accommodates downtime gaps without a separate code path. Each collection function defaults `since` to:
 
 ```
 since = max(latest_period_start_in_table_for(ticker, timeframe), now - default_lookback)
 ```
 
-i.e., "since the latest row we have, falling back to a per-collector default lookback if the table is empty." Bootstrap, ongoing collection, and catch-up share the same code path with different `since` values.
+Bootstrap, ongoing collection, and catch-up share the same code path with different `since` values.
 
-`python -m alphamind.collector catch-up` runs every collection function once with `since=None`, exits. Used after extended downtime when the operator wants a single sweep before re-starting the long-running runner.
+`python -m alphamind.collector catch-up` runs every collection function once with `since=None`, then exits. Used after extended downtime when the operator wants a single sweep before re-starting the long-running runner.
 
-The principle: **forward-only by default; targeted single-record revisions are acceptable; no recurring or routine bulk historical sweeps.** Initial bootstrap is a one-time exception. Catch-up is bounded by what is missing rather than by a fixed depth, so it is targeted-by-construction.
+Principle: **forward-only by default; targeted single-record revisions acceptable; no routine bulk historical sweeps.** Bootstrap is the one-time exception. Catch-up is bounded by what's missing, so it's targeted-by-construction.
 
 ## Operator workflow on first deploy
 
-1. Set up `.env` with API keys per [api-key-checklist.md](../api-key-checklist.md). Confirm provider connectivity with each adapter's smoke-test entry point.
+1. Set up `.env` with API keys per [api-key-checklist.md](../api-key-checklist.md). Confirm provider connectivity via each adapter's smoke-test entry point.
 2. Run `python -m alphamind.collector bootstrap`. Watch logs.
 3. Spot-check row counts against the volume table above.
 4. `nssm start alphamind-collector` to begin steady-state collection (or run in a PowerShell window during development).
 5. Verify the next-scheduled cycle of each collector writes new rows successfully.
 
-A revoked-key drill — revoke one provider's key temporarily, verify the runner logs the failure, writes a `failed` row to `collection_runs`, and continues with healthy sources — is the standard go-live check before the system is left unattended.
+Revoked-key drill — revoke one provider's key, verify the runner logs the failure, writes a `failed` row to `collection_runs`, and continues with healthy sources — is the standard go-live check before unattended operation.
 
 ## Eventual pipeline integration
 
-When the pipeline's data-layer phase comes online, two roles split between the runner and the pipeline:
+When the pipeline's data-layer phase comes online, roles split:
 
-- The pipeline owns invocation-time pulls of high-frequency, freshness-critical sources (Q1 equity, Q3 options) that need <5 min currency at decision time.
-- The runner continues to handle slow-cadence sources (FRED, BLS, calendar, corporate actions) on its own schedule — pulling them at every pipeline invocation is wasteful.
+- Pipeline owns invocation-time pulls of high-frequency, freshness-critical sources (Q1 equity, Q3 options) that need <5 min currency at decision time.
+- Runner continues handling slow-cadence sources (FRED, BLS, calendar, corporate actions) — pulling them every invocation is wasteful.
 
-Both processes import the same [data sources library](data-sources.md), write to the same tables, and share the same idempotency contract. The split is a configuration question (which collectors stay on the standalone schedule vs. move to invocation-driven), not an architectural one.
+Both processes import the same [data sources library](data-sources.md), write to the same tables, and share the same idempotency contract. The split is configuration, not architecture.
 
-The migration:
+Migration:
 
 1. Pipeline's data-layer phase implements `collect_*()` calls for high-frequency sources at invocation start.
 2. Operator removes the corresponding jobs from `config/collector_schedule.yaml`.
-3. Runner restarts; schedules only the slow-cadence sources.
+3. Runner restarts; schedules only slow-cadence sources.
 4. Pipeline and runner coexist as long-running services.
 
 No data migration. Both processes share the SQLite database via WAL mode per [data-and-state.md § Concurrency model](../../../architecture/data-and-state.md#concurrency-model).

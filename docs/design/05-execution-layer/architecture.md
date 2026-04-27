@@ -60,52 +60,48 @@ The monitor subscribes to Alpaca's `trade_updates` websocket (via the [broker ad
 
 ### 4b. Guardrail breach detection and protective response
 
-The monitor periodically evaluates portfolio state against guardrail limits using live market data. When market movement, a regime change, or a margin event causes a guardrail breach on an existing position, the monitor determines whether immediate action is required based on the per-rule classification in [breach-behavior.md](../06-risk-guardrails/breach-behavior.md).
+The monitor periodically evaluates portfolio state against guardrail limits using live market data. When market movement, a regime change, or a margin event causes a breach, the monitor determines whether immediate action is required per the per-rule classification in [breach-behavior.md](../06-risk-guardrails/breach-behavior.md).
 
-**Response authority:** The monitor may issue CLOSE commands (only CLOSE — never OPEN, ADD, ADJUST, or CANCEL) to cure detected breaches. Each CLOSE is wrapped in an engine-originated command envelope with a guardrail trigger record providing full traceability. See [portfolio-manager.md](../04-decision-layer/portfolio-manager.md) for the envelope specification.
+**Response authority:** The monitor may issue CLOSE commands (only CLOSE — never OPEN, ADD, ADJUST, or CANCEL) to cure detected breaches. Each CLOSE is wrapped in an engine-originated command envelope with a guardrail trigger record. See [portfolio-manager.md](../04-decision-layer/portfolio-manager.md) for the envelope specification.
 
-**Secondary breach checking:** Before issuing a protective CLOSE, the monitor verifies that the close wouldn't create a new breach (e.g., closing a short that was providing directional balance). If a secondary breach would result, the monitor logs the conflict and either selects an alternative position or defers to the strategist/PM.
+**Secondary breach checking:** Before issuing a protective CLOSE, the monitor verifies the close wouldn't create a new breach (e.g., closing a short that was providing directional balance). If a secondary breach would result, the monitor logs the conflict and either selects an alternative position or defers to the strategist/PM.
 
-**Activity log integration:** Engine-originated envelopes are written to the activity log with the same structure as PM-originated envelopes. The PM, strategist, and feedback loop see a uniform audit trail regardless of command origin.
+**Activity log integration:** Engine-originated envelopes use the same activity log structure as PM-originated envelopes — uniform audit trail regardless of command origin.
 
 ### 4c. Emergency invocation triggering
 
-When market conditions deteriorate beyond what mechanical between-invocation actions can handle, the monitor can trigger an emergency pipeline invocation to bring the full agent pipeline (analyst, strategist, PM) online immediately rather than waiting for the next scheduled run. Trigger conditions include regime jumps, multi-rule breaches, rapid drawdown acceleration, and margin calls. See [breach-behavior.md](../06-risk-guardrails/breach-behavior.md#emergency-invocation-trigger) for the trigger thresholds, cooldown rules, and relationship to the scheduled invocation cadence.
+When market conditions deteriorate beyond what mechanical between-invocation actions can handle, the monitor can trigger an emergency pipeline invocation to bring the full agent pipeline online immediately. Trigger conditions include regime jumps, multi-rule breaches, rapid drawdown acceleration, and margin calls. See [breach-behavior.md](../06-risk-guardrails/breach-behavior.md#emergency-invocation-trigger) for trigger thresholds, cooldown rules, and relationship to the scheduled cadence.
 
 ### 4d. Greeks refresh orchestration
 
-For open option positions, the monitor maintains freshness of the greeks used for derived pricing and continuous guardrail evaluation. It runs a scheduled 15-minute refresh timer per underlying with open options and additionally triggers a refresh when the underlying has moved more than 2% since the last refresh. The monitor already subscribes to underlying price streams for bracket stop trigger detection, so the move-based trigger requires no new data subscription.
-
-On each refresh, the monitor fetches the latest IV from the data pipeline, recomputes greeks via the same Black-Scholes model the guardrail layer uses for OPEN/ADD validation, and writes the refreshed values to the position record consumed by both its own derived-pricing path and the next invocation's guardrail checks. On refresh failure, the monitor falls back to a widened uncertainty buffer on the last known greeks; if the resulting ambiguity prevents a confident breach determination, the monitor escalates to emergency invocation under 4c rather than act on stale data.
-
-This responsibility supports 4e (options bracket derived-price evaluation and P/L-target firing) and 4b (continuous exposure monitoring for options positions). Options-fill execution itself is Alpaca's responsibility — see [broker-adapter.md § Supported instruments](broker-adapter.md).
+For open option positions, the monitor maintains freshness of the greeks used for derived pricing and continuous guardrail evaluation. This supports 4e (options bracket derived-price evaluation and P/L-target firing) and 4b (continuous exposure monitoring for options). Options-fill execution itself is Alpaca's — see [broker-adapter.md § Supported instruments](broker-adapter.md).
 
 **Refresh triggers (whichever fires first):**
 
 - *Scheduled:* every 15 minutes during market hours, per underlying with open option positions.
-- *Move-based:* when the underlying has moved more than 2% cumulative from the price at the last refresh. Measured continuously against the underlying stream the monitor already consumes for 4e.
+- *Move-based:* when the underlying has moved more than 2% cumulative from the price at the last refresh. Measured continuously against the underlying stream the monitor already consumes for 4e — no new data subscription required.
 
-**Refresh action:** fetch the latest IV from the data pipeline's surface snapshot, recompute greeks via Black-Scholes using the underlying price in hand, and write the refreshed values to the position record consumed by both the monitor's derived-pricing path (4e) and the next invocation's guardrail checks.
+**Refresh action:** fetch the latest IV from the data pipeline's surface snapshot, recompute greeks via the Black-Scholes model the guardrail layer uses for OPEN/ADD validation, and write to the position record consumed by both the monitor's derived-pricing path (4e) and the next invocation's guardrail checks.
 
-**Failure semantics:** brief retry on IV fetch failure matching the adapter's submission retry pattern; on exhaustion, the monitor continues with the last successful greeks under a widened derivation uncertainty buffer and records `greeks_refresh_failed` in the activity log. If the stale greeks subsequently leave a breach determination ambiguous, the monitor escalates to emergency invocation (4c) rather than act on uncertain data.
+**Failure semantics:** brief retry on IV fetch failure matching the adapter's submission retry pattern; on exhaustion, continue with the last successful greeks under a widened derivation uncertainty buffer and record `greeks_refresh_failed` in the activity log. If stale greeks leave a breach determination ambiguous, escalate to emergency invocation (4c) rather than act on uncertain data.
 
-**Off-hours:** the scheduled timer pauses outside market hours; the underlying stream stops producing ticks, so neither refresh trigger fires. Greeks hold at the last in-market-hours refresh until the next session open. Theta decay still applies via the derivation formula (Δt is known from the clock); delta, gamma, and vega do not drift because the underlying isn't trading.
+**Off-hours:** the scheduled timer pauses outside market hours; the underlying stream stops producing ticks, so neither trigger fires. Greeks hold at the last in-session refresh. Theta decay still applies via the derivation formula (Δt is known from the clock); delta, gamma, and vega do not drift because the underlying isn't trading.
 
 ### 4e. Options bracket-stop evaluation and P/L-target firing
 
-Alpaca does not support bracket, OCO, or OTO order classes on options ([broker-adapter.md § Order classes](broker-adapter.md)). AlphaMind's mandatory thesis-linked bracket requirement ([orders-and-brackets.md](orders-and-brackets.md)) is therefore satisfied for options at the monitor level, regardless of paper vs. live mode.
+Alpaca does not support bracket, OCO, or OTO order classes on options ([broker-adapter.md § Order classes](broker-adapter.md)). AlphaMind's mandatory thesis-linked bracket requirement ([orders-and-brackets.md](orders-and-brackets.md)) is therefore satisfied for options at the monitor level, regardless of mode.
 
-**Price-based invalidation (thesis stop).** The stop trigger evaluates against the **underlying equity's real-time stream** — the same clean, high-fidelity feed used for equity stops. No derived pricing is involved in the trigger decision. When the trigger fires, the monitor submits a closing market order on the option position via the broker adapter. The actual fill price depends on Alpaca's options fill at the moment of submission; derivation error does not enter the trigger.
+**Price-based invalidation (thesis stop).** The trigger evaluates against the **underlying equity's real-time stream** — the same clean feed used for equity stops; no derived pricing in the trigger decision. When the trigger fires, the monitor submits a closing market order on the option position via the broker adapter. Actual fill price depends on Alpaca's options fill at submission.
 
-**P/L-based targets.** Take-profit legs defined in P/L terms ("close at 80% profit on premium") use the derived options price (from 4d) for trigger evaluation, with the derivation uncertainty buffer applied. A configurable margin on top of the target (default: 5% of estimated spread) prevents false firings from derivation noise.
+**P/L-based targets.** Take-profit legs defined in P/L terms ("close at 80% profit on premium") use the derived options price (from 4d), with the derivation uncertainty buffer applied. A configurable margin on top of the target (default: 5% of estimated spread) prevents false firings from derivation noise.
 
-**Guardrail P/L monitoring.** Position-level max-loss guardrails on options positions use the same derived pricing. This is the capital-protection layer that catches greek-driven value erosion independently of underlying price movement. Under refresh failure, the monitor widens the uncertainty buffer; if breach determination remains ambiguous, it escalates to emergency invocation (4c).
+**Guardrail P/L monitoring.** Position-level max-loss guardrails on options positions use the same derived pricing — the capital-protection layer catching greek-driven value erosion independently of underlying movement. Under refresh failure, the monitor widens the uncertainty buffer; if breach determination remains ambiguous, it escalates to emergency invocation (4c).
 
-**Strategy positions.** Multi-leg strategies evaluate stops on the underlying and close the entire strategy via market orders. Alpaca's `mleg` order class does not support contingent submission, so the monitor submits a fresh `mleg` closing order (or per-leg market orders if Alpaca rejects a combined close) when the stop fires.
+**Strategy positions.** Multi-leg strategies evaluate stops on the underlying and close the entire strategy via market orders. Alpaca's `mleg` does not support contingent submission, so the monitor submits a fresh `mleg` closing order (or per-leg market orders if Alpaca rejects a combined close) when the stop fires.
 
 ### Why first-class?
 
-The continuous monitor is mode-agnostic: its guardrail enforcement, emergency invocation, greeks refresh, and options bracket-stop responsibilities apply identically in paper and live trading. Even 4a (fill-stream consumption) is identical between modes — same websocket shape, only the URL differs. The monitor is persistent system infrastructure, not a mode-specific detail.
+The continuous monitor is mode-agnostic: every responsibility applies identically in paper and live trading. Even 4a is identical between modes — same websocket shape, only the URL differs. The monitor is persistent system infrastructure, not a mode-specific detail.
 
 ---
 
@@ -116,13 +112,13 @@ The fill report is the OMS-facing projection of Alpaca's `trade_updates` event. 
 Each fill report contains:
 
 - **Order ID:** the OMS's stable `client_order_id`, correlating back to the original submission
-- **Alpaca order ID:** Alpaca's internal identifier at the time of the fill — may differ from the original if the order has been replaced via PATCH. Preserved for audit
-- **Fill timestamp:** Alpaca's event timestamp, preserved through the pipeline — not the invocation collection time
+- **Alpaca order ID:** Alpaca's internal identifier at fill time — may differ from the original if the order was replaced via PATCH. Preserved for audit
+- **Fill timestamp:** Alpaca's event timestamp, preserved through the pipeline — not collection time
 - **Fill price:** raw execution price as reported by Alpaca
 - **Fill quantity:** shares or contracts filled; may be less than order quantity for partial fills
-- **Remaining quantity:** unfilled portion, if any — zero for complete fills
+- **Remaining quantity:** unfilled portion, zero for complete fills
 - **Order status:** mapped from Alpaca's event type — `filled`, `partially_filled`, `canceled`, `expired`, `rejected`, `stopped`, `done_for_day`
-- **Execution venue:** which exchange filled the order (populated in live mode; absent or `paper` in paper mode)
+- **Execution venue:** exchange that filled the order (populated in live mode; absent or `paper` in paper mode)
 - **`live_execution_estimate`** (paper mode only): metadata attached by the [paper-evaluation harness](paper-evaluation-harness.md) — estimated spread, impact, regulatory-fee drag, and a live-adjusted fill price. Absent in live mode, where execution costs are real
 
-Regulatory fees are not present in the per-fill report — Alpaca reports them at EOD via the account activities endpoint. The OMS records fills pre-fee and applies a daily `fee_reconciliation` event against raw activity data; the paper-evaluation harness separately estimates the expected fee drag at fill time for live-execution estimation. See [broker-adapter.md § Fee reporting](broker-adapter.md) for details.
+Regulatory fees are not in the per-fill report — Alpaca reports them at EOD via the account activities endpoint. The OMS records fills pre-fee and applies a daily `fee_reconciliation` event; the harness separately estimates expected fee drag at fill time for live-execution estimation. See [broker-adapter.md § Fee reporting](broker-adapter.md).

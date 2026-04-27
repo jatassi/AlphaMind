@@ -1,16 +1,16 @@
 # Asset universe validation
 
-How the asset universe is verified, persisted as machine-readable config, and updated over time. The selection criteria in [asset-universe.md](asset-universe.md) define what makes a ticker eligible (liquidity, coverage, beta, market cap, options chain). This doc makes those criteria operationally precise — what data backs each criterion, what threshold passes, how often the universe is re-evaluated, and how the operator adds or removes a ticker.
+How the asset universe is verified, persisted as machine-readable config, and updated over time. [asset-universe.md](asset-universe.md) defines eligibility criteria (liquidity, coverage, beta, market cap, options chain). This doc makes them operationally precise — backing data per criterion, threshold values, re-evaluation cadence, and the operator add/remove workflow.
 
-The companion [asset-universe.md](asset-universe.md) is descriptive (sector composition, rationale per sector, selection criteria as written prose). This doc is procedural (concrete measurement specifications, the YAML schema, and the operator workflow).
+[asset-universe.md](asset-universe.md) is descriptive (sector composition, rationale, prose criteria). This doc is procedural (measurement specs, YAML schema, operator workflow).
 
 ---
 
 ## Scope
 
-**In scope.** Each criterion that gates a ticker's inclusion in the universe; the configuration file that holds the resolved ticker list; the validation procedure the operator runs to verify each ticker against the criteria; the cadence at which validation re-runs; the procedure for adding a candidate or removing a failing ticker, including held-position interaction.
+**In scope.** Per-criterion measurement gates; the config file holding the resolved ticker list; the validation procedure; re-evaluation cadence; add/remove procedure including held-position interaction.
 
-**Out of scope** (owned by other docs, not duplicated here):
+**Out of scope** (owned elsewhere):
 
 | Concern | Authoritative spec |
 |---|---|
@@ -24,7 +24,7 @@ The companion [asset-universe.md](asset-universe.md) is descriptive (sector comp
 
 ## Where the universe lives
 
-The authoritative ticker list is `config/assets.yaml`. Reloaded at the start of every invocation per [configuration-management.md § Reload model](configuration-management.md#reload-model), like every other YAML file under `config/`. Operator edits land at the next scheduled trigger.
+The authoritative ticker list is `config/assets.yaml`. Reloaded at every invocation start per [configuration-management.md § Reload model](configuration-management.md#reload-model). Operator edits land at the next scheduled trigger.
 
 ```yaml
 last_full_validation: 2026-04-25
@@ -55,17 +55,17 @@ benchmarks:
   GLD:  { role: intermarket,  description: "SPDR Gold Shares" }
 ```
 
-The `discovery_sources` block names a sector ETF per sector to drive [Candidate discovery](#candidate-discovery). Each entry specifies the ETF ticker, the vendor (`spdr` or `ishares`), and — for iShares — the product ID encoded in the holdings-CSV download URL.
+The `discovery_sources` block names a sector ETF per sector to drive [Candidate discovery](#candidate-discovery). Each entry specifies the ETF ticker, the vendor (`spdr` or `ishares`), and — for iShares — the product ID encoded in the holdings-CSV URL.
 
-The universe is universe-wide — no per-profile composition. A profile selects which sectors are active via `active_sectors`; within an active sector, every ticker listed in `assets.yaml` is in scope. The dual portfolio profiles ([rules-and-limits.md § Dual portfolio profiles](06-risk-guardrails/rules-and-limits.md#dual-portfolio-profiles)) differ in capital and feature flags, not in which tickers exist.
+The universe is universe-wide — no per-profile composition. A profile selects which sectors are active via `active_sectors`; within an active sector, every ticker in `assets.yaml` is in scope. Dual portfolio profiles ([rules-and-limits.md § Dual portfolio profiles](06-risk-guardrails/rules-and-limits.md#dual-portfolio-profiles)) differ in capital and feature flags, not in tickers.
 
-`last_full_validation` records the calendar date the validation procedure last ran against every ticker and every ticker passed. Per-ticker history (when a name was added, when a single name was re-validated mid-cycle) lives in git, not in the YAML.
+`last_full_validation` records the calendar date validation last ran against every ticker and every ticker passed. Per-ticker history (when a name was added, when a single name was re-validated mid-cycle) lives in git, not the YAML.
 
 ---
 
 ## Validation criteria
 
-Five criteria gate inclusion. All thresholds are universe-wide. The five criteria apply to `sectors[*]` entries only — `benchmarks` are reference instruments for cross-asset distillation and are not subject to the selection criteria.
+Five criteria gate inclusion, all universe-wide. The criteria apply to `sectors[*]` entries only — `benchmarks` are reference instruments for cross-asset distillation, not subject to selection criteria.
 
 ### Average daily volume
 
@@ -75,7 +75,7 @@ Five criteria gate inclusion. All thresholds are universe-wide. The five criteri
 | Lookback | 60 trading days ending on the validation date |
 | Computation | `mean(volume)` and `mean(volume * close)` over the window |
 | Threshold | `mean(volume) > 2,000,000` shares OR `mean(volume * close) > $50,000,000` notional |
-| Rationale | Either condition satisfies fill realism for the position sizes the system uses. The OR allows lower-priced names with sufficient share volume and higher-priced names with sufficient notional to qualify on the same rule. Sixty trading days smooths through earnings spikes and quiet weeks while remaining responsive to a structural change in liquidity. |
+| Rationale | Either condition satisfies fill realism for the system's position sizes. The OR lets lower-priced names qualify on share volume and higher-priced names on notional. Sixty trading days smooths earnings spikes and quiet weeks while remaining responsive to structural liquidity changes. |
 
 ### Analyst coverage
 
@@ -85,7 +85,7 @@ Five criteria gate inclusion. All thresholds are universe-wide. The five criteri
 | Lookback | Most recent month-end snapshot |
 | Computation | `sum(strongBuy + buy + hold + sell + strongSell)` |
 | Threshold | `total >= 10` |
-| Rationale | Ten or more analysts ensures news density, earnings-estimate breadth, and revision flow sufficient for the analyst agent to find context. Below ten, sell-side coverage thins enough that a single house's view dominates the consensus signal — undesirable for an information-synthesis edge that depends on disagreement and revision flow. |
+| Rationale | Ten-plus analysts ensures news density, earnings-estimate breadth, and revision flow sufficient for the analyst agent. Below ten, a single house's view dominates the consensus signal — undesirable for an information-synthesis edge that depends on disagreement and revision flow. |
 
 ### Beta
 
@@ -95,7 +95,7 @@ Five criteria gate inclusion. All thresholds are universe-wide. The five criteri
 | Lookback | 90 trading days ending on the validation date |
 | Computation | `cov(return_ticker, return_spy) / var(return_spy)` over the window, returns computed close-to-close |
 | Threshold | `abs(beta) >= 0.6` |
-| Rationale | The criterion's purpose is tradable intra-window dispersion at the system's 4–72h horizon, which is what absolute beta measures. Signed beta conflates dispersion magnitude with correlation direction — a name at β = −0.7 has the same tradable dispersion as one at +0.7, just moving opposite SPY, and is arguably more useful for a swing system (independent catalyst structure, hedge value). The 0.6 absolute floor drops names whose returns are genuinely small in either direction (typical of low-vol infrastructure and utility-like names) while admitting negatively-correlated names that carry their own catalyst structure (energy on commodity dynamics, defensive plays). |
+| Rationale | The purpose is tradable intra-window dispersion at 4–72h, which absolute beta measures. Signed beta conflates dispersion magnitude with correlation direction — β = −0.7 has the same tradable dispersion as +0.7 and is arguably more useful for a swing system (independent catalyst structure, hedge value). The 0.6 floor drops names with genuinely small returns in either direction (low-vol infrastructure, utility-like names) while admitting negatively-correlated names with their own catalyst structure (energy on commodities, defensives). |
 
 ### Market capitalization
 
@@ -104,7 +104,7 @@ Five criteria gate inclusion. All thresholds are universe-wide. The five criteri
 | Data source | Polygon `/v3/reference/tickers/{ticker}` `market_cap` field |
 | Lookback | None — point-in-time |
 | Threshold | `market_cap >= $10,000,000,000` |
-| Rationale | Ten-billion-dollar floor establishes institutional coverage density and absorbs the system's position sizes without per-trade market impact. The floor also filters small-caps where information environments are thinner and idiosyncratic news (single executive, single product line) dominates the signal. |
+| Rationale | Ten-billion-dollar floor establishes institutional coverage density and absorbs the system's position sizes without per-trade impact. Also filters small-caps where information environments are thin and idiosyncratic news (one executive, one product line) dominates. |
 
 ### Options chain liquidity
 
@@ -114,7 +114,7 @@ Five criteria gate inclusion. All thresholds are universe-wide. The five criteri
 | Reference expiry | The nearest standard monthly expiry within 45 calendar days of the validation date |
 | Computation | Sum of open interest across all contracts (calls + puts) within ±10% of spot at the reference expiry |
 | Threshold | `total_oi >= 5,000` contracts |
-| Rationale | Five thousand near-the-money OI carries the options-flow signals (category 3 in [external/quantitative.md](01-data-layer/external/quantitative.md)) above the noise floor that single-counterparty hedging activity creates on sparse chains. The same threshold also implies tradable liquidity for the options-enabled profiles, sized for the position quantities those profiles allow. |
+| Rationale | 5,000 NTM OI carries options-flow signals (category 3 in [external/quantitative.md](01-data-layer/external/quantitative.md)) above the noise floor of single-counterparty hedging on sparse chains. Also implies tradable liquidity for options-enabled profiles at their position sizes. |
 
 ---
 
@@ -122,10 +122,10 @@ Five criteria gate inclusion. All thresholds are universe-wide. The five criteri
 
 An offline operator workflow run on the cadence below. Per ticker in `config/assets.yaml`:
 
-1. Operator pulls the data sources named in [Validation criteria](#validation-criteria).
-2. Operator computes each criterion's value.
-3. Operator compares each value against its threshold.
-4. Operator records pass/fail per criterion with the computed value.
+1. Pull the data sources named in [Validation criteria](#validation-criteria).
+2. Compute each criterion's value.
+3. Compare each value against its threshold.
+4. Record pass/fail per criterion with the computed value.
 
 The output is a per-ticker report with one row per criterion. Example:
 
@@ -145,71 +145,71 @@ NFLX  [fail: beta]
   Options OI (NTM):  118,000 contracts                               pass
 ```
 
-The report is the only output. The operator reads it and decides which failures warrant a YAML edit, which mirrors the operator-driven Class A review pattern in [02-distillation-layer/threshold-calibration.md § Update process](02-distillation-layer/threshold-calibration.md#update-process) — automated computation paired with manual judgment.
+The report is the only output. The operator reads it and decides which failures warrant a YAML edit — the operator-driven Class A review pattern from [02-distillation-layer/threshold-calibration.md § Update process](02-distillation-layer/threshold-calibration.md#update-process), automated computation plus manual judgment.
 
-A data-source failure for one ticker (Polygon returns no data, Finnhub returns an error) is reported as `unknown` for that criterion. The ticker carries forward unchanged in the universe pending a successful re-validation; the operator does not act on a missing measurement.
+A data-source failure for one ticker (Polygon no data, Finnhub error) is reported as `unknown` for that criterion. The ticker carries forward unchanged pending successful re-validation; the operator does not act on a missing measurement.
 
-When every ticker has passed in a single run, the operator updates `last_full_validation` to that run's date in the same YAML edit that lands any add/remove decisions.
+When every ticker passes in a single run, the operator updates `last_full_validation` to that date in the same edit that lands any add/remove decisions.
 
 ---
 
 ## Re-evaluation cadence
 
-The default cadence is **monthly during paper trading** and **quarterly once live**, plus on-demand whenever a structured trigger fires.
+Default: **monthly during paper trading**, **quarterly once live**. Plus on-demand whenever a structured trigger fires.
 
-**Structured triggers — re-validate immediately when any of these are observed:**
+**Structured triggers — re-validate immediately:**
 
-- A held position experiences sustained liquidity deterioration (sustained widening of the bid-ask spread or volume below 50% of recent baseline) — re-validate that single ticker.
-- A ticker's index inclusion changes (e.g., dropped from S&P 500), which often correlates with structural changes in coverage and liquidity.
-- A corporate event affects the eligibility of an existing ticker: merger close, spin-off completion, going-private transaction, bankruptcy filing.
-- The feedback loop ([project-tracker.md § Phase 4](../project-tracker.md#phase-4--maturation-before-live-transition)) shows a sector with persistently weak thesis quality — re-validate that sector for whether its current names match the rest of the universe's information density.
-- A regime jump to crisis or back to low-vol — beta and ADV characteristics shift enough to warrant a check, especially for tickers near a threshold edge.
+- A held position has sustained liquidity deterioration (widened spread or volume <50% of recent baseline) — re-validate that ticker.
+- Ticker's index inclusion changes (e.g., dropped from S&P 500) — often correlates with coverage and liquidity changes.
+- A corporate event affects eligibility: merger close, spin-off completion, going-private, bankruptcy.
+- The feedback loop ([project-tracker.md § Phase 4](../project-tracker.md#phase-4--maturation-before-live-transition)) shows a sector with persistently weak thesis quality — re-validate that sector.
+- A regime jump to crisis or back to low-vol — beta and ADV shift enough to warrant a check, especially near threshold edges.
 
-The cadence is the floor; structured triggers add re-validation events on top.
+Cadence is the floor; structured triggers stack on top.
 
 ---
 
 ## Add and remove process
 
-**Adding a candidate.** The operator nominates a ticker (typically by sector — the natural ask is "we should have ABC in financials"), runs the validation procedure against the candidate, and reads the report. If all five criteria pass, the operator edits `assets.yaml` to add the ticker to the appropriate sector array. The change takes effect at the next invocation reload.
+**Adding a candidate.** Operator nominates a ticker (typically by sector — "we should have ABC in financials"), runs validation, reads the report. If all five pass, edit `assets.yaml` to add the ticker to the sector array. Effective at next invocation reload.
 
-**Removing a failing ticker that the system does not hold.** The operator deletes the ticker from `assets.yaml`. The change takes effect at the next reload, and downstream data ingestion stops scoping that ticker.
+**Removing a failing ticker that the system does not hold.** Delete from `assets.yaml`. Effective at next reload; downstream data ingestion stops scoping that ticker.
 
-**Removing a failing ticker that the system holds.** Held positions complicate removal. The operator chooses between two paths based on the failing criterion:
+**Removing a failing ticker the system holds.** Two paths based on the failing criterion:
 
-- **Close-first.** When the failing criterion materially affects the trade's risk (e.g., liquidity deterioration that widens exit slippage, a market-cap drop that signals structural deterioration), the operator closes the position via the strategist or by direct intervention, then removes the ticker.
-- **Carry-to-exit.** When the failure is a drift below threshold without immediate risk implication (e.g., beta dropped from 0.85 to 0.75 due to a calm regime), the operator can leave the ticker in place until the position closes naturally, then remove it.
+- **Close-first.** When the failing criterion materially affects trade risk (liquidity deterioration widening exit slippage, market-cap drop signaling structural deterioration), close the position via the strategist or direct intervention, then remove.
+- **Carry-to-exit.** When the failure is a drift without immediate risk implication (beta dropped from 0.85 to 0.75 in a calm regime), leave the ticker in place until the position closes naturally, then remove.
 
-The operator's calibration log records the decision and the rationale, alongside the YAML diff. The single source of truth for what is in scope is `assets.yaml`.
+The operator's calibration log records the decision and rationale alongside the YAML diff. `assets.yaml` is the single source of truth for what is in scope.
 
-Sector-level edits (adding healthcare, dropping energy) are out of scope here — they reshape the `sectors:` keys in `assets.yaml`, the per-profile `active_sectors` arrays, the analysis-layer domain researcher catalog, and the prompts those researchers run.
+Sector-level edits (adding healthcare, dropping energy) are out of scope — they reshape `sectors:` keys, per-profile `active_sectors`, the analysis-layer domain researcher catalog, and researcher prompts.
 
 ---
 
 ## Candidate discovery
 
-The validation procedure above is unidirectional — it surfaces names in the universe that have stopped qualifying. Candidate discovery is the inverse: it surfaces names *outside* the universe that *would* qualify if added. Run on a slower cadence than re-validation (operator-driven, typically alongside or following a regular validation cycle).
+The validation procedure surfaces names *in* the universe that stopped qualifying. Candidate discovery is the inverse: names *outside* the universe that *would* qualify. Operator-driven, slower cadence — typically alongside a regular validation cycle.
 
-**Pool definition.** Each sector maps to a canonical sector ETF in `discovery_sources`. The ETF's current holdings define the discovery pool for that sector. The four defaults — XLK (SPDR Technology Select Sector), SOXX (iShares Semiconductor), XLF (SPDR Financial Select Sector), XLE (SPDR Energy Select Sector) — were chosen because each is the broadly-recognized index proxy for its sector, and their issuers publish daily holdings CSV/XLSX downloads at stable URLs. Holdings drift over time as the index rebalances; the pool reflects the index's view of sector membership at the time of the discovery run.
+**Pool definition.** Each sector maps to a canonical sector ETF in `discovery_sources`. The ETF's current holdings define the discovery pool. The four defaults — XLK (SPDR Tech), SOXX (iShares Semis), XLF (SPDR Financials), XLE (SPDR Energy) — are the broadly-recognized index proxies, and their issuers publish daily holdings at stable URLs. Holdings drift as the index rebalances; the pool reflects sector membership at run time.
 
-**Vendor support.** `vendor: spdr` resolves to the State Street XLSX endpoint; `vendor: ishares` resolves to the iShares CSV endpoint with the `ishares_product_id` encoded in the URL. The script's holdings parsers reject non-equity rows (cash, currency forwards, futures, legal disclaimer text) by ticker-shape regex and — for iShares — by the `Asset Class` column.
+**Vendor support.** `vendor: spdr` resolves to the State Street XLSX endpoint; `vendor: ishares` resolves to the iShares CSV endpoint with `ishares_product_id` encoded in the URL. Holdings parsers reject non-equity rows (cash, currency forwards, futures, disclaimer text) by ticker-shape regex and, for iShares, by the `Asset Class` column.
 
 **Procedure.** For each sector with a `discovery_sources` entry:
 
-1. Fetch the ETF's current holdings.
-2. Filter out tickers already in the universe (across *all* sectors — a single sector ETF may overlap multiple universe sectors; e.g., XLK includes semiconductor names that we partition into our `semis` sector).
+1. Fetch the ETF's holdings.
+2. Filter out tickers already in the universe across *all* sectors — sector ETFs may overlap (e.g., XLK includes semiconductor names we partition into `semis`).
 3. Run the five validation criteria against each remaining candidate.
-4. Surface the passing candidates as add candidates; report the failing candidates as a one-line summary so the operator can see what almost qualified and why.
+4. Surface passing candidates; report failing candidates as a one-line summary so the operator sees what almost qualified.
 
-**Output is informational.** Discovery emits a report keyed by sector. The operator reviews passing candidates and decides which to add via the standard [Adding a candidate](#add-and-remove-process) procedure. The script never edits `assets.yaml`.
+**Output is informational.** Discovery emits a report keyed by sector. The operator reviews and adds via the standard [Adding a candidate](#add-and-remove-process) procedure. The script never edits `assets.yaml`.
 
-**When to run.** Quarterly during paper trading (alongside the regular re-validation), or whenever an [structured trigger](#re-evaluation-cadence) indicates the universe should be reconsidered as a whole. Discovery is heavier than validation (155+ candidates × 5 criteria), so it isn't a per-invocation operation.
+**When to run.** Quarterly during paper trading (alongside re-validation), or on a [structured trigger](#re-evaluation-cadence). Heavier than validation (155+ candidates × 5 criteria) — not a per-invocation operation.
 
 ---
 
 ## Validation invariants
 
-Run as part of the configuration-management cross-reference and semantic self-test layers ([configuration-management.md § Validation](configuration-management.md#validation)) when `assets.yaml` is loaded. Failure aborts the invocation and alerts the operator.
+Run as part of the cross-reference and semantic self-test layers ([configuration-management.md § Validation](configuration-management.md#validation)) when `assets.yaml` loads. Failure aborts the invocation and alerts the operator.
 
 | Invariant | Layer | Reason |
 |---|---|---|
@@ -222,7 +222,7 @@ Run as part of the configuration-management cross-reference and semantic self-te
 | Every `discovery_sources[*].vendor` is in `{spdr, ishares}`; iShares entries carry an `ishares_product_id` | Parse-time | The fetcher dispatches on vendor and requires the product ID for iShares URLs. |
 | Every benchmark `role`, if `benchmarks` is present, is in `{broad_market, breadth, sector_etf, intermarket}` | Parse-time | The role is consumed by the data-source layer to scope cross-asset queries. |
 
-The invariants confirm the file is well-formed. They do not re-run the five validation criteria at config load — those are validated by the offline procedure on the cadence above.
+The invariants confirm the file is well-formed. They do not re-run the five validation criteria at config load — those are the offline procedure's job on the cadence above.
 
 ---
 

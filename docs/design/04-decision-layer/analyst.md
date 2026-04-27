@@ -100,74 +100,74 @@ The optional `entry_window` field communicates when the entry should be executed
 
 ## Opportunity ranking and prioritization
 
-The analyst does not rank or compare proposals. Each recommendation is self-contained and stands on its own merits. Cross-opportunity prioritization — which trade to execute first, which to cut under capital pressure — is the [portfolio manager's](portfolio-manager.md) job, performed with full portfolio context the analyst does not have.
+The analyst does not rank or compare proposals. Each recommendation stands on its own merits. Cross-opportunity prioritization — which trade executes first, which is cut under capital pressure — is the [portfolio manager's](portfolio-manager.md) job, performed with full portfolio context.
 
-The analyst's contribution in this area is limited to three behaviors: an inclusion threshold, a non-overlap filter, and a conventional presentation order.
+The analyst's contribution is three behaviors: an inclusion threshold, a non-overlap filter, and a presentation order.
 
 ### Inclusion threshold
 
-Only propose setups the analyst would commit capital to if acting alone. The strongest ranking signal the analyst produces is what it chose to exclude.
+Propose only setups worth committing capital to acting alone. The strongest ranking signal the analyst produces is what it excluded.
 
-- Conviction 1 setups should appear rarely — only when asymmetric payoff justifies a small position even on single-signal evidence.
-- Conviction 2 setups should carry a clear acknowledgment of contradictions and a specific reason the analyst believes the signal despite them.
+- Conviction 1 setups should appear rarely — only when asymmetric payoff justifies a small position on single-signal evidence.
+- Conviction 2 setups should carry a clear acknowledgment of contradictions and a specific reason to believe the signal anyway.
 - On quiet days, zero or one recommendation is valid and preferable to padding.
 
-**No numeric cap on count.** The number of recommendations per invocation emerges from this threshold and tracks signal availability — zero or one on quiet days, many on exceptional days. A fixed or soft cap would anchor the analyst toward a number rather than signal, and forced truncation would require cross-opportunity ranking the analyst is not positioned to do. Genuine stress conditions (regime jumps, margin events) trigger [emergency invocations or halt mode](../06-risk-guardrails/state-delivery.md#halt-mode-header-modifications), which constrain generation upstream. Calibration drift is monitored across invocations via the feedback loop, not prevented per-invocation.
+**No numeric cap.** Recommendation count emerges from the threshold and tracks signal availability. A fixed or soft cap would anchor toward a number rather than signal, and forced truncation would require cross-opportunity ranking the analyst is not positioned to do. Stress conditions (regime jumps, margin events) trigger [emergency invocations or halt mode](../06-risk-guardrails/state-delivery.md#halt-mode-header-modifications), constraining generation upstream. Calibration drift is monitored across invocations via the feedback loop.
 
 The [conviction scale calibration target](#conviction-scale) defines the expected distribution across invocations.
 
 ### Non-overlap filter
 
-Filter proposals before finalizing to avoid presenting structurally redundant or collectively non-viable sets. The [proposal pre-processor](proposal-pre-processor.md) flags analyst-vs-strategist same-underlying conflicts for the PM as annotations but does not suppress them — the analyst's self-filter is what prevents the noise from reaching the PM in the first place.
+Filter proposals before finalizing to avoid structurally redundant or collectively non-viable sets. The [proposal pre-processor](proposal-pre-processor.md) flags analyst-vs-strategist same-underlying conflicts as annotations but does not suppress them — the analyst's self-filter prevents noise from reaching the PM in the first place.
 
-- **Same-underlying duplicates (intra-invocation).** If two proposals target the same underlying in the same direction (equity long plus call long on NVDA, two different call strikes on the same name), pick the best expression and drop the others. These are variants of the same bet, not independent opportunities.
-- **Held-book duplicates.** If a candidate's underlying appears in the analyst's [`Held positions` block](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header) with the same direction at meaningful size, drop the candidate. The [strategist](strategist.md) owns add/hold/reduce for existing positions and will evaluate whether the current thesis supports increasing exposure — re-proposing from the analyst side creates redundant work and noise for the PM. Exception: an opposite-direction thesis on a held name (a new short on a held long, or vice versa) is genuine new information and should be surfaced; the strategist's thesis-status assessment will reconcile it against the existing thesis.
-- **Collectively breaching headroom.** When the [guardrail validation tool's](../06-risk-guardrails/state-delivery.md#guardrail-validation-tool) cumulative check fails across multiple proposals, raise the inclusion threshold until the remaining set fits, rather than revising sizes indefinitely to squeeze everything in.
+- **Same-underlying duplicates (intra-invocation).** If two proposals target the same underlying in the same direction (NVDA equity long plus NVDA call long, or two NVDA call strikes), pick the best expression and drop the rest. These are variants of the same bet.
+- **Held-book duplicates.** If a candidate's underlying appears in the [`Held positions` block](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header) with the same direction at meaningful size, drop it. The [strategist](strategist.md) owns add/hold/reduce on existing positions. Exception: an opposite-direction thesis on a held name (new short on a held long, or vice versa) is genuine new information and should be surfaced; the strategist will reconcile against the existing thesis.
+- **Collectively breaching headroom.** When the [guardrail validation tool's](../06-risk-guardrails/state-delivery.md#guardrail-validation-tool) cumulative check fails across multiple proposals, raise the inclusion threshold until the remaining set fits — don't revise sizes indefinitely to squeeze everything in.
 
-Catalyst overlap (e.g., two different underlyings riding the same macro catalyst) is not inherently a filter trigger — proposals may share a catalyst and still be independent opportunities — but the analyst should weigh reduced signal independence when considering inclusion.
+Catalyst overlap (different underlyings riding the same macro catalyst) is not inherently a filter trigger — proposals may share a catalyst and remain independent — but reduced signal independence weighs against inclusion.
 
 ### Presentation order
 
-Recommendations are presented conviction descending, with entry window urgency as tiebreaker (binary decay with nearest deadline first, then gradual, then no window), and risk asymmetry as secondary tiebreaker (defined-risk before open-ended). This is a readability convention so the portfolio manager can scan high-signal setups first — not an expression of the analyst's execution preference. Anti-ranking discipline (each proposal stands on its own merits; do not cross-compare) is enforced at the system prompt — see [`prompts/decision/analyst.md`](../../prompts/decision/analyst.md).
+Conviction descending, with entry-window urgency as tiebreaker (binary decay with nearest deadline first, then gradual, then no window), and risk asymmetry as secondary tiebreaker (defined-risk before open-ended). This is a readability convention so the PM can scan high-signal setups first — not an execution preference. Anti-ranking discipline (each proposal stands alone; no cross-comparison) is enforced at the system prompt — see [`prompts/decision/analyst.md`](../../prompts/decision/analyst.md).
 
 ---
 
 ## Abandoned openings from prior invocation
 
-OPEN commands approved by the PM in the prior invocation but abandoned at broker submission (per the Phase 2 write-path policy in [state-persistence.md](../05-execution-layer/state-persistence.md) and [broker-adapter.md](../05-execution-layer/broker-adapter.md)) are surfaced in the analyst guardrail state header's `Abandoned openings` block — see [state-delivery.md](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header) for format and purpose.
+OPEN commands approved by the PM but abandoned at broker submission (per the Phase 2 write-path policy in [state-persistence.md](../05-execution-layer/state-persistence.md) and [broker-adapter.md](../05-execution-layer/broker-adapter.md)) are surfaced in the analyst guardrail state header's `Abandoned openings` block — see [state-delivery.md](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header).
 
-Each entry is a prompt to re-evaluate the original thesis on current signals, not a retry obligation. If the thesis is re-expressed as a new recommendation (new `REC-n`), the [Conviction scale](#conviction-scale) and [Inclusion threshold](#inclusion-threshold) apply unchanged — prior PM approval is not evidence that elevates conviction or relaxes the threshold, and the new narrative must cite current synthesizer references rather than copy forward the prior invocation's reasoning. If current signals no longer support the thesis, the entry lapses; no "decline" artifact is required. Never fabricate a reference to a prior-invocation source; only cite references present in the current synthesizer brief.
+Each entry is a prompt to re-evaluate the original thesis on current signals, not a retry obligation. If re-expressed as a new recommendation (new `REC-n`), the [Conviction scale](#conviction-scale) and [Inclusion threshold](#inclusion-threshold) apply unchanged — prior PM approval does not elevate conviction or relax the threshold, and the new narrative must cite current synthesizer references. If current signals no longer support the thesis, the entry lapses; no "decline" artifact is required. Cite only references present in the current synthesizer brief.
 
 ---
 
 ## Pre-submission guardrail validation
 
-Before finalizing recommendations, the analyst validates each proposal against the current guardrail state. This ensures that only guardrail-compliant proposals reach the portfolio manager — the PM evaluates thesis quality and portfolio coherence, not guardrail feasibility.
+Before finalizing recommendations, the analyst validates each proposal against current guardrail state. Only guardrail-compliant proposals reach the PM, which then evaluates thesis quality and portfolio coherence rather than feasibility.
 
 **Two-layer approach:**
 
-1. **Headroom context (pre-loaded).** The analyst's [guardrail state header](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header) includes current guardrail headroom at the start of its window — available capital, per-sector delta-adjusted exposure room, directional and gross exposure room, per-position size limits under the active regime. The analyst uses this to self-constrain during initial proposal generation, avoiding obviously infeasible recommendations (e.g., a large new semi position when semi sector exposure is near its limit). This is the primary mechanism — most proposals should be compliant on the first pass because the analyst is sizing with awareness of constraints.
+1. **Headroom context (pre-loaded).** The [guardrail state header](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header) supplies current headroom at the start of the window — available capital, per-sector delta-adjusted exposure room, directional/gross exposure room, per-position size limits under the active regime. The analyst self-constrains during initial generation, so most proposals should be compliant on the first pass.
 
-2. **Guardrail validation tool (deterministic check).** After drafting each recommendation, the analyst calls a guardrail validation tool that deterministically checks the proposal against all applicable rules. The tool accepts the proposed instrument, direction, and size, computes delta-adjusted exposure for options/strategies via the [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md) (the same primitives the engine's T3 check uses), and returns a pass/fail result per rule with current headroom and projected headroom after the trade.
+2. **Guardrail validation tool (deterministic check).** After drafting each recommendation, the analyst calls the tool. It accepts the proposed instrument, direction, and size; computes delta-adjusted exposure for options/strategies via the [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md) (same primitives as the engine's T3 check); and returns per-rule pass/fail with current and projected-after headroom.
 
-**On validation failure:** The analyst revises the proposal — reducing size, choosing a different instrument (e.g., a lower-delta strike), or dropping the recommendation — and re-validates. This is an expected part of the workflow, not an exceptional case. The validation feedback is specific enough to guide revision: "semi sector delta-adjusted exposure would be 22.3%, limit is 20.0% — reduce by approximately 15% or choose a lower-delta instrument."
+**On validation failure:** revise — reduce size, choose a lower-delta instrument, or drop the recommendation — and re-validate. Validation feedback is specific enough to guide revision: "semi sector delta-adjusted exposure would be 22.3%, limit is 20.0% — reduce by approximately 15% or choose a lower-delta instrument."
 
-**On validation success:** The proposal is finalized and included in the analyst's output. The portfolio manager can trust that all received proposals were guardrail-compliant at the time the analyst checked them.
+**On validation success:** the proposal is finalized. The PM can trust all received proposals were guardrail-compliant at check time.
 
-**Important caveat:** Portfolio state may shift between the analyst's validation and the PM's command execution (due to market movement, fills resolving, or regime changes). The execution layer performs a final authoritative guardrail check on every OMS command. If a previously-compliant proposal is rejected at execution time, the PM receives synchronous feedback and can adjust — see [portfolio-manager.md](portfolio-manager.md) and [oms-commands.md](../05-execution-layer/oms-commands.md).
+**Caveat:** portfolio state may shift between analyst validation and PM command execution (market movement, fills resolving, regime changes). The execution layer performs a final authoritative check on every OMS command; rejections return synchronously so the PM can adjust — see [portfolio-manager.md](portfolio-manager.md) and [oms-commands.md](../05-execution-layer/oms-commands.md).
 
-**Multi-proposal cumulative impact:** When the analyst produces multiple recommendations in a single invocation, the guardrail validation tool tracks cumulative impact across proposals. The second proposal's headroom check accounts for the first proposal's projected impact. This prevents the analyst from producing five individually-compliant proposals that collectively breach a limit.
+**Multi-proposal cumulative impact:** the validation tool tracks cumulative impact across an invocation's proposals — the second proposal's headroom check accounts for the first's projected impact. Prevents five individually-compliant proposals from collectively breaching a limit.
 
 ---
 
 ## Source brief retrieval
 
-The synthesizer output contains typed source references (e.g., `[SA-TECH-3]`, `[QR-4]`). The analyst has access to a retrieval tool that accepts these reference IDs and returns the corresponding section from the original research brief.
+The synthesizer output contains typed references (e.g., `[SA-TECH-3]`, `[QR-4]`). The retrieval tool accepts a reference ID and returns the corresponding section from the original research brief.
 
-**Expected workflow:**
+**Workflow:**
 1. Read the synthesizer brief in full
 2. Form initial views on opportunities, risks, and thesis candidates
-3. For findings needing deeper investigation — especially flagged contradictions or areas of uncertainty — retrieve the underlying source material by reference ID
+3. Retrieve underlying source material by reference ID for findings needing deeper investigation — especially flagged contradictions or uncertainty
 4. Incorporate retrieved detail into thesis construction where it strengthens the case
 
-The retrieval tool is optional. On quiet days with broad consensus, the synthesis alone may be sufficient. On volatile days with many flagged contradictions, the analyst should expect to retrieve more source material to inform its recommendations.
+The tool is optional — synthesis alone may suffice on quiet days. On volatile days with many flagged contradictions, expect to retrieve more source material.

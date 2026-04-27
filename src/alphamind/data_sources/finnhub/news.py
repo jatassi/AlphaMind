@@ -203,8 +203,10 @@ def collect_news(
             session_factory=sf,
         )
     if _rate_limiter is None:
+        # Finnhub free tier returns 429 well below the documented 60/min when
+        # bursting; pin to 30/min to guarantee >=2s spacing between calls.
         _rate_limiter = RateLimiter()
-        _rate_limiter.set_limit(_PROVIDER, rate_per_minute=60)
+        _rate_limiter.set_limit(_PROVIDER, rate_per_minute=30)
 
     sdk = finnhub.Client(api_key=_get_api_key())
     outlets = _load_outlets()

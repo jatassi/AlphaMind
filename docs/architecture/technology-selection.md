@@ -1,6 +1,6 @@
 # Technology selection
 
-Consolidated dependency list and version constraints. Every choice here traces back to a decision in the preceding architecture documents.
+Consolidated dependency list and version constraints. Each choice traces to a decision in the preceding architecture documents.
 
 ---
 

@@ -7,46 +7,46 @@
 
 ## 1. System overview
 
-**AlphaMind** is an autonomous trading system that uses a multi-agent LLM pipeline to synthesize market data, generate trade theses, and execute positions. The system separates concerns across fresh context windows — mirroring how institutional trading desks divide research, strategy, and risk management — to prevent cognitive anchoring between stages.
+**AlphaMind** is an autonomous trading system that uses a multi-agent LLM pipeline to synthesize market data, generate trade theses, and execute positions. Concerns split across fresh context windows — mirroring institutional desks dividing research, strategy, and risk management — preventing cognitive anchoring between stages.
 
-The core insight: LLMs add value not through faster price analysis (traditional algos win there) but through synthesizing *unstructured* information across domains — reading between the lines of news, catching narrative shifts, identifying cross-domain signals that quantitative systems can't easily encode.
+The core insight: LLMs add value not through faster price analysis (traditional algos win there) but through synthesizing *unstructured* information across domains — reading between the lines of news, catching narrative shifts, identifying cross-domain signals quantitative systems can't easily encode.
 
-In the initial phase, the system paper trades with real market data to validate thesis accuracy and measure P/L before any real capital is deployed.
+The initial phase paper trades with real market data to validate thesis accuracy and measure P/L before any capital is deployed.
 
 
 ## 2. Design principles
 
 ### Time horizon: 4–72 hours
 
-Positions are swing-trade scale, not day-trade. Long enough that unstructured information synthesis matters — narrative shifts, regulatory signals, prediction market movements — but short enough to avoid macro bets that require deep fundamental analysis.
+Swing-trade scale, not day-trade. Long enough that unstructured information synthesis matters — narrative shifts, regulatory signals, prediction market movements — short enough to avoid macro bets requiring deep fundamental analysis.
 
-The constraint is thesis validity, not calendar time. A position opened at 9 AM might close at 3 PM because the catalyst played out fast, or it might sit for two days waiting for a thesis to resolve. The rule: close any position whose original thesis has been invalidated or fully realized.
+The constraint is thesis validity, not calendar time. A position opened at 9 AM might close at 3 PM because the catalyst played out fast, or sit for two days waiting for a thesis to resolve. Close when the original thesis is invalidated or fully realized.
 
 ### Incremental gains
 
-No moonshots. The system targets a high volume of small, positive-expectancy trades. The overarching goal is to end each trading day with more liquid cash than the opening balance. This aligns with mean-reversion and statistical arbitrage approaches rather than momentum or trend-following.
+No moonshots. The system targets high volume of small, positive-expectancy trades, ending each day with more liquid cash than the opening balance. Aligns with mean-reversion and statistical arbitrage rather than momentum or trend-following.
 
 ### Information edge, not speed edge
 
-The system's competitive advantage is cross-domain synthesis of unstructured data. It should never compete on latency or pure technical analysis — those are solved problems with faster, cheaper tools. Every trade thesis should involve at least one qualitative signal that a traditional quantitative system would miss.
+Competitive advantage is cross-domain synthesis of unstructured data. The system never competes on latency or pure technical analysis — solved problems with faster, cheaper tools. Every trade thesis involves at least one qualitative signal a traditional quant system would miss.
 
 ### Invocation schedule
 
 The pipeline runs on a fixed schedule tied to US market hours (NYSE: 9:30 AM – 4:00 PM ET).
 
-**Market hours (9:30 AM – 4:00 PM ET):** Every 2 hours. Higher frequency because this is when price action, flow data, and news are most signal-dense. Approximate runs: 9:30, 11:30, 1:30, 3:30.
+**Market hours (9:30 AM – 4:00 PM ET):** Every 2 hours. Higher frequency where price action, flow data, and news are most signal-dense. Runs at ~9:30, 11:30, 1:30, 3:30.
 
-**Off hours (4:00 PM – 9:30 AM ET):** Every 4 hours. Lower frequency because signal density drops, but overnight developments (Asian/European markets, geopolitical events, earnings releases) still need monitoring. Approximate runs: 8:00 PM, 12:00 AM, 4:00 AM, 8:00 AM.
+**Off hours (4:00 PM – 9:30 AM ET):** Every 4 hours. Signal density drops, but overnight developments (Asian/European markets, geopolitical events, earnings) still need monitoring. Runs at ~8:00 PM, 12:00 AM, 4:00 AM, 8:00 AM.
 
-**Anchored runs:** Two fixed invocations regardless of the rolling schedule:
-- **Pre-open (9:00 AM ET):** Runs 30 minutes before market open. Synthesizes overnight developments, pre-market price action, and any thesis-relevant news into a fresh snapshot before the opening bell. Critical for positioning decisions — this is when the system decides whether to enter new positions at open or adjust existing ones.
-- **Pre-close (3:30 PM ET):** Runs 30 minutes before market close. Evaluates all open positions against end-of-day dynamics — do any theses need to be closed before the overnight gap? Are there late-day setups worth entering? This run has a bias toward risk reduction: positions held overnight should have strong conviction.
+**Anchored runs:** Two fixed invocations regardless of rolling schedule:
+- **Pre-open (9:00 AM ET):** 30 minutes before open. Synthesizes overnight developments, pre-market price action, and thesis-relevant news. Critical for positioning decisions — open new entries vs. adjust existing.
+- **Pre-close (3:30 PM ET):** 30 minutes before close. Evaluates open positions against end-of-day dynamics: close before the overnight gap? Late-day setups worth entering? Bias toward risk reduction — overnight holds need strong conviction.
 
-**Schedule overlap handling:** When an anchored run coincides with a rolling interval (e.g., pre-close at 3:30 overlaps with the 2-hour cadence), the anchored run takes precedence and the rolling run is skipped. No double-invocations within 30 minutes of each other.
+**Overlap handling:** When an anchored run coincides with a rolling interval (e.g., pre-close at 3:30 overlaps the 2-hour cadence), the anchored run takes precedence and the rolling run is skipped. No double-invocations within 30 minutes.
 
-**TODO — Refine scope per run type:** Each invocation type should have a tailored pipeline configuration — not every run needs the full agent pipeline at full depth. Pre-open likely warrants expanded adaptive research budget and a broader qualitative sweep (overnight developments, international markets, pre-market movers). Pre-close should prioritize portfolio review and thesis invalidation over new opportunity generation. Intraday runs are monitoring-heavy with selective deep dives on anomalies. After-hours runs can be lighter — checking for material news, earnings releases, and overnight catalysts without full technical re-analysis. Defining these scoped profiles will also drive the cost model.
+**TODO — Refine scope per run type:** Tailored pipeline configurations per invocation type — not every run needs the full pipeline at full depth. Pre-open warrants expanded adaptive research budget and broader qualitative sweep. Pre-close prioritizes portfolio review and thesis invalidation. Intraday runs are monitoring-heavy with selective deep dives. After-hours runs can be lighter. Scoped profiles also drive the cost model.
 
-**Total daily invocations:** Approximately 8–10 per trading day (4 market hours + 2 anchored + 3–4 off hours), plus weekday off-hours cycles. Weekend cadence TBD — likely reduced to every 6–8 hours since only futures and prediction markets provide signal.
+**Total daily invocations:** ~8–10 per trading day (4 market + 2 anchored + 3–4 off hours), plus weekday off-hours cycles. Weekend cadence TBD — likely every 6–8 hours since only futures and prediction markets provide signal.
 
 
 ---

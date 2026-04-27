@@ -102,6 +102,9 @@ def _ingest_earnings(
     sess: Any,
     items: list[dict],
 ) -> int:
+    from alphamind.persistence.models import AssetUniverse
+
+    known_tickers = {r.ticker for r in sess.query(AssetUniverse.ticker).all()}
     rows_written = 0
     for item in items:
         ticker = item.get("symbol") or ""
@@ -112,6 +115,8 @@ def _ingest_earnings(
 
         if not date:
             continue
+        if ticker and ticker not in known_tickers:
+            continue  # skip earnings for tickers outside our universe (FK)
 
         scheduled_at = f"{date}T00:00:00+00:00"
         evt_id = _event_id(_PROVIDER, "earnings", ticker, date)

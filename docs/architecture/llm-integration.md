@@ -6,11 +6,11 @@ Claude Agent SDK, authenticated via Claude Max OAuth token.
 
 ## Decision
 
-All LLM agent invocations use the **Claude Agent SDK for Python**, authenticated with a **Claude Max 5x subscription OAuth token** (`CLAUDE_CODE_OAUTH_TOKEN`). This provides programmatic agent execution within the pipeline process — async, with per-agent model selection, budget caps, custom MCP tools, and system prompt control — billed against the flat-rate Max subscription.
+All LLM agent invocations use the **Claude Agent SDK for Python**, authenticated with a **Claude Max 5x subscription OAuth token** (`CLAUDE_CODE_OAUTH_TOKEN`). This provides async, programmatic agent execution within the pipeline process with per-agent model selection, budget caps, custom MCP tools, and system prompt control — billed against the flat-rate Max subscription.
 
-The subscription is owned and used by a single operator on operator-owned hardware; this is the personal-use posture that Anthropic's [Claude Code legal page](https://code.claude.com/docs/en/legal-and-compliance) accommodates with the line *"Advertised usage limits for Pro and Max plans assume ordinary, individual usage of Claude Code and the Agent SDK."* The third-party-developer prohibitions on the same page (rerouting subscription credentials on behalf of other users) do not apply.
+The subscription is owned and used by a single operator on operator-owned hardware — the personal-use posture that Anthropic's [Claude Code legal page](https://code.claude.com/docs/en/legal-and-compliance) accommodates with *"Advertised usage limits for Pro and Max plans assume ordinary, individual usage of Claude Code and the Agent SDK."* The third-party-developer prohibitions on the same page (rerouting subscription credentials on behalf of other users) do not apply.
 
-API-key billing on Anthropic's Commercial Terms is the escape hatch if Max becomes untenable (cap exhaustion, technical-enforcement rejection, or an Anthropic policy change). The SDK switches credentials by environment variable; no code change is required. See [design/cost-and-rate-limit-modeling.md § API-key escape hatch](../design/cost-and-rate-limit-modeling.md#api-key-escape-hatch) for the full posture.
+API-key billing on Anthropic's Commercial Terms is the escape hatch if Max becomes untenable (cap exhaustion, technical-enforcement rejection, Anthropic policy change). The SDK switches credentials by environment variable; no code change required. See [design/cost-and-rate-limit-modeling.md § API-key escape hatch](../design/cost-and-rate-limit-modeling.md#api-key-escape-hatch).
 
 ---
 
@@ -20,24 +20,24 @@ API-key billing on Anthropic's Commercial Terms is the escape hatch if Max becom
 
 The Agent SDK provides the orchestration primitives AlphaMind needs without building them from scratch:
 
-- **Built-in tool-use loops.** The adaptive research agent and decision layer agents use agentic tool-use cycles (generate question → call tool → reason about result → repeat). The SDK manages this loop natively. With the raw API, you'd write your own tool dispatch + conversation management (~200-300 lines of boilerplate per agentic pattern).
-- **MCP tool integration.** Custom tools are defined as Python functions with decorators and registered as MCP servers. The retrieval tool (fetch analysis briefs by reference ID), research tools (news API, prediction market queries), and data tools (on-demand quantitative pulls) are all just Python functions wired into the SDK.
-- **Per-agent configuration.** Each agent gets its own `ClaudeAgentOptions` with model, system prompt, budget cap, and allowed tools — the exact per-agent control surface AlphaMind needs.
-- **Async execution.** The SDK is fully async, enabling parallel sector analyst execution via `asyncio.gather`.
+- **Built-in tool-use loops.** The adaptive research agent and decision layer agents use agentic tool-use cycles (generate question → call tool → reason about result → repeat). The SDK manages this loop natively; the raw API would require ~200-300 lines of tool dispatch + conversation management per agentic pattern.
+- **MCP tool integration.** Custom tools are Python functions with decorators registered as MCP servers. The retrieval tool, research tools (news API, prediction market queries), and data tools (on-demand quantitative pulls) are wired into the SDK directly.
+- **Per-agent configuration.** Each agent gets its own `ClaudeAgentOptions` with model, system prompt, budget cap, and allowed tools.
+- **Async execution.** Fully async, enabling parallel sector analyst execution via `asyncio.gather`.
 
 ### Why Claude Max over pay-as-you-go API billing
 
-**Cost structure is fundamentally different.** AlphaMind runs nine LLM agents across ~32 pipeline invocations per week. The Max 5x subscription at $100/month covers this workload with comfortable headroom in normal weeks, narrowing toward the weekly Opus cap in stress weeks (see [design/cost-and-rate-limit-modeling.md](../design/cost-and-rate-limit-modeling.md) for the full headroom analysis and the operating posture under cap pressure). Pay-as-you-go API billing for the same workload, with prompt caching enabled on stable system prompts and the synthesizer brief, lands in the $150–450/month range — comparable to the subscription, but with no cap to manage.
+AlphaMind runs nine LLM agents across ~32 pipeline invocations per week. The Max 5x subscription at $100/month covers this with comfortable headroom in normal weeks, narrowing toward the weekly Opus cap in stress weeks (see [design/cost-and-rate-limit-modeling.md](../design/cost-and-rate-limit-modeling.md)). Pay-as-you-go API billing with prompt caching on stable system prompts and the synthesizer brief lands in $150–450/month — comparable, but with no cap to manage.
 
-The Max subscription also removes cost-per-token pressure from model selection. Using Opus for every agent is "free" relative to Haiku — the choice becomes purely about quality and speed, not cost. This is significant for a system where the quality of reasoning directly determines P/L.
+Max also removes cost-per-token pressure from model selection. Opus everywhere is "free" relative to Haiku — model choice becomes purely about quality and speed, significant for a system where reasoning quality directly determines P/L.
 
 **Authentication:** Generate an OAuth token via `claude setup-token`, set `CLAUDE_CODE_OAUTH_TOKEN` in the environment. No API key needed.
 
 ### What the Agent SDK doesn't provide
 
-- **No temperature/sampling control.** The SDK does not expose temperature, top_p, or top_k. Claude's default sampling behavior is used for all agents. In practice this is acceptable — the default behavior produces good analytical output — but it means you can't tune for more creative (adaptive research) vs. more deterministic (PM commands) agents.
-- **No raw token counting per call.** Token usage is available in response metadata but not as fine-grained as the raw API's `usage` object. Cost tracking per agent is approximate rather than exact (less important with flat-rate billing).
-- **Abstraction over conversation internals.** The SDK manages the tool-use loop internally. Detailed logging of every intermediate tool call requires working within the SDK's callback/streaming structure.
+- **No temperature/sampling control.** Temperature, top_p, top_k are not exposed; Claude's default sampling is used for all agents. Acceptable in practice, but rules out tuning for creative (adaptive research) vs. deterministic (PM commands) agents.
+- **No raw token counting per call.** Token usage is in response metadata but less fine-grained than the raw API's `usage` object. Per-agent cost tracking is approximate (less important under flat-rate billing).
+- **Abstraction over conversation internals.** The SDK manages the tool-use loop internally; detailed logging of intermediate tool calls requires working within the SDK's callback/streaming structure.
 
 ---
 
@@ -57,9 +57,9 @@ The pipeline invokes these LLM agents per invocation, each with independent conf
 | Trader agent | Decision (sequential) | Opus | Brief retrieval tool | Reads synthesis, drills into source briefs on demand |
 | PM agent | Decision (sequential) | Opus | Brief retrieval tool, OMS command tool | Evaluates trader proposals, issues execution commands |
 
-**Model rationale:** Sector analysts, qualitative researcher, and synthesizer do structured analytical work where Sonnet's capability is sufficient. The trader and PM agents make high-stakes judgment calls (trade selection, risk evaluation, position sizing) where Opus's stronger reasoning justifies the slower speed. With flat-rate billing, the cost difference is zero — the choice is purely about quality and latency.
+**Model rationale:** Sector analysts, qualitative researcher, and synthesizer do structured analytical work where Sonnet suffices. The trader and PM agents make high-stakes judgment calls (trade selection, risk evaluation, position sizing) where Opus's stronger reasoning justifies the slower speed. Under flat-rate billing the cost difference is zero — the choice is purely quality and latency.
 
-**Model flexibility:** These assignments are starting points. If Sonnet proves insufficient for synthesis quality or Opus is too slow for the trader agent, models can be swapped per-agent without code changes — it's a configuration parameter in `ClaudeAgentOptions`.
+**Model flexibility:** Starting assignments. Models swap per-agent without code changes via the `ClaudeAgentOptions` configuration parameter.
 
 ---
 
@@ -117,7 +117,7 @@ async def news_search(args):
 
 ### Fresh context windows
 
-Each `query()` call in the Agent SDK creates a new session by default — fresh context window with no carryover from previous agents. This is exactly the design spec's requirement: each agent sees only what's explicitly passed to it, preventing cognitive anchoring between stages.
+Each `query()` call in the Agent SDK creates a new session by default — fresh context window with no carryover. Each agent sees only what's explicitly passed, preventing cognitive anchoring between stages.
 
 ---
 
@@ -142,4 +142,4 @@ prompts/
 
 Each prompt file contains the agent's role definition, output format specification, and any few-shot examples. The pipeline loads the prompt file and passes it via `ClaudeAgentOptions(system_prompt=...)`.
 
-Data payloads (distillation output, briefs, portfolio state) are injected into the user message, not the system prompt. This keeps the system prompt stable across invocations while the data varies.
+Data payloads (distillation output, briefs, portfolio state) go into the user message, keeping the system prompt stable across invocations while data varies.

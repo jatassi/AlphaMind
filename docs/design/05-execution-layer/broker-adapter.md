@@ -1,8 +1,8 @@
 # Broker adapter — Alpaca
 
-The narrow layer between the OMS and Alpaca. Translates validated OMS commands into Alpaca REST calls, subscribes to Alpaca's `trade_updates` websocket, and pushes fill events into the fill buffer. The adapter does not contain business logic — validation and risk enforcement happen in the guardrail layer before a command reaches the adapter, and position/thesis state lives in the OMS.
+The narrow layer between the OMS and Alpaca. Translates validated OMS commands into Alpaca REST calls, subscribes to `trade_updates`, and pushes fill events into the fill buffer. No business logic — validation and risk enforcement happen in the guardrail layer; position/thesis state lives in the OMS.
 
-This document specifies what the OMS can assume about Alpaca's behavior. It is not a generic "broker interface" — AlphaMind is committed to Alpaca, and this document describes Alpaca's actual surface area. A future migration to a different broker would require rewriting this document and the adapter implementation it describes; it would not require rewriting the OMS.
+This document specifies what the OMS can assume about Alpaca's behavior — Alpaca's actual surface area, not a generic broker interface. A future migration to a different broker would require rewriting this document and the adapter; it would not require rewriting the OMS.
 
 ---
 
@@ -13,7 +13,7 @@ A single configuration flag selects the environment by swapping the base URL:
 - **Paper:** `https://paper-api.alpaca.markets` (REST), `wss://paper-api.alpaca.markets/stream` (websocket)
 - **Live:** `https://api.alpaca.markets` (REST), `wss://api.alpaca.markets/stream` (websocket)
 
-The API credentials differ per environment. All environment-specific knowledge lives in the adapter's configuration; the OMS is environment-unaware. Paper mode additionally engages the [paper-evaluation harness](paper-evaluation-harness.md) for live-execution estimation; live mode does not.
+API credentials differ per environment. All environment-specific knowledge lives in the adapter's configuration; the OMS is environment-unaware. Paper mode engages the [paper-evaluation harness](paper-evaluation-harness.md) for live-execution estimation; live mode does not.
 
 ---
 
@@ -64,7 +64,7 @@ Options orders are day-only. The OMS must not attempt to place GTC options order
 | `oto` | Yes | No | No | Entry + one contingent child (take-profit OR stop-loss, not both) |
 | `mleg` | No | Yes | No | Multi-leg options strategy, up to 4 legs |
 
-**Critical consequence for options:** Alpaca does not support brackets, OCO, or OTO on options. AlphaMind's mandatory thesis-linked bracket requirement ([orders-and-brackets.md](orders-and-brackets.md)) is satisfied for options by the continuous monitor, which watches the underlying equity stream for price-based invalidation and submits a closing market order when the trigger fires. This is the same logic the monitor would run regardless of broker; Alpaca's gap is a constraint, not a new problem.
+**Consequence for options:** Alpaca does not support brackets, OCO, or OTO on options. AlphaMind's mandatory thesis-linked bracket requirement ([orders-and-brackets.md](orders-and-brackets.md)) is satisfied for options by the continuous monitor, which watches the underlying equity stream for price-based invalidation and submits a closing market order when the trigger fires.
 
 ---
 
@@ -74,19 +74,19 @@ The adapter constructs request bodies matching Alpaca's schema:
 
 - Required: `symbol`, `side` (`buy` | `sell`), `type`, `time_in_force`
 - Quantity: `qty` OR `notional` (mutually exclusive; `notional` is market-day-only)
-- Conditional: `limit_price` (for limit/stop_limit), `stop_price` (for stop/stop_limit), `trail_price` or `trail_percent` (for trailing_stop)
-- Optional: `client_order_id` (OMS writes its own order ID here for end-to-end correlation), `extended_hours` (limit-day/GTC only, bracket orders disallowed in extended hours)
+- Conditional: `limit_price` (limit/stop_limit), `stop_price` (stop/stop_limit), `trail_price` or `trail_percent` (trailing_stop)
+- Optional: `client_order_id` (OMS's own order ID for end-to-end correlation), `extended_hours` (limit-day/GTC only, brackets disallowed in extended hours)
 - For brackets: `order_class: bracket` + `take_profit: { limit_price }` + `stop_loss: { stop_price, limit_price? }`
-- For mleg: `order_class: mleg` + `legs: [{ symbol, side, ratio_qty, position_intent }]` (ratios must be in simplified form — GCD of ratios = 1)
+- For mleg: `order_class: mleg` + `legs: [{ symbol, side, ratio_qty, position_intent }]` (ratios in simplified form — GCD of ratios = 1)
 
-The OMS provides `client_order_id` on every submission. This is the OMS's stable identifier; Alpaca returns its own `id` which the adapter maps to the client ID. The OMS never sees Alpaca's internal IDs.
+The OMS provides `client_order_id` on every submission as its stable identifier; Alpaca returns its own `id` which the adapter maps to the client ID. The OMS never sees Alpaca's internal IDs.
 
-**Acknowledgment semantics:** Alpaca's response is an order record, not a fill. The adapter treats this as submission acknowledgment only. Fill state arrives later via the `trade_updates` websocket.
+**Acknowledgment semantics:** Alpaca's response is an order record, not a fill — submission acknowledgment only. Fill state arrives later via `trade_updates`.
 
 **Rejection reasons** (mapped from Alpaca HTTP responses):
 - `422` with validation errors → submission rejected, OMS logs and marks the command abandoned ([architecture.md](architecture.md))
 - `403` with `insufficient_buying_power` or `insufficient_shares` → gateway rejection distinct from guardrail rejection; the PM sees this and may adjust on the next invocation
-- Asset-level rejections (symbol halted, non-shortable on a short-sell, options level not approved) → also `403` / `422` with specific error codes
+- Asset-level rejections (symbol halted, non-shortable on a short-sell, options level not approved) → `403` / `422` with specific error codes
 
 ---
 
@@ -96,15 +96,15 @@ Cancellation is fire-and-forget: the REST call acknowledges receipt, and the ter
 
 ## Order modification — `PATCH /v2/orders/{id}`
 
-Alpaca's modification semantics are **cancel-and-replace**: the response carries a **new order ID**, and the OMS's `client_order_id` → Alpaca-ID mapping must be updated on acknowledgment. The adapter handles this mapping; the OMS's external identifier remains stable.
+Alpaca's modification is **cancel-and-replace**: the response carries a **new order ID**, and the OMS's `client_order_id` → Alpaca-ID mapping is updated on acknowledgment. The adapter handles the mapping; the OMS's external identifier remains stable.
 
-**Race window.** A `200` success from the PATCH endpoint does not guarantee replacement. If the original order fills between the PATCH arrival and the replace taking effect, the replacement is rejected (arrives as a `replace_rejected` event on `trade_updates`) and the original's fill takes precedence. During the window, Alpaca reserves buying power equal to the larger of (old order, new order). The OMS handles this race identically to a cancel race: whichever terminal event arrives first wins.
+**Race window.** A `200` from PATCH does not guarantee replacement. If the original fills between PATCH arrival and replacement taking effect, the replacement is rejected (`replace_rejected` event on `trade_updates`) and the original's fill takes precedence. During the window, Alpaca reserves buying power equal to the larger of (old order, new order). The OMS handles this race identically to a cancel race: whichever terminal event arrives first wins.
 
-**Status restrictions.** Orders in `accepted`, `pending_new`, `pending_cancel`, or `pending_replace` cannot be replaced. The OMS must let these states settle before issuing a PATCH.
+**Status restrictions.** Orders in `accepted`, `pending_new`, `pending_cancel`, or `pending_replace` cannot be replaced — these states must settle before issuing a PATCH.
 
-**Unreplaceable orders.** Notional orders and OTO orders cannot be replaced at all — modification of those requires explicit cancel + new submission at the OMS level. The OMS avoids notional orders for this and other reasons ([orders-and-brackets.md](orders-and-brackets.md)); OTO is avoided in favor of bracket.
+**Unreplaceable orders.** Notional and OTO orders cannot be replaced — modification requires explicit cancel + new submission at the OMS level. The OMS avoids notional orders ([orders-and-brackets.md](orders-and-brackets.md)) and uses bracket instead of OTO.
 
-**Fields modifiable via PATCH**: `limit_price`, `stop_price`, `qty`, `trail_price`, `trail_percent`, `time_in_force`. Bracket/OCO children can have their `limit_price` and `stop_price` modified in the same way.
+**Fields modifiable via PATCH:** `limit_price`, `stop_price`, `qty`, `trail_price`, `trail_percent`, `time_in_force`. Bracket/OCO children's `limit_price` and `stop_price` are modifiable the same way.
 
 ---
 
@@ -130,15 +130,15 @@ The adapter subscribes to `wss://{paper|api}.alpaca.markets/stream` and authenti
 
 ### Fill buffer model
 
-The continuous monitor owns the websocket subscription and writes each fill event into the fill buffer (`state-persistence.md`). The OMS drains the buffer during Phase 1 of each pipeline invocation (`architecture.md`). Buffer writes are durable — a monitor restart does not lose in-flight fills as long as the state DB is intact.
+The continuous monitor owns the websocket subscription and writes each fill event into the fill buffer (`state-persistence.md`). The OMS drains the buffer during Phase 1 of each invocation (`architecture.md`). Buffer writes are durable — a monitor restart does not lose in-flight fills as long as the state DB is intact.
 
-**Re-subscription on disconnect.** If the websocket disconnects, the monitor reconnects and re-queries Alpaca's `GET /v2/orders` with a `since` parameter to recover any events missed during the outage. Alpaca orders are authoritative; any disagreement between buffered state and Alpaca's reported state is resolved toward Alpaca.
+**Re-subscription on disconnect.** If the websocket disconnects, the monitor reconnects and re-queries `GET /v2/orders` with a `since` parameter to recover missed events. Alpaca orders are authoritative; any disagreement between buffered state and Alpaca's reported state resolves toward Alpaca.
 
 ---
 
 ## Fee reporting
 
-Alpaca does not include regulatory fees in per-fill events. Fees accrue intraday and are charged at end-of-day, surfaced via `GET /v2/account/activities` as separate `FEE` activities. Fee types reported:
+Alpaca does not include regulatory fees in per-fill events. Fees accrue intraday and are charged at end-of-day, surfaced via `GET /v2/account/activities` as separate `FEE` activities:
 
 - **TAF** (FINRA Trading Activity Fee) — equity sells
 - **CAT** (Consolidated Audit Trail) — all executed shares
@@ -146,7 +146,7 @@ Alpaca does not include regulatory fees in per-fill events. Fees accrue intraday
 - **ORF** (Options Regulatory Fee) — options
 - **OCC** (Options Clearing Corporation) — options
 
-The OMS accounts for fills pre-fee at fill time. At end-of-day (pre-close invocation or a dedicated reconciliation pass), it reads the day's fee activities, attributes them to their originating fills where possible, and applies the aggregate as a single `fee_reconciliation` event in the activity log. The [paper-evaluation harness](paper-evaluation-harness.md) estimates the expected fee impact at fill time using the current published rate table, for live-execution estimation; the actual debit still arrives via EOD reconciliation in live mode.
+The OMS accounts for fills pre-fee at fill time. At end-of-day, it reads the day's fee activities, attributes them to originating fills where possible, and applies the aggregate as a single `fee_reconciliation` event. The [paper-evaluation harness](paper-evaluation-harness.md) estimates expected fee impact at fill time using the published rate table; actual debits still arrive via EOD reconciliation in live mode.
 
 **Commission:** $0 on US-listed equities and options via the standard retail Trading API. No commission field is populated in the fill stream.
 
@@ -154,42 +154,40 @@ The OMS accounts for fills pre-fee at fill time. At end-of-day (pre-close invoca
 
 ## Account state queries
 
-The adapter exposes thin wrappers over Alpaca REST endpoints the OMS uses for state reconciliation:
+The adapter exposes thin wrappers over the Alpaca REST endpoints the OMS uses for state reconciliation:
 
-- `GET /v2/account` — cash balance, equity, buying power (day and overnight), regt_buying_power, maintenance margin, day trade count, pattern day trader flag
-- `GET /v2/positions` — current positions, authoritative. The OMS reconciles its internal position state against this on every invocation's Phase 1
+- `GET /v2/account` — cash, equity, buying power (day and overnight), regt_buying_power, maintenance margin, day trade count, pattern day trader flag
+- `GET /v2/positions` — authoritative current positions. The OMS reconciles internal state against this every Phase 1
 - `GET /v2/orders` — order state query, used for disconnect recovery and spot reconciliation
-- `GET /v2/account/activities` — EOD fee reconciliation, dividend activities, corporate action activities, and any other non-fill account debits/credits
-- `GET /v2/assets/{symbol}` — asset metadata (`shortable` flag, `fractionable`, `tradable`, `easy_to_borrow`). Used by the guardrail layer when validating short-sell eligibility
-- `GET /v2/calendar`, `GET /v2/clock` — trading calendar and current market state. Consulted by the scheduler and the continuous monitor
+- `GET /v2/account/activities` — EOD fee reconciliation, dividends, corporate actions, and other non-fill account debits/credits
+- `GET /v2/assets/{symbol}` — asset metadata (`shortable`, `fractionable`, `tradable`, `easy_to_borrow`); used by the guardrail layer for short-sell eligibility
+- `GET /v2/calendar`, `GET /v2/clock` — trading calendar and current market state; consulted by the scheduler and continuous monitor
 
-Alpaca's positions and account endpoints are the source of truth for the OMS's reconciliation. If local OMS state disagrees with Alpaca's response, Alpaca wins and the OMS logs a reconciliation delta.
+Alpaca's positions and account endpoints are the source of truth for OMS reconciliation. If local state disagrees, Alpaca wins and the OMS logs a reconciliation delta.
 
 ---
 
 ## Rate limits
 
-Alpaca throttles the Trading API at **200 requests/minute per account** on the retail tier. This is ample for AlphaMind's 8–10 invocations/day with ≤ 20 simultaneous positions — the dominant request budget is fill-reconciliation queries and the submission bursts during Phase 2, neither of which approach the limit.
-
-The websocket has no per-subscription rate limit; it delivers events as they occur.
+Alpaca throttles the Trading API at **200 requests/minute per account** on the retail tier — ample for AlphaMind's 8–10 invocations/day with ≤ 20 simultaneous positions. The websocket has no per-subscription rate limit.
 
 ---
 
 ## Known gaps relative to AlphaMind's order vocabulary
 
-These are cases where Alpaca's surface is narrower than AlphaMind's design; each is handled at the OMS/monitor layer rather than being worked around at the adapter layer:
+Cases where Alpaca's surface is narrower than AlphaMind's design; each is handled at the OMS/monitor layer:
 
 1. **Brackets on options.** Unsupported. The continuous monitor evaluates options bracket stops against the underlying equity stream and submits a closing market order on trigger. Options P/L-based targets are monitored via the derived-pricing model (see [architecture.md § 4d — Greeks refresh orchestration](architecture.md)).
 
-2. **Brackets in extended hours.** Unsupported. AlphaMind does not currently trade in extended hours; if it ever does, extended-hours orders must be submitted as atomic limits with the monitor handling protective legs.
+2. **Brackets in extended hours.** Unsupported. AlphaMind does not trade in extended hours; if it ever does, extended-hours orders must be submitted as atomic limits with the monitor handling protective legs.
 
-3. **Trailing stop in bracket/OCO.** Alpaca currently supports trailing stops only as single atomic orders. The monitor will emulate trailing-stop behavior for bracket legs that require it by repeatedly PATCHing the stop leg's `stop_price` as the favorable-side price moves; this is an OMS-level emulation not pushed to Alpaca.
+3. **Trailing stop in bracket/OCO.** Alpaca supports trailing stops only as single atomic orders. The monitor emulates trailing-stop behavior on bracket legs by PATCHing the stop leg's `stop_price` as the favorable-side price moves.
 
-4. **OTO replace.** Unsupported at Alpaca. AlphaMind does not use OTO — brackets cover the OTO use case.
+4. **OTO replace.** Unsupported. AlphaMind uses bracket instead of OTO.
 
-5. **Fractional shorts.** Alpaca restricts fractional orders to market + day TIF and disallows any action that would produce a net-short fractional position. AlphaMind does not use fractional sizing; orders are in whole shares and whole contracts.
+5. **Fractional shorts.** Alpaca restricts fractional orders to market + day TIF and disallows net-short fractional positions. AlphaMind orders are in whole shares and whole contracts.
 
-6. **Corporate action handling.** Alpaca handles corporate actions natively (splits, dividends, mergers) and surfaces the adjustments via `account/activities`; post-adjustment position state is reflected in `GET /v2/positions` and `GET /v2/account`. The OMS-side integration mechanics — per-action quantity/cost-basis/cash mutations, spin-off child position creation, Phase 1 sequencing, idempotency, and activity log entries — are specified in [corporate-actions.md](corporate-actions.md). Bracket lifecycle is in [orders-and-brackets.md § Corporate action handling](orders-and-brackets.md#corporate-action-handling) and strategist re-evaluation is in [strategist.md § Corporate-action-pending positions](../04-decision-layer/strategist.md#corporate-action-pending-positions).
+6. **Corporate action handling.** Alpaca handles corporate actions natively (splits, dividends, mergers) and surfaces adjustments via `account/activities`; post-adjustment state is reflected in `GET /v2/positions` and `GET /v2/account`. OMS-side integration mechanics — quantity/cost-basis/cash mutations, spin-off child creation, Phase 1 sequencing, idempotency, activity log entries — are in [corporate-actions.md](corporate-actions.md). Bracket lifecycle: [orders-and-brackets.md § Corporate action handling](orders-and-brackets.md#corporate-action-handling). Strategist re-evaluation: [strategist.md § Corporate-action-pending positions](../04-decision-layer/strategist.md#corporate-action-pending-positions).
 
 ---
 

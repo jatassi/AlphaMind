@@ -1,14 +1,14 @@
 # Strategist
 
-Operates in a fresh context window. **Mandate:** evaluate every open position against current market conditions and recommend portfolio actions. The strategist connects new information from the synthesizer to existing thesis narratives, classifies thesis health status, identifies cross-position dynamics, and recommends specific actions with rationale. It is the sole agent responsible for thesis status assessment — determining whether each thesis is on-track, at-risk, stale, or invalidated based on primary data.
+Operates in a fresh context window. **Mandate:** evaluate every open position against current market conditions and recommend portfolio actions. Connects new information from the synthesizer to existing thesis narratives, classifies thesis health, identifies cross-position dynamics, and recommends actions with rationale. The sole agent responsible for thesis-status assessment — on-track, at-risk, stale, or invalidated.
 
-Runs in parallel with the [analyst](analyst.md). Both agents receive the synthesizer output independently and produce recommendations concurrently. Their outputs converge at the [portfolio manager](portfolio-manager.md), which evaluates both holistically.
+Runs in parallel with the [analyst](analyst.md). Outputs converge at the [portfolio manager](portfolio-manager.md), which evaluates both holistically.
 
 ---
 
 ## Inputs
 
-The strategist's input bundle is delivered at invocation start. Source documents in parentheses are authoritative for each input's content.
+The input bundle is delivered at invocation start. Source documents in parentheses are authoritative for each input's content.
 
 | Input | Source | Description |
 |---|---|---|
@@ -30,77 +30,74 @@ Tools available during reasoning:
 
 The volatility regime label is delivered as the `Regime:` line in the guardrail state header (not as a separate broadcast).
 
-**Token budget:** the input bundle scales with portfolio complexity — target ranges are 400–700 tokens for the primary portfolio (1–4 positions) and 1,500–2,500 tokens for the full-system portfolio (6–15 positions), not counting the shared synthesizer brief. See [Presentation order and token budget](#presentation-order-and-token-budget) for the output budget and the rationale.
+**Token budget:** the input bundle scales with portfolio complexity — target ranges are 400–700 tokens for the primary portfolio (1–4 positions) and 1,500–2,500 tokens for the full-system portfolio (6–15 positions), excluding the shared synthesizer brief. See [Presentation order and token budget](#presentation-order-and-token-budget).
 
 ---
 
 ## Output
 
-The strategist's invocation output is a single document conforming to the [strategist output schema](strategist-output-schema.md) (formal JSON Schema, Draft 2020-12). The schema is the authoritative contract; the field lists in [Output structure](#output-structure) below are the readable reference. Each per-position assessment is a structured record with **structured fields** (machine-parseable, consumed by the [proposal pre-processor](proposal-pre-processor.md)) and **narrative fields** (free-text reasoning, consumed by the [portfolio manager](portfolio-manager.md)). The output also carries pending-order assessments and a portfolio-level observations section.
+A single document conforming to the [strategist output schema](strategist-output-schema.md) (formal JSON Schema, Draft 2020-12). The schema is the authoritative contract; the field lists in [Output structure](#output-structure) are the readable reference. Each per-position assessment carries **structured fields** (machine-parseable, consumed by the [proposal pre-processor](proposal-pre-processor.md)) and **narrative fields** (free-text reasoning, consumed by the [portfolio manager](portfolio-manager.md)). The output also carries pending-order assessments and portfolio-level observations.
 
-The output mode is `normal` under standard conditions and `defensive_posture` under halt mode — see [Halt mode and defensive-posture behavior](#halt-mode-and-defensive-posture-behavior) for the behavioral and schema-variant differences.
+Mode is `normal` under standard conditions, `defensive_posture` under halt mode — see [Halt mode and defensive-posture behavior](#halt-mode-and-defensive-posture-behavior).
 
 ---
 
 ## Responsibilities
 
-- **Thesis status classification:** For each open position, assess thesis health by cross-referencing the thesis narrative and key assumptions against the synthesizer's current market context. Classify each thesis as on-track, partially-realized, at-risk, stale, or invalidated (see [thesis-model.md](../05-execution-layer/thesis-model.md) for status definitions). This is signal-level reasoning — e.g., "`[QR-7]` directly contradicts the supply chain signal that supported this entry, moving thesis from on-track to at-risk."
-
-- **Action recommendation:** For each position, recommend a specific action: hold, reduce, close, adjust-bracket, or add. For non-hold recommendations, include concrete action parameters (quantity, order type, bracket changes, close rationale type).
-
-- **Cross-position reasoning:** Identify portfolio-level dynamics that no single-position assessment would catch: correlation shifts between held positions, thesis dependency overlaps (multiple positions relying on the same catalyst), sector concentration trends, and opportunities to rebalance.
-
-- **Pending order review:** Evaluate unfilled orders from prior invocations — should they be maintained, modified, or cancelled given current conditions?
+- **Thesis status classification.** For each open position, assess thesis health by cross-referencing thesis narrative and key assumptions against the synthesizer's current context. Classify each thesis as on-track, partially-realized, at-risk, stale, or invalidated (see [thesis-model.md](../05-execution-layer/thesis-model.md)). Signal-level reasoning — e.g., "`[QR-7]` directly contradicts the supply chain signal that supported entry, moving thesis from on-track to at-risk."
+- **Action recommendation.** For each position, recommend hold, reduce, close, adjust-bracket, or add. Non-hold recommendations include concrete parameters (quantity, order type, bracket changes, close rationale type).
+- **Cross-position reasoning.** Identify portfolio-level dynamics no single-position assessment would catch: correlation shifts between held positions, shared-catalyst dependency overlaps, sector concentration trends, rebalance opportunities.
+- **Pending order review.** Evaluate unfilled orders from prior invocations — maintain, modify, or cancel given current conditions.
 
 ---
 
 ## Output structure
 
-The strategist produces a position assessment for every open position plus any pending orders. The portfolio manager receives the strategist's output as a complete book review alongside the analyst's new trade proposals, with [proposal pre-processor](proposal-pre-processor.md) annotations layered on top.
+The strategist produces a position assessment for every open position plus any pending orders. The PM receives the output as a complete book review alongside the analyst's new trade proposals, with [proposal pre-processor](proposal-pre-processor.md) annotations layered on top.
 
 **Per-position assessment — structured fields:**
 
-- **Assessment ID:** unique identifier within the invocation (e.g., `SA-1`, `SA-2`)
+- **Assessment ID:** unique within invocation (e.g., `SA-1`, `SA-2`)
 - **Position ID and thesis ID:** which position this assessment covers
-- **Underlying:** the root ticker for this position — used by the pre-processor for same-name conflict detection against analyst proposals
+- **Underlying:** root ticker — used by the pre-processor for same-name conflict detection against analyst proposals
 - **Sector:** which sector this position belongs to
-- **Thesis status:** the strategist's status classification (on-track, partially-realized, at-risk, stale, invalidated) — the authoritative thesis health assessment for this invocation. Signal criteria per status are defined in [Thesis status classification methodology](#thesis-status-classification-methodology)
-- **Prior status:** the thesis status from the previous invocation (read from the thesis record), enabling the PM to see status transitions (e.g., on-track → at-risk)
-- **Recommended action:** hold, reduce, close, adjust-bracket, or add. Action selection criteria are defined in [Action decision logic](#action-decision-logic)
-- **Action parameters** (required for non-hold recommendations):
-  - For close: quantity (partial or full), order type (market or limit with price), close rationale type (thesis-invalidated, target-reached, conviction-reduced, risk-management)
-  - For reduce: quantity, order type
-  - For adjust-bracket: specific changes (new stop level, new target, new time horizon, new/revised event invalidation)
-  - For add: additional quantity, entry order parameters, bracket adjustment if needed
-- **Exposure impact** (for non-hold recommendations): the estimated change in delta-adjusted exposure for this position's sector, and the net directional impact. For add recommendations: populated by the guardrail validation tool at pre-submission check time. For close/reduce: computed from current position data
-- **Guardrail validation result** (for add recommendations only, and for reduce/close recommendations whose exposure impact interacts with a flagged constraint): pass/fail summary from the pre-submission check
-- **Remedy flag** (optional): identifier of a regime-transition or market-movement breach flagged in the strategist's guardrail state header that this assessment addresses (e.g., `BREACH-1`). See [Regime-transition remedy proposals](#regime-transition-remedy-proposals)
+- **Thesis status:** on-track, partially-realized, at-risk, stale, or invalidated — the authoritative health assessment for this invocation. Signal criteria in [Thesis status classification methodology](#thesis-status-classification-methodology)
+- **Prior status:** classification from the previous invocation, read from the thesis record — surfaces transitions (e.g., on-track → at-risk)
+- **Recommended action:** hold, reduce, close, adjust-bracket, or add. Selection criteria in [Action decision logic](#action-decision-logic)
+- **Action parameters** (required for non-hold):
+  - close: quantity (partial or full), order type (market or limit with price), close rationale type (thesis-invalidated, target-reached, conviction-reduced, risk-management)
+  - reduce: quantity, order type
+  - adjust-bracket: specific changes (new stop level, new target, new time horizon, new/revised event invalidation)
+  - add: additional quantity, entry order parameters, bracket adjustment if needed
+- **Exposure impact** (non-hold): change in delta-adjusted exposure for this position's sector, plus net directional impact. For add: populated by the guardrail validation tool. For close/reduce: computed from current position data
+- **Guardrail validation result** (for add, and for reduce/close whose exposure impact interacts with a flagged constraint): pass/fail summary from pre-submission check
+- **Remedy flag** (optional): identifier of a regime-transition or market-movement breach this assessment addresses (e.g., `BREACH-1`). See [Regime-transition remedy proposals](#regime-transition-remedy-proposals)
 
 **Per-position assessment — narrative fields:**
 
-- **Status rationale:** signal-level reasoning with source references (e.g., `[QR-7]`, `[SA-TECH-3]`) explaining the thesis status classification — what signals support or undermine the thesis. When status has changed from the prior invocation, the rationale must explain what drove the transition
-- **Action rationale:** signal-level reasoning explaining what new information drives the recommended action. For close with thesis-invalidated: the specific invalidation reason
-- **Reduce rationale** (for reduce only): why partial rather than full close, and how the reduction quantity maps to the portion of the thesis that weakened or to the breach overage (for remedy reductions)
-- **Add conviction justification** (for add only): what strengthening signal absent at entry warrants increasing the position. A validating signal ("the thesis is playing out") is a hold reason, not an add reason
-- **Adjustment rationale** (for adjust-bracket only): why the bracket parameters should change — what new information makes the original level wrong
-- **Remedy rationale** (required when remedy flag is present): why this action (trim-to-compliance / close / hold-with-rationale) is the right response to the flagged breach, given the thesis state
-- **Cross-position observations** (optional): portfolio-level dynamics relevant to this position — e.g., "this position's correlation with POS-AMD-001 has increased from 0.3 to 0.7 this week, creating unintended concentration"
+- **Status rationale:** signal-level reasoning with source references (e.g., `[QR-7]`, `[SA-TECH-3]`) — what signals support or undermine the thesis. Status transitions must explain what drove them
+- **Action rationale:** what new information drives the recommended action. For close with thesis-invalidated: the specific invalidation reason
+- **Reduce rationale** (reduce only): why partial rather than full, and how the reduction quantity maps to the weakened portion of the thesis or the breach overage (for remedy reductions)
+- **Add conviction justification** (add only): the strengthening signal absent at entry. A validating signal ("the thesis is playing out") is a hold reason, not an add reason
+- **Adjustment rationale** (adjust-bracket only): what new information makes the original parameter wrong
+- **Remedy rationale** (when remedy flag is present): why this action (trim-to-compliance / close / hold-with-rationale) is the right response given the thesis state
+- **Cross-position observations** (optional): portfolio-level dynamics relevant to this position — e.g., "correlation with POS-AMD-001 has increased from 0.3 to 0.7 this week, creating unintended concentration"
 
-**Pending order assessment — structured fields:** See [Pending order review](#pending-order-review).
+**Pending order assessment — structured fields:** see [Pending order review](#pending-order-review).
 
-**Portfolio-level observations** (one section, after all position assessments — narrative only):
+**Portfolio-level observations** (one section after all position assessments, narrative only):
 
-- Aggregate thesis health: distribution of positions across status categories; direction of movement since the prior invocation
-- Sector balance shifts: whether the recommended actions would alter the portfolio's sector exposure profile
-- Thesis dependency warnings: multiple positions that share catalysts or assumptions — a single catalyst firing against consensus would invalidate several positions at once
-- Capital allocation observations: whether the current book is capital-efficient given the aggregate thesis-quality distribution
-- Regime-transition summary (when applicable): which flagged breaches are addressed by the per-position remedies above, and any that remain uncured with rationale
+- Aggregate thesis health: distribution across status categories; direction of movement since prior invocation
+- Sector balance shifts: whether recommended actions alter the portfolio's sector exposure profile
+- Thesis dependency warnings: positions sharing catalysts or assumptions whose simultaneous firing against consensus would invalidate several at once
+- Capital allocation observations: whether the book is capital-efficient given aggregate thesis-quality distribution
+- Regime-transition summary (when applicable): which flagged breaches are addressed by per-position remedies, and any that remain uncured with rationale
 
 ---
 
 ## Thesis status classification methodology
 
-Every per-position assessment sets `thesis_status` to one of five values. The scale is defined by signal characteristics — the presence or absence of specific current-invocation signals bearing on the thesis — not by P/L. A position can be deeply profitable and `at-risk` (the move already played out and new information undermines the residual case) or deeply underwater and `on-track` (the catalyst hasn't fired yet and nothing has contradicted the thesis).
+Every per-position assessment sets `thesis_status` to one of five values, defined by signal characteristics — presence or absence of specific current-invocation signals bearing on the thesis — not by P/L. A position can be deeply profitable and `at-risk` (the move played out and new information undermines the residual case) or deeply underwater and `on-track` (the catalyst hasn't fired and nothing has contradicted the thesis).
 
 | Status | Signal criteria |
 |--------|----------------|

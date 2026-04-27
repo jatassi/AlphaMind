@@ -6,19 +6,19 @@ What kind of system AlphaMind is — before choosing how to build it.
 
 ## Summary
 
-AlphaMind is a **scheduled batch pipeline** where most wall-clock time is spent waiting on LLM API calls, with a **real-time sidecar** (the continuous monitor consuming Alpaca's `trade_updates` websocket and watching price streams for options-stop and guardrail-breach detection) that has genuinely different runtime characteristics, a **moderately complex state machine** (the OMS) that manages position and order lifecycle, a **heavy data integration layer** that talks to many external APIs, and a **numerical computation component** that is meaningful but not HPC-scale.
+AlphaMind is a **scheduled batch pipeline** where most wall-clock time is spent waiting on LLM API calls, with a **real-time sidecar** (the continuous monitor consuming Alpaca's `trade_updates` websocket and watching price streams for options-stop and guardrail-breach detection), a **moderately complex state machine** (the OMS) managing position and order lifecycle, a **heavy data integration layer** talking to many external APIs, and a **numerical computation component** that is meaningful but not HPC-scale.
 
-It is **not** a low-latency trading system. It is **not** a streaming data pipeline. It is **not** a microservices architecture — the layers are sequential stages in a single pipeline, not independent services. It is closest in shape to a **sophisticated ETL/workflow system with LLM agents in the middle and an event-driven execution sidecar**.
+It is **not** a low-latency trading system, a streaming data pipeline, or a microservices architecture — the layers are sequential stages in a single pipeline. Closest shape: a **sophisticated ETL/workflow system with LLM agents in the middle and an event-driven execution sidecar**.
 
 ---
 
 ## Four runtime profiles
 
-The system has four distinct runtime profiles that coexist, each with different computational characteristics:
+Four distinct runtime profiles coexist, each with different computational characteristics:
 
 ### 1. The pipeline (batch, scheduled, 8-10x/day)
 
-The core loop. Triggered on schedule, runs sequentially through 5 layers. Each invocation is a single pass — no long-lived state within a run, no loops that span invocations.
+The core loop. Triggered on schedule, runs sequentially through 5 layers. Each invocation is a single pass — no long-lived state within a run, no loops spanning invocations.
 
 ```
 Trigger
@@ -29,7 +29,7 @@ Trigger
   → Execution             (CPU + I/O: validation, DB writes, order submission)
 ```
 
-The pipeline's dominant bottleneck is **LLM API latency**, not local compute. Layers 1-2 are fast programmatic work. Layers 3-4 are waiting on LLM responses. Layer 5 is fast again. Total wall-clock time per invocation is mostly waiting for LLM inference.
+The dominant bottleneck is **LLM API latency**. Layers 1-2 and 5 are fast programmatic work; layers 3-4 wait on LLM responses. Total wall-clock per invocation is mostly LLM inference wait.
 
 ### 2. The continuous monitor (real-time, always-on)
 
@@ -42,15 +42,15 @@ Underlying price feed → options stop trigger evaluation → close order via br
                       → guardrail breach detection
 ```
 
-An **event-driven, real-time system** with very different characteristics from the batch pipeline. Low latency matters (trigger detection should happen close to real-time). It maintains state (pending orders, bracket lifecycle for options, position greeks). It talks to the same DB as the pipeline but at different times (pipeline reads during Phase 1; monitor writes continuously).
+An **event-driven, real-time system**. Low latency matters (trigger detection should happen near real-time). Maintains state (pending orders, bracket lifecycle for options, position greeks). Shares the DB with the pipeline at different times (pipeline reads during Phase 1; monitor writes continuously).
 
 ### 3. The scheduler (control plane)
 
-Manages the invocation schedule: market-hours cadence (2h), off-hours cadence (4h), anchored runs (pre-open, pre-close), overlap deduplication. Not computationally interesting, but a distinct concern — needs market calendar awareness, time zones, and schedule conflict resolution.
+Manages the invocation schedule: market-hours cadence (2h), off-hours cadence (4h), anchored runs (pre-open, pre-close), overlap deduplication. Needs market calendar awareness, time zones, and schedule conflict resolution.
 
 ### 4. Data ingestion infrastructure (I/O, rate-limited)
 
-External data collection across 12+ categories of quantitative data and 6+ categories of qualitative data for 60-80 tickers. Hundreds of API calls per invocation, each with rate limits, authentication, error handling, and potentially different refresh cadences. Some data sources are websocket-based (the monitor needs real-time prices), some are REST (batch pulls at invocation time).
+External data collection across 12+ quantitative and 6+ qualitative data categories for 60-80 tickers. Hundreds of API calls per invocation, each with rate limits, authentication, error handling, and varying refresh cadences. Some sources are websocket-based (monitor); some are REST (batch pulls at invocation time).
 
 ---
 
@@ -60,29 +60,29 @@ These cut across the runtime profiles:
 
 ### A. Pipeline orchestration
 
-Sequencing the layers, managing parallelism *within* layers (3 sector analysts + portfolio analyst + qualitative research run in parallel), handling partial failures (what if one API is down?), and passing structured data between stages.
+Sequencing layers, managing parallelism *within* layers (3 sector analysts + portfolio analyst + qualitative research run in parallel), handling partial failures (one API down), passing structured data between stages.
 
 ### B. LLM agent management
 
-7-8 distinct LLM agents per invocation (3 sector analysts, portfolio analyst, qualitative researcher, adaptive researcher, synthesizer, trader, PM), each with its own context window, system prompt, and tool access. Some run in parallel, some sequential. The adaptive researcher has a nested agentic loop (tool use within tool use). Decision layer agents have retrieval tools that fetch from a brief store. This is the heart of the system's complexity.
+7-8 distinct LLM agents per invocation (3 sector analysts, portfolio analyst, qualitative researcher, adaptive researcher, synthesizer, trader, PM), each with its own context window, system prompt, and tool access. Some parallel, some sequential. The adaptive researcher has a nested agentic loop (tool use within tool use); decision layer agents have retrieval tools that fetch from a brief store. The heart of the system's complexity.
 
 ### C. State management
 
-Multiple kinds of state with different lifecycles:
+Multiple state lifecycles:
 
-- **Portfolio state** (persistent, authoritative): positions, theses, orders, cash, P/L — survives across invocations, the system's memory
-- **Fill buffer** (ephemeral, accumulating): fills produced by the continuous monitor, drained at each pipeline invocation
-- **Brief store** (per-invocation, read-heavy): analysis briefs keyed by reference ID for decision layer retrieval — built during analysis, consumed during decision, discarded after
-- **Distillation state** (rolling): baselines, regime classifications, composite signals — updated each invocation, persisted between invocations
+- **Portfolio state** (persistent, authoritative): positions, theses, orders, cash, P/L — the system's memory across invocations
+- **Fill buffer** (ephemeral, accumulating): fills from the continuous monitor, drained each pipeline invocation
+- **Brief store** (per-invocation, read-heavy): analysis briefs keyed by reference ID for decision layer retrieval
+- **Distillation state** (rolling): baselines, regime classifications, composite signals — updated each invocation, persisted between
 
 ### D. Numerical computation
 
-The distillation layer: technical indicators, statistical anomaly detection, normalization, volatility regime classification, portfolio exposure calculations, P/L attribution. Requires a language/ecosystem with strong numerical libraries.
+The distillation layer: technical indicators, statistical anomaly detection, normalization, volatility regime classification, portfolio exposure calculations, P/L attribution. Requires strong numerical libraries.
 
 ### E. External data integration
 
-Dozens of data source integrations with heterogeneous APIs, authentication schemes, rate limits, and data formats. Market data vendors, news APIs, prediction market APIs. Each needs adapters, error handling, and potentially caching.
+Dozens of integrations with heterogeneous APIs, authentication schemes, rate limits, data formats. Market data vendors, news APIs, prediction market APIs. Each needs adapters, error handling, potentially caching.
 
 ### F. Observability and auditability
 
-Every trading decision must be traceable back through the chain: PM approved → trader recommended → synthesizer highlighted → analyst flagged → distillation computed → raw data showed. Structured logging, brief archival, and decision audit trails.
+Every trading decision must be traceable: PM approved → trader recommended → synthesizer highlighted → analyst flagged → distillation computed → raw data showed. Structured logging, brief archival, decision audit trails.

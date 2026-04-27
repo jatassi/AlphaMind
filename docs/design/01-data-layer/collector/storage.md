@@ -1,26 +1,26 @@
 # Storage
 
-The data layer's schema spec — tables, columns, cross-cutting rules, retention. Defines what the [data sources library](data-sources.md)'s collection functions write and what the distillation layer (and eventually the pipeline) reads.
+Schema spec — tables, columns, cross-cutting rules, retention. Defines what the [data sources library](data-sources.md) writes and what distillation (and eventually the pipeline) reads.
 
 ## Storage choice
 
-SQLite (WAL mode) accessed via SQLAlchemy. Schema migrations via Alembic. Models live in `alphamind.persistence.models`. Coexists with the eventual portfolio-state schema ([state-persistence.md](../../05-execution-layer/state-persistence.md)) in the same `%USERPROFILE%\AlphaMind\data\alphamind.db` — table names are disjoint.
+SQLite (WAL mode) via SQLAlchemy; migrations via Alembic. Models live in `alphamind.persistence.models`. Coexists with the eventual portfolio-state schema ([state-persistence.md](../../05-execution-layer/state-persistence.md)) in `%USERPROFILE%\AlphaMind\data\alphamind.db` — table names are disjoint.
 
-The choice and pragma settings inherit from [data-and-state.md](../../../architecture/data-and-state.md): `journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=ON`, `synchronous=NORMAL`.
+Pragma settings inherit from [data-and-state.md](../../../architecture/data-and-state.md): `journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=ON`, `synchronous=NORMAL`.
 
 ## Cross-cutting rules
 
 | Rule | Choice |
 |---|---|
-| **Timestamps** | UTC throughout, stored as ISO 8601 TEXT (`2026-04-26T13:30:00Z`). SQLAlchemy `DateTime` maps cleanly. ET conversion happens at presentation, never in storage. |
-| **Missing data** | Nullable columns where absence is meaningful. Required fields are NOT NULL — a missing value is a collection bug. No sentinel rows on collection failure: the next scheduled fire retries; absence in the data tables is interpreted via [api-failure-handling.md](../api-failure-handling.md)'s fail-closed policy. |
-| **Adjustments** | Q1 OHLCV bars stored with paired `adj_*` and `unadj_*` price/volume columns from a single Polygon pull. Adjusted values reflect adjustments-known-at-ingestion-time; corporate actions occurring after ingestion do not retroactively rewrite stored rows. |
-| **Extended hours** | Single `ohlcv_bars` table; `session` column distinguishes `pre_market` / `regular` / `after_hours` / `overnight`. The distillation layer applies the confidence discount per [external.md § 1](../../02-distillation-layer/external.md#1-normalization-and-formatting). |
-| **Idempotency** | Every time-series table has a natural composite primary key. Collection functions UPSERT; re-running on the same window produces no duplicates. |
-| **Partitioning** | Single tables, composite indexes. SQLite has no native partitioning; volumes (estimated below) are well within range for single-table queries. |
+| **Timestamps** | UTC throughout, stored as ISO 8601 TEXT (`2026-04-26T13:30:00Z`). ET conversion happens at presentation. |
+| **Missing data** | Nullable columns where absence is meaningful; required fields NOT NULL — a missing value is a collection bug. No sentinel rows on failure; absence is interpreted via [api-failure-handling.md](../api-failure-handling.md)'s fail-closed policy. |
+| **Adjustments** | Q1 OHLCV bars store paired `adj_*` and `unadj_*` columns from a single Polygon pull. Adjusted values reflect adjustments-known-at-ingestion; later corporate actions don't retroactively rewrite stored rows. |
+| **Extended hours** | Single `ohlcv_bars` table; `session` column distinguishes `pre_market` / `regular` / `after_hours` / `overnight`. Distillation applies the confidence discount per [external.md § 1](../../02-distillation-layer/external.md#1-normalization-and-formatting). |
+| **Idempotency** | Every time-series table has a natural composite primary key; collection functions UPSERT. |
+| **Partitioning** | Single tables with composite indexes. SQLite has no native partitioning; estimated volumes are well within single-table range. |
 | **Provenance** | Every row carries `source` (e.g., `polygon`, `fred`) and `ingested_at` UTC. |
-| **Universe scoping** | Most tables FK to `asset_universe.ticker`. `asset_universe` holds both trading-universe tickers and benchmark instruments via the `asset_role` column. |
-| **Forward-only** | Time-series tables append; collection functions never rewrite past rows. The two narrow exceptions are macro revisions (new row with incremented `revision_number`) and options snapshot retention pruning at 120 days. Reference tables hold current snapshots and overwrite in place. |
+| **Universe scoping** | Most tables FK to `asset_universe.ticker`. `asset_universe` holds both trading-universe and benchmark instruments via the `asset_role` column. |
+| **Forward-only** | Time-series tables append; collection functions never rewrite past rows. Two exceptions: macro revisions (new row with incremented `revision_number`) and options snapshot retention pruning at 120 days. Reference tables hold current snapshots and overwrite in place. |
 
 ## Tables
 
@@ -404,7 +404,7 @@ After bootstrap (252-day equity / 24-month monthly macro / 90-day daily macro / 
 | `event_calendar` + `earnings_event_details` | ~500 | <1 MB |
 | Reference tables | ~100 | <1 MB |
 
-Total post-bootstrap: ~150–200 MB. Steady-state daily growth: ~25 MB/day (mostly `ohlcv_bars` + `options_contract_snapshots` before pruning + `news_articles`). One year of operation lands around 10 GB before any retention policy applies.
+Post-bootstrap: ~150–200 MB. Steady-state daily growth: ~25 MB/day (mostly `ohlcv_bars` + pre-prune `options_contract_snapshots` + `news_articles`). One year lands around 10 GB before retention.
 
 ## Retention
 

@@ -1,6 +1,6 @@
 # Corporate action processing
 
-How the OMS integrates Alpaca-emitted corporate-action events into local position state. Position-layer mechanics — quantity, cost basis, ticker, status — paired with the cash-ledger movements and activity log entries that document them. The bracket lifecycle on a corporate action ([orders-and-brackets.md § Corporate action handling](orders-and-brackets.md#corporate-action-handling)) and the strategist's per-action-type re-evaluation ([strategist.md § Corporate-action-pending positions](../04-decision-layer/strategist.md#corporate-action-pending-positions)) are documented elsewhere; this doc is the underlying mechanical layer they depend on.
+How the OMS integrates Alpaca-emitted corporate-action events into local position state. Position-layer mechanics — quantity, cost basis, ticker, status — plus cash-ledger movements and activity log entries. Bracket lifecycle ([orders-and-brackets.md § Corporate action handling](orders-and-brackets.md#corporate-action-handling)) and the strategist's per-action-type re-evaluation ([strategist.md § Corporate-action-pending positions](../04-decision-layer/strategist.md#corporate-action-pending-positions)) are specified elsewhere; this doc is the mechanical foundation they depend on.
 
 ---
 
@@ -8,7 +8,7 @@ How the OMS integrates Alpaca-emitted corporate-action events into local positio
 
 Covered:
 
-- Position quantity, cost basis, ticker, and status mutations driven by Alpaca corporate-action activities
+- Position quantity, cost basis, ticker, and status mutations from Alpaca CA activities
 - Cash credits and debits (long dividends, short dividend obligations, fractional cash-out, merger proceeds)
 - Spin-off child position creation
 - Phase 1 integration sequencing alongside fill processing
@@ -16,26 +16,24 @@ Covered:
 - Ex-date detection and application timing
 - Activity log catalog additions
 
-Bracket cancellation on CA, the strategist's per-action defaults, and the asset-universe membership of spun-off tickers are covered in their own specs and referenced where relevant.
-
 ---
 
 ## Source of truth: Alpaca
 
-Alpaca handles corporate actions natively ([broker-adapter.md § Known gaps](broker-adapter.md#known-gaps-relative-to-alphaminds-order-vocabulary)) — it computes split ratios, applies fractional-share cash-outs, allocates spin-off cost basis, and the like. The OMS does not derive these parameters from market data or external corporate-action calendars; it reads what Alpaca reports.
+Alpaca handles corporate actions natively ([broker-adapter.md § Known gaps](broker-adapter.md#known-gaps-relative-to-alphaminds-order-vocabulary)) — it computes split ratios, applies fractional-share cash-outs, allocates spin-off cost basis, etc. The OMS reads what Alpaca reports rather than deriving from market data or external CA calendars.
 
 Two Alpaca surfaces serve as inputs:
 
-1. **`GET /v2/account/activities`** — the per-CA event records. Each record carries the activity type (the discriminator), the ticker, the transaction time, and the per-action parameters (ratio for splits, amount for dividends, deal price for mergers, allocation for spin-offs). This is the trigger and the parameter source.
-2. **`GET /v2/positions` and `GET /v2/account`** — the post-adjustment authoritative state. Used at the end of Phase 1 to reconcile local state against Alpaca's view. On any unexplained delta, local state moves to match Alpaca's per the existing reconciliation discipline ([broker-adapter.md § Account state queries](broker-adapter.md#account-state-queries)).
+1. **`GET /v2/account/activities`** — per-CA event records. Each carries the activity type (discriminator), ticker, transaction time, and per-action parameters (ratio for splits, amount for dividends, deal price for mergers, allocation for spin-offs). This is the trigger and parameter source.
+2. **`GET /v2/positions` and `GET /v2/account`** — post-adjustment authoritative state. Used at end of Phase 1 to reconcile local state against Alpaca's view. On any unexplained delta, local state moves to match Alpaca's per the existing reconciliation discipline ([broker-adapter.md § Account state queries](broker-adapter.md#account-state-queries)).
 
-The OMS applies the per-action mutation to local state from the activity record's parameters, then verifies the result against the authoritative endpoints. There is no parallel computation of Alpaca's behavior — read it, apply it, verify it.
+The OMS reads, applies, and verifies — no parallel computation of Alpaca's behavior.
 
 ---
 
 ## Per-action-type matrix
 
-Each row enumerates one category of corporate action. The Alpaca activity-code column lists the relevant `activity_type` values from `/v2/account/activities`; the exact enum is verified against Alpaca's documentation at implementation time and may include additional sub-codes (tax-classification variants, etc.) that route into the same OMS handler.
+Each row is one category of corporate action. The Alpaca activity-code column lists the relevant `activity_type` values from `/v2/account/activities`; the exact enum is verified against Alpaca's docs at implementation time and may include sub-codes (tax-classification variants, etc.) that route into the same handler.
 
 | Action | Alpaca codes | Quantity | Cost basis | Ticker | Status | Cash impact | Activity log events |
 |---|---|---|---|---|---|---|---|
@@ -49,7 +47,7 @@ Each row enumerates one category of corporate action. The Alpaca activity-code c
 | **Spin-off** | `SPIN` | parent unchanged; child created | parent reduced by Alpaca-allocated portion; child carries the balance | parent unchanged; child = spun-off ticker | parent open; child open with `corporate_action_adjustment_needed` | none on either | `corporate_action_applied` (parent), `bracket_cancelled_corporate_action` (parent), `position_opened` on child (mechanism `spin_off_from_parent`) |
 | **Symbol / name change** | `NC`, `SC` | unchanged | unchanged | new ticker | open | none | `corporate_action_applied`, `bracket_cancelled_corporate_action` |
 
-The `corporate_action_applied` entry carries a structured payload sufficient to reconstruct the change: action type, Alpaca activity ID, ticker (and `new_ticker` for symbol changes and stock mergers), the ratio or amount as reported by Alpaca, pre- and post-action quantity, pre- and post-action cost basis, signed cash impact, the parent position ID for spin-offs, and the resulting position status. This is the audit-trail single-source-of-truth event; the standard lifecycle events (`position_closed`, `position_opened`, `cash_credited`, `cash_debited`) are emitted alongside it for downstream consumers that already process those generically.
+The `corporate_action_applied` entry carries a structured payload sufficient to reconstruct the change: action type, Alpaca activity ID, ticker (and `new_ticker` for symbol changes and stock mergers), ratio/amount as reported by Alpaca, pre/post quantity, pre/post cost basis, signed cash impact, parent position ID (spin-offs), resulting position status. This is the audit-trail single-source-of-truth event; standard lifecycle events (`position_closed`, `position_opened`, `cash_credited`, `cash_debited`) are emitted alongside for downstream consumers that already process those generically.
 
 ---
 

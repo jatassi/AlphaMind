@@ -93,11 +93,11 @@ Two complementary layers: **SQLite tables** for structured, queryable metrics an
 
 ### Layer 1: Structured metrics (SQLite)
 
-The persistence layer's `invocations`, `process_lifetimes`, and `agent_calls` tables — fully specified in [state-persistence.md](../design/05-execution-layer/state-persistence.md) — capture queryable data about every pipeline run, the runtime that produced it, and every LLM agent call within it. The invocation record carries the trigger type, phase timestamps, fill collection summary, command execution summary, and the provenance fields (active profile, regime, mode, overlays, resolved config hash and snapshot reference, git SHA, data source freshness) that let the feedback loop join past behavior to the exact composition that produced it. Per-agent metrics (model ID, prompt hash, token usage, wall-clock latency, success/error class) live in `agent_calls`, one row per agent invocation, joined to the parent `invocations` row via `invocation_id`.
+The persistence layer's `invocations`, `process_lifetimes`, and `agent_calls` tables — fully specified in [state-persistence.md](../design/05-execution-layer/state-persistence.md) — capture queryable data about every pipeline run, the runtime that produced it, and every LLM agent call within it. The invocation record carries trigger type, phase timestamps, fill collection summary, command execution summary, and provenance fields (active profile, regime, mode, overlays, resolved config hash and snapshot reference, git SHA, data source freshness) that let the feedback loop join past behavior to the exact composition that produced it. Per-agent metrics (model ID, prompt hash, token usage, wall-clock latency, success/error class) live in `agent_calls`, one row per agent invocation, joined to `invocations` via `invocation_id`.
 
-This is the layer you query: "how many invocations failed this week?", "what's the average analysis phase duration?", "which run types produce the most OMS commands?", "did this prompt edit shift our PM rejection rate?". Standard SQL, no special tooling needed.
+This is the query layer: "how many invocations failed this week?", "average analysis phase duration?", "which run types produce the most OMS commands?", "did this prompt edit shift PM rejection rate?". Standard SQL, no special tooling.
 
-The existing `activity_log` table (portfolio state category 5) handles trade-level audit — every state-changing event with timestamps. The `invocations` and `agent_calls` tables add pipeline-level and per-call audit on top.
+The `activity_log` table (portfolio state category 5) handles trade-level audit — every state-changing event with timestamps. `invocations` and `agent_calls` add pipeline-level and per-call audit on top.
 
 ### Layer 2: Invocation archive (files)
 
@@ -133,11 +133,11 @@ Each pipeline invocation writes its full agent output chain to disk as readable 
         └── ...
 ```
 
-**This is the primary debugging and development tool.** During prompt iteration, you open the archive directory in your editor and read through the chain: what did the distillation layer produce → what did the analyst make of it → what did the synthesizer highlight → what did the trader propose → what did the PM decide. Markdown files are readable, diffable, and greppable.
+**This is the primary debugging and development tool.** During prompt iteration, open the archive directory in your editor and read through the chain: what did distillation produce → what did the analyst make of it → what did the synthesizer highlight → what did the trader propose → what did the PM decide. Markdown files are readable, diffable, greppable.
 
-**Retention:** Archive indefinitely during paper trading evaluation (total volume is modest — a few MB of text per invocation, ~80 MB/day). Prune older archives when disk space becomes a concern.
+**Retention:** Archive indefinitely during paper trading evaluation (a few MB of text per invocation, ~80 MB/day). Prune older archives when disk space becomes a concern.
 
-**Relationship to the brief store:** The brief store in SQLite (from the data-and-state doc) is the *live* store used by the retrieval tool during an invocation. The archive is a *post-hoc* copy written at the end of each invocation. Both contain the same content; the archive is optimized for human browsing, the DB store for programmatic retrieval.
+**Relationship to the brief store:** The brief store in SQLite is the *live* store used by the retrieval tool during an invocation; the archive is a *post-hoc* copy written at end of invocation. Same content, different optimization — archive for human browsing, DB store for programmatic retrieval.
 
 ### Process logging
 
@@ -146,13 +146,13 @@ Separate from the invocation archive, standard process-level logging for operati
 - `%USERPROFILE%\AlphaMind\logs\pipeline.log` — scheduler events, invocation start/end, errors, warnings
 - `%USERPROFILE%\AlphaMind\logs\monitor.log` — websocket connection state, trigger detections, fill events
 
-Python's `logging` module with `TimedRotatingFileHandler` (daily rotation). Retention: 30 days. These are operational logs, not analytical artifacts — you read them when something goes wrong, not routinely.
+Python's `logging` module with `TimedRotatingFileHandler` (daily rotation). Retention: 30 days. Operational logs, read when something goes wrong.
 
 ### Alerting
 
-Not built initially. The pipeline logs errors and continues. If it crashes, NSSM restarts it and the next invocation runs normally — missed invocations are logged but not critical (the system is designed for the next run to catch up).
+Not built initially. The pipeline logs errors and continues. If it crashes, NSSM restarts it and the next invocation catches up; missed invocations are logged but not critical.
 
-**Future:** Simple alerting (email or webhook) on: pipeline failure, monitor websocket disconnect >15 minutes, guardrail breach, or daily P/L exceeding a threshold. Easy to add later, no architectural decisions needed now.
+**Future:** Simple alerting (email or webhook) on pipeline failure, monitor websocket disconnect >15 minutes, guardrail breach, or daily P/L exceeding a threshold. Easy to add later.
 
 ---
 
@@ -165,4 +165,4 @@ Not built initially. The pipeline logs errors and continues. If it crashes, NSSM
 | Compute (existing machine or small VPS) | $0-20 |
 | **Total** | **~$130-220/month** |
 
-The dominant cost is the Claude Max subscription. Everything else is incidental. See [design/cost-and-rate-limit-modeling.md](../design/cost-and-rate-limit-modeling.md) for the workload fit against the Max 5x throughput envelope and the operating posture under cap pressure.
+Claude Max dominates; everything else is incidental. See [design/cost-and-rate-limit-modeling.md](../design/cost-and-rate-limit-modeling.md) for workload fit against the Max 5x throughput envelope and operating posture under cap pressure.

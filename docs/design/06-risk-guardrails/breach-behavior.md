@@ -74,34 +74,34 @@ Before any forced reduction, the engine verifies the action wouldn't breach a di
 
 ## Drawdown halt mode
 
-The most severe mechanical response. Triggered when daily drawdown hits 100% of the limit (2.5% of opening equity at default settings) or cumulative drawdown hits 100% of its limit (8% from high-water mark).
+The most severe mechanical response. Triggered at 100% of the daily limit (2.5% of opening equity) or the cumulative limit (8% from high-water mark).
 
 ### Daily drawdown halt
 
-**Trigger:** Portfolio equity declines 2.5% or more from the day's opening equity, detected by the continuous monitor.
+**Trigger:** Portfolio equity declines 2.5%+ from day's opening equity, detected by the continuous monitor.
 
 **Mechanical response:**
-1. **No new positions.** The engine rejects all OPEN and ADD commands for the remainder of the trading day.
-2. **No new shorts.** Even CLOSE commands that would create new short exposure are blocked (edge case: closing a long when the system is net short).
-3. **Existing bracket stops remain active.** Take-profit and invalidation stops continue to execute normally. The system doesn't freeze existing risk management — it only blocks new risk.
-4. **Pending orders are not cancelled.** Limit orders placed before the halt may still fill. The PM can cancel them at the next invocation if desired, but the engine doesn't mechanically cancel because: (a) a limit buy at a lower price represents defined-risk entry at a known level, and (b) automatic cancellation could interfere with bracket stops on existing positions.
-5. **Halt lifts at the next day's open.** The daily drawdown counter resets at market open (9:30 ET). If cumulative drawdown is also in breach, the cumulative drawdown response (below) remains active.
+1. **No new positions.** Engine rejects all OPEN and ADD commands for the rest of the trading day.
+2. **No new shorts.** CLOSE commands creating new short exposure are blocked (edge case: closing a long when net short).
+3. **Existing bracket stops remain active.** Take-profits and invalidation stops continue normally — the system blocks new risk, not existing risk management.
+4. **Pending orders are not cancelled.** Limit orders placed before halt may still fill. The PM can cancel at the next invocation. Engine does not auto-cancel because (a) a limit buy at a lower price is defined-risk at a known level, and (b) auto-cancellation could interfere with bracket stops on existing positions.
+5. **Halt lifts at next day's open.** Daily counter resets at 9:30 ET. If cumulative drawdown is also breached, that response (below) remains active.
 
 ### Agent behavior during halt mode
 
-The pipeline continues to run during halt, but each agent receives modified instructions via its guardrail state header (see [state-delivery.md](state-delivery.md#halt-mode-header-modifications)). The upstream pipeline (data ingestion, distillation, research agents) runs normally — its output informs how agents reason about existing positions during the halt.
+The pipeline continues running during halt; each agent receives modified instructions via its guardrail state header (see [state-delivery.md](state-delivery.md#halt-mode-header-modifications)). The upstream pipeline (data ingestion, distillation, research) runs normally and informs reasoning about existing positions.
 
-**Analyst — watchlist mode.** The analyst does not generate trade proposals during halt. Its OPEN/ADD proposals cannot execute, so generating them wastes tokens. Instead, the analyst produces a compact **watchlist** — opportunities worth tracking for post-halt consideration. The watchlist captures the ticker, thesis summary, and estimated conviction, but omits the full proposal structure (sizing, entry parameters, bracket configuration). This preserves the analytical signal at a fraction of the token cost. The watchlist is stored in the activity log and surfaced to the analyst at the first post-halt invocation.
+**Analyst — watchlist mode.** Generates no trade proposals — OPEN/ADD cannot execute, so generation wastes tokens. Produces a compact watchlist (ticker, thesis summary, estimated conviction) for post-halt consideration, omitting sizing, entry parameters, and bracket config. Stored in the activity log and surfaced at the first post-halt invocation.
 
-**Strategist — defensive posture mode.** The strategist's role becomes more focused during halt: instead of balancing additions and reductions, it shifts entirely toward defensive position management. It still receives the full distillation and research output, which informs its reasoning about current holdings. Its position assessments should emphasize: which positions have deteriorating theses in the current market environment, which stops should be tightened, and which positions should be closed to reduce exposure and limit further drawdown. The strategist's recommendations during halt carry higher weight because the PM's only available actions are risk-reducing.
+**Strategist — defensive posture mode.** Receives full distillation and research output. Position assessments emphasize: deteriorating theses in the current environment, stops to tighten, and positions to close to limit further drawdown. Recommendations carry higher weight because the PM's only available actions are risk-reducing.
 
-**PM — risk reduction mode.** The PM retains the ability to issue CLOSE commands (reducing risk) and ADJUST commands (tightening stops on existing positions). No OPEN, ADD, or risk-increasing actions are available. The PM's context explicitly states the restricted action space and the halt reason. The PM should prioritize: (a) reviewing and potentially cancelling pending limit orders that were placed before the halt, (b) executing the strategist's defensive recommendations, and (c) tightening stops on positions that are moving against their thesis in the current session.
+**PM — risk reduction mode.** Retains CLOSE and ADJUST (tightening stops) authority. No OPEN, ADD, or risk-increasing actions. Context states the restricted action space and halt reason. Priorities: (a) review and possibly cancel pre-halt pending limit orders, (b) execute the strategist's defensive recommendations, (c) tighten stops on positions moving against thesis.
 
 ### Cumulative drawdown response
 
-**Trigger:** Portfolio equity declines 8% or more from the all-time high-water mark, detected by the continuous monitor.
+**Trigger:** Portfolio equity declines 8%+ from the all-time high-water mark.
 
-**Progressive response (not a binary halt):**
+**Progressive response (not binary halt):**
 
 | Drawdown depth | Response |
 |----------------|----------|
@@ -109,63 +109,61 @@ The pipeline continues to run during halt, but each agent receives modified inst
 | 10% (125% of limit) | Max position size reduced to 2%. Max gross exposure reduced to 60%. Existing positions with unrealized loss > 15% flagged for PM review. |
 | 12% (150% of limit) | **Full halt.** No new positions. Strategist and PM enter survival mode — strategist proposes orderly position reductions (1–2 per invocation to avoid market impact), PM reviews and executes. If the strategist/PM fail to reduce positions within 2 invocations of entering tier 3, the engine falls back to closing positions by largest unrealized loss first. |
 
-**Subjective measures are PM/strategist judgment, not mechanical gates.** Conviction, thesis strength, and thesis status are subjective agent assessments — they reflect interpretation, not objective portfolio metrics. Guardrails must be based on objective, measurable quantities (position size, exposure, drawdown). Earlier versions of this design used conviction-level minimums as mechanical gates in tiers 1–2 and thesis status as an engine sorting criterion in tier 3. Both have been removed. The strategist and PM are the appropriate layers for applying subjective judgment: the strategist uses thesis strength to propose which positions to trim or close, and the PM exercises judgment about whether a trade's conviction justifies entry during drawdown. When the engine must act autonomously (the tier 3 fallback), it uses objective criteria only — largest unrealized loss, then most liquid.
+**Subjective measures are PM/strategist judgment, not mechanical gates.** Conviction, thesis strength, and thesis status are agent interpretations, not objective portfolio metrics. Guardrails are based on measurable quantities (position size, exposure, drawdown). The strategist uses thesis strength to propose which positions to trim; the PM exercises judgment on whether conviction justifies entry during drawdown. The tier 3 engine fallback uses objective criteria only — largest unrealized loss, then most liquid.
 
-**Recovery:** As the portfolio recovers (equity rises), the system exits each tier's restrictions when drawdown depth drops below the tier's threshold. Recovery thresholds use the same percentages — no hysteresis. The reasoning: if the portfolio has recovered to 7% drawdown, it should return to full operating capacity. Hysteresis would delay recovery without adding safety.
+**Recovery:** Each tier's restrictions exit when drawdown depth drops below its threshold. No hysteresis — same percentages on entry and exit. If the portfolio has recovered to 7% drawdown, it returns to full operating capacity; delaying recovery doesn't add safety.
 
-**Rationale for progressive rather than binary response:** A binary halt at 8% would prevent the system from recovering — it can't generate returns if it can't trade. The progressive model constrains the system increasingly tightly as losses deepen, preserving some ability to recover while ensuring that truly severe drawdowns trigger a full defensive posture.
+**Rationale for progressive vs. binary response:** A binary halt at 8% prevents the system from recovering — it can't generate returns if it can't trade. The progressive model constrains tighter as losses deepen while preserving recovery ability.
 
 ---
 
 ## Margin call cascade handling
 
-Margin calls create a special category of forced action because they're externally imposed (by the broker) rather than internally triggered (by guardrails). The margin call response interacts with other guardrails.
+Margin calls are externally imposed by the broker rather than internally triggered.
 
-**Margin call priority:** Margin calls take absolute priority over all other guardrail rules. If a margin call requires liquidation, the engine liquidates regardless of the impact on other constraints. The reasoning: a margin call is a hard external constraint — failure to meet it results in broker-initiated forced liquidation at worse prices and terms.
+**Margin call priority:** Absolute priority over all guardrail rules. If liquidation is required, the engine liquidates regardless of impact on other constraints — failure to meet the call results in broker-initiated forced liquidation at worse prices.
 
-**Cascade detection:** After executing a margin call liquidation, the engine re-evaluates all guardrail rules against the post-liquidation portfolio state. If the liquidation created a new breach (e.g., closing a short to meet margin causes a net long exposure breach), the new breach is handled according to its own classification (immediate or deferred).
+**Cascade detection:** After liquidation, the engine re-evaluates all rules against post-liquidation state. New breaches (e.g., closing a short causes a net long breach) are handled per their own classification.
 
-**Cascade logging:** Each step of a margin cascade is logged as a separate command envelope with `engine_guardrail` provenance and a `margin_cascade` sub-type. The full cascade sequence is linked by a shared `cascade_id` so the activity log shows the chain of events.
+**Cascade logging:** Each step is logged as a command envelope with `engine_guardrail` provenance and `margin_cascade` sub-type. A shared `cascade_id` links the chain.
 
 **Margin call position selection:**
-1. Prioritize positions with the worst risk/reward ratio at current price (closest to invalidation, farthest from target)
-2. Among tied positions, prefer the most liquid
-3. Prefer full closes over partial — partial closes may not satisfy the margin requirement and leave residual risk
+1. Worst risk/reward ratio at current price (closest to invalidation, farthest from target)
+2. Tiebreaker: most liquid
+3. Full closes — partial may not satisfy the requirement and leaves residual risk
 
 ---
 
 ## Emergency invocation trigger
 
-The continuous monitor normally operates between scheduled pipeline invocations (every ~2 hours), taking only mechanical actions (halt mode, forced closes). But certain market events are severe enough that waiting for the next scheduled invocation is unacceptable — the strategist and PM need to start reasoning about the response immediately.
+The continuous monitor normally takes only mechanical actions between scheduled invocations. Certain events are severe enough that waiting for the next scheduled run is unacceptable.
 
 ### Trigger conditions
 
-The continuous monitor requests an emergency pipeline invocation when any of the following objective thresholds are met:
-
 | Trigger | Threshold | Rationale |
 |---------|-----------|-----------|
-| **Regime jump** | Regime classification skips a level (e.g., low-vol → elevated, normal → crisis, low-vol → crisis) | A regime skip indicates a sudden, severe market shift. The strategist and PM need to begin resolving the resulting breaches immediately, not 2 hours from now. |
-| **Multi-rule breach** | 3 or more deferred rules simultaneously enter breach between invocations | A single deferred breach can wait; multiple simultaneous breaches indicate a coordinated market move that requires a coordinated agent response. |
-| **Daily drawdown velocity** | Daily drawdown crosses 60% of limit within 30 minutes of the last check | Rapid drawdown acceleration suggests the situation is deteriorating faster than the scheduled cadence can respond to. The agents should evaluate defensive actions before the halt triggers. |
-| **Margin call** | Broker issues a margin call | After the engine handles the immediate liquidation mechanically, an emergency invocation lets the agents assess the post-liquidation state and take further defensive action. |
+| **Regime jump** | Classification skips a level (e.g., low-vol → elevated, normal → crisis, low-vol → crisis) | A regime skip indicates a sudden severe shift requiring immediate strategist/PM reasoning, not 2 hours from now. |
+| **Multi-rule breach** | 3+ deferred rules simultaneously breach between invocations | Multiple simultaneous breaches indicate a coordinated market move requiring a coordinated agent response. |
+| **Daily drawdown velocity** | Daily drawdown crosses 60% of limit within 30 minutes of last check | Rapid acceleration suggests the situation is outpacing the scheduled cadence; agents should evaluate defensive actions before halt triggers. |
+| **Margin call** | Broker issues a margin call | After mechanical liquidation, agents assess post-liquidation state and take further defensive action. |
 
-**All triggers are objective and measurable.** No subjective assessment (thesis quality, sentiment, analyst opinion) can trigger an emergency invocation.
+All triggers are objective and measurable; no subjective assessment can trigger an emergency invocation.
 
 ### Cooldown
 
-Emergency invocations are subject to a **minimum 30-minute cooldown** between triggers. If multiple trigger conditions fire within the cooldown window, they are coalesced into the already-scheduled or in-progress emergency invocation. The cooldown prevents runaway invocations during sustained volatility where multiple triggers could fire in rapid succession.
+**Minimum 30-minute cooldown** between triggers. Multiple conditions firing within the window coalesce into the in-progress emergency invocation. Prevents runaway invocations during sustained volatility.
 
-**Exception:** Margin calls override the cooldown. A margin call always triggers an emergency invocation (or attaches to one already in progress) because the broker's deadline is external and non-negotiable.
+**Exception:** Margin calls override the cooldown — the broker's deadline is external and non-negotiable.
 
 ### Relationship to scheduled invocations
 
-An emergency invocation **resets the scheduled cadence.** The next scheduled invocation fires at the normal interval (e.g., 2 hours) after the emergency invocation completes. This prevents a scenario where an emergency invocation fires 15 minutes before a scheduled one, causing two near-simultaneous invocations with minimal new information between them.
+An emergency invocation **resets the scheduled cadence.** The next scheduled invocation fires at the normal interval after the emergency completes, preventing near-simultaneous runs with minimal new information between them.
 
-**An emergency trigger fired while a rolling invocation is in progress interrupts and replaces it.** The scheduler preserves its `max_instances=1` constraint — at most one pipeline invocation ever runs. When an emergency trigger arrives mid-rolling-invocation, the rolling invocation is cancelled, its in-flight state is discarded per [mid-pipeline-failure-handling.md](../mid-pipeline-failure-handling.md) (partial outputs persisted as diagnostic, never replayed), and the emergency invocation runs in its place. The rolling run was reasoning against a pre-emergency market state that the trigger itself says no longer holds; the emergency invocation's fresh context window and current-data snapshot are precisely the point. Execution-layer state (committed commands, activity log, position records) is preserved — only the interrupted rolling invocation's in-memory reasoning state is discarded. The continuous monitor's between-invocation authority (protective CLOSE via engine-originated envelopes, greeks refresh, halt-mode activation) is unaffected by the interruption.
+**An emergency trigger fired during a rolling invocation interrupts and replaces it.** The scheduler preserves `max_instances=1`. The rolling invocation is cancelled, its in-flight state discarded per [mid-pipeline-failure-handling.md](../mid-pipeline-failure-handling.md), and the emergency runs in its place. The rolling run was reasoning against a pre-emergency state the trigger says no longer holds; the emergency's fresh context and current-data snapshot are the point. Execution-layer state (committed commands, activity log, position records) is preserved — only in-memory reasoning state is discarded. Continuous monitor authority (protective CLOSE, greeks refresh, halt activation) is unaffected.
 
 ### Agent context for emergency invocations
 
-Agents receive a modified context header indicating the emergency trigger:
+Agents receive a modified context header:
 
 ```
 === GUARDRAIL STATE (invocation {id}, {timestamp}) ===
@@ -176,40 +174,40 @@ Time since last invocation: {minutes}m (normal cadence: ~120m)
 [...normal guardrail state header follows...]
 ```
 
-The emergency flag serves two purposes: it signals urgency (the strategist and PM should prioritize breach resolution over new opportunity evaluation), and it provides context about *why* the invocation was triggered, which informs the agents' reasoning about the appropriate response.
+The flag signals urgency (prioritize breach resolution over new opportunity evaluation) and provides the trigger context that informs the appropriate response.
 
 ### Implementation note
 
-The emergency invocation trigger is a guardrail-layer capability that requires execution-layer support. The continuous monitor (execution layer) detects the trigger conditions; the pipeline scheduler (execution layer) handles the actual invocation dispatch. The guardrail layer defines the trigger thresholds and the agent context modifications. See the execution layer architecture for the scheduling and dispatch contract.
+The continuous monitor (execution layer) detects trigger conditions; the scheduler dispatches the invocation. The guardrail layer defines thresholds and agent context modifications. See the execution layer architecture for the scheduling contract.
 
 ---
 
 ## Hard rejection semantics
 
-When the engine's T3 guardrail check rejects a command during normal pipeline execution (not between invocations), the rejection is returned synchronously to the PM. The rejection payload includes:
+When the T3 check rejects a command during normal pipeline execution, the rejection returns synchronously to the PM. Payload:
 
-- **Rule(s) breached:** which specific guardrail(s) blocked the command
+- **Rule(s) breached:** which guardrail(s) blocked the command
 - **Current state:** current value for each breaching rule (e.g., "sector tech delta-adjusted exposure: 23.7%")
-- **Limit:** the active limit value (e.g., "sector tech limit: 25.0%")
-- **Overage:** how much the command would exceed the limit (e.g., "proposed addition would push to 28.2%, overage: 3.2%")
-- **Suggested modification:** a mechanical suggestion for making the command compliant (e.g., "reduce position size by 42% to fit within sector limit"). This is a starting point for the PM, not a binding instruction
-- **Headroom after hypothetical compliance:** what the headroom would be if the PM adopts the suggested modification
+- **Limit:** the active limit (e.g., "sector tech limit: 25.0%")
+- **Overage:** how much the command would exceed the limit (e.g., "would push to 28.2%, overage: 3.2%")
+- **Suggested modification:** a mechanical compliance suggestion (e.g., "reduce size by 42%"). Starting point, not binding.
+- **Headroom after hypothetical compliance:** headroom if the PM adopts the suggestion
 
-See [portfolio-manager.md](../04-decision-layer/portfolio-manager.md) for the PM's synchronous feedback handling contract.
+See [portfolio-manager.md](../04-decision-layer/portfolio-manager.md) for the PM's synchronous feedback handling.
 
 ---
 
 ## Traceability for engine-originated actions
 
-All commands in the system — whether originated by the PM or by the engine — are wrapped in **command envelopes** that provide full traceability. The envelope model is defined in [portfolio-manager.md](../04-decision-layer/portfolio-manager.md). When the continuous monitor detects a breach and issues a protective CLOSE, it generates an engine-originated envelope (`engine_guardrail` provenance) containing:
+All commands are wrapped in **command envelopes** for traceability. Envelope model in [portfolio-manager.md](../04-decision-layer/portfolio-manager.md). When the continuous monitor issues a protective CLOSE, the engine-originated envelope (`engine_guardrail` provenance) contains:
 
 - A guardrail trigger record (rule breached, breach details, trigger timestamp, regime at time of breach)
-- The position selection logic (which position was selected and why)
+- Position selection logic (which position, why)
 - The CLOSE command with close rationale type `risk_management` / sub-type `engine_guardrail`
 
-This envelope is stored in the activity log with the same structure as PM-originated envelopes. The thesis resolution carries the `engine_guardrail` provenance, allowing the feedback loop to segment engine-originated closures from PM-originated ones in outcome analysis. The PM and strategist see engine-originated envelopes in their input bundles at the next invocation (via the activity log delivered as part of [portfolio state §5](../01-data-layer/internal/portfolio-state.md), with prominence cues in their respective guardrail state headers), maintaining full awareness of between-invocation actions.
+Stored in the activity log with the same structure as PM-originated envelopes. Thesis resolution carries `engine_guardrail` provenance so the feedback loop can segment engine-originated closures in outcome analysis. The PM and strategist see these envelopes in their next input bundle (via the activity log in [portfolio state §5](../01-data-layer/internal/portfolio-state.md), with prominence cues in their guardrail state headers).
 
-**Constraint on engine autonomy:** The engine may only issue CLOSE commands via this path — never OPEN, ADD, ADJUST, or CANCEL. All constructive actions require PM judgment.
+**Engine autonomy constraint:** Engine may only issue CLOSE — never OPEN, ADD, ADJUST, or CANCEL. All constructive actions require PM judgment.
 
 ---
 
