@@ -17,5 +17,5 @@ Alert the user before disabling the linter or any rule in any form — including
 - For mechanical changes, use Sonnet
 - For all other changes, use Opus
 - Always spawn subagents asynchronously
-- Always list model name (Sonnet or Opus) in subagent title
+- Always list model name (Sonnet or Opus) in subagent title like this: [Sonnet | Opus] <Title>
 
