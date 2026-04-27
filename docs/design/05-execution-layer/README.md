@@ -33,7 +33,7 @@ The engine has four components with distinct responsibilities, consumers, and fa
 | [Position model](position-model.md) | Designed | Multi-instrument hierarchy (equity, options, strategy), delta-adjusted exposure calculations, Reg T margin model |
 | [Thesis model](thesis-model.md) | Designed | Structured components within a flat record, mandatory bracket coverage, component-level resolution, three consumption modes for token efficiency |
 | [OMS commands](oms-commands.md) | Designed | Five commands: OPEN, CLOSE, ADJUST, CANCEL, ADD. No compound commands (ROLL/HEDGE deliberately excluded — see [design decisions](../design-decisions.md)). Validation contracts, rejection handling, sequencing |
-| [State persistence](state-persistence.md) | Stub | How the engine stores state, how the data layer queries it, schema design for the two-phase invocation model |
+| [State persistence](state-persistence.md) | Designed | Three-tier persistence model (core / lifecycle / derived entities), Phase 1 collect + Phase 2 commit, atomic transactions, immediate fill persistence, single-writer invariant, activity log catalog |
 | [Corporate actions](corporate-actions.md) | Designed | Position-layer mechanics for Alpaca-emitted CA events: per-action quantity/cost-basis/cash mutations, spin-off child positions, Phase 1 chronological merge with fills, idempotency ledger, activity log additions |
 | [Venue configuration](venue-configuration.md) | Designed | Alpaca-specific venue rules: settlement cycle, market sessions, PDT, Reg T margin percentages |
 

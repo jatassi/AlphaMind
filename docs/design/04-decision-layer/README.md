@@ -6,10 +6,10 @@ The analyst and strategist run in parallel — both receive the synthesizer outp
 
 | Component | Document | Type | Status |
 |-----------|----------|------|--------|
-| [Analyst](analyst.md) | Identifies highest-conviction asymmetric setups, constructs trade theses for new entries | LLM agent | Stub |
-| [Strategist](strategist.md) | Evaluates every open position against current conditions, recommends portfolio actions | LLM agent | Stub |
-| [Proposal pre-processor](proposal-pre-processor.md) | Merges analyst and strategist outputs, computes cross-proposal annotations | Deterministic | Stub |
-| [Portfolio manager](portfolio-manager.md) | Critically evaluates annotated proposals, manages portfolio risk, approves/rejects, executes | LLM agent | Stub |
+| [Analyst](analyst.md) | Identifies highest-conviction asymmetric setups, constructs trade theses for new entries | LLM agent | Designed |
+| [Strategist](strategist.md) | Evaluates every open position against current conditions, recommends portfolio actions | LLM agent | Designed |
+| [Proposal pre-processor](proposal-pre-processor.md) | Merges analyst and strategist outputs, computes cross-proposal annotations | Deterministic | Designed |
+| [Portfolio manager](portfolio-manager.md) | Critically evaluates annotated proposals, manages portfolio risk, approves/rejects, executes | LLM agent | Designed |
 
 ---
 

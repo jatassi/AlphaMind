@@ -119,8 +119,10 @@ LLM agents reason about what to do with the information available.
 | Document | Description |
 |----------|-------------|
 | [README](04-decision-layer/README.md) | Layer overview, retrieval tool concept, sequential flow |
-| [Analyst](04-decision-layer/analyst.md) | *(stub)* Trade recommendation generation |
-| [Portfolio manager](04-decision-layer/portfolio-manager.md) | *(stub)* Portfolio management and risk evaluation |
+| [Analyst](04-decision-layer/analyst.md) | Identifies asymmetric setups, constructs trade theses for new entries; signal weighting, conviction calibration, anti-ranking discipline |
+| [Strategist](04-decision-layer/strategist.md) | Evaluates every open position against current conditions; thesis status classification, action decision logic, defensive-posture mode |
+| [Proposal pre-processor](04-decision-layer/proposal-pre-processor.md) | Deterministic merge of analyst + strategist outputs with cross-proposal annotations: combined-set guardrail impact, conviction distribution, conflict cross-references |
+| [Portfolio manager](04-decision-layer/portfolio-manager.md) | Critically evaluates annotated proposals against thesis-quality criteria; rejects, modifies, or executes |
 
 ### 05 — Execution layer
 
@@ -137,7 +139,8 @@ Executes trades and records results.
 | [Position model](05-execution-layer/position-model.md) | Multi-instrument hierarchy (equity, options, strategy), delta-adjusted exposure, Reg T margin |
 | [Thesis model](05-execution-layer/thesis-model.md) | Structured components within flat record, mandatory bracket coverage, component-level resolution |
 | [OMS commands](05-execution-layer/oms-commands.md) | Five commands: OPEN, CLOSE, ADJUST, CANCEL, ADD — no compound commands (see [design decisions](design-decisions.md)) |
-| [State persistence](05-execution-layer/state-persistence.md) | *(stub)* Storage, read model, schema design |
+| [Corporate actions](05-execution-layer/corporate-actions.md) | Position-layer mechanics for Alpaca-emitted CA events: per-action quantity/cost-basis/cash mutations, spin-off child positions, Phase 1 chronological merge with fills, idempotency ledger |
+| [State persistence](05-execution-layer/state-persistence.md) | Three-tier persistence model (core / lifecycle / derived entities), Phase 1 collect + Phase 2 commit, atomic transactions, immediate fill persistence, single-writer invariant, activity log catalog |
 | [Venue configuration](05-execution-layer/venue-configuration.md) | Alpaca-specific venue rules: settlement, sessions, PDT, Reg T margin tiers |
 
 ### 06 — Risk guardrails (cross-cutting)
@@ -147,7 +150,9 @@ Hard-coded programmatic constraints — not LLM-mediated. Enforced at multiple l
 | Document | Description |
 |----------|-------------|
 | [README](06-risk-guardrails/README.md) | Multi-layer enforcement model, relationship map |
-| [Rules & limits](06-risk-guardrails/rules-and-limits.md) | *(stub)* Position size, sector concentration, drawdown, exposure, correlation |
-| [Regime adaptation](06-risk-guardrails/regime-adaptation.md) | *(stub)* Volatility-regime-dependent parameter sets and transition mechanics |
-| [Breach behavior](06-risk-guardrails/breach-behavior.md) | *(stub)* Warning thresholds, hard rejection, forced reduction, drawdown halt |
-| [State delivery](06-risk-guardrails/state-delivery.md) | *(stub)* How guardrail state is packaged for trader, PM, and portfolio state |
+| [Rules & limits](06-risk-guardrails/rules-and-limits.md) | Concrete rule values for position size, sector concentration, drawdown, exposure, correlation, Greeks; three-tier enforcement mapping; dual portfolio profiles |
+| [Regime adaptation](06-risk-guardrails/regime-adaptation.md) | Per-regime multiplier table for all rules across four regimes (low-vol / normal / elevated / crisis); immediate tightening, gradual loosening over 3 invocations |
+| [Breach behavior](06-risk-guardrails/breach-behavior.md) | Forced-reduction policy (per-rule classification), drawdown halt mode (daily + cumulative tiers), escalation thresholds, margin-call cascade priority |
+| [State delivery](06-risk-guardrails/state-delivery.md) | Per-agent guardrail state headers (analyst / strategist / PM); guardrail validation tool contract; portfolio state ingestion payload |
+| [Guardrail evaluation](06-risk-guardrails/guardrail-evaluation.md) | Shared math primitives: Black-Scholes delta with conservative buffer, per-rule projection, regime parameter resolution, feature-flag early-exit |
+| [Scenario tests](06-risk-guardrails/scenario-tests.md) | Worked walkthroughs of design-validation scenarios across normal / elevated / crisis regimes |

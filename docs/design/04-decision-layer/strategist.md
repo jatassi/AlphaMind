@@ -405,7 +405,7 @@ The portfolio-level observations section follows last.
 
 ### Token budget
 
-The strategist's input bundle is larger than the analyst's because it must carry full thesis component detail for every open position (the [strategist guardrail state header](../06-risk-guardrails/state-delivery.md#strategist-guardrail-state-header) contributes the constraint portion; the thesis components come from portfolio state). Scales with portfolio complexity; the target ranges below replace the TBD in the state-delivery spec.
+The strategist's input bundle is larger than the analyst's because it must carry full thesis component detail for every open position (the [strategist guardrail state header](../06-risk-guardrails/state-delivery.md#strategist-guardrail-state-header) contributes the constraint portion; the thesis components come from portfolio state). The target ranges below scale with portfolio complexity.
 
 | Portfolio profile | Positions in typical range | Target context budget | Target output budget |
 |-------------------|---------------------------|----------------------|---------------------|
@@ -416,7 +416,7 @@ The strategist's input bundle is larger than the analyst's because it must carry
 
 - The context budget covers the guardrail state header (constraint portion), pending orders, and active thesis records at component level from portfolio state. It does not include the synthesizer brief, which is shared across agents and is not a strategist-specific allocation.
 - The output budget covers structured fields, per-position narratives, pending-order assessments, and portfolio-level observations. Per-position narrative length scales with thesis complexity, not with position count directly — a simple equity position with an uncomplicated thesis produces a shorter narrative than a multi-leg options strategy with several thesis components.
-- These are sizing targets for the state-delivery layer, not behavioral targets for the strategist. The strategist does not have a per-invocation output-length target — the emphasis on quality over brevity applies, following the [feedback guidance on numeric anchors in LLM specs](../../project-tracker.md). The ranges exist so the pipeline orchestrator can budget prompt construction; drift of individual invocations above the upper bound triggers a prompt-iteration review, not a mid-invocation truncation.
+- These are sizing targets for the state-delivery layer, not behavioral targets for the strategist. The strategist does not have a per-invocation output-length target — quality over brevity applies. The ranges exist so the pipeline orchestrator can budget prompt construction; drift of individual invocations above the upper bound triggers a prompt-iteration review, not a mid-invocation truncation.
 
 ---
 

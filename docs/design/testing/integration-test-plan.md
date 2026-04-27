@@ -301,7 +301,7 @@ Design questions the integration-plan scoping surfaced, now closed:
 
 - **Multi-invocation DB seed construction.** Hand-constructed seeds. Builder API exposes the state fields tests care about — positions, theses, activity log entries, drawdown state — with sensible defaults. Authenticity concerns (drift from what a real invocation sequence would produce) are accepted as a known trade-off; the win is test clarity and per-test state ownership.
 
-- **Pre-processor spec dependency.** [proposal-pre-processor.md](../04-decision-layer/proposal-pre-processor.md) still carries open design items (concrete annotation data structures, output format, token budget, edge cases). Cross-agent orchestration scenarios in this plan assume behavior matching the current spec narrative. Implementation of those scenarios is blocked on pre-processor spec completion, tracked as a Phase 3 Other item in [project-tracker.md](../../project-tracker.md).
+- **Pre-processor spec dependency.** Resolved. [proposal-pre-processor.md](../04-decision-layer/proposal-pre-processor.md) and [proposal-pre-processor-bundle-schema.md](../04-decision-layer/proposal-pre-processor-bundle-schema.md) define the §1/§2/§3 bundle structure and validation contract; cross-agent orchestration scenarios target these shapes directly.
 
 ---
 

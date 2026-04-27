@@ -128,11 +128,7 @@ Catalyst overlap (e.g., two different underlyings riding the same macro catalyst
 
 ### Presentation order
 
-Recommendations are presented conviction descending, with entry window urgency as tiebreaker (binary decay with nearest deadline first, then gradual, then no window), and risk asymmetry as secondary tiebreaker (defined-risk before open-ended). This is a readability convention so the portfolio manager can scan high-signal setups first — not an expression of the analyst's execution preference.
-
-### Deferred
-
-The behavioral enforcement of "each proposal stands on its own merits; do not cross-compare" is a system-prompt concern, captured under the [pending analyst system prompt item](../../project-tracker.md#analyst-agent).
+Recommendations are presented conviction descending, with entry window urgency as tiebreaker (binary decay with nearest deadline first, then gradual, then no window), and risk asymmetry as secondary tiebreaker (defined-risk before open-ended). This is a readability convention so the portfolio manager can scan high-signal setups first — not an expression of the analyst's execution preference. Anti-ranking discipline (each proposal stands on its own merits; do not cross-compare) is enforced at the system prompt — see [`prompts/decision/analyst.md`](../../prompts/decision/analyst.md).
 
 ---
 

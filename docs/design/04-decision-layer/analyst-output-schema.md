@@ -508,4 +508,4 @@ Some invariants cannot be expressed cleanly in JSON Schema and must be enforced 
 
 ## Evolution
 
-When new fields are added to the analyst's output (e.g., opportunity-ranking fields from the pending [Phase 2 item](../../project-tracker.md#analyst-agent)), they are added here first. This schema is the authoritative contract; prose updates in [analyst.md](analyst.md) follow.
+When new fields are added to the analyst's output, they are added here first. This schema is the authoritative contract; prose updates in [analyst.md](analyst.md) follow.
