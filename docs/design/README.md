@@ -1,7 +1,6 @@
 # AlphaMind — agentic trading system architecture spec
 
-**Status:** Design phase (pre-implementation)
-**Version:** 0.30 — layered architecture refactor
+**Status:** Implementation phase
 **Last updated:** 2026-03-15
 
 ---
