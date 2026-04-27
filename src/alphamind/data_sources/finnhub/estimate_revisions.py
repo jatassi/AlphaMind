@@ -21,7 +21,6 @@ Finnhub returns the fiscal-period end date (ISO string).  Mapping to
 from __future__ import annotations
 
 import os
-import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -188,17 +187,19 @@ def _ingest_entries(
                 continue
             prior_value = latest.consensus_value if latest is not None else None
 
+        now_iso = datetime.now(UTC).isoformat()
         sess.add(
             EarningsEstimateRevisions(
-                revision_id=str(uuid.uuid4()),
+                revised_at=now_iso,
                 ticker=ticker,
                 fiscal_year=fiscal_year,
                 fiscal_period=fiscal_period,
                 metric=metric,
-                revised_at=datetime.now(UTC).isoformat(),
                 prior_consensus_value=prior_value,
                 consensus_value=consensus_value,
                 num_analysts=num_analysts,
+                source="finnhub",
+                ingested_at=now_iso,
             )
         )
         rows_written += 1

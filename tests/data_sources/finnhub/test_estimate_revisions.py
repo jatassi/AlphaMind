@@ -172,15 +172,16 @@ class TestEarningsEstimateRevisionsModel:
         """EarningsEstimateRevisions has the columns the spec demands."""
         cols = {c.name for c in EarningsEstimateRevisions.__table__.columns}
         required = {
-            "revision_id",
+            "revised_at",
             "ticker",
             "fiscal_year",
             "fiscal_period",
             "metric",
-            "revised_at",
-            "prior_consensus_value",
             "consensus_value",
+            "prior_consensus_value",
             "num_analysts",
+            "source",
+            "ingested_at",
         }
         assert required.issubset(cols), f"Missing columns: {required - cols}"
 

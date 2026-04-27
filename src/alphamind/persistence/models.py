@@ -407,35 +407,34 @@ class EarningsEstimateRevisions(Base):
     """
     Analyst-estimate revision history reconstructed by daily diffing of Finnhub consensus.
 
-    One row per (ticker, fiscal_year, fiscal_period, metric) change event.
-    ``metric`` is ``'eps'`` or ``'revenue'``.
+    One row per (revised_at, ticker, fiscal_year, fiscal_period, metric) change event.
+    ``metric`` is ``'eps'`` / ``'revenue'`` / ``'ebitda'``.
     """
 
     __tablename__ = "earnings_estimate_revisions"
 
-    revision_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    revised_at: Mapped[str] = mapped_column(Text, primary_key=True)
     ticker: Mapped[str] = mapped_column(
         Text,
         ForeignKey("asset_universe.ticker", ondelete="RESTRICT"),
-        nullable=False,
+        primary_key=True,
     )
-    fiscal_year: Mapped[int] = mapped_column(Integer)
-    fiscal_period: Mapped[str] = mapped_column(Text)
-    metric: Mapped[str] = mapped_column(Text)
-    revised_at: Mapped[str] = mapped_column(Text)
+    fiscal_year: Mapped[int] = mapped_column(Integer, primary_key=True)
+    fiscal_period: Mapped[str] = mapped_column(Text, primary_key=True)
+    metric: Mapped[str] = mapped_column(Text, primary_key=True)
+    consensus_value: Mapped[float | None] = mapped_column(Float)
     prior_consensus_value: Mapped[float | None] = mapped_column(Float)
-    consensus_value: Mapped[float] = mapped_column(Float)
     num_analysts: Mapped[int | None] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(Text)
+    ingested_at: Mapped[str] = mapped_column(Text)
 
     __table_args__ = (
         Index(
-            "ix_earnings_estimate_revisions_ticker_period_metric",
+            "ix_earnings_estimate_revisions_ticker_period",
             "ticker",
             "fiscal_year",
             "fiscal_period",
-            "metric",
         ),
-        Index("ix_earnings_estimate_revisions_revised_at", "revised_at"),
     )
 
 
@@ -635,7 +634,7 @@ class BorrowCostIntraday(Base):
         ForeignKey("asset_universe.ticker", ondelete="RESTRICT"),
         primary_key=True,
     )
-    fee_pct: Mapped[float | None] = mapped_column(Float)
+    fee_pct: Mapped[float] = mapped_column(Float)
     available_shares: Mapped[int | None] = mapped_column(Integer)
     source: Mapped[str] = mapped_column(Text)
     ingested_at: Mapped[str] = mapped_column(Text)
