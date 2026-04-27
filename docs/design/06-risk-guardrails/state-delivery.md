@@ -1,20 +1,20 @@
 # Guardrail state delivery
 
-How current guardrail state is packaged for each consumer. Granularity varies: the analyst needs a summary; the PM needs detailed headroom and proximity; the engine layer operates on the authoritative state.
+How current guardrail state is packaged for each consumer. Granularity varies: analyst gets a summary; PM gets detailed headroom and proximity; the engine layer operates on the authoritative state.
 
-This doc owns the **guardrail state header** — a formatted text block bounded by `=== GUARDRAIL STATE ===` markers that opens each agent's prompt. It is one component of the agent's input bundle (the *context package*), alongside the synthesizer brief, portfolio state, and proposal pre-processor bundle. See [analyst.md](../04-decision-layer/analyst.md), [strategist.md](../04-decision-layer/strategist.md), and [portfolio-manager.md](../04-decision-layer/portfolio-manager.md) for the full per-agent input contracts.
+This doc owns the **guardrail state header** — a formatted text block bounded by `=== GUARDRAIL STATE ===` markers that opens each agent's prompt. One component of the agent's input bundle (the *context package*), alongside the synthesizer brief, portfolio state, and proposal pre-processor bundle. See [analyst.md](../04-decision-layer/analyst.md), [strategist.md](../04-decision-layer/strategist.md), and [portfolio-manager.md](../04-decision-layer/portfolio-manager.md) for the full per-agent input contracts.
 
 ---
 
 ## Design principles
 
-**Snapshot consistency.** All headers in an invocation use the same snapshot, computed once at the start of Phase 1 (after fill collection). Analyst, strategist, PM, and validation tool all operate on the same numbers; the execution layer's final check catches any drift.
+**Snapshot consistency.** All headers in an invocation use the same snapshot, computed once at Phase 1 start (after fill collection). Analyst, strategist, PM, and validation tool operate on the same numbers; the execution layer's final check catches drift.
 
 **Token efficiency.** Structured text blocks, not raw JSON. Field names abbreviated, zero-headroom rules highlighted, normal-headroom rules compressed.
 
-**Progressive detail.** Analyst gets the least (what's available); strategist gets position-level (which positions to trim); PM gets the most (final sizing decisions).
+**Progressive detail.** Analyst gets the least; strategist gets position-level; PM gets the most.
 
-**Feature-flag aware.** Disabled features (e.g., options and shorts in the primary portfolio — see [dual portfolio profiles](rules-and-limits.md#dual-portfolio-profiles)) omit corresponding sections entirely. The primary portfolio's analyst doesn't see options headroom — those fields don't exist in its header, naturally preventing proposals in those categories.
+**Feature-flag aware.** Disabled features (e.g., options and shorts in the primary portfolio — see [dual portfolio profiles](rules-and-limits.md#dual-portfolio-profiles)) omit corresponding sections entirely. Those fields don't exist in the primary analyst's header, naturally preventing proposals in those categories.
 
 ---
 
@@ -72,11 +72,11 @@ Hard blocks (do NOT recommend):
 
 **Excluded from the analyst header:** P/L trajectories, drawdown state, full thesis records, breach history, position-level max-loss proximity, activity log. The held-positions block is intentionally thin (ticker + direction + size + sector) — enough for dedup, not enough to invite reasoning about existing thesis health (strategist's domain).
 
-**Held positions section:** One compact line per position. Purpose is dedup — the analyst doesn't re-propose trades already in the book at meaningful size; the strategist owns add/hold/reduce. Opposite-direction proposals on held names (e.g., short on a held long) are new information and should be surfaced; the strategist's thesis-status assessment reconciles them. On the primary portfolio with shorts disabled, entries are always `long`; the direction column is retained for format consistency.
+**Held positions section:** One compact line per position for dedup — the analyst doesn't re-propose trades already in the book; the strategist owns add/hold/reduce. Opposite-direction proposals on held names (e.g., short on a held long) are new information; the strategist's thesis-status assessment reconciles them. On the primary portfolio with shorts disabled, entries are always `long`; the direction column is retained for format consistency.
 
-**Hard block section:** When any rule is at ≥95% consumption, the constraint is called out in a "do NOT recommend" block. Strongest self-constraint signal — engine will reject proposals in the blocked direction regardless of thesis quality. Disabled features appear as permanent hard blocks.
+**Hard block section:** When any rule is at ≥95% consumption, the constraint is called out in a "do NOT recommend" block. Engine will reject proposals in the blocked direction regardless of thesis quality. Disabled features appear as permanent hard blocks.
 
-**Abandoned openings section:** OPEN commands the PM approved in the prior invocation but that failed to reach the broker within the retry window (per [state-persistence.md § Phase 2 write path](../05-execution-layer/state-persistence.md)). Scoped to the prior invocation only — older abandonments are stale. Each entry is a prompt to evaluate against current market data whether the thesis still holds; if so, a new `REC-n` with fresh narrative may be produced; if not, the entry lapses. The inclusion threshold and fresh-grounds reasoning requirements in [analyst.md](../04-decision-layer/analyst.md) apply unchanged. The section exists so legitimately missed opportunities are explicitly reconsidered, not as a retry obligation.
+**Abandoned openings section:** OPEN commands the PM approved in the prior invocation but that failed to reach the broker within the retry window (per [state-persistence.md § Phase 2 write path](../05-execution-layer/state-persistence.md)). Scoped to the prior invocation only — older abandonments are stale. Each entry prompts evaluation against current market data; if the thesis holds, a new `REC-n` with fresh narrative may be produced. The inclusion threshold and fresh-grounds reasoning requirements in [analyst.md](../04-decision-layer/analyst.md) apply unchanged. Exists so legitimately missed opportunities are explicitly reconsidered, not as a retry obligation.
 
 ---
 
@@ -156,11 +156,11 @@ Hard blocks (do NOT recommend):
 ===
 ```
 
-**Why position-level detail:** To recommend intelligently, the strategist needs to know which positions are nearest constraint boundaries, which sectors have room vs. are at capacity, and which positions contribute to any drawdown.
+**Why position-level detail:** To recommend intelligently, the strategist needs to know which positions are nearest constraint boundaries, which sectors have room vs. capacity, and which positions contribute to drawdown.
 
-**Abandoned position actions section:** ADD, ADJUST, CLOSE, CANCEL commands the PM approved in the prior invocation but that failed at broker submission (per [state-persistence.md § Phase 2 write path](../05-execution-layer/state-persistence.md)). Scoped to the prior invocation only. Each entry is a prompt to evaluate against current data; if intent still holds, a new `SA-n` or `SA-ORD-n` may be produced; if not, it lapses. Action-decision rigor in [strategist.md](../04-decision-layer/strategist.md) applies unchanged. A CLOSE abandonment deserves particular attention — an intended risk-reducing exit that didn't execute is the most operationally consequential failure mode. The abandoned-openings section is portfolio-awareness context only; the analyst owns re-proposing those.
+**Abandoned position actions section:** ADD, ADJUST, CLOSE, CANCEL commands the PM approved in the prior invocation but failed at broker submission (per [state-persistence.md § Phase 2 write path](../05-execution-layer/state-persistence.md)). Scoped to the prior invocation only. Each entry prompts evaluation against current data; if intent holds, a new `SA-n` or `SA-ORD-n` may be produced. Action-decision rigor in [strategist.md](../04-decision-layer/strategist.md) applies unchanged. A CLOSE abandonment deserves particular attention — an intended risk-reducing exit that didn't execute is the most operationally consequential failure mode. The abandoned-openings section is portfolio-awareness context; the analyst owns re-proposing those.
 
-**Strategist remedy responsibility:** When regime-transition breaches are present, the strategist proposes specific remedies for each breaching position — trim to compliance (with quantity), close, or hold with thesis-based rationale. The strategist's position-level thesis context (target proximity, conviction, catalyst timing) makes it the right agent to decide *which* positions to reduce; the PM handles cross-constraint interactions and execution.
+**Strategist remedy responsibility:** When regime-transition breaches are present, the strategist proposes specific remedies for each breaching position — trim to compliance (with quantity), close, or hold with thesis-based rationale. Position-level thesis context (target proximity, conviction, catalyst timing) makes the strategist the right agent to decide *which* positions to reduce; the PM handles cross-constraint interactions and execution.
 
 ---
 
@@ -255,17 +255,17 @@ Hard blocks (do NOT issue commands violating):
 ===
 ```
 
-**Cross-constraint impact summary:** Shows how approving one proposal affects headroom for others — needed for sequencing and prioritization. Pre-computed by the proposal pre-processor over the combined analyst + strategist set; PM modifications are validated separately via the guardrail tool as the PM makes them.
+**Cross-constraint impact summary:** Shows how approving one proposal affects headroom for others. Pre-computed by the proposal pre-processor over the combined analyst + strategist set; PM modifications are validated separately via the guardrail tool.
 
-**Strategist remedy proposals:** When breaches are present, the strategist's per-position remedies (trim with quantity, close, or hold with rationale) arrive in the pre-processor bundle as per-position assessments with `remedy_flag` set. The PM reviews against the cross-constraint summary — e.g., closing a short might create a net long breach visible in the cross-constraint view. The PM adjusts, reorders, or overrides before executing.
+**Strategist remedy proposals:** When breaches are present, the strategist's per-position remedies (trim with quantity, close, or hold with rationale) arrive in the pre-processor bundle as per-position assessments with `remedy_flag` set. PM reviews against the cross-constraint summary — closing a short might create a net long breach visible in the cross-constraint view. PM adjusts, reorders, or overrides before executing.
 
-**Recent engine-originated actions:** Guardrail-state prominence cue for activity-log events the PM should not miss. The full activity log is in [portfolio state §5](../01-data-layer/internal/portfolio-state.md); this section is a spotlight, not the only access.
+**Recent engine-originated actions:** Prominence cue for activity-log events the PM should not miss. Full activity log in [portfolio state §5](../01-data-layer/internal/portfolio-state.md); this section spotlights.
 
 ---
 
 ## Halt-mode header modifications
 
-When daily drawdown halt or cumulative drawdown full halt (tier 3, 12%+) is active, each agent's header reflects the restricted mode. Upstream pipeline (data ingestion, distillation, research) runs normally — its output feeds modified agent contexts. See [breach-behavior.md](breach-behavior.md#agent-behavior-during-halt-mode) for behavioral contracts.
+When daily drawdown halt or cumulative drawdown full halt (tier 3, 12%+) is active, each agent's header reflects the restricted mode. Upstream pipeline runs normally; its output feeds modified agent contexts. See [breach-behavior.md](breach-behavior.md#agent-behavior-during-halt-mode) for behavioral contracts.
 
 ### Analyst — watchlist mode
 
@@ -279,7 +279,7 @@ Capital:
   ...
 ```
 
-Instruction shifts from generating proposals to generating a compact watchlist for post-halt — ticker, thesis summary, estimated conviction. Omits sizing, entry parameters, bracket config.
+Generates a compact watchlist for post-halt — ticker, thesis summary, estimated conviction. Omits sizing, entry parameters, bracket config.
 
 ### Strategist — defensive posture mode
 
@@ -292,7 +292,7 @@ Position-level constraint proximity:
   ...
 ```
 
-Strategist receives full distillation and research output to reason about whether current theses hold under the conditions that triggered halt. Position assessments emphasize thesis deterioration, stop-tightening candidates, and close recommendations for positions with weakened risk/reward.
+Strategist receives full distillation and research output to assess whether current theses hold under halt conditions. Position assessments emphasize thesis deterioration, stop-tightening candidates, and closes for positions with weakened risk/reward.
 
 ### PM — risk reduction mode
 
@@ -307,7 +307,7 @@ Pending orders review:
   ...
 ```
 
-PM instructions restrict to: reviewing/cancelling pre-halt pending orders, executing strategist defensive recommendations, tightening stops on deteriorating positions. Cross-constraint impact summary remains, scoped to risk-reducing actions.
+PM restricted to reviewing/cancelling pre-halt pending orders, executing defensive recommendations, tightening stops on deteriorating positions. Cross-constraint impact summary remains, scoped to risk-reducing actions.
 
 ---
 
@@ -322,7 +322,7 @@ Trigger detail: {e.g., "Regime jump: low-vol → crisis (VIX 12 → 38)"}
 Time since last invocation: {minutes}m (normal cadence: ~120m)
 ```
 
-The flag shifts priorities toward breach resolution: analyst minimizes new proposal generation and reassesses existing theses; strategist prioritizes regime-transition remedies and defensive assessment; PM prioritizes executing strategist recommendations and addressing engine-originated actions.
+The flag shifts priorities toward breach resolution: analyst minimizes new proposal generation; strategist prioritizes regime-transition remedies and defensive assessment; PM prioritizes executing recommendations and addressing engine-originated actions.
 
 Emergency invocations and halt mode are independent states that can co-occur. When both are active, agents receive both header blocks; halt-mode restrictions (no OPEN/ADD) take precedence.
 
@@ -370,11 +370,11 @@ For the primary portfolio, immediately returns FAIL with reason `feature_disable
 
 ### Behavioral contract
 
-**Cumulative tracking:** State persists across calls within a single agent invocation. When the analyst validates proposal #2, headroom already accounts for proposal #1's projected impact — preventing N individually-compliant proposals that collectively breach.
+**Cumulative tracking:** State persists across calls within a single agent invocation. When the analyst validates proposal #2, headroom accounts for proposal #1's projected impact — preventing N individually-compliant proposals that collectively breach.
 
 **State reset:** Tracking resets at agent-invocation boundaries (analyst → strategist → PM each start fresh). The proposal pre-processor handles cross-agent cumulative analysis.
 
-**Shared math:** Per-rule projection, delta-adjusted exposure, regime parameter resolution, and feature-flag early-exit all live in the [guardrail-evaluation library](guardrail-evaluation.md). The `per_rule[]` shape is the library's canonical output. A proposal passing the tool also passes the T3 check, barring state drift.
+**Shared math:** Per-rule projection, delta-adjusted exposure, regime parameter resolution, and feature-flag early-exit live in the [guardrail-evaluation library](guardrail-evaluation.md). The `per_rule[]` shape is the library's canonical output. A proposal passing the tool also passes T3, barring state drift.
 
 **Failure guidance:** On FAIL, output includes the minimum adjustment for compliance (e.g., "reduce size by 15%" or "switch to a lower-delta strike").
 
@@ -395,7 +395,7 @@ Guardrail state is computed by the enforcement layer at the start of Phase 1 (af
 
 ### Freshness guarantee
 
-State is computed once per invocation at Phase 1 start. All downstream consumers (state headers, validation tool, analysis pipeline) see the same snapshot. The execution layer's final check at submission time closes the freshness gap against drifted live state.
+State is computed once per invocation at Phase 1 start. All downstream consumers see the same snapshot. The execution layer's final check at submission closes the freshness gap against drifted live state.
 
 ---
 
@@ -405,9 +405,9 @@ The system shows how curing one breach affects other constraints, not just per-r
 
 ### Where this surfaces
 
-**PM state header:** The cross-constraint impact summary shows projected state across all rules if all pending proposals are approved. Primary cross-constraint mechanism.
+**PM state header:** Cross-constraint impact summary shows projected state across all rules if all pending proposals are approved. Primary cross-constraint mechanism.
 
-**Validation tool:** Each check returns projected per-rule headroom after the proposed trade, including cumulative impact of prior proposals. The PM sees, e.g., that a tech long would leave sector headroom at 1.5% while pushing gross into warning.
+**Validation tool:** Each check returns projected per-rule headroom after the proposed trade, including cumulative impact of prior proposals. PM sees, e.g., that a tech long would leave sector headroom at 1.5% while pushing gross into warning.
 
 **Breach response context:** When the engine reports a secondary breach from a forced reduction (see [breach-behavior.md](breach-behavior.md)), the primary/secondary conflict surfaces explicitly.
 
