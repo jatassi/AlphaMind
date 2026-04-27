@@ -1,25 +1,25 @@
 # Execution layer
 
-The system's operational core — responsible for order lifecycle management, position tracking, P/L accounting, thesis management, and risk guardrail enforcement.
+The system's operational core — order lifecycle management, position tracking, P/L accounting, thesis management, and risk guardrail enforcement.
 
-AlphaMind uses **Alpaca** as its broker for both paper and live trading. The switch between modes is a base-URL change (`paper-api.alpaca.markets` ↔ `api.alpaca.markets`), not a code change. The OMS consumes Alpaca's fill stream identically in both modes; a thin [paper-evaluation harness](paper-evaluation-harness.md) sits on top of paper-mode fills to produce calibrated live-execution estimates for go/no-go evaluation.
+AlphaMind uses **Alpaca** as its broker for both paper and live trading. Mode switching is a base-URL change (`paper-api.alpaca.markets` ↔ `api.alpaca.markets`), not a code change. The OMS consumes Alpaca's fill stream identically in both modes; a thin [paper-evaluation harness](paper-evaluation-harness.md) sits on top of paper-mode fills to produce calibrated live-execution estimates for go/no-go evaluation.
 
-*Design principle — parity over simulation.* A custom paper-trading simulator can never match a broker's API surface byte-for-byte, and any gap produces bugs that only appear at the paper-to-live transition — when the cost of a bug is highest. Alpaca's paper environment trades some simulation fidelity for identical-API parity. On a 4–72h strategy where per-fill microstructure is not the edge, that is the right tradeoff.
+*Design principle — parity over simulation.* A custom paper simulator cannot match a broker's API surface byte-for-byte, and any gap produces bugs that only appear at the paper-to-live transition — when the cost is highest. Alpaca's paper environment trades simulation fidelity for identical-API parity. On a 4–72h strategy where per-fill microstructure is not the edge, that is the right tradeoff.
 
-*Design principle — calibrated, not pessimistic.* The harness estimates the slippage, market impact, and regulatory fees Alpaca's paper environment doesn't model, so paper P/L is reported two ways: raw (what Alpaca said) and live-adjusted (what we'd expect at a real exchange). Over-deflating paper P/L makes the go-live threshold unreachable without the system actually improving; the harness is tuned to estimate, not punish.
+*Design principle — calibrated, not pessimistic.* The harness estimates slippage, market impact, and regulatory fees Alpaca's paper environment does not model, so paper P/L is reported two ways: raw (what Alpaca said) and live-adjusted (what we'd expect at a real exchange). Over-deflating paper P/L makes the go-live threshold unreachable without the system actually improving; the harness is tuned to estimate, not punish.
 
 ---
 
 ## Component architecture
 
-The engine has four components with distinct responsibilities, consumers, and failure modes:
+Four components with distinct responsibilities, consumers, and failure modes:
 
 | Component | Document | Description |
 |-----------|----------|-------------|
-| Order management system (OMS) | [architecture.md](architecture.md) | Core of the engine: receives PM commands, consumes Alpaca fill events, maintains the authoritative record of positions, theses, orders, cash, activity log, and historical resolutions. The entire [portfolio state specification](../01-data-layer/internal/portfolio-state.md) (categories 1–6) is a read interface into the OMS database |
+| Order management system (OMS) | [architecture.md](architecture.md) | Engine core: receives PM commands, consumes Alpaca fill events, maintains the authoritative record of positions, theses, orders, cash, activity log, and historical resolutions. The [portfolio state specification](../01-data-layer/internal/portfolio-state.md) (categories 1–6) is a read interface into the OMS database |
 | Broker adapter (Alpaca) | [broker-adapter.md](broker-adapter.md) | The narrow layer the OMS talks to. Translates OMS commands into Alpaca REST calls and subscribes to Alpaca's `trade_updates` websocket. Documents Alpaca's actual surface: order types, `order_class` values, `PATCH` replace semantics, fee reporting cadence, options support gaps |
-| Guardrail enforcement layer | [architecture.md](architecture.md) | Sits between PM command intake and broker adapter. Validates every command against risk constraints before submission. Specific rules and limits defined in [risk guardrails](../06-risk-guardrails/README.md) |
-| Continuous monitor | [architecture.md](architecture.md) | Long-running process that owns: (1) Alpaca `trade_updates` consumption into the fill buffer, (2) guardrail breach detection on live prices, (3) emergency invocation triggering, (4) greeks refresh orchestration, (5) options bracket-stop evaluation against the underlying equity stream (Alpaca does not support brackets on options — the monitor owns that logic regardless of mode) |
+| Guardrail enforcement layer | [architecture.md](architecture.md) | Between PM command intake and broker adapter. Validates every command against risk constraints before submission. Specific rules and limits in [risk guardrails](../06-risk-guardrails/README.md) |
+| Continuous monitor | [architecture.md](architecture.md) | Long-running process owning: (1) Alpaca `trade_updates` consumption into the fill buffer, (2) guardrail breach detection on live prices, (3) emergency invocation triggering, (4) greeks refresh orchestration, (5) options bracket-stop evaluation against the underlying equity stream (Alpaca does not support brackets on options — the monitor owns that logic regardless of mode) |
 
 ## Sub-documents
 
@@ -45,7 +45,7 @@ The engine has four components with distinct responsibilities, consumers, and fa
 
 | Spec | Relationship |
 |------|-------------|
-| [Data layer — internal](../01-data-layer/internal/README.md) | Portfolio state categories 1–6 are read interfaces into the OMS database. The engine *writes* portfolio state; the data layer *reads* it. The OMS's authoritative source of positions, cash, and activities is reconciled against Alpaca's account / positions / orders / activities endpoints |
-| [Decision layer — analyst](../04-decision-layer/analyst.md) | Analyst generates thesis recommendations. The thesis model here defines how those recommendations are structured and stored |
-| [Decision layer — portfolio manager](../04-decision-layer/portfolio-manager.md) | Portfolio manager is the engine's primary write-path consumer — it issues commands via the OMS command vocabulary and receives portfolio state as input |
-| [Risk guardrails](../06-risk-guardrails/README.md) | The guardrail enforcement layer in this engine defines the enforcement interface; the risk guardrail spec defines the specific rules and limits |
+| [Data layer — internal](../01-data-layer/internal/README.md) | Portfolio state categories 1–6 are read interfaces into the OMS database. The engine *writes* portfolio state; the data layer *reads* it. The OMS reconciles its authoritative state of positions, cash, and activities against Alpaca's account / positions / orders / activities endpoints |
+| [Decision layer — analyst](../04-decision-layer/analyst.md) | Analyst generates thesis recommendations; the thesis model here defines how they are structured and stored |
+| [Decision layer — portfolio manager](../04-decision-layer/portfolio-manager.md) | The engine's primary write-path consumer — issues commands via the OMS command vocabulary and receives portfolio state as input |
+| [Risk guardrails](../06-risk-guardrails/README.md) | The guardrail enforcement layer here defines the enforcement interface; the risk guardrail spec defines the specific rules and limits |

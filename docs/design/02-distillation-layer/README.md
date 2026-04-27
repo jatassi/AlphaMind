@@ -1,6 +1,6 @@
 # Distillation layer
 
-Deterministic transforms — no LLMs, no interpretation — that present data in the most token-efficient form so downstream analysis agents focus on judgment, not data wrangling.
+Deterministic transforms — no LLMs, no interpretation — that present data in token-efficient form so downstream analysis agents focus on judgment, not data wrangling.
 
 | Source | Input | Output | Document |
 |--------|-------|--------|----------|

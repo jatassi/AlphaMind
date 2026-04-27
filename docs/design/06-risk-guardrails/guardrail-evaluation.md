@@ -1,6 +1,6 @@
 # Guardrail-evaluation library
 
-Deterministic math shared by every guardrail check. Three call sites compose these primitives with their own orchestration: the agent-side [validation tool](state-delivery.md#guardrail-validation-tool), the [proposal pre-processor's](../04-decision-layer/proposal-pre-processor.md) combined-set check, and the engine's authoritative T3 check via the [guardrail enforcement layer](../05-execution-layer/architecture.md#3-guardrail-enforcement-layer).
+Deterministic math shared by every guardrail check. Three call sites compose these primitives: the agent-side [validation tool](state-delivery.md#guardrail-validation-tool), the [proposal pre-processor's](../04-decision-layer/proposal-pre-processor.md) combined-set check, and the engine's authoritative T3 check via the [guardrail enforcement layer](../05-execution-layer/architecture.md#3-guardrail-enforcement-layer).
 
 ---
 
@@ -22,19 +22,19 @@ Deterministic math shared by every guardrail check. Three call sites compose the
 
 ### Active regime parameter resolution
 
-For each rule active under `active_profile`, the base value is multiplied by the rule-specific `active_regime` multiplier. The product is the effective limit. See the multiplier table in [regime adaptation](regime-adaptation.md).
+For each rule active under `active_profile`, the base value is multiplied by the rule-specific `active_regime` multiplier. The product is the effective limit. Multiplier table in [regime adaptation](regime-adaptation.md).
 
 ### Feature-flag early-exit
 
-When a `proposed_delta` references an instrument class disabled by `active_profile` (e.g., `asset_type: option` on `options_enabled: false`, or `direction: short` on `short_selling_enabled: false`), per-rule evaluation is skipped — result is `FAIL` with `reason: feature_disabled`. Disabled features have no rule rows in the output.
+When a `proposed_delta` references an instrument class disabled by `active_profile` (e.g., `asset_type: option` on `options_enabled: false`, `direction: short` on `short_selling_enabled: false`), per-rule evaluation is skipped — result is `FAIL` with `reason: feature_disabled`. Disabled features have no rule rows in the output.
 
 ### Delta-adjusted exposure
 
-Equity positions contribute their full notional, signed by direction. Options and strategies contribute delta-adjusted notional:
+Equity positions contribute full notional, signed by direction. Options and strategies contribute delta-adjusted notional:
 
 1. **Black-Scholes greeks.** Delta, gamma, theta, vega computed from underlying price, IV, risk-free rate, and time to expiration. Shares the model with the continuous monitor's [greeks refresh](../05-execution-layer/architecture.md#4d-greeks-refresh-orchestration).
-2. **IV sourcing.** Interpolates the data pipeline's IV surface to the proposal's strike/expiration. When no surface exists, falls back to the underlying's trailing 30-day realized volatility.
-3. **Conservative buffer.** Absolute delta is inflated by a configurable margin (default +10%) toward more exposure — a computed delta of 0.45 becomes 0.495. Overstating exposure means borderline trades may be rejected; over-limit trades are never approved. Configurable per regime; tighter regimes use higher buffer.
+2. **IV sourcing.** Interpolates the data pipeline's IV surface to the proposal's strike/expiration. Falls back to the underlying's trailing 30-day realized volatility when no surface exists.
+3. **Conservative buffer.** Absolute delta is inflated by a configurable margin (default +10%) — a computed delta of 0.45 becomes 0.495. Overstates exposure so borderline trades may be rejected; over-limit trades are never approved. Configurable per regime; tighter regimes use higher buffer.
 4. **Strategy aggregation.** Per-leg greeks sum to strategy-level net delta, gamma, theta, vega. The buffer applies to net delta's absolute value.
 
 ### Per-rule projection and evaluation

@@ -6,7 +6,7 @@ SQLite (WAL mode) as the single shared database for both processes.
 
 ## Decision
 
-All persistent and semi-persistent state lives in a **single SQLite database file**, accessed by both the pipeline and the continuous monitor. WAL (write-ahead logging) mode enables concurrent reads with no contention; low write frequency from each process makes write conflicts effectively nonexistent.
+All persistent and semi-persistent state lives in a **single SQLite database file**, accessed by both processes. WAL mode enables concurrent reads with no contention; low write frequency from each process makes write conflicts effectively nonexistent.
 
 **SQLAlchemy** for database access, split by usage pattern: ORM models for portfolio state (rich relationships, lifecycle logic), Core/raw SQL for market data and distillation state (bulk I/O). Schema migrations via Alembic.
 
@@ -17,39 +17,39 @@ All persistent and semi-persistent state lives in a **single SQLite database fil
 ### Why SQLite
 
 - **Zero operational overhead.** No server process, configuration, connection pooling, or port management. The database is a file; backup is `cp`.
-- **Two-process concurrency is fine.** WAL mode allows concurrent readers with a single writer. The pipeline writes in bursts (8-10x/day); the monitor writes fills intermittently. Rare overlaps resolve via brief writer retries.
+- **Two-process concurrency is fine.** WAL mode allows concurrent readers with a single writer. Pipeline writes in bursts (8-10x/day); monitor writes fills intermittently. Rare overlaps resolve via brief writer retries.
 - **Data volume is modest.** Hundreds of MB, tens of thousands of rows in the largest tables (trailing market data). Well within SQLite's range.
-- **Atomic transactions.** Portfolio state updates (position changes, P/L recalculations, thesis status transitions, cash adjustments) wrap in a single transaction.
+- **Atomic transactions** wrap portfolio state updates (position changes, P/L recalculations, thesis status transitions, cash adjustments).
 - **Python ships with it.** No external dependencies for the core data layer.
 
 ### Why not PostgreSQL
 
-PostgreSQL would work but adds a server process, connection management, and operational surface area unjustified at this scale. Its advantages — advanced query planning, concurrent write scaling, row-level locking, extensions — don't address any AlphaMind bottleneck.
+PostgreSQL adds a server process, connection management, and operational surface area unjustified at this scale; its advantages (advanced query planning, concurrent write scaling, row-level locking, extensions) don't address any AlphaMind bottleneck.
 
 If the system ever needs multiple machines or significantly higher write concurrency, PostgreSQL is the natural migration target — a connection-string change plus minor dialect adjustments, not a rewrite.
 
 ### Why SQLAlchemy (split usage)
 
-Two distinct data access patterns call for different approaches:
+Two distinct data access patterns:
 
-**ORM models for portfolio state.** Positions, theses, orders, cash, and the activity log have real relationships (order → thesis → position, bracket → parent order) and lifecycle logic (read a position, check state, update fields, write an activity log entry). SQLAlchemy 2.0's mapped classes provide typed attributes, IDE autocomplete, and static analysis; Alembic handles schema migrations.
+**ORM models for portfolio state.** Positions, theses, orders, cash, and the activity log have real relationships (order → thesis → position, bracket → parent order) and lifecycle logic (read a position, check state, update fields, write an activity log entry). SQLAlchemy 2.0's mapped classes give typed attributes, IDE autocomplete, and static analysis; Alembic handles migrations.
 
-**Core / raw SQL for market data and distillation state.** Bulk I/O patterns — load 60 days of bars for 70 tickers, write 70 rows of updated baselines. SQLAlchemy Core's expression builder or raw SQL is more natural and efficient for batch operations.
+**Core / raw SQL for market data and distillation state.** Bulk I/O — load 60 days of bars for 70 tickers, write 70 rows of updated baselines. SQLAlchemy Core's expression builder or raw SQL is more natural and efficient for batch operations.
 
-**The existing dataclasses are a separate concern.** The Python dataclasses in the schema package are *LLM presentation models* — denormalized, token-optimized payloads serialized into agent context windows. A thin mapping layer converts between ORM models / query results and the dataclasses agents consume. Storage shape (normalized, relational) and LLM-consumption shape (denormalized, context-optimized) differ; the presentation layer is a future design topic.
+**The existing dataclasses are a separate concern.** The Python dataclasses in the schema package are *LLM presentation models* — denormalized, token-optimized payloads serialized into agent context windows. A thin mapping layer converts between ORM models / query results and the dataclasses agents consume. The presentation layer is a future design topic.
 
 ---
 
 ## Four state categories
 
-Four categories of state with different lifecycles, all in the same SQLite database but logically distinct.
+All in the same SQLite database but logically distinct, each with its own lifecycle.
 
 ### 1. Portfolio state (persistent, authoritative)
 
 The system's memory across invocations — positions, theses, orders, cash, P/L, activity log, historical resolutions. Defined by the execution layer spec ([categories 1-6](../design/01-data-layer/internal/portfolio-state.md)).
 
 **Writers:** Pipeline (Phase 1: portfolio state updates from fills; Phase 2: new order submissions, thesis creation). The continuous monitor writes fills to the fill buffer, never to portfolio state directly.
-**Readers:** Pipeline (data layer at invocation start; guardrail checks throughout; distillation for internal metrics). Continuous monitor reads pending orders to know what to watch.
+**Readers:** Pipeline (data layer at invocation start; guardrail checks throughout; distillation for internal metrics). Continuous monitor reads pending orders.
 
 **Key tables (conceptual):**
 - `positions` — open and closed positions with instrument details, entry/exit data
@@ -61,7 +61,7 @@ The system's memory across invocations — positions, theses, orders, cash, P/L,
 
 ### 2. Fill buffer (ephemeral, accumulating)
 
-Fills produced by the continuous monitor between pipeline invocations. Rows accumulate (minutes to hours), then Phase 1 reads them and marks them processed. Retained for audit after processing.
+Fills produced by the continuous monitor between invocations. Rows accumulate (minutes to hours); Phase 1 reads them, marks them processed, and retains them for audit.
 
 **Writers:** Continuous monitor (one fill per trigger condition met).
 **Readers:** Pipeline (Phase 1: reads unprocessed fills, marks them processed).
@@ -84,8 +84,8 @@ Analysis briefs keyed by reference ID. Built during analysis, consumed during de
 
 Rolling baselines, regime classifications, composite signals. Each invocation reads current state, computes new values, writes updates. Historical values may be retained for trend detection (e.g., trailing 20-day baselines).
 
-**Writers:** Pipeline (distillation layer updates after computation).
-**Readers:** Pipeline (distillation layer at start of computation; analysis layer reads regime classification).
+**Writers:** Pipeline (distillation layer, after computation).
+**Readers:** Pipeline (distillation at start of computation; analysis reads regime classification).
 
 **Key tables:**
 - `rolling_baselines` — per-ticker trailing averages (volume, ATR, spread, etc.)
@@ -96,7 +96,7 @@ Rolling baselines, regime classifications, composite signals. Each invocation re
 
 ## Market data storage
 
-Raw and historical market data (OHLCV bars, options data, macro series) also lives in SQLite. The distillation layer needs trailing 20-60 day windows for baseline computation and correlation matrices.
+Raw and historical market data (OHLCV bars, options data, macro series) also lives in SQLite. Distillation needs trailing 20-60 day windows for baseline computation and correlation matrices.
 
 **Volume:** 70 tickers × 5 timeframes × 60 days × ~200 bytes/bar ≈ 4 MB for price data; with order flow, options, and macro, 50-100 MB total.
 
@@ -104,7 +104,7 @@ Raw and historical market data (OHLCV bars, options data, macro series) also liv
 
 **Key tables:**
 - `ohlcv_bars` — ticker, timeframe, timestamp, OHLCV fields — the foundational table
-- Per-category tables for order flow snapshots, options data, macro readings, etc.
+- Per-category tables for order flow snapshots, options data, macro readings
 - Indexed on (ticker, timeframe, timestamp) for efficient trailing window queries
 
 ---
@@ -130,11 +130,11 @@ Raw and historical market data (OHLCV bars, options data, macro series) also liv
 ## Concurrency model
 
 - **WAL mode** enabled at database creation. Both processes open the same file.
-- Pipeline is the dominant writer; all pipeline writes happen in transactions per-phase.
+- Pipeline is the dominant writer; pipeline writes happen in per-phase transactions.
 - Monitor writes are infrequent (fills) and small (single row inserts).
 - Read-read: unlimited in WAL mode.
 - Read-write: readers never block writers and vice versa in WAL mode.
-- Write-write contention: effectively zero; rare overlaps resolve via SQLite's busy timeout.
+- Write-write contention is effectively zero; rare overlaps resolve via SQLite's busy timeout.
 - **Busy timeout** set to 5-10 seconds on both connections as a safety net.
 
 ---

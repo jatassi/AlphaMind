@@ -6,9 +6,9 @@ What kind of system AlphaMind is — before choosing how to build it.
 
 ## Summary
 
-AlphaMind is a **scheduled batch pipeline** where most wall-clock time is spent waiting on LLM API calls, with a **real-time sidecar** (the continuous monitor consuming Alpaca's `trade_updates` websocket and watching price streams for options-stop and guardrail-breach detection), a **moderately complex state machine** (the OMS) managing position and order lifecycle, a **heavy data integration layer** talking to many external APIs, and a **numerical computation component** that is meaningful but not HPC-scale.
+AlphaMind is a **scheduled batch pipeline** dominated by LLM API latency, with a **real-time sidecar** (the continuous monitor consuming Alpaca's `trade_updates` websocket and watching price streams for options-stop and guardrail-breach detection), a **moderately complex state machine** (the OMS) managing position and order lifecycle, a **heavy data integration layer** across many external APIs, and a **numerical computation component** that is meaningful but not HPC-scale.
 
-It is **not** a low-latency trading system, a streaming data pipeline, or a microservices architecture — the layers are sequential stages in a single pipeline. Closest shape: a **sophisticated ETL/workflow system with LLM agents in the middle and an event-driven execution sidecar**.
+The layers are sequential stages in a single pipeline — not a low-latency trading system, streaming pipeline, or microservices architecture. Closest shape: a **sophisticated ETL/workflow system with LLM agents in the middle and an event-driven execution sidecar**.
 
 ---
 
@@ -27,7 +27,7 @@ Trigger
   → Execution             (CPU + I/O: validation, DB writes, order submission)
 ```
 
-The dominant bottleneck is **LLM API latency**. Layers 1-2 and 5 are fast programmatic work; layers 3-4 wait on LLM responses. Total wall-clock per invocation is mostly LLM inference wait.
+**LLM API latency dominates.** Layers 1-2 and 5 are fast programmatic work; layers 3-4 wait on LLM responses.
 
 ### 2. The continuous monitor (real-time, always-on)
 
@@ -40,15 +40,15 @@ Underlying price feed → options stop trigger evaluation → close order via br
                       → guardrail breach detection
 ```
 
-An **event-driven, real-time system**. Low latency matters (trigger detection should happen near real-time). Maintains state (pending orders, bracket lifecycle for options, position greeks). Shares the DB with the pipeline at different times (pipeline reads during Phase 1; monitor writes continuously).
+An **event-driven, real-time system**. Low latency matters; maintains state (pending orders, bracket lifecycle for options, position greeks); shares the DB with the pipeline (pipeline reads during Phase 1; monitor writes continuously).
 
 ### 3. The scheduler (control plane)
 
-Manages the invocation schedule: market-hours cadence (2h), off-hours cadence (4h), anchored runs (pre-open, pre-close), overlap deduplication. Needs market calendar awareness, time zones, and schedule conflict resolution.
+Manages the invocation schedule: market-hours cadence (2h), off-hours cadence (4h), anchored runs (pre-open, pre-close), overlap deduplication. Requires market calendar awareness, time zones, and schedule conflict resolution.
 
 ### 4. Data ingestion infrastructure (I/O, rate-limited)
 
-External data collection across 12+ quantitative and 6+ qualitative data categories for 60-80 tickers. Hundreds of API calls per invocation, each with rate limits, authentication, error handling, and varying refresh cadences. Some sources are websocket-based (monitor); some are REST (batch pulls at invocation time).
+External data collection across 12+ quantitative and 6+ qualitative data categories for 60-80 tickers — hundreds of API calls per invocation, each with rate limits, authentication, error handling, and varying refresh cadences. Websocket-based (monitor) and REST (batch pulls at invocation time).
 
 ---
 
@@ -58,11 +58,11 @@ These cut across the runtime profiles.
 
 ### A. Pipeline orchestration
 
-Sequencing layers, managing parallelism *within* layers (3 sector analysts + portfolio analyst + qualitative research run in parallel), handling partial failures (one API down), passing structured data between stages.
+Sequencing layers, managing parallelism *within* layers (3 sector analysts + portfolio analyst + qualitative research run in parallel), handling partial failures, passing structured data between stages.
 
 ### B. LLM agent management
 
-7-8 distinct LLM agents per invocation (3 sector analysts, portfolio analyst, qualitative researcher, adaptive researcher, synthesizer, trader, PM), each with its own context window, system prompt, and tool access. Some parallel, some sequential. The adaptive researcher has a nested agentic loop (tool use within tool use); decision layer agents have retrieval tools that fetch from a brief store. The heart of the system's complexity.
+7-8 distinct LLM agents per invocation (3 sector analysts, portfolio analyst, qualitative researcher, adaptive researcher, synthesizer, trader, PM), each with its own context window, system prompt, and tool access. Some parallel, some sequential. The adaptive researcher has a nested agentic loop (tool use within tool use); decision layer agents have retrieval tools fetching from a brief store. The heart of the system's complexity.
 
 ### C. State management
 
@@ -75,11 +75,11 @@ Multiple state lifecycles:
 
 ### D. Numerical computation
 
-The distillation layer: technical indicators, statistical anomaly detection, normalization, volatility regime classification, portfolio exposure calculations, P/L attribution. Requires strong numerical libraries.
+Distillation layer work: technical indicators, statistical anomaly detection, normalization, volatility regime classification, portfolio exposure calculations, P/L attribution.
 
 ### E. External data integration
 
-Dozens of integrations with heterogeneous APIs, authentication schemes, rate limits, data formats. Market data vendors, news APIs, prediction market APIs. Each needs adapters, error handling, potentially caching.
+Dozens of heterogeneous APIs (market data vendors, news, prediction markets) with varied auth schemes, rate limits, and formats — each an adapter with its own error handling.
 
 ### F. Observability and auditability
 

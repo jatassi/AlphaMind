@@ -1,12 +1,12 @@
 # Asset universe
 
-US equities only, across four sectors. ~60–80 tickers selected for liquidity, analyst coverage density, news flow volume, and volatility sufficient to generate opportunities on the 4–72 hour horizon. The system needs a rich information environment per ticker — no penny stocks, low-float names, or thinly covered companies.
+US equities only, across four sectors. ~60–80 tickers selected for liquidity, analyst coverage density, news flow volume, and volatility sufficient to generate opportunities on the 4–72 hour horizon. Rich information environment per ticker required — no penny stocks, low-float names, or thinly covered companies.
 
-The authoritative ticker list is `config/assets.yaml`. Verification procedure, re-evaluation cadence, add/remove workflow, and the [candidate discovery](asset-universe-validation.md#candidate-discovery) mechanism are specified in [asset-universe-validation.md](asset-universe-validation.md). This doc is descriptive — sector composition, rationale, prose criteria.
+The authoritative ticker list is `config/assets.yaml`. Verification procedure, re-evaluation cadence, add/remove workflow, and the [candidate discovery](asset-universe-validation.md#candidate-discovery) mechanism are in [asset-universe-validation.md](asset-universe-validation.md). This doc is descriptive — sector composition, rationale, prose criteria.
 
 ### Sector: Technology (mega-cap + growth) — ~20 names
 
-The anchor sector. Massive analyst coverage, high news density, strong social sentiment signal, prices reacting to both company-specific and macro catalysts. Split between mega-cap names that move primarily on macro and mid/high-growth names that move on narrative shifts.
+Anchor sector. Massive analyst coverage, high news density, strong social sentiment signal, prices reacting to both company-specific and macro catalysts. Split between mega-cap names that move on macro and mid/high-growth names that move on narrative shifts.
 
 **Mega-cap tech:**
 AAPL, MSFT, GOOG/GOOGL, AMZN, META, TSLA, NFLX, ORCL
@@ -33,7 +33,7 @@ V, MA, AXP, PYPL, FIS, GPN
 
 ### Sector: Energy — ~15 names
 
-Volatile and driven by identifiable catalysts (inventory reports, OPEC decisions, geopolitical events). A higher-difficulty test case — strong theses here vs. weak ones validate where the information synthesis edge does and doesn't work. Mix of integrated majors, E&P, midstream, services.
+Volatile, driven by identifiable catalysts (inventory reports, OPEC decisions, geopolitical events). A higher-difficulty test case — strong vs. weak theses here validate where the information synthesis edge does and doesn't work. Mix of integrated majors, E&P, midstream, services.
 
 **Integrated majors:**
 XOM, CVX, COP, EOG
@@ -48,7 +48,7 @@ ET, EPD, LNG, KMI, WMB
 
 Each ticker should satisfy:
 - ADV >2M shares/day or >$50M notional/day (realistic paper trade fills)
-- 10+ sell-side analysts (news density and earnings estimate breadth)
+- 10+ sell-side analysts (news density, earnings estimate breadth)
 - Options chain with reasonable liquidity (flow signal ingestion)
 - |Beta| ≥ 0.6 (intra-window dispersion at the 4–72h horizon, regardless of correlation direction)
 - Market cap > $10B (institutional coverage floor)

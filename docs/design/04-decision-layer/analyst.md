@@ -1,19 +1,19 @@
 # Analyst
 
-Operates in a fresh context window. **Mandate:** given current conditions, identify the highest-conviction asymmetric setups with a 4–72 hour time horizon. Focus is exclusively new trade opportunities; existing-position management is the [strategist's](strategist.md) job, run in parallel.
+Operates in a fresh context window. **Mandate:** identify the highest-conviction asymmetric setups with a 4–72 hour time horizon. Focus is new trade opportunities; existing-position management is the [strategist's](strategist.md) job, run in parallel.
 
 ---
 
 ## Inputs
 
-The analyst's input bundle is delivered at invocation start. Source documents in parentheses are authoritative for each input's content.
+Delivered at invocation start. Source documents are authoritative for each input's content.
 
 | Input | Source | Description |
 |---|---|---|
 | Synthesizer brief | [synthesizer.md](../03-analysis-layer/synthesizer.md) | Prose synthesis with embedded `[SA-*]`, `[QR-*]`, `[AR-*]`, `[CR-*]` references — the primary market context for opportunity identification |
-| Analyst guardrail state header | [state-delivery.md — Analyst guardrail state header](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header) | Formatted text block at the top of the prompt: regime label, available capital, per-sector delta-adjusted headroom, directional/gross headroom, per-position size limits, options/short feature flags, hard blocks |
+| Analyst guardrail state header | [state-delivery.md — Analyst guardrail state header](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header) | Formatted text block at top of prompt: regime label, available capital, per-sector delta-adjusted headroom, directional/gross headroom, per-position size limits, options/short feature flags, hard blocks |
 | Held positions block | [state-delivery.md — Analyst guardrail state header](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header) (held-positions section) | Slim per-position dedup line (ticker, direction, % of portfolio, sector). Used by the [non-overlap filter](#non-overlap-filter) — the analyst does not receive thesis records or P/L for held positions |
-| Abandoned openings block | [state-delivery.md — Analyst guardrail state header](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header) (abandoned-openings section) | Prior-invocation OPEN commands that failed to reach the broker — surfaced for re-evaluation on current grounds, not as a retry obligation. See [Abandoned openings from prior invocation](#abandoned-openings-from-prior-invocation) |
+| Abandoned openings block | [state-delivery.md — Analyst guardrail state header](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header) (abandoned-openings section) | Prior-invocation OPEN commands that failed to reach the broker — surfaced for re-evaluation on current grounds. See [Abandoned openings from prior invocation](#abandoned-openings-from-prior-invocation) |
 
 Tools available during reasoning:
 
@@ -22,13 +22,13 @@ Tools available during reasoning:
 | Source-brief retrieval | [decision-layer overview — Information flow](README.md#information-flow) | Pull a section of an analysis brief by reference ID from the synthesizer's retrieval store. See [Source brief retrieval](#source-brief-retrieval) |
 | Guardrail validation tool | [state-delivery.md — Guardrail validation tool](../06-risk-guardrails/state-delivery.md#guardrail-validation-tool) | Deterministic pre-submission check. Tracks cumulative impact across multiple proposals within the invocation. See [Pre-submission guardrail validation](#pre-submission-guardrail-validation) |
 
-The volatility regime label is delivered as the `Regime:` line in the guardrail state header (not as a separate broadcast).
+The volatility regime label is delivered as the `Regime:` line in the guardrail state header.
 
 ---
 
 ## Output
 
-The output is a single document conforming to the [analyst output schema](analyst-output-schema.md) (formal JSON Schema, Draft 2020-12). The schema is the authoritative contract; the field lists below are the readable reference. Each trade recommendation is a structured record with **structured** fields (machine-parseable, consumed by the [proposal pre-processor](proposal-pre-processor.md) and execution layer) and **narrative** fields (free-text reasoning, consumed by the [portfolio manager](portfolio-manager.md) for thesis quality evaluation). Structured fields enable deterministic processing; narrative fields give the PM reasoning context.
+A single document conforming to the [analyst output schema](analyst-output-schema.md) (Draft 2020-12). The schema is the authoritative contract; the field lists below are the readable reference. Each trade recommendation carries **structured** fields (machine-parseable, consumed by the [proposal pre-processor](proposal-pre-processor.md) and execution layer) and **narrative** fields (free-text reasoning, consumed by the [portfolio manager](portfolio-manager.md) for thesis quality evaluation).
 
 Mode is `normal` (recommendations) under standard conditions and `watchlist` (lighter-weight entries, no sizing or bracket detail) under halt mode — see [state-delivery.md — Analyst — watchlist mode](../06-risk-guardrails/state-delivery.md#analyst--watchlist-mode).
 

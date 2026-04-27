@@ -1,6 +1,6 @@
 # Data sources library
 
-The shared collection library at `alphamind.data_sources`. Used by the standalone [runner](runner.md) today and the future pipeline's data-layer phase. Owns the vendor SDK boundary, retry semantics, rate limiting, and the idempotent collection functions that produce rows in the [storage schema](storage.md).
+The shared collection library at `alphamind.data_sources`, used by the [runner](runner.md) today and the future pipeline's data-layer phase. Owns the vendor SDK boundary, retry semantics, rate limiting, and the idempotent collection functions that produce rows in the [storage schema](storage.md).
 
 ## Module layout
 

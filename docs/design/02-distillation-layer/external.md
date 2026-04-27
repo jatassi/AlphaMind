@@ -13,7 +13,7 @@ Anomaly flags are the critical output: trigger inputs for the adaptive research 
 
 The ingestion docs ([quantitative](../01-data-layer/external/quantitative.md), [qualitative](../01-data-layer/external/qualitative.md), [portfolio state](../01-data-layer/internal/portfolio-state.md)) define *what* each signal is and *what fields* the system needs. This doc defines *what is computed* from those inputs. Cross-references to ingestion categories (e.g., "quant 1a") point to the data source; computations live here.
 
-*Scope boundary with the analysis layer:* deterministic and judgment-free → here; cross-referencing qualitative context or interpretive calls → analysis. Exception: portfolio-state-aware deterministic computations (beta-adjusted exposure, position correlation matrices) are specified in [portfolio state — derived metrics](../01-data-layer/internal/portfolio-state.md) because they need inputs this layer doesn't currently receive; they migrate here if scope expands.
+*Scope boundary with the analysis layer:* deterministic and judgment-free → here; cross-referencing qualitative context or interpretive calls → analysis. Exception: portfolio-state-aware deterministic computations (beta-adjusted exposure, position correlation matrices) live in [portfolio state — derived metrics](../01-data-layer/internal/portfolio-state.md) because they need inputs this layer doesn't currently receive; they migrate here if scope expands.
 
 ---
 
@@ -23,7 +23,7 @@ Every downstream agent receives data in identical units, time frames, and format
 
 - **Unit standardization:** Moves in both absolute and ATR-relative terms where applicable (2% on TSLA is normal; 2% on JPM is a big deal). Dollar values, percentages, and ratios in consistent notation
 - **Time alignment:** All timestamps in ET; multi-source data aligned to common windows
-- **Per-ticker volatility normalization:** Move magnitudes as multiples of ATR (from quant 1f) — cross-ticker comparison without per-name vol adjustment
+- **Per-ticker volatility normalization:** Move magnitudes as multiples of ATR (from quant 1f) — enables cross-ticker comparison without per-name vol adjustment
 - **Extended-hours confidence discounting:** Extended-hours metrics (quant 1g, 2f) carry a reliability-weight tag — a blanket discount on thin-liquidity moves, not a per-metric judgment
 - **Macro surprise framing:** Macro points (quant 6a–6g) expressed as deviation from expectations rather than absolute level — at the 4–72 hour horizon the surprise is what's actionable
 
@@ -40,7 +40,7 @@ Computed from raw OHLCV and market data feeds, organized by the ingestion catego
 - Mean-reversion bands: Bollinger bands (position within bands, band width as vol proxy); Keltner channels
 - Trend-following: moving average slopes and crossovers (20/50/200 EMA); ADX (trend strength regardless of direction)
 - Volatility: ATR (14-period, absolute and as a normalizer); Bollinger bandwidth; ATR expansion/compression regime
-- **Multi-timeframe divergence flags:** Explicit surfacing when indicators at different timeframes conflict — e.g., RSI bearish divergence on 4hr while daily RSI is still healthy. Among the most actionable outputs for sector researchers
+- **Multi-timeframe divergence flags:** Surfaced when indicators at different timeframes conflict — e.g., RSI bearish divergence on 4hr while daily RSI is still healthy. Among the most actionable outputs for sector researchers
 
 **Volume profile (quant 1b):**
 - Value area (price range where ~70% of volume transacted), point of control, high-volume and low-volume nodes
@@ -75,12 +75,12 @@ Computed from raw OHLCV and market data feeds, organized by the ingestion catego
 - Bid-ask spread trends over rolling windows
 
 **Block and institutional flow (quant 2c):**
-- Dark pool prints tagged with venue and, where available, classified by likely participant type. Venue attribution: Sigma X (Goldman) skews institutional, IEX attracts informed flow, BATS dark carries more retail. Not always available (some venues report to FINRA TRF without venue granularity), but tagged when it is
+- Dark pool prints tagged with venue and, where available, classified by likely participant type. Venue attribution: Sigma X (Goldman) skews institutional, IEX attracts informed flow, BATS dark carries more retail. Some venues report to FINRA TRF without venue granularity; tagged when available
 - Sustained one-sided dark pool flow detection above/below VWAP
 
 **Extended-hours flow (quant 2f):**
 - Regular-session aggregations (net dollar flow, aggressor-side balance, trade size distribution) computed separately for pre-market and after-hours
-- **Regular-session confirmation flag:** Tracks whether extended-hours flow direction is confirmed or reversed in the first 30 minutes of regular trading. Per-ticker historical confirmation rate calibrates weight on pre-market signals
+- **Regular-session confirmation flag:** Whether extended-hours flow direction is confirmed or reversed in the first 30 minutes of regular trading. Per-ticker historical confirmation rate calibrates weight on pre-market signals
 
 ### From derivatives and options (quant 3)
 
@@ -98,7 +98,7 @@ Computed from raw OHLCV and market data feeds, organized by the ingestion catego
 
 **Real-time short interest estimation (quant 4a–4c):**
 - Triangulate across subcategories: daily short volume (fast) estimates how short interest (slow) is changing between bi-monthly FINRA reports; borrow-cost spikes (fast) infer utilization shifts before confirmation
-- **Directional vs. mechanical classification:** Flag short volume as directional (bearish conviction) vs. mechanical (market-maker hedging and liquidity provision), using order-flow context (quant 2)
+- **Directional vs. mechanical classification:** Flag short volume as directional (bearish conviction) vs. mechanical (market-maker hedging, liquidity provision), using order-flow context (quant 2)
 
 ### From fundamental and earnings (quant 5)
 
@@ -106,7 +106,7 @@ Computed from raw OHLCV and market data feeds, organized by the ingestion catego
 - Per-ticker scorecard tracking the gap between market expectations (consensus, guidance, analyst targets) and incoming reality signals (revisions, actuals, insider behavior)
 - Updates near-real-time as estimates and ratings arrive; re-anchors quarterly when actuals land
 - Single output per ticker: "expectation gap widening, narrowing, or stable?"
-- **Revision-price lag detection:** Flags revisions that landed since the last run but haven't been absorbed by price — timestamped to the hour and cross-referenced with price movement
+- **Revision-price lag detection:** Revisions that landed since the last run but haven't been absorbed by price — timestamped to the hour and cross-referenced with price movement
 
 ### From macro and rates (quant 6)
 
@@ -127,7 +127,7 @@ The layer's heaviest derived computation. Category 7 has no raw data sources of 
 
 **Intra-sector correlation (quant 7a):**
 - Rolling pairwise correlation matrices within each sector (20-day and 60-day trailing)
-- Automated divergence detection: names breaking from sector group behavior, with magnitude and duration
+- Divergence detection: names breaking from sector group behavior, with magnitude and duration
 - Historical divergence resolution lookup per pair
 
 **Cross-sector rotation (quant 7b):**
@@ -155,7 +155,7 @@ The layer's heaviest derived computation. Category 7 has no raw data sources of 
 
 **Correlation regime change detection (quant 7g):**
 - Rolling correlation stability (stdev of trailing correlation estimates)
-- Correlation breakdown: major pairwise or sector-level correlation exceeding historical norms for rate of change
+- Correlation breakdown: pairwise or sector-level correlation exceeding historical norms for rate of change
 - Dispersion shift: sudden increase in cross-stock dispersion
 - **Narrative lag indicator:** Correlation structure has shifted but financial media narrative hasn't — early-stage regime transition signal
 
@@ -183,13 +183,13 @@ Most qualitative signals require LLM interpretation; a few deterministic computa
 - Inter-invocation deltas per contract
 - Flag moves >5 percentage points since last pull
 - Trailing history per contract for trajectory display
-- Cross-platform probability normalization when multiple platforms offer contracts on the same outcome
+- Cross-platform probability normalization when platforms offer contracts on the same outcome
 
 ---
 
 ## 3. Anomaly detection
 
-Primary trigger system for adaptive research. Each anomaly has a detection threshold calibrated against recent baselines (typically 20-day trailing). Flagged, not interpreted — interpretation is the analysis pipeline's job. Threshold values, cold-start bootstrap policy, and update procedure are in [threshold-calibration.md](threshold-calibration.md).
+Primary trigger system for adaptive research. Each anomaly has a detection threshold calibrated against recent baselines (typically 20-day trailing). Flagged, not interpreted — interpretation is the analysis pipeline's job. Threshold values, cold-start bootstrap policy, and update procedure: [threshold-calibration.md](threshold-calibration.md).
 
 **Price and volume:**
 - Volume exceeding N standard deviations from 20-day average
@@ -223,7 +223,7 @@ Primary trigger system for adaptive research. Each anomaly has a detection thres
 
 ## 4. Persistent state and composites
 
-Stateful computations the layer maintains in a database, refreshed each invocation. Window sizes (volume, ATR, sentiment, gap-fill, extended-hours, lead-lag, prediction-market history) and minimum-observations thresholds for treating per-ticker baselines as calibrated are in [threshold-calibration.md § Persistence and percentile windows](threshold-calibration.md#persistence-and-percentile-windows).
+Stateful computations the layer maintains in a database, refreshed each invocation. Window sizes (volume, ATR, sentiment, gap-fill, extended-hours, lead-lag, prediction-market history) and minimum-observations thresholds for treating per-ticker baselines as calibrated: [threshold-calibration.md § Persistence and percentile windows](threshold-calibration.md#persistence-and-percentile-windows).
 
 **Rolling baselines (per ticker):**
 - 20-day trailing averages for volume, ATR, spread, and other anomaly-detection denominators

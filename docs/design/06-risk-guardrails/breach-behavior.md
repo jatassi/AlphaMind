@@ -1,23 +1,23 @@
 # Breach behavior
 
-Defines the escalation model, forced reduction policy, drawdown halt logic, margin cascade handling, and per-rule engine-vs-PM-deferral classification.
+Escalation model, forced reduction policy, drawdown halt logic, margin cascade handling, and per-rule engine-vs-PM-deferral classification.
 
 ---
 
 ## Escalation model
 
-Every rule has four proximity zones, defined as percentages of the limit consumed. The zone determines what information is surfaced and what mechanical actions are available.
+Every rule has four proximity zones, defined as percentages of the limit consumed. The zone determines what is surfaced and what mechanical actions are available.
 
 | Zone | Threshold | Meaning | Action |
 |------|-----------|---------|--------|
 | **Normal** | 0–70% of limit | Comfortable headroom | Headroom reported in guardrail state headers. |
-| **Warning** | 70–85% of limit | Approaching capacity | Headroom flagged `⚠ warning`. Analyst should avoid pushing into the critical zone. |
+| **Warning** | 70–85% of limit | Approaching capacity | Headroom flagged `⚠ warning`. Analyst avoids pushing into the critical zone. |
 | **Critical** | 85–95% of limit | Near breach | Headroom flagged `🔴 critical`. Validation tool returns advisory warnings on proposals consuming remaining headroom. PM receives explicit near-breach notification. |
 | **Hard block** | 95–100%+ of limit | At or beyond limit | Engine rejects any command increasing exposure in the breaching direction. Existing positions may trigger forced reduction per rule classification (below). |
 
-**Threshold rationale:** 70/85/95 gives progressive warning at useful decision points: at 70%, room for 1–2 more typical positions; at 85%, one more max-sized position breaches; at 95%, even a small position breaches. The 95% hard block (rather than 100%) buffers against estimation error in delta, correlation, and price lag — preventing the case where a command approved at 99% pushes over 100% before execution completes.
+**Threshold rationale:** 70/85/95 gives progressive warning at useful decision points: at 70%, room for 1–2 more typical positions; at 85%, one more max-sized position breaches; at 95%, even a small position breaches. The 95% hard block (rather than 100%) buffers against estimation error in delta, correlation, and price lag — preventing a command approved at 99% pushing over 100% before execution completes.
 
-**Per-rule overrides:** Two exceptions to 70/85/95:
+**Per-rule overrides:**
 
 - **Daily drawdown:** 60/80/90. Drawdown is the hardest constraint and triggers halt mode; earlier warning lets the PM restrict new entries to high-conviction opportunities at 60% consumed (1.5% of the 2.5% limit).
 - **Cumulative drawdown:** 50/70/85. The cumulative limit affects system behavior for days or weeks; earlier warning gives time to adjust strategy.

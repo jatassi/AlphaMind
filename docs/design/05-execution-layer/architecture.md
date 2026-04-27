@@ -6,17 +6,17 @@ Four components with distinct responsibilities, interaction patterns, and failur
 
 ## 1. Order management system (OMS)
 
-The core of the engine. Receives commands from the portfolio manager (during pipeline invocations) and from the continuous monitor (between invocations, for guardrail breach responses — see [oms-commands.md](oms-commands.md) for command origins). Consumes fill events from Alpaca via the continuous monitor's websocket subscription and maintains the authoritative record of positions, theses, orders, cash, activity log, and historical resolutions. The raw state specification ([categories 1–6](../01-data-layer/internal/portfolio-state.md)) is a read interface into the OMS database.
+The engine core. Receives commands from the portfolio manager (during pipeline invocations) and from the continuous monitor (between invocations, for guardrail breach responses — see [oms-commands.md](oms-commands.md)). Consumes fill events from Alpaca via the continuous monitor's websocket subscription and maintains the authoritative record of positions, theses, orders, cash, activity log, and historical resolutions. The raw state specification ([categories 1–6](../01-data-layer/internal/portfolio-state.md)) is a read interface into the OMS database.
 
 The OMS behaves identically in paper and live modes — the only difference is which Alpaca base URL the [broker adapter](broker-adapter.md) is configured for, and whether the [paper-evaluation harness](paper-evaluation-harness.md) annotates fills with live-execution estimates. Position updates, P/L accounting, and thesis tracking run off the raw fill stream regardless of mode.
 
-The OMS also owns venue-level configuration: settlement cycles, pre-settlement credit rules, market session boundaries, and Alpaca's regulatory constraints (PDT rule, Reg T margin percentages). See [venue-configuration.md](venue-configuration.md).
+The OMS owns venue-level configuration: settlement cycles, pre-settlement credit rules, market session boundaries, and Alpaca's regulatory constraints (PDT, Reg T margin). See [venue-configuration.md](venue-configuration.md).
 
 ## 2. Broker adapter
 
-The layer the OMS calls to execute orders and the layer the monitor subscribes to for fill events. Accepts a validated order, issues the corresponding Alpaca REST call, and returns a submission acknowledgment. Translates Alpaca's `trade_updates` websocket events into fill reports for the OMS. See [broker-adapter.md](broker-adapter.md) for the full Alpaca surface — order types, order classes, modification semantics, fee reporting cadence, options support constraints.
+The layer the OMS calls to execute orders and the layer the monitor subscribes to for fill events. Accepts a validated order, issues the corresponding Alpaca REST call, returns a submission acknowledgment. Translates Alpaca's `trade_updates` websocket events into fill reports for the OMS. See [broker-adapter.md](broker-adapter.md) for the full Alpaca surface — order types, order classes, modification semantics, fee reporting cadence, options support constraints.
 
-The adapter contains no business logic. Validation and risk enforcement happen in the guardrail layer before a command reaches the adapter; position and thesis state live in the OMS.
+The adapter contains no business logic. Validation and risk enforcement happen in the guardrail layer before commands reach the adapter; position and thesis state live in the OMS.
 
 ## 3. Guardrail enforcement layer
 
@@ -24,11 +24,11 @@ Sits between portfolio manager command intake and broker adapter routing. Valida
 
 The guardrail layer enforces rules during invocations via T3 validation; the continuous monitor (component 4) enforces them between invocations.
 
-The layer has veto power: it can reject or modify any command that violates a constraint. The portfolio manager is the *judgment* layer for risk; the engine is the *hard stop* layer. Rejections return **synchronously to the portfolio manager within the same invocation** so the PM can adjust and retry, and are logged in the activity log ([raw state category 5b](../01-data-layer/internal/portfolio-state.md)).
+The layer has veto power — it can reject or modify any command that violates a constraint. The portfolio manager is the *judgment* layer for risk; the engine is the *hard stop* layer. Rejections return **synchronously to the portfolio manager within the same invocation** so the PM can adjust and retry, and are logged in the activity log ([raw state category 5b](../01-data-layer/internal/portfolio-state.md)).
 
-Execution-time rejections should be infrequent: the analyst and strategist pre-validate proposals before they reach the PM, and the PM validates its own sizing modifications. The engine's check is an authoritative backstop catching state drift between upstream validation and command execution. See [oms-commands.md](oms-commands.md) for the rejection handling contract and [analyst.md](../04-decision-layer/analyst.md) for upstream validation.
+Execution-time rejections should be infrequent — the analyst and strategist pre-validate proposals before they reach the PM, and the PM validates its own sizing modifications. The engine's check is an authoritative backstop catching state drift between upstream validation and command execution. See [oms-commands.md](oms-commands.md) for the rejection handling contract and [analyst.md](../04-decision-layer/analyst.md) for upstream validation.
 
-**Greek computation for options validation:** For OPEN and ADD commands on options or strategy positions, the guardrail layer computes greeks internally rather than requiring them as command parameters — the portfolio manager is an LLM and would hallucinate values. The math is delegated to the [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md), which is also the source of the Black-Scholes model used by the continuous monitor's greek refresh. Computed greeks are returned in the validation response and persisted as the position's initial greeks. See [oms-commands.md](oms-commands.md) for the engine-side orchestration.
+**Greek computation for options validation:** For OPEN and ADD commands on options or strategy positions, the guardrail layer computes greeks internally rather than accepting them as command parameters — the LLM PM would hallucinate values. The math is delegated to the [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md), which is also the source of the Black-Scholes model used by the continuous monitor's greek refresh. Computed greeks are returned in the validation response and persisted as the position's initial greeks. See [oms-commands.md](oms-commands.md) for the engine-side orchestration.
 
 ---
 
@@ -40,9 +40,9 @@ The broker adapter is always asynchronous from the OMS's perspective. Every orde
 
 Each pipeline invocation has two phases:
 
-**Phase 1 — Collect.** At the start of each invocation, the OMS drains the fill buffer written by the continuous monitor since the last invocation: fill reports, partial fills, stop triggers, order expirations, cancellations. This produces the activity changelog ([raw state category 5a](../01-data-layer/internal/portfolio-state.md)) and updates positions, P/L, cash, and thesis status. Collection happens *before* the ingestion layer snapshots portfolio state, so the pipeline operates on settled state with no in-flight orders.
+**Phase 1 — Collect.** At invocation start, the OMS drains the fill buffer written by the continuous monitor since the last invocation: fill reports, partial fills, stop triggers, order expirations, cancellations. This produces the activity changelog ([raw state category 5a](../01-data-layer/internal/portfolio-state.md)) and updates positions, P/L, cash, and thesis status. Collection happens *before* the ingestion layer snapshots portfolio state, so the pipeline operates on settled state with no in-flight orders.
 
-**Phase 2 — Execute.** At the end of each invocation, the portfolio manager issues commands. The OMS validates them against guardrails, routes them through the broker adapter to Alpaca, and receives acknowledgments (not fills). These become pending orders ([raw state category 4b](../01-data-layer/internal/portfolio-state.md)) that resolve in a future invocation's collect phase.
+**Phase 2 — Execute.** At invocation end, the portfolio manager issues commands. The OMS validates them against guardrails, routes them through the broker adapter to Alpaca, and receives acknowledgments (not fills). These become pending orders ([raw state category 4b](../01-data-layer/internal/portfolio-state.md)) that resolve in a future invocation's collect phase.
 
 *Fill timestamps reflect actual execution, not collection.* Fills arrive on `trade_updates` with Alpaca's event timestamps; the monitor writes them to the buffer as they arrive. Phase 1 preserves the Alpaca timestamp through to activity logs and position-age calculations.
 

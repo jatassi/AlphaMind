@@ -1,6 +1,6 @@
 # Decision layer
 
-The layer where trading decisions are made. Three LLM agents operate with fresh context windows, connected by a deterministic pre-processing step: the **analyst** proposes new trades, the **strategist** evaluates existing positions, the **proposal pre-processor** merges and annotates their structured outputs, and the **portfolio manager** critically evaluates the annotated proposals and either rejects or executes them.
+Three LLM agents operate in fresh context windows, connected by a deterministic pre-processing step: the **analyst** proposes new trades, the **strategist** evaluates existing positions, the **proposal pre-processor** merges and annotates their structured outputs, and the **portfolio manager** critically evaluates the annotated proposals and either rejects or executes them.
 
 The analyst and strategist run in parallel — both receive the synthesizer output independently and produce recommendations concurrently. Their outputs pass through the proposal pre-processor before reaching the portfolio manager.
 
@@ -15,9 +15,9 @@ The analyst and strategist run in parallel — both receive the synthesizer outp
 
 ## Information flow
 
-The decision layer consumes the output of the [analysis layer](../03-analysis-layer/README.md) through a hybrid model balancing token efficiency with access to detail:
+The decision layer consumes the [analysis layer](../03-analysis-layer/README.md) output through a hybrid model balancing token efficiency with access to detail:
 
-**Primary input: Synthesizer brief.** The [synthesizer](../03-analysis-layer/synthesizer.md) produces a unified market snapshot loaded into context by default for all three agents. The brief carries cross-domain findings with typed source references (e.g., `[SA-TECH-3]`, `[QR-4]`, `[AR-2]`) and explicitly flags contradictions and uncertainty rather than resolving them.
+**Primary input: Synthesizer brief.** The [synthesizer](../03-analysis-layer/synthesizer.md) produces a unified market snapshot loaded into context for all three agents. The brief carries cross-domain findings with typed source references (e.g., `[SA-TECH-3]`, `[QR-4]`, `[AR-2]`) and flags contradictions and uncertainty rather than resolving them.
 
 **On-demand retrieval: Source briefs.** All three agents have a retrieval tool that accepts reference IDs and returns the corresponding section from the original analysis brief — drill-down without loading all source material into context.
 
@@ -36,7 +36,7 @@ The decision layer consumes the output of the [analysis layer](../03-analysis-la
 1. Read the synthesizer brief in full
 2. Form initial views from the unified snapshot
 3. Retrieve underlying source brief sections by reference ID for findings needing deeper investigation — especially flagged contradictions or uncertainty
-4. On quiet days retrieval may not be needed; on volatile days the agent pulls more source material, naturally scaling token spend with market complexity
+4. On quiet days retrieval may not be needed; on volatile days the agent pulls more source material, scaling token spend with market complexity
 
 ---
 
@@ -44,17 +44,17 @@ The decision layer consumes the output of the [analysis layer](../03-analysis-la
 
 The analyst and strategist run concurrently in separate context windows. Same synthesizer output, different mandates and input bundles:
 
-**Analyst context** is opportunity-focused: synthesizer brief and the [analyst guardrail state header](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header) (available capital, per-sector delta-adjusted exposure room, directional/gross exposure room, per-position size limits under the active regime, slim held-positions block for dedup). The analyst finds new setups; it does not receive full thesis records. A guardrail validation tool deterministically checks each proposal before finalization — see [analyst.md](analyst.md).
+**Analyst context** is opportunity-focused: synthesizer brief and the [analyst guardrail state header](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header) (available capital, per-sector delta-adjusted exposure room, directional/gross exposure room, per-position size limits under the active regime, slim held-positions block for dedup). The analyst finds new setups and does not receive full thesis records. A guardrail validation tool deterministically checks each proposal before finalization — see [analyst.md](analyst.md).
 
-**Strategist context** is portfolio-focused: synthesizer brief, full thesis records at component level including prior status (strategist is the sole consumer that receives components inline; see [portfolio-state.md §3a](../01-data-layer/internal/portfolio-state.md)), position details, activity log, pending orders, and the [strategist guardrail state header](../06-risk-guardrails/state-delivery.md#strategist-guardrail-state-header) (per-sector delta-adjusted headroom, directional/gross exposure room, position-level constraint proximity, drawdown state, regime-transition breaches). The strategist classifies thesis health, connects new information from the synthesizer to existing thesis narratives, and recommends specific actions. The same guardrail validation tool is available for pre-submission checking of exposure-changing proposals — see [strategist.md](strategist.md).
+**Strategist context** is portfolio-focused: synthesizer brief, full thesis records at component level including prior status (strategist is the sole consumer that receives components inline; see [portfolio-state.md §3a](../01-data-layer/internal/portfolio-state.md)), position details, activity log, pending orders, and the [strategist guardrail state header](../06-risk-guardrails/state-delivery.md#strategist-guardrail-state-header) (per-sector delta-adjusted headroom, directional/gross exposure room, position-level constraint proximity, drawdown state, regime-transition breaches). The strategist classifies thesis health, connects new information to existing thesis narratives, and recommends specific actions. The same guardrail validation tool is available for pre-submission checking of exposure-changing proposals — see [strategist.md](strategist.md).
 
-This separation gives each agent a context optimized for its task rather than splitting attention between opportunity scanning and position management.
+Each agent's context is optimized for its task rather than splitting attention between opportunity scanning and position management.
 
 ---
 
 ## Proposal pre-processor
 
-A deterministic step between the analyst/strategist outputs and the portfolio manager. Reads the **structured fields** from both outputs, computes cross-proposal annotations, and delivers the combined package to the PM. No LLM reasoning — pure computation on typed data. The pre-processor only adds annotations; it never modifies, filters, or reorders underlying proposals.
+A deterministic step between the analyst/strategist outputs and the portfolio manager. Reads the **structured fields** from both outputs, computes cross-proposal annotations, and delivers the combined package to the PM. Pure computation on typed data — the pre-processor only adds annotations and preserves underlying proposals verbatim.
 
 **Computed annotations:** same-underlying conflict detection, cumulative capital requirement, cumulative exposure impact, entry window priority ordering, conviction distribution, book health summary, sector exposure shift preview.
 
@@ -64,7 +64,7 @@ See [proposal-pre-processor.md](proposal-pre-processor.md) for the full specific
 
 ## Convergence at the portfolio manager
 
-The PM receives the pre-processor's annotated output alongside the synthesizer brief and portfolio state. It evaluates proposals holistically, with annotations reducing mechanical reasoning load:
+The PM receives the pre-processor's annotated output alongside the synthesizer brief and portfolio state. Annotations reduce mechanical reasoning load:
 
 - **New entries** (from analyst): thesis quality, sizing, portfolio fit, risk/reward
 - **Position actions** (from strategist): whether holds, reduces, closes, adjustments, and adds are well-justified
@@ -77,8 +77,8 @@ The PM issues [OMS commands](../05-execution-layer/oms-commands.md) (OPEN, CLOSE
 
 ## Relationship to risk guardrails
 
-The [risk guardrails](../06-risk-guardrails/README.md) operate at multiple levels, pushing compliance as far upstream as possible so the PM can focus on thesis quality and portfolio coherence:
+The [risk guardrails](../06-risk-guardrails/README.md) operate at multiple levels, pushing compliance upstream so the PM can focus on thesis quality and portfolio coherence:
 
-1. **Analyst and strategist pre-submission validation.** Both agents receive headroom in their [guardrail state headers](../06-risk-guardrails/state-delivery.md) (available capital, per-sector delta-adjusted exposure room, directional/gross exposure room, per-position limits under the active regime) and self-constrain during proposal generation. Before finalizing, each calls a deterministic guardrail validation tool that checks every proposal against all applicable rules (including delta-adjusted exposure for options) and revises failures. Proposals that reach the PM are guardrail-compliant at the time of check. See [analyst.md](analyst.md) and [strategist.md](strategist.md).
-2. **PM modification validation.** When the PM adjusts parameters (e.g., sizing), modifications are validated against guardrails before becoming commands using the same tool.
+1. **Analyst and strategist pre-submission validation.** Both agents receive headroom in their [guardrail state headers](../06-risk-guardrails/state-delivery.md) and self-constrain during proposal generation. Before finalizing, each calls a deterministic guardrail validation tool that checks every proposal against all applicable rules (including delta-adjusted exposure for options) and revises failures. Proposals reaching the PM are guardrail-compliant at check time. See [analyst.md](analyst.md) and [strategist.md](strategist.md).
+2. **PM modification validation.** When the PM adjusts parameters (e.g., sizing), modifications are validated against guardrails using the same tool before becoming commands.
 3. **Engine authoritative (synchronous).** The [execution layer](../05-execution-layer/README.md) performs a final guardrail check on every OMS command at execution time — the authoritative backstop, since portfolio state can shift between upstream validation and execution (market movement, fill resolution, regime changes). Rejections return synchronously to the PM within the same invocation; see [portfolio-manager.md](portfolio-manager.md).

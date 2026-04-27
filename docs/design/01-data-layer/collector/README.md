@@ -6,16 +6,16 @@ The data layer's only writer until the pipeline's data-layer phase comes online.
 
 - [Storage](storage.md) — schema spec, retention, cross-cutting rules.
 - [Data sources library](data-sources.md) — vendor adapters, retry-per-tier, rate limiting, idempotency contract.
-- [Runner](runner.md) — the thin scheduler process; cadence, supervision, entry points.
+- [Runner](runner.md) — the scheduler process; cadence, supervision, entry points.
 - [Lifecycle](lifecycle.md) — bootstrap, catch-up, eventual pipeline integration.
 
 ## Principles
 
-**Forward-only collection.** Steady-state writes new rows; no bulk historical re-fetch. Targeted single-record revisions are acceptable. The one exception is initial bootstrap — a one-time backfill so distillation has baselines.
+**Forward-only collection.** Steady-state writes new rows; no bulk historical re-fetch. Targeted single-record revisions are acceptable. Bootstrap is the one-time exception — backfill so distillation has baselines.
 
-**Shared library, thin runner.** Vendor clients and collection functions live in `alphamind.data_sources`. The collector is a scheduler that imports and dispatches them. The future pipeline imports the same library.
+**Shared library, thin runner.** Vendor clients and collection functions live in `alphamind.data_sources`. The collector imports and dispatches them; the future pipeline imports the same library.
 
-**Vendor-serialized scheduling.** APScheduler executors are one per vendor with `max_workers=1` so calls within a vendor share the rate budget; vendors run in parallel. A token-bucket rate limiter inside the shared library paces individual API calls.
+**Vendor-serialized scheduling.** APScheduler executors are one per vendor with `max_workers=1` so calls within a vendor share the rate budget; vendors run in parallel. A token-bucket rate limiter paces individual API calls.
 
 **Idempotent functions.** Every collection function UPSERTs against natural composite keys. Bootstrap, catch-up, and steady-state share the same code path with different `since` parameters.
 

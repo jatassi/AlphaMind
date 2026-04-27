@@ -11,42 +11,42 @@
 
 The core insight: LLMs add value not through faster price analysis (traditional algos win there) but through synthesizing *unstructured* information across domains — reading between the lines of news, catching narrative shifts, identifying cross-domain signals quantitative systems can't easily encode.
 
-The initial phase paper trades with real market data to validate thesis accuracy and measure P/L before any capital is deployed.
+The initial phase paper trades with real market data to validate thesis accuracy and measure P/L before capital is deployed.
 
 
 ## 2. Design principles
 
 ### Time horizon: 4–72 hours
 
-Swing-trade scale, not day-trade. Long enough that unstructured information synthesis matters — narrative shifts, regulatory signals, prediction market movements — short enough to avoid macro bets requiring deep fundamental analysis.
+Swing-trade scale. Long enough that unstructured information synthesis matters (narrative shifts, regulatory signals, prediction market movements), short enough to avoid macro bets requiring deep fundamental analysis.
 
-The constraint is thesis validity, not calendar time. A position opened at 9 AM might close at 3 PM because the catalyst played out fast, or sit for two days waiting for a thesis to resolve. Close when the original thesis is invalidated or fully realized.
+The constraint is thesis validity, not calendar time. A position opened at 9 AM might close at 3 PM if the catalyst plays out fast, or sit two days waiting to resolve. Close when the original thesis is invalidated or fully realized.
 
 ### Incremental gains
 
-No moonshots. The system targets high volume of small, positive-expectancy trades, ending each day with more liquid cash than the opening balance. Aligns with mean-reversion and statistical arbitrage rather than momentum or trend-following.
+No moonshots. High volume of small, positive-expectancy trades, ending each day with more liquid cash than the opening balance. Aligns with mean-reversion and statistical arbitrage over momentum or trend-following.
 
 ### Information edge, not speed edge
 
-Competitive advantage is cross-domain synthesis of unstructured data. The system never competes on latency or pure technical analysis — solved problems with faster, cheaper tools. Every trade thesis involves at least one qualitative signal a traditional quant system would miss.
+Competitive advantage is cross-domain synthesis of unstructured data. The system never competes on latency or pure technical analysis. Every trade thesis involves at least one qualitative signal a traditional quant system would miss.
 
 ### Invocation schedule
 
 The pipeline runs on a fixed schedule tied to US market hours (NYSE: 9:30 AM – 4:00 PM ET).
 
-**Market hours (9:30 AM – 4:00 PM ET):** Every 2 hours. Higher frequency where price action, flow data, and news are most signal-dense. Runs at ~9:30, 11:30, 1:30, 3:30.
+**Market hours (9:30 AM – 4:00 PM ET):** Every 2 hours, where price action, flow, and news are most signal-dense. Runs at ~9:30, 11:30, 1:30, 3:30.
 
-**Off hours (4:00 PM – 9:30 AM ET):** Every 4 hours. Signal density drops, but overnight developments (Asian/European markets, geopolitical events, earnings) still need monitoring. Runs at ~8:00 PM, 12:00 AM, 4:00 AM, 8:00 AM.
+**Off hours (4:00 PM – 9:30 AM ET):** Every 4 hours. Signal density drops, but overnight developments (Asian/European markets, geopolitics, earnings) still need monitoring. Runs at ~8:00 PM, 12:00 AM, 4:00 AM, 8:00 AM.
 
 **Anchored runs:** Two fixed invocations regardless of rolling schedule:
-- **Pre-open (9:00 AM ET):** 30 minutes before open. Synthesizes overnight developments, pre-market price action, and thesis-relevant news. Critical for positioning decisions — open new entries vs. adjust existing.
-- **Pre-close (3:30 PM ET):** 30 minutes before close. Evaluates open positions against end-of-day dynamics: close before the overnight gap? Late-day setups worth entering? Bias toward risk reduction — overnight holds need strong conviction.
+- **Pre-open (9:00 AM ET):** 30 minutes before open. Synthesizes overnight developments, pre-market price action, thesis-relevant news. Critical for positioning — open new entries vs. adjust existing.
+- **Pre-close (3:30 PM ET):** 30 minutes before close. Evaluates open positions against end-of-day dynamics: close before the overnight gap? Late-day setups? Bias toward risk reduction — overnight holds need strong conviction.
 
 **Overlap handling:** When an anchored run coincides with a rolling interval (e.g., pre-close at 3:30 overlaps the 2-hour cadence), the anchored run takes precedence and the rolling run is skipped. No double-invocations within 30 minutes.
 
-**TODO — Refine scope per run type:** Tailored pipeline configurations per invocation type — not every run needs the full pipeline at full depth. Pre-open warrants expanded adaptive research budget and broader qualitative sweep. Pre-close prioritizes portfolio review and thesis invalidation. Intraday runs are monitoring-heavy with selective deep dives. After-hours runs can be lighter. Scoped profiles also drive the cost model.
+**TODO — Refine scope per run type:** Tailored pipeline configurations per invocation type. Pre-open warrants expanded adaptive research budget and broader qualitative sweep; pre-close prioritizes portfolio review and thesis invalidation; intraday runs are monitoring-heavy with selective deep dives; after-hours runs can be lighter. Scoped profiles also drive the cost model.
 
-**Total daily invocations:** ~8–10 per trading day (4 market + 2 anchored + 3–4 off hours), plus weekday off-hours cycles. Weekend cadence TBD — likely every 6–8 hours since only futures and prediction markets provide signal.
+**Total daily invocations:** ~8–10 per trading day (4 market + 2 anchored + 3–4 off hours). Weekend cadence TBD — likely every 6–8 hours since only futures and prediction markets provide signal.
 
 
 ---
