@@ -2,7 +2,7 @@
 
 Deterministic layer — no LLM tokens. Takes raw ingestion payloads and emits structured, token-efficient outputs sized for the analysis pipeline's context windows.
 
-Four responsibilities, applied across all data categories:
+Four responsibilities across all data categories:
 
 1. **Normalize** data into consistent formats and units
 2. **Compute** derived metrics and indicators from raw feeds
@@ -11,9 +11,9 @@ Four responsibilities, applied across all data categories:
 
 Anomaly flags are the critical output: trigger inputs for the adaptive research layer.
 
-The ingestion docs ([quantitative](../01-data-layer/external/quantitative.md), [qualitative](../01-data-layer/external/qualitative.md), [portfolio state](../01-data-layer/internal/portfolio-state.md)) define *what* each signal is and *what fields* the system needs. This doc defines *what is computed* from those inputs. Cross-references to ingestion categories (e.g., "quant 1a") point to the data source; computations live here.
+The ingestion docs ([quantitative](../01-data-layer/external/quantitative.md), [qualitative](../01-data-layer/external/qualitative.md), [portfolio state](../01-data-layer/internal/portfolio-state.md)) define *what* each signal is. This doc defines *what is computed* from those inputs. Cross-references like "quant 1a" point to the data source; computations live here.
 
-*Scope boundary with the analysis layer:* deterministic and judgment-free → here; cross-referencing qualitative context or interpretive calls → analysis. Exception: portfolio-state-aware deterministic computations (beta-adjusted exposure, position correlation matrices) live in [portfolio state — derived metrics](../01-data-layer/internal/portfolio-state.md) because they need inputs this layer doesn't currently receive; they migrate here if scope expands.
+*Scope boundary with analysis:* deterministic and judgment-free → here; interpretive or qualitative-context calls → analysis. Exception: portfolio-state-aware deterministic computations (beta-adjusted exposure, position correlation matrices) live in [portfolio state — derived metrics](../01-data-layer/internal/portfolio-state.md) because they need inputs this layer doesn't currently receive; they migrate here if scope expands.
 
 ---
 
@@ -24,14 +24,14 @@ Every downstream agent receives data in identical units, time frames, and format
 - **Unit standardization:** Moves in both absolute and ATR-relative terms where applicable (2% on TSLA is normal; 2% on JPM is a big deal). Dollar values, percentages, and ratios in consistent notation
 - **Time alignment:** All timestamps in ET; multi-source data aligned to common windows
 - **Per-ticker volatility normalization:** Move magnitudes as multiples of ATR (from quant 1f) — enables cross-ticker comparison without per-name vol adjustment
-- **Extended-hours confidence discounting:** Extended-hours metrics (quant 1g, 2f) carry a reliability-weight tag — a blanket discount on thin-liquidity moves, not a per-metric judgment
+- **Extended-hours confidence discounting:** Extended-hours metrics (quant 1g, 2f) carry a reliability-weight tag — blanket discount on thin-liquidity moves, not a per-metric judgment
 - **Macro surprise framing:** Macro points (quant 6a–6g) expressed as deviation from expectations rather than absolute level — at the 4–72 hour horizon the surprise is what's actionable
 
 ---
 
 ## 2. Technical indicators and derived metrics
 
-Computed from raw OHLCV and market data feeds, organized by the ingestion category they derive from.
+Computed from raw OHLCV and market data feeds, organized by ingestion category.
 
 ### From price and volume (quant 1)
 
@@ -123,7 +123,7 @@ Computed from raw OHLCV and market data feeds, organized by the ingestion catego
 
 ### From cross-asset and correlation (quant 7)
 
-The layer's heaviest derived computation. Category 7 has no raw data sources of its own — all derived from categories 1–6 and 8.
+The layer's heaviest derived computation. Category 7 has no raw data of its own — all derived from categories 1–6 and 8.
 
 **Intra-sector correlation (quant 7a):**
 - Rolling pairwise correlation matrices within each sector (20-day and 60-day trailing)
@@ -241,28 +241,28 @@ Stateful computations the layer maintains in a database, refreshed each invocati
 - Inter-invocation deltas per contract
 - Threshold flags (>5pp shift since last pull)
 - Trailing history per contract
-- Cross-platform probability normalization when multiple platforms offer contracts on the same outcome
+- Cross-platform probability normalization when platforms offer contracts on the same outcome
 
 **Volatility regime classification (quant 11f):**
 
-The most consequential persistent state — a composite regime label maintained continuously and broadcast to every agent as universal context metadata.
+The most consequential persistent state — a composite regime label maintained continuously and broadcast to every agent as universal context.
 - **Low-vol compression:** VIX low, term structure in steep contango, VVIX low, realized vol declining
 - **Vol expansion:** VIX rising, term structure flattening, realized vol increasing
 - **Crisis/spike:** VIX elevated, term structure in backwardation, VVIX high
 - **Vol normalization:** VIX declining from elevated levels, term structure returning to contango
-- **Regime transition detection:** Label changes flagged with confidence level — early transitions are more actionable but less certain than confirmed
+- **Regime transition detection:** Label changes flagged with confidence — early transitions are more actionable but less certain than confirmed
 
 ---
 
 ## Output format
 
-Structured output optimized for LLM consumption: minimal tokens, maximum signal density. Each output block carries:
+Structured for LLM consumption: minimal tokens, maximum signal density. Each output block carries:
 - **Freshness timestamp:** When the underlying data was last updated
 - **Confidence/reliability tier:** Full for regular-session, discounted for extended-hours, estimated for interpolated metrics (e.g., short interest between FINRA reports)
 - **Anomaly flags:** Binary flags plus magnitude per detected anomaly, grouped for easy scanning
 - **Regime context:** Current volatility regime label
 
-Output is partitioned by consumer:
+Partitioned by consumer:
 - **Sector analyst agents:** Their sector's tickers with full distillation (indicators, anomalies, divergences)
 - **Synthesizer agent (via correlation brief):** Cross-asset correlation, lead-lag, regime outputs — category 7 computations
 - **All agents:** Volatility regime classification label as universal context

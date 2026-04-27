@@ -2,7 +2,7 @@
 
 Takes raw portfolio state from [raw-state.md](../01-data-layer/internal/portfolio-state.md) and cross-references it with market data from [quantitative](../01-data-layer/external/quantitative.md) and [qualitative](../01-data-layer/external/qualitative.md) sources. Every metric requires cross-source computation or LLM judgment.
 
-*Scope note:* Some metrics (beta-adjusted exposure, pairwise correlation matrix) are deterministic and would naturally live in [programmatic distillation](external.md), but they need portfolio-state inputs the distillation layer doesn't currently receive. They migrate there if scope expands. Today, they're computed in the pipeline's portfolio-state processing and exposed to decision-layer agents via tools and context packages.
+*Scope note:* Some metrics (beta-adjusted exposure, pairwise correlation matrix) are deterministic and would naturally live in [programmatic distillation](external.md), but they need portfolio-state inputs the distillation layer doesn't currently receive. Today, they're computed in the pipeline's portfolio-state processing and exposed to decision-layer agents via tools and context packages; they migrate to distillation if scope expands.
 
 ---
 
@@ -13,7 +13,7 @@ Derived exposure views requiring cross-reference between position inventory (raw
   Position market values weighted by beta (from quant 1f). A $1M TSLA position (beta ~2.0) carries different market risk than $1M in JPM (beta ~1.0).
   - Beta-adjusted net exposure: Σ(market value × beta) longs minus shorts, as % of portfolio — true directional market risk, more meaningful than raw dollar net (raw state 1b)
   - Beta-adjusted gross exposure: Σ|market value × beta|, as % of portfolio — true total risk footprint
-  - Sector beta contribution: per-sector share of portfolio beta — identifies which sector drives the portfolio's market sensitivity. Critical when macro events (FOMC, CPI) approach and the PM needs to know where rate/growth sensitivity is concentrated
+  - Sector beta contribution: per-sector share of portfolio beta. Critical when macro events (FOMC, CPI) approach and the PM needs to know where rate/growth sensitivity is concentrated
   - Marginal beta impact: per-position change in portfolio beta on removal — prioritizes which position to trim when beta must come down quickly
 
   *7b. Position correlation profile*
@@ -21,15 +21,15 @@ Derived exposure views requiring cross-reference between position inventory (raw
   - Pairwise position correlation matrix: trailing correlation between all open positions, from quant 7a and 7d — reveals hidden concentration where positions in different sectors make the same bet (e.g., long NVDA and long AVGO are a correlated AI-infrastructure bet)
   - Portfolio-level implied correlation: weighted average pairwise correlation — higher means more single-theme concentration even if sector-diversified. Monitored against the correlation limit in risk guardrails
   - Correlation clustering: groups positions into effective "bets" — 6 tech/semis positions might be 2 independent bets (AI-infrastructure cluster, cybersecurity cluster). Surfaces true independent-thesis count, not position count
-  - Correlation change since entry: how each position's correlation with the rest of the portfolio has shifted — rising correlation means the position is becoming less diversifying, which matters even if the individual thesis is still valid
-  - Correlation regime flag: whether current correlation structure is typical or anomalous vs. recent history — in risk-off episodes correlations spike, and "diversification" evaporates. Alerts the PM that effective risk exceeds static correlation numbers
+  - Correlation change since entry: how each position's correlation with the rest of the portfolio has shifted — rising correlation means the position is becoming less diversifying, even if the individual thesis is still valid
+  - Correlation regime flag: whether current correlation structure is typical or anomalous vs. recent history — in risk-off episodes correlations spike and "diversification" evaporates. Alerts the PM that effective risk exceeds static correlation numbers
 
 ---
 
 **8. P/L attribution**
 Decomposes returns into components to distinguish skill from luck. Cross-references position P/L (raw state 2a) with market returns (quant 1a), sector returns (quant 7b), and position betas (quant 1f).
 
-*Cadence:* Full attribution is analytically heavy and not tactically urgent — a PM making a hold/close decision cares about raw P/L, distance to target, and risk/reward. Runs once per day (pre-close invocation). Intraday invocations carry forward the most recent snapshot with a staleness flag.
+*Cadence:* Analytically heavy and not tactically urgent — a PM making a hold/close decision cares about raw P/L, distance to target, and risk/reward. Runs once per day (pre-close invocation). Intraday invocations carry forward the most recent snapshot with a staleness flag.
 
   *8a. Position-level attribution (daily)*
   Per open and recently closed position, P/L decomposed into:
@@ -49,7 +49,7 @@ Decomposes returns into components to distinguish skill from luck. Cross-referen
 **9. Thesis dependency mapping**
 Hidden concentration risk at the thesis level that position correlation (7b) may not capture. Two positions can have moderate price correlation but share a single catalyst — if it fails, both theses fail simultaneously.
 
-Price correlation measures how assets have moved historically. Thesis dependency measures whether positions *will* move together conditional on a specific future event. Long NVDA on "AI capex beats consensus" and long AVGO on "custom ASIC demand from hyperscalers" have different correlation profiles but both fail if the AI-infrastructure spending narrative reverses. Position correlation might be 0.6; thesis dependency on the AI-capex catalyst is 1.0.
+Price correlation measures how assets have moved historically. Thesis dependency measures whether positions *will* move together conditional on a specific future event. Long NVDA on "AI capex beats consensus" and long AVGO on "custom ASIC demand from hyperscalers" have different correlation profiles but both fail if the AI-infrastructure spending narrative reverses — position correlation might be 0.6; thesis dependency on the AI-capex catalyst is 1.0.
 
   *9a. Shared catalyst identification*
   For each active thesis (raw state 3a), extract assumptions and named catalysts, find overlaps:
@@ -66,7 +66,7 @@ Price correlation measures how assets have moved historically. Thesis dependency
 ---
 
 **10. Capital efficiency analysis**
-Retrospective metrics on how effectively the system deploys capital. Slow-moving strategic signals — not tactical inputs for the current trade. Feed into system tuning and PM allocation calibration.
+Retrospective metrics on how effectively the system deploys capital. Slow-moving strategic signals — feed into system tuning and PM allocation calibration, not tactical inputs for the current trade.
 
 *Cadence:* Daily (pre-close invocation). Negligible intraday change.
 
@@ -95,13 +95,13 @@ Process-quality monitoring, separate from P/L. Profitable-with-bad-process (luck
   Risk-adjusted statistics over trailing windows. The PM compares current-period vs. trailing baselines to detect drift.
   - Sharpe ratio: trailing annualized risk-adjusted return at 5-day, 20-day, and inception-to-date. Shorter window declining vs. longer signals recent deterioration
   - Sortino ratio: downside-only Sharpe — appropriate for a system targeting asymmetric setups
-  - Expectancy per trade: (win rate × avg win) − (loss rate × avg loss). Earlier signal than Sharpe — doesn't need annualization data
+  - Expectancy per trade: (win rate × avg win) − (loss rate × avg loss). Earlier signal than Sharpe — no annualization data needed
   - Profit factor: gross profits / gross losses. Above 1.0 means profitable; trend matters more than level
 
   *11b. Execution quality monitoring (weekly)*
   Execution drag and, in paper mode, [paper-evaluation harness](../05-execution-layer/paper-evaluation-harness.md) estimation fidelity. Calibration concern, not trading input. Feeds harness calibration and surfaces live-execution drift the go-live gate should know.
   - Slippage statistics: live — submit-mid vs. actual fill per trade. Paper — raw Alpaca fill vs. harness-adjusted estimate, broken down by position size and liquidity. Are estimates matching live observations?
-  - Fill rate: % of intended size actually filled. Tracked from Alpaca's reported fills; thin-name underperformance surfaces here
+  - Fill rate: % of intended size actually filled. From Alpaca's reported fills; thin-name underperformance surfaces here
   - Execution latency: delay from command submission to first fill event on the `trade_updates` stream
 
 ---
