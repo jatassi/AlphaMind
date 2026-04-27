@@ -403,8 +403,9 @@ Article metadata. Body text stored on disk at `%USERPROFILE%\AlphaMind\data\news
 | `vendor_sentiment_score` | REAL | Marketaux pre-computed (-1 to +1). Nullable. |
 | `vendor_sentiment_label` | TEXT | `positive` / `negative` / `neutral`. Nullable. |
 | `topic_tags` | TEXT | JSON array of canonical `HeadlineType` values (see [schema/_common.py § HeadlineType](../schema/_common.py)). Vendor tags are normalized at the collector boundary via [`config/headline_tag_mapping.yaml`](../../../../config/headline_tag_mapping.yaml). |
+| `cluster_id` | TEXT | FK to [`news_article_clusters.cluster_id`](#news_article_clusters). Set by the clustering pipeline; null for unclustered articles. Materializes [`BreakingHeadline.cross_ticker_cluster_id`](../schema/news_sentiment.py). |
 
-Indexes: `(published_at DESC)`, `(source, published_at)`.
+Indexes: `(published_at DESC)`, `(source, published_at)`, `(cluster_id)`.
 
 #### `news_article_tickers`
 
@@ -419,6 +420,22 @@ Many-to-many: articles to mentioned tickers, with per-(article, ticker) sentimen
 | `vendor_sentiment_label` | TEXT | `positive` / `negative` / `neutral`, derived from `vendor_sentiment_score` per the same thresholds as `news_articles.vendor_sentiment_label`. Nullable when score is null. |
 
 Primary key: `(article_id, ticker)`. Indexes: `(ticker, article_id)`.
+
+#### `news_article_clusters`
+
+Cluster records produced by the news pipeline's two-pass clustering algorithm — Stage 1 collapses syndicated wire copies, Stage 2 groups source-canonical headlines about the same event. See [qualitative-research.md § Headline clustering](../../03-analysis-layer/qualitative-research.md#headline-clustering) for the algorithm specification and [`HeadlineCluster`](../schema/news_sentiment.py) for the schema-level shape.
+
+| Column | Type | Notes |
+|---|---|---|
+| `cluster_id` | TEXT PRIMARY KEY | The `article_id` of the earliest source-canonical member. |
+| `primary_theme` | TEXT NOT NULL | Canonical [`HeadlineType`](../schema/_common.py) value — modal across cluster members; ties resolve to the modal member's first `topic_tags` entry. |
+| `headline_count` | INTEGER NOT NULL | Number of source-canonical headlines in the cluster (post-syndication, distinct outlets only). |
+| `first_seen_at` | TEXT NOT NULL | UTC. Earliest source-canonical member's `published_at`. Anchors the 24h sealing window. |
+| `last_seen_at` | TEXT NOT NULL | UTC. Most recent member's `published_at`. Updated as members join until the cluster seals. |
+| `tickers_involved` | TEXT NOT NULL | JSON array of tickers — union of `(primary_ticker, tickers_mentioned)` across cluster members. |
+| `sealed_at` | TEXT | UTC. `first_seen_at + 24h`. Set when the cluster stops accepting new members. Null while the cluster is still active. |
+
+Indexes: `(first_seen_at)`, `(sealed_at)`. The per-article link is [`news_articles.cluster_id`](#news_articles), which carries the schema-level [`BreakingHeadline.cross_ticker_cluster_id`](../schema/news_sentiment.py) value.
 
 ### Prediction markets — Qual3
 

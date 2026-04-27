@@ -214,11 +214,45 @@ Reference scheme:
 - `ND-EC{N}` — earnings call summaries
 - `ND-HP{N}` — high-priority flags
 
+### Headline clustering
+
+Two-pass deterministic algorithm producing the cluster set Step 1 of the [ranking algorithm](#ranking-algorithm) consumes. Runs at ingestion in the news pipeline — no LLM involvement.
+
+**Stage 1 — Source canonicalization.** Many duplicate headlines are syndicated wire copies — the same Reuters or AP item republished by Yahoo, MarketWatch, CNBC within minutes. Stage 1 collapses these so cluster size reflects independent reporting rather than syndication multiplier.
+
+- Compare every pair of headlines published within 30 minutes of each other.
+- Match condition: normalized-Levenshtein ratio of `headline_text` ≥ 0.90. Normalization: lowercase, strip punctuation, normalize whitespace, normalize ticker references (`$AAPL` → `AAPL`), drop outlet-specific lead tokens (`BREAKING:`, `UPDATE:`, `EXCLUSIVE:`).
+- Result: matched headlines merge into a source-canonical group keyed on the earliest member's `article_id`. The earliest publication time wins; the highest-credibility-tier source on the group wins for `is_first_mover` attribution per [news_sentiment.py § BreakingHeadline](../01-data-layer/schema/news_sentiment.py).
+
+**Stage 2 — Event clustering.** Source-canonical headlines covering the same event from different angles (independent reporting on one filing, one earnings print, one geopolitical development) cluster into a single event cluster.
+
+- Compare every pair of source-canonical headlines published within 6 hours of each other.
+- Match condition (all three required):
+  1. SimHash Jaccard similarity over 64-bit fingerprints of `headline_text` ≥ 0.60. Fingerprint: token set after the same normalization Stage 1 uses, hashed via SimHash.
+  2. At least one shared ticker between the headlines' `(primary_ticker, tickers_mentioned)` sets. Ticker-less headlines cluster only with other ticker-less headlines whose `topic_tags` ([`HeadlineType`](../01-data-layer/schema/_common.py)) intersect by at least one tag.
+  3. Both members fall within 6 hours of the cluster's `first_seen_at`.
+- Cluster ID: the `article_id` of the earliest source-canonical member. Single-link agglomeration on the matched-pair graph — a headline joins an existing cluster if it matches any current member.
+- Cluster sealing: a cluster seals at `first_seen_at + 24h`. Headlines arriving past the seal that match the cluster's similarity profile start a new cluster — the digest's invocation-windowed view does not need cross-day continuity.
+
+**Cluster metadata.** Persisted in [`news_article_clusters`](../01-data-layer/collector/storage.md#news_article_clusters) and represented at the schema level by [`HeadlineCluster`](../01-data-layer/schema/news_sentiment.py):
+
+- `cluster_id` — the earliest source-canonical member's `article_id`.
+- `primary_theme` — the modal `HeadlineType` across cluster members; ties resolve to the modal member's first `topic_tags` entry.
+- `headline_count` — number of source-canonical headlines (post-syndication, distinct outlets only). The count Step 2 of the ranking algorithm scores on.
+- `first_seen_at`, `last_seen_at` — UTC timestamps bounding cluster activity within its 24h window.
+- `tickers_involved` — union of `(primary_ticker, tickers_mentioned)` across cluster members.
+
+Per-headline linkage: [`BreakingHeadline.cross_ticker_cluster_id`](../01-data-layer/schema/news_sentiment.py) carries the cluster's `cluster_id` for every member; null for unclustered headlines.
+
+**Why two passes.** Syndication is the dominant duplication source in news APIs — Reuters → Yahoo → MarketWatch → CNBC chains produce 4–8 near-identical headlines per breaking event. A single-pass similarity check conflates these with same-event-different-angle independent coverage, inflating `headline_count` 4–8× and breaking the attention-signal interpretation Step 2 relies on.
+
+**Why no embeddings.** SimHash is deterministic, replayable, and dependency-free — no model artifact, no embedding store, no GPU. Headlines are short (most < 20 tokens) and lexical sufficiency is high; the lexical-method failure mode (paraphrase miss) is rare for wire-service-style headlines, which dominate the digest's input.
+
 ### Ranking algorithm
 
 Deterministic composite-score ranking per sector bucket — no LLM involvement.
 
-**Step 1 — Deduplication:** Cluster same-event headlines (headline similarity + co-occurring ticker mentions within a short window). Keep the highest-credibility source per cluster. Record cluster size — 10 articles on one event signals higher attention than one.
+**Step 1 — Deduplication:** Each headline arrives carrying its `cross_ticker_cluster_id` and the cluster's `headline_count` from [headline clustering](#headline-clustering). Within a sector bucket, retain the highest-credibility-tier member of each cluster as that cluster's representative; lower-tier copies drop. Cluster size feeds Step 2's score — 10 distinct sources on one event signals higher attention than one.
 
 **Step 2 — Scoring:** Each deduplicated headline is scored:
 
@@ -358,7 +392,7 @@ Quiet days: ~300 tokens (1–2 threads, no catalysts, neutral sentiment). Eventf
 | Headline credibility tier tagging | Data layer | Specified in prose ([qualitative.md](../01-data-layer/external/qualitative.md), 1a) | Must be implemented as structured field on ingested items |
 | Headline universe ticker tagging | Data layer | Specified in prose ([qualitative.md](../01-data-layer/external/qualitative.md), 1a) | Must be implemented as structured field |
 | Headline type tagging | Data layer | Not specified | New taxonomy defined in this doc; needs addition to data layer spec |
-| Headline clustering / deduplication | Data layer | Partially specified ([qualitative.md](../01-data-layer/external/qualitative.md), 1a) | Concept described; algorithm and cluster metadata not specified |
+| Headline clustering / deduplication | Data layer | Specified ([§ Headline clustering](#headline-clustering)) | Two-pass syndication + event clustering; cluster metadata persisted in `news_article_clusters` |
 | High-priority flag tagging | Data layer | Specified in prose ([qualitative.md](../01-data-layer/external/qualitative.md), 1b, 5e) | Must be implemented as first-class field |
 | Earnings report detection | Data layer | Specified (quant 5a, 5b) | Flag when universe name reports since last invocation; deliver actual vs. consensus EPS/revenue |
 | **Shared tools** (contracts defined in [adaptive-research.md](adaptive-research.md)) | | | |

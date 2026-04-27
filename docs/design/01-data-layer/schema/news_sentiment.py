@@ -66,17 +66,6 @@ __all__ = [
 
 
 @dataclass(frozen=True)
-class HeadlineCluster:
-    """A group of related headlines detected via NLP clustering. Used to
-    identify correlated news across different tickers or themes."""
-
-    cluster_id: str  # Unique identifier for this cluster
-    headline_count: int  # Number of headlines in the cluster
-    primary_theme: str  # Human-readable theme (e.g., "earnings_miss", "regulatory_action")
-    tickers_involved: list[Ticker] = field(default_factory=list)  # All tickers mentioned in cluster
-
-
-@dataclass(frozen=True)
 class NewsVolume:
     """Point-in-time news volume for a ticker across multiple rolling windows.
     Used to detect abnormal news flow frequency."""
@@ -127,6 +116,58 @@ class UnusualOptionsActivityReport:
 
 
 # ── Primary entities ─────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class HeadlineCluster:
+    """Qual 1:1a-derived — A group of related headlines produced by the news
+    pipeline's two-pass clustering algorithm.
+
+    Stage 1 collapses syndicated wire copies via normalized-Levenshtein ratio
+    ≥ 0.90 within a 30-minute window (one source-canonical group per syndication
+    chain). Stage 2 clusters source-canonical headlines covering the same event
+    via SimHash Jaccard ≥ 0.60 + ≥ 1 shared ticker + 6-hour window. Clusters
+    seal at first_seen_at + 24h. See `qualitative-research.md § Headline clustering`
+    (in `docs/design/03-analysis-layer/`) for the full algorithm.
+
+    The cluster_id is the article_id of the earliest source-canonical member;
+    BreakingHeadline.cross_ticker_cluster_id carries this id for every member.
+
+    Source: Derived from BreakingHeadline ingestion (Finnhub + Marketaux + RSS + 8-K)
+    Cadence: Continuous (clusters update as new headlines arrive within the 24h window)
+    Feasibility: HIGH — fully deterministic, no model artifact or external dependency
+    """
+
+    # ── Identity ──
+    cluster_id: str
+    metadata: InvocationMetadata
+
+    # ── Cluster shape ──
+    primary_theme: HeadlineType
+    # Modal HeadlineType across cluster members. Ties resolve to the modal member's
+    # first topic_tags entry. Captures what the cluster is about at a glance — the
+    # news digest scoring pipeline routes the cluster to a sector bucket using this.
+    headline_count: int
+    # Number of source-canonical headlines in the cluster — distinct outlets only,
+    # post-syndication. This is the count Step 2 of the news-digest ranking algorithm
+    # scores on; it reflects independent reporting (true attention signal), not
+    # syndication multiplier (noise).
+
+    # ── Activity window ──
+    first_seen_at: datetime
+    # UTC timestamp of the earliest source-canonical member's publication. Anchors
+    # the 24h sealing window — the cluster stops accepting new members at
+    # first_seen_at + 24h.
+    last_seen_at: datetime
+    # UTC timestamp of the most recent member's publication. Used by the news
+    # digest to decide whether the cluster is still active or has decayed.
+
+    # ── Tickers ──
+    tickers_involved: list[Ticker] = field(default_factory=list)
+    # Union of (primary_ticker, tickers_mentioned) across all cluster members.
+    # The qualitative research agent uses this to identify cross-ticker narratives;
+    # the news digest uses it to decide which sector bucket presents the cluster's
+    # representative headline.
 
 
 @dataclass(frozen=True)

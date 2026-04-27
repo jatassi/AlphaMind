@@ -5,46 +5,69 @@ common_fields_note: 'All primary entities include ''ticker: Ticker'' and ''metad
   from individual field listings). See _common.yaml for InvocationMetadata mapping.'
 entities:
 - entity: HeadlineCluster
-  spec_id: N/A (supporting type)
-  description: A group of related headlines detected via NLP clustering. Used to
-  is_primary_entity: false
+  spec_id: Qual1:1a-derived
+  description: A group of related headlines produced by the news pipeline's two-pass
+    clustering algorithm (Stage 1 syndication collapse, Stage 2 same-event grouping).
+  is_primary_entity: true
+  primary_source: Derived from BreakingHeadline ingestion (Finnhub + Marketaux + RSS + 8-K)
+  fallback_source: N/A (deterministic local computation; no external dependency)
+  cadence: Continuous (clusters update as new headlines arrive within the 24h window)
+  feasibility: HIGH — fully deterministic, no model artifact or external dependency
   fields:
   - target_field: cluster_id
     target_type: str
-    description: Unique identifier for this cluster
-    source: Marketaux
-    source_endpoint: GET /v1/news/all?symbols={ticker}&filter_entities=true
-    source_field: 'Derived: NLP clustering of Marketaux + Finnhub + Polygon headlines'
+    description: The article_id of the earliest source-canonical member; persists in
+      news_article_clusters and is materialized onto news_articles.cluster_id and
+      BreakingHeadline.cross_ticker_cluster_id.
+    source: Derived
+    source_endpoint: news pipeline § Headline clustering (Stage 1 + Stage 2)
+    source_field: BreakingHeadline.article_id of the earliest source-canonical member
     source_type: string
-    transform: 'Marketaux: data[].title, data[].description, data[].entities[].sentiment_score. Finnhub company-news for additional
-      coverage.'
+    transform: See entity docstring for computation logic.
+  - target_field: primary_theme
+    target_type: HeadlineType
+    description: Modal HeadlineType across cluster members; ties resolve to the modal
+      member's first topic_tags entry.
+    source: Derived
+    source_endpoint: news pipeline § Headline clustering (Stage 2)
+    source_field: BreakingHeadline.topic_tags across cluster members
+    source_type: enum
+    transform: See entity docstring for computation logic.
   - target_field: headline_count
     target_type: int
-    description: Number of headlines in the cluster
-    source: Marketaux
-    source_endpoint: GET /v1/news/all?symbols={ticker}&filter_entities=true
-    source_field: 'Marketaux: data[].title | Finnhub: [].headline | Polygon: results[].title'
-    source_type: string
-    transform: 'Marketaux: data[].title, data[].description, data[].entities[].sentiment_score. Finnhub company-news for additional
-      coverage.'
-  - target_field: primary_theme
-    target_type: str
-    description: Human-readable theme (e.g., "earnings_miss", "regulatory_action")
-    source: Marketaux
-    source_endpoint: GET /v1/news/all?symbols={ticker}&filter_entities=true
-    source_field: 'Derived: NLP clustering of Marketaux + Finnhub + Polygon headlines'
-    source_type: string
-    transform: 'Marketaux: data[].title, data[].description, data[].entities[].sentiment_score. Finnhub company-news for additional
-      coverage.'
+    description: Number of source-canonical headlines (post-syndication, distinct outlets only).
+      The count Step 2 of the news-digest ranking algorithm scores on.
+    source: Derived
+    source_endpoint: news pipeline § Headline clustering (Stage 1 + Stage 2)
+    source_field: count of source-canonical members in the cluster
+    source_type: integer
+    transform: See entity docstring for computation logic.
+  - target_field: first_seen_at
+    target_type: datetime
+    description: UTC timestamp of the earliest source-canonical member's publication.
+      Anchors the 24h sealing window.
+    source: Derived
+    source_endpoint: news pipeline § Headline clustering (Stage 1)
+    source_field: min(BreakingHeadline.published_at) across cluster members
+    source_type: datetime
+    transform: See entity docstring for computation logic.
+  - target_field: last_seen_at
+    target_type: datetime
+    description: UTC timestamp of the most recent member's publication. Used by the
+      news digest to gauge cluster activity.
+    source: Derived
+    source_endpoint: news pipeline § Headline clustering (Stage 2)
+    source_field: max(BreakingHeadline.published_at) across cluster members
+    source_type: datetime
+    transform: See entity docstring for computation logic.
   - target_field: tickers_involved
     target_type: list[Ticker]
-    description: All tickers mentioned in cluster
-    source: Marketaux
-    source_endpoint: GET /v1/news/all?symbols={ticker}&filter_entities=true
-    source_field: 'Marketaux: data[].entities[].symbol | Polygon: results[].tickers[]'
-    source_type: string/array
-    transform: 'Marketaux: data[].title, data[].description, data[].entities[].sentiment_score. Finnhub company-news for additional
-      coverage.'
+    description: Union of (primary_ticker, tickers_mentioned) across cluster members.
+    source: Derived
+    source_endpoint: news pipeline § Headline clustering (Stage 2)
+    source_field: BreakingHeadline.(primary_ticker, tickers_mentioned) across cluster members
+    source_type: list[string]
+    transform: See entity docstring for computation logic.
 - entity: NewsVolume
   spec_id: N/A (supporting type)
   description: Point-in-time news volume for a ticker across multiple rolling windows.

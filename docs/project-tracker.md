@@ -235,37 +235,13 @@ _Schema additions, well-scoped multi-file edits, or single-component contributio
 
 _New infrastructure, cross-cutting consolidations, or UI surfaces._
 
-#### Headline tagging — clustering algorithm _(Analysis layer)_
-
-- [ ] Specify the headline clustering / deduplication algorithm and cluster metadata fields (currently described conceptually but not algorithmically). _Source: [qualitative-research.md](design/03-analysis-layer/qualitative-research.md)._
-
-**Unblocks.**
-
-- [qualitative-research.md](design/03-analysis-layer/qualitative-research.md) — co-blockers: _Unified event calendar_, _Earnings transcript NLP pipeline_.
-
-**Context.** [qualitative-research.md §Ranking algorithm Step 1](design/03-analysis-layer/qualitative-research.md) calls for "Cluster same-event headlines (headline similarity + co-occurring ticker mentions within a short window). Keep the highest-credibility source per cluster. Record cluster size — 10 articles on one event signals higher attention than one." The schema already defines `HeadlineCluster` with `cluster_id`, `headline_count`, `primary_theme`, `tickers_involved` and a per-headline `cross_ticker_cluster_id` foreign key ([schema/news_sentiment.py](design/01-data-layer/schema/news_sentiment.py)) — but the clustering algorithm itself is unspecified. This is deterministic distillation work (the digest is "produced by the data layer's news ingestion pipeline with no LLM involvement" per [qualitative-research.md §News digest](design/03-analysis-layer/qualitative-research.md)), so numeric thresholds are appropriate here.
-
-**Options.**
-
-1. **Embedding-based clustering with deterministic merge.** Compute sentence-transformer embeddings on `headline_text` at ingestion. Cluster by single-link agglomeration: two headlines join the same cluster when cosine similarity ≥ 0.78 AND publication time within 6 hours AND at least one shared primary ticker (or both ticker-less and same `topic_tags` intersection ≥ 1). Cluster ID is the `article_id` of the earliest member. `primary_theme` is the most-frequent member's first `HeadlineType`. Re-cluster on a sliding 24h window — clusters seal after the window closes.
-2. **Lexical fingerprint + ticker co-occurrence.** Hash each headline to a SimHash/MinHash fingerprint after stop-word removal and ticker-symbol normalization. Two headlines cluster when Jaccard similarity of fingerprints ≥ 0.6 AND publication time within 6 hours AND at least one shared ticker. No embeddings, no model dependency. Cluster ID and `primary_theme` derivation as in Option 1.
-3. **Source-canonicalization first, then ticker+window grouping.** Many "duplicate" headlines are syndicated copies — the same wire item republished by different outlets within minutes. Stage 1: detect syndication via near-identical headline text (Levenshtein ratio ≥ 0.9) and collapse into source-canonical groups. Stage 2: cluster source-canonical headlines by shared ticker + 6h window + headline-overlap heuristic (token-set Jaccard ≥ 0.5). Two-pass keeps near-duplicates separated from same-event-different-angle headlines.
-
-**Steelmans.**
-
-- *Option 1.* Embeddings handle paraphrase well — "Apple beats Q3 estimates" and "AAPL crushes consensus" cluster correctly; lexical methods often miss that. Sentence-transformers run cheaply at the ~1000-headline/day scale of the universe, the model lives on disk and incurs zero per-call cost. Clusters seal after 24h matches the digest's "since the last invocation" cadence; the clustering state is bounded.
-- *Option 2.* Zero new dependencies — SimHash is a few lines of Python over standard hashlib, fully deterministic, replayable. Lexical similarity is sufficient when headlines are short (most are < 20 tokens) and the universe is bounded — the failure mode (paraphrase miss) is rare for wire-service-style headlines, which dominate. Aligns with simplify-before-building: no model artifact, no embedding store, no GPU.
-- *Option 3.* Empirically, syndication is the dominant duplication source in news APIs — Reuters → Yahoo → MarketWatch → CNBC chains produce 4–8 near-identical headlines per breaking event. Splitting syndication from event-clustering means `headline_count` reflects independent reporting (true attention signal) rather than syndication multiplier (noise). Source-canonicalization also gives `is_first_mover` ([schema/news_sentiment.py — BreakingHeadline](design/01-data-layer/schema/news_sentiment.py)) a reliable derivation.
-
-**Recommendation.** **Option 3, with Option 2 as the cluster-similarity primitive.** Two-pass design: Stage 1 collapses syndication via Levenshtein ratio ≥ 0.9 on headline text (within a 30-minute window); Stage 2 clusters source-canonical headlines via SimHash Jaccard ≥ 0.6 + ≥ 1 shared ticker + within a 6h window. Stage 1 fixes the dominant noise source (syndication multiplier) directly. Stage 2 stays embedding-free — within the scaffolded universe, lexical sufficiency is high and zero new dependencies preserves replayability. Cluster persists in `news_article_clusters` (new table, composite PK `(cluster_id)`) with fields `cluster_id`, `primary_theme` (first `HeadlineType` of mode-frequency member), `headline_count` (post-syndication, distinct sources only), `first_seen_at`, `last_seen_at`, `tickers_involved` (JSON array). Per-headline link via the existing `cross_ticker_cluster_id` field on `BreakingHeadline`. Clusters seal after a 24h sliding window; later headlines on the same event start a new cluster (the digest's invocation-windowed view doesn't need cross-day continuity).
-
 #### Unified event calendar _(Analysis layer)_
 
 - [ ] Specify the merge of qualitative-5e (catalyst calendar) + quantitative-6g (economic calendar) into a single sector-tagged feed in the data layer. _Source: [qualitative-research.md](design/03-analysis-layer/qualitative-research.md)._
 
 **Unblocks.**
 
-- [qualitative-research.md](design/03-analysis-layer/qualitative-research.md) — co-blockers: _Headline tagging — clustering algorithm_, _Earnings transcript NLP pipeline_.
+- [qualitative-research.md](design/03-analysis-layer/qualitative-research.md) — co-blockers: _Earnings transcript NLP pipeline_.
 
 **Context.** Two near-overlapping calendar entities exist today: `MacroEventCalendar` ([schema/macro.py](design/01-data-layer/schema/macro.py), Q6:6g — economic releases, FOMC, NFP, ISM, Treasury auctions, Fed speakers) and `PolicyEventCalendar` ([schema/regulatory.py](design/01-data-layer/schema/regulatory.py), Qual5:5e — FOMC, CPI/PPI/PCE, hearings, court dates, OPEC, Treasury auctions, regulatory deadlines). The two `event_type` enumerations overlap on FOMC, CPI, PPI, PCE, NFP, OPEC, and Treasury auctions. Storage already pre-collapsed the redundancy: `event_calendar` ([storage.md §Events](design/01-data-layer/collector/storage.md)) is "All scheduled events with an `event_type` discriminator. Consolidates Q6g (macro events), Qual5 (regulatory / policy / geopolitical), and Qual5e earnings calendar entries into one shape." [qualitative-research.md §Dependencies](design/03-analysis-layer/qualitative-research.md) lists "Unified event calendar" as Not specified. The schema package still emits two separate calendar entities; the consumer-side analysis layer expects one merged feed with sector tags.
 
@@ -429,7 +405,7 @@ The thresholds are concrete, deterministic, and reachable from observed paper-an
 
 **Unblocks.**
 
-- [qualitative-research.md](design/03-analysis-layer/qualitative-research.md) — co-blockers: _Headline tagging — clustering algorithm_, _Unified event calendar_.
+- [qualitative-research.md](design/03-analysis-layer/qualitative-research.md) — co-blockers: _Unified event calendar_.
 
 **Context.** Tier 2 of the `earnings_commentary` tool ([qualitative-research.md §earnings_commentary tool contract](design/03-analysis-layer/qualitative-research.md)) currently degrades to `partial_no_transcript` for every call — the schemas (`ManagementToneAnalysis`, `AnalystQADynamics`, `ForwardLookingStatement`, `NonAnswerFlag`, `QAExchange` in [schema/earnings_commentary.py](design/01-data-layer/schema/earnings_commentary.py)) and mappings ([mappings/earnings_commentary.yaml](design/01-data-layer/mappings/earnings_commentary.yaml)) exist but every transcript-derived field is `derived from TBD`. Storage is already pre-cleared for the hybrid pattern: metadata in `event_calendar` + `earnings_event_details`, transcript text on disk under `%USERPROFILE%\AlphaMind\data\news\` ([storage.md §Deferred categories — Qual4](design/01-data-layer/collector/storage.md)). The universe is ~65 names ([asset-universe.md](design/asset-universe.md)) clustering 2–4 calls/day across 4–6 weeks per quarter, so the pipeline is bursty, not continuous.
 
