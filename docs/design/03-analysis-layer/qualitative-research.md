@@ -145,16 +145,11 @@ Set `include_transcript_analysis: false` to skip the transcript pull when only n
 | `forward_looking_statements` | ManagementToneAnalysis.forward_looking_statements | MEDIUM | NLP extraction from transcript |
 | `guidance_vs_consensus` | EarningsEstimates entity (quant 5e) + transcript | HIGH (numeric) / MEDIUM (narrative) | Numeric guidance vs. consensus is straightforward; narrative guidance tone requires transcript |
 
-**Implementation phasing:** Initially `transcript_available` is `false` for most calls until transcript ingestion (Motley Fool scraping or Quartr API) and NLP extraction are built. Tier 1 is available day one. The tool degrades gracefully — Tier 1 with `quality: "partial_no_transcript"` — rather than failing when transcripts are unavailable.
+**Implementation phasing:** Tier 1 is available day one; `transcript_available` is initially `false` for most calls until transcript ingestion (Motley Fool scraping or Quartr API) and NLP extraction are built. The tool degrades gracefully to Tier 1 with `quality: "partial_no_transcript"` rather than failing.
 
-> **Data layer dependencies:**
-> - Earnings result data: yfinance + Finnhub (API keys configured)
-> - Price reaction data: Polygon quote data (API key configured)
-> - Transcript ingestion: Motley Fool scraping (free, <24hr latency) or Quartr API (status TBD per [earnings_commentary.yaml](../01-data-layer/mappings/earnings_commentary.yaml))
-> - Transcript NLP pipeline: not yet specified — tone classification, Q&A clustering, non-answer detection, forward-looking statement extraction all marked "derived from TBD" in mappings
-> - ManagementToneAnalysis and AnalystQADynamics schemas: defined in [schema/earnings_commentary.py](../01-data-layer/schema/earnings_commentary.py); computation pipeline not yet built
+Outstanding data-layer work for Tier 2: transcript NLP pipeline (tone classification, Q&A clustering, non-answer detection, forward-looking statement extraction — all marked "derived from TBD" in mappings); ManagementToneAnalysis and AnalystQADynamics schemas defined in [schema/earnings_commentary.py](../01-data-layer/schema/earnings_commentary.py) but computation pipeline not yet built; transcript ingestion source TBD per [earnings_commentary.yaml](../01-data-layer/mappings/earnings_commentary.yaml).
 
-**Tool call budget:** No hard cap. The agent's closed-scope mandate (assess the five sweep categories) bounds usage — single pass across known categories, not an open-ended loop. System prompt includes soft advisory guidance: "typically 5–15 tool calls per invocation; fewer on quiet days, more on busy days." A hard cap can be added if testing reveals runaway behavior. Differs from [adaptive research](adaptive-research.md)'s hard 25-call limit, which exists because that agent's open-ended loop can spiral; the baseline qualitative agent is self-limiting.
+**Tool call budget:** No hard cap. The agent's closed-scope mandate (assess the five sweep categories) bounds usage — single pass across known categories, not an open-ended loop. System prompt includes soft advisory: "typically 5–15 tool calls per invocation; fewer on quiet days, more on busy days." A hard cap can be added if testing reveals runaway behavior. Differs from [adaptive research](adaptive-research.md)'s hard 25-call limit, which exists because that agent's open-ended loop can spiral; the baseline qualitative agent is self-limiting.
 
 ---
 
