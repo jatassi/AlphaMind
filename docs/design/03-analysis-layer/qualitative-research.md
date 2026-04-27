@@ -386,7 +386,7 @@ Quiet days: ~300 tokens (1–2 threads, no catalysts, neutral sentiment). Eventf
 | **In-context data** | | | |
 | Per-ticker sentiment calibration | Distillation layer | Specified ([external.md](../02-distillation-layer/external.md)) | Trailing sentiment distributions, percentile delivery |
 | Prediction market delta computation | Distillation layer | Specified ([external.md](../02-distillation-layer/external.md)) | Inter-invocation deltas, threshold flags |
-| Unified event calendar | Data layer | Not specified | Merge qualitative 5e + quantitative 6g into single feed with sector tags |
+| Unified event calendar | Data layer | Specified ([events.py](../01-data-layer/schema/events.py)) | `EventCalendar` (Events:CAL) — single sector-tagged feed across macro releases and regulatory / policy / geopolitical events |
 | Active thesis summaries delivery | Execution layer | Specified ([thesis-model.md](../05-execution-layer/thesis-model.md)) | Per-thesis: ticker, summary, key catalyst, time expectation — loaded in context every invocation |
 | **News digest** | | | |
 | Headline credibility tier tagging | Data layer | Specified in prose ([qualitative.md](../01-data-layer/external/qualitative.md), 1a) | Must be implemented as structured field on ingested items |

@@ -1,0 +1,241 @@
+domain: events
+spec_prefix: Events
+module_description: 'Events: Unified Event Calendar — one sector-tagged feed across macro releases and regulatory / policy / geopolitical events. Producers (FRED, Finnhub, SEC EDGAR collectors) write through the shared `event_calendar` storage table keyed on event_id; analysis-layer consumers read this single entity.'
+common_fields_note: 'The primary entity carries `metadata: InvocationMetadata` (omitted from individual field listings). See _common.yaml for InvocationMetadata mapping.'
+entities:
+- entity: Event
+  spec_id: N/A (supporting type)
+  description: A single scheduled or recently released event on the unified calendar.
+  is_primary_entity: false
+  fields:
+  - target_field: event_id
+    target_type: str
+    description: Unique identifier — stable across updates. Vendor-assigned where available, else hashed at ingestion.
+    source: Finnhub + FRED + SEC EDGAR + Manual
+    source_endpoint: 'Finnhub: /api/v1/calendar/economic | FRED: GET /fred/releases | SEC EDGAR: GET /cgi-bin/browse-edgar'
+    source_field: id (vendor) or sha256(source, event_type, scheduled_at)
+    source_type: string
+    transform: 'Direct map from vendor id when available; otherwise hashed at ingestion to deduplicate across reprioritizations.'
+  - target_field: event_type
+    target_type: str
+    description: 'Union enumeration over macro releases and policy/regulatory events: ''fomc'' | ''cpi'' | ''ppi'' | ''pce'' | ''nfp'' | ''ism'' | ''gdp'' | ''fed_speaker'' | ''treasury_auction'' | ''opec'' | ''congressional_hearing'' | ''court_date'' | ''regulatory_deadline'' | ''rate_decision_other_central_bank'' | ''fda_advisory'' | ''earnings_cluster'' | ''other''.'
+    source: Finnhub + FRED + SEC EDGAR + Manual
+    source_endpoint: 'Finnhub: /api/v1/calendar/economic | FRED: GET /fred/releases | SEC EDGAR: GET /cgi-bin/browse-edgar'
+    source_field: vendor-categorical
+    source_type: string
+    transform: 'Per-collector parser maps the vendor''s native category to the unified enum at ingestion.'
+  - target_field: event_datetime
+    target_type: datetime
+    description: UTC timestamp of the event (decision time, release time, or scheduled start).
+    source: Finnhub + FRED + SEC EDGAR + Manual
+    source_endpoint: 'Finnhub: /api/v1/calendar/economic | FRED: GET /fred/releases | SEC EDGAR: GET /cgi-bin/browse-edgar'
+    source_field: scheduled_at / release_time / hearing_date
+    source_type: ISO datetime
+    transform: 'Direct map. Local-tz timestamps converted to UTC at the collector boundary.'
+  - target_field: description
+    target_type: str
+    description: Human-readable event description (e.g., 'FOMC Rate Decision', 'CPI Release').
+    source: Finnhub + FRED + SEC EDGAR + Manual
+    source_endpoint: 'Finnhub: /api/v1/calendar/economic | FRED: GET /fred/releases | SEC EDGAR: GET /cgi-bin/browse-edgar'
+    source_field: description / title
+    source_type: string
+    transform: Direct map from vendor description.
+  - target_field: affected_sectors
+    target_type: list[AlphaMindSector]
+    description: Sectors most directly impacted; empty for genuinely market-wide events.
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: per-event_type sector-tilt mapping (e.g., CPI → [TECH, SEMIS]; OPEC → [ENERGY]). Empty list for market-wide events.'
+  - target_field: expected_volatility_impact
+    target_type: SignalStrength
+    description: Pre-event volatility expectation.
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: classification per event_type from historical realized volatility around prior instances.'
+  - target_field: consensus_estimate
+    target_type: Optional[str]
+    description: Qualitative consensus or numeric estimate. Null for non-release events.
+    source: Finnhub + FRED + Manual
+    source_endpoint: 'Finnhub: /api/v1/calendar/economic | FRED: GET /fred/series'
+    source_field: consensus / forecast
+    source_type: string (numeric or qualitative)
+    transform: Direct map when populated by vendor; null for events without numeric consensus (hearings, deadlines, court dates).
+  - target_field: actual_result
+    target_type: Optional[float]
+    description: Posted result after release. Null pre-release and for non-release events.
+    source: Finnhub + FRED
+    source_endpoint: 'Finnhub: /api/v1/calendar/economic | FRED: GET /fred/series/observations'
+    source_field: actual / observations[].value
+    source_type: numeric
+    transform: Direct map; null pre-release.
+  - target_field: surprise_bps
+    target_type: Optional[float]
+    description: Actual minus estimate in basis points. Null when not applicable.
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: (actual_result - consensus_estimate) * 100 for percent-quoted releases; vendor-native units for others.'
+  - target_field: surprise_direction
+    target_type: Direction
+    description: BULLISH (beat) | BEARISH (miss) | NEUTRAL.
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: sign(surprise_bps) with NEUTRAL for sub-threshold deltas; NEUTRAL pre-release.'
+  - target_field: surprise_magnitude
+    target_type: SignalStrength
+    description: Magnitude of the surprise. NONE pre-release.
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: bucketed |surprise_bps| against per-event-type historical surprise distribution.'
+- entity: EventProximityFlag
+  spec_id: N/A (supporting type)
+  description: Alert that a market-moving event is imminent.
+  is_primary_entity: false
+  fields:
+  - target_field: next_event
+    target_type: str
+    description: Event name (e.g., 'CPI Release').
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: derived from upcoming_events filtered by horizon.'
+  - target_field: hours_until_event
+    target_type: float
+    description: Time remaining until the event.
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: event_datetime − now(), in fractional hours.'
+  - target_field: event_risk_level
+    target_type: SignalStrength
+    description: STRONG | MODERATE | WEAK | NONE.
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: per-event_type expected_volatility_impact promoted to risk level once within the proximity horizon.'
+- entity: EventCalendar
+  spec_id: Events:CAL
+  description: 'Events:CAL — Unified event calendar across macro releases and regulatory / policy / geopolitical events.'
+  is_primary_entity: true
+  primary_source: Finnhub economic calendar (free)
+  fallback_source: FRED + SEC EDGAR + Manual maintenance
+  cadence: Daily
+  feasibility: HIGH — Finnhub economic calendar covers the bulk; FRED for macro releases, SEC EDGAR for regulatory deadlines, manual fallback for FOMC/OPEC dates.
+  fields:
+  - target_field: upcoming_events
+    target_type: list[Event]
+    description: Chronologically sorted upcoming events over the next 30 days.
+    source: Finnhub + FRED + SEC EDGAR + Manual
+    source_endpoint: 'Finnhub: /api/v1/calendar/economic | FRED: GET /fred/releases | SEC EDGAR: GET /cgi-bin/browse-edgar'
+    source_field: See Event mapping
+    source_type: varies
+    transform: 'Per-collector parsers serialize each source to Event rows in the shared event_calendar storage table; distillation reads forward-30d window.'
+  - target_field: next_event
+    target_type: Optional[Event]
+    description: The single most imminent event.
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: upcoming_events[0] when non-empty.'
+  - target_field: events_this_week
+    target_type: list[Event]
+    description: Events in the current calendar week through Friday close.
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: subset of upcoming_events filtered to week-end horizon.'
+  - target_field: event_proximity_alerts
+    target_type: list[EventProximityFlag]
+    description: Events within the proximity horizon (typically 24–48 hours).
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: subset of upcoming_events within configured horizon, lifted into EventProximityFlag shape.'
+  - target_field: event_clustering_risk
+    target_type: SignalStrength
+    description: STRONG = 3+ high-impact events within 5 days; MODERATE = 2; WEAK = 1; NONE = no significant events.
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: count of expected_volatility_impact ≥ MODERATE events within the rolling 5-day window.'
+  - target_field: clustering_description
+    target_type: str
+    description: Narrative description of which events are clustering and why it matters.
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: templated narrative over the cluster set; references named events and recommends sizing posture.'
+  - target_field: unscheduled_event_risk_factors
+    target_type: list[str]
+    description: Conditions increasing the probability of surprise unscheduled events.
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: cross-reads geopolitical-tension state, credit spreads, and Fed-speaker-calendar gaps to surface latent surprise risk.'
+  - target_field: macro_surprise_index
+    target_type: float
+    description: Aggregate score of whether recent data is beating or missing expectations (Citi ESI analogue).
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: rolling-window aggregate of surprise_bps across released events, weighted by expected_volatility_impact.'
+  - target_field: surprise_index_trend
+    target_type: Direction
+    description: Is the surprise index rising or falling?
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: sign of macro_surprise_index 5-day delta.'
+  - target_field: surprise_index_change_5d
+    target_type: float
+    description: 5-day change in the surprise index.
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: macro_surprise_index − macro_surprise_index_5d_ago.'
+  - target_field: event_impact_by_sector
+    target_type: dict[str, float]
+    description: Map of event_type → average sector-specific reaction multiplier.
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: historical event-impact lookup table maintained per event_type and sector.'
+  - target_field: latest_release
+    target_type: Optional[Event]
+    description: Most recent completed release with surprise scoring populated.
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: most recent event_calendar row with status=completed and surprise fields populated.'
+  - target_field: anomalies
+    target_type: list[AnomalyFlag]
+    description: Detected anomalies (event density spike, unusual clustering pattern).
+    source: Distillation
+    source_endpoint: Computed
+    source_field: Computed
+    source_type: N/A
+    transform: 'Distillation: clustering-risk and density anomaly detectors over the upcoming horizon.'
+audit_notes: 'Per-source collector modules write through one path keyed on `event_calendar.event_id`. The Finnhub economic_calendar endpoint returned 403 on the free tier as of the 2026-03-15 audit; FRED + SEC EDGAR + manual maintenance carry the load until that resolves.'

@@ -1025,112 +1025,6 @@ entities:
     source_field: Computed
     source_type: N/A
     transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
-- entity: MacroEvent
-  spec_id: N/A (supporting type)
-  description: A single economic event scheduled or recently released.
-  is_primary_entity: false
-  fields:
-  - target_field: event_name
-    target_type: str
-    description: e.g., "FOMC Decision", "CPI Release", "NFP", "ISM Manufacturing"
-    source: FRED + BLS + Derived
-    source_endpoint: GET /fred/series/observations?series_id=CPIAUCSL
-    source_field: observations[].value
-    source_type: string (numeric)
-    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
-  - target_field: event_datetime
-    target_type: datetime
-    description: UTC timestamp of event (e.g., FOMC decision time, data release time)
-    source: FRED + BLS + Derived
-    source_endpoint: GET /fred/series/observations?series_id={id}
-    source_field: Computed
-    source_type: N/A
-    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
-  - target_field: event_type
-    target_type: str
-    description: '"fed_decision" | "inflation_data" | "employment" | "growth" | "credit" |'
-    source: FRED + BLS + Derived
-    source_endpoint: GET /fred/series/observations?series_id={id}
-    source_field: Computed
-    source_type: N/A
-    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
-  - target_field: consensus_estimate
-    target_type: Optional[float]
-    description: Expected value (if applicable)
-    source: FRED + BLS + Derived
-    source_endpoint: GET /fred/series/observations?series_id={id}
-    source_field: Computed
-    source_type: N/A
-    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
-  - target_field: actual_result
-    target_type: Optional[float]
-    description: Posted result after release
-    source: FRED + BLS + Derived
-    source_endpoint: GET /fred/series/observations?series_id={id}
-    source_field: Computed
-    source_type: N/A
-    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
-  - target_field: surprise_bps
-    target_type: Optional[float]
-    description: Actual minus estimate (bp), if applicable
-    source: FRED + BLS + Derived
-    source_endpoint: GET /fred/series/observations?series_id={id}
-    source_field: Computed
-    source_type: N/A
-    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
-  - target_field: surprise_direction
-    target_type: Direction
-    description: BULLISH (beat) | BEARISH (miss) | NEUTRAL
-    source: FRED + BLS + Derived
-    source_endpoint: GET /fred/series/observations?series_id={id}
-    source_field: Computed
-    source_type: N/A
-    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
-  - target_field: surprise_magnitude
-    target_type: SignalStrength
-    description: How large the surprise is
-    source: FRED + BLS + Derived
-    source_endpoint: GET /fred/series/observations?series_id={id}
-    source_field: Computed
-    source_type: N/A
-    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
-  - target_field: affected_sectors
-    target_type: list[str]
-    description: Sector codes affected (e.g., ["tech", "energy"])
-    source: FRED + BLS + Derived
-    source_endpoint: GET /fred/series/observations?series_id={id}
-    source_field: Computed
-    source_type: N/A
-    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
-- entity: EventProximityFlag
-  spec_id: N/A (supporting type)
-  description: Alert that a market-moving event is imminent.
-  is_primary_entity: false
-  fields:
-  - target_field: next_event
-    target_type: str
-    description: Event name (e.g., "CPI Release")
-    source: FRED + BLS + Derived
-    source_endpoint: GET /fred/series/observations?series_id=CPIAUCSL
-    source_field: observations[].value
-    source_type: string (numeric)
-    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
-  - target_field: hours_until_event
-    target_type: float
-    description: Time remaining until event (hours, float for minutes)
-    source: FRED + BLS + Derived
-    source_endpoint: GET /fred/series/observations?series_id={id}
-    source_field: Computed
-    source_type: N/A
-    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
-  - target_field: event_risk_level
-    target_type: SignalStrength
-    description: STRONG (high-impact event), MODERATE, WEAK, NONE
-    source: FRED + BLS + Derived
-    source_endpoint: GET /fred/series/observations?series_id={id}
-    source_field: Computed
-    source_type: N/A
-    transform: 'Distillation: derived from FRED/BLS macro time series. See entity-level source info.'
 - entity: YieldCurve
   spec_id: Q6:6a
   description: Q6:6a — Treasury yield curve, spreads, real yields, and auction results.
@@ -1285,13 +1179,13 @@ entities:
     source_type: string (numeric)
     transform: 'Distillation: derived from FRED yield curve data series.'
   - target_field: next_scheduled_auction
-    target_type: Optional[MacroEvent]
+    target_type: Optional[Event]
     description: Upcoming auction with scheduled date/time
     source: FRED
     source_endpoint: GET /fred/series/observations?series_id={id}
     source_field: observations[].value
     source_type: string (numeric)
-    transform: 'Distillation: derived from FRED yield curve data series.'
+    transform: 'Distillation: derived from FRED yield curve data series. Event supporting type defined in events.py.'
   - target_field: anomalies
     target_type: list[AnomalyFlag]
     description: ''
@@ -1374,13 +1268,13 @@ entities:
     source_type: varies
     transform: 'Distillation: derived from prediction market probabilities and FRED rate data.'
   - target_field: next_fed_speaker_event
-    target_type: Optional[MacroEvent]
+    target_type: Optional[Event]
     description: Upcoming Chair/Vice Chair/FOMC member appearance
     source: Kalshi + Polymarket + FRED
     source_endpoint: GET /trade-api/v2/markets?series_ticker={series}
     source_field: markets[].{field}
     source_type: varies
-    transform: 'Distillation: derived from prediction market probabilities and FRED rate data.'
+    transform: 'Distillation: derived from prediction market probabilities and FRED rate data. Event supporting type defined in events.py.'
   - target_field: recent_speaker_impact
     target_type: Optional[float]
     description: Market reaction to most recent speaker appearance (bp move)
@@ -1737,90 +1631,6 @@ entities:
     source_field: observations[].value
     source_type: string (numeric)
     transform: 'Distillation: derived from FRED exchange rate data and Polygon forex bars.'
-- entity: MacroEventCalendar
-  spec_id: Q6:6g
-  description: Q6:6g — Economic event calendar with consensus, surprise scoring, and proximity.
-  is_primary_entity: true
-  primary_source: Finnhub economic calendar
-  fallback_source: Manual maintenance
-  cadence: Daily
-  feasibility: MEDIUM — Finnhub economic_calendar returned 403 on free tier; may need alternative
-  fields:
-  - target_field: upcoming_events
-    target_type: list[MacroEvent]
-    description: 'Chronologically sorted. Major events: FOMC decisions, CPI/PPI/PCE, NFP, ISM/PMI, GDP, Fed speaker appearances,
-      Treasury auctions.'
-    source: Finnhub (if accessible) + Manual
-    source_endpoint: Finnhub /calendar/economic (403 on free tier)
-    source_field: Computed
-    source_type: varies
-    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
-      key releases (FOMC, NFP, CPI, GDP).'
-  - target_field: event_proximity_alerts
-    target_type: list[EventProximityFlag]
-    description: Events within N hours (distillation layer configurable, typically 24–48 hours). The sector analysts and PM
-      agent need to know when event risk is imminent.
-    source: Finnhub (if accessible) + Manual
-    source_endpoint: Finnhub /calendar/economic (403 on free tier)
-    source_field: Computed
-    source_type: varies
-    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
-      key releases (FOMC, NFP, CPI, GDP).'
-  - target_field: macro_surprise_index
-    target_type: float
-    description: Similar to Citi Economic Surprise Index (ESI).
-    source: Finnhub (if accessible) + Manual
-    source_endpoint: Finnhub /calendar/economic (403 on free tier)
-    source_field: Computed
-    source_type: varies
-    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
-      key releases (FOMC, NFP, CPI, GDP).'
-  - target_field: surprise_index_trend
-    target_type: Direction
-    description: Is the surprise index rising (improving data flow)
-    source: Finnhub (if accessible) + Manual
-    source_endpoint: Finnhub /calendar/economic (403 on free tier)
-    source_field: Computed
-    source_type: varies
-    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
-      key releases (FOMC, NFP, CPI, GDP).'
-  - target_field: surprise_index_change_5d
-    target_type: float
-    description: 5-day change in the ESI (how fast perception is shifting)
-    source: Finnhub (if accessible) + Manual
-    source_endpoint: Finnhub /calendar/economic (403 on free tier)
-    source_field: Computed
-    source_type: varies
-    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
-      key releases (FOMC, NFP, CPI, GDP).'
-  - target_field: event_impact_by_sector
-    target_type: dict[str, float]
-    description: 'Map of event_type → avg sector-specific reaction (multiplier on absolute market reaction). e.g., {"hot_cpi":
-      {"tech": 1.8, "semis": 1.2, "financials": 0.8, "energy": 0.6}} Helps the analyst size ...'
-    source: Finnhub (if accessible) + Manual
-    source_endpoint: Finnhub /calendar/economic (403 on free tier)
-    source_field: Computed
-    source_type: varies
-    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
-      key releases (FOMC, NFP, CPI, GDP).'
-  - target_field: latest_release
-    target_type: Optional[MacroEvent]
-    description: ''
-    source: Finnhub (if accessible) + Manual
-    source_endpoint: Finnhub /calendar/economic (403 on free tier)
-    source_field: Computed
-    source_type: varies
-    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
-      key releases (FOMC, NFP, CPI, GDP).'
-  - target_field: anomalies
-    target_type: list[AnomalyFlag]
-    description: ''
-    source: Finnhub (if accessible) + Manual
-    source_endpoint: Finnhub /calendar/economic (403 on free tier)
-    source_field: Computed
-    source_type: varies
-    transform: 'Finnhub: economic calendar endpoint (may require paid tier). Fallback: maintain manual event calendar for
-      key releases (FOMC, NFP, CPI, GDP).'
 audit_notes: 'AUDIT 2026-03-15: All FRED series verified working. Confirmed series: DGS10, DGS2, DGS30, T10Y2Y, T10Y3M, T10YIE,
   T5YIE, BAMLH0A0HYM2, BAMLC0A0CM, VIXCLS, DTWEXBGS, DCOILWTICO, CPIAUCSL, PCEPI, STLFSI4, SOFR, DFEDTARU, M2SL. Additional
   series probed: ICSA (initial claims), UMCSENT (consumer sentiment), RSAFS (retail sales), INDPRO (industrial production),

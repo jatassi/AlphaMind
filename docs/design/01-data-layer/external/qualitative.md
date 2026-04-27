@@ -159,7 +159,7 @@ Discrete events from government and international actors that create step-functi
   - **International regulators:** EU Digital Markets Act enforcement (affects AAPL, GOOG, META, MSFT, AMZN), China's tech regulatory actions, international semiconductor export controls
 
   *5c. Executive action*
-  Executive orders and administrative actions can materially reprice sectors within hours — trade, technology policy (AI regulation, semiconductor policy), energy (drilling on federal land, LNG export approvals), financial regulation. Legislative activity moves too slowly and fails too often for routine ingestion; capture significant legislative milestones through the news sweep (category 1) and regulatory event calendar (5e).
+  Executive orders and administrative actions can materially reprice sectors within hours — trade, technology policy (AI regulation, semiconductor policy), energy (drilling on federal land, LNG export approvals), financial regulation. Legislative activity moves too slowly and fails too often for routine ingestion; capture significant legislative milestones through the news sweep (category 1) and the unified [`EventCalendar`](../schema/events.py) (Events:CAL).
 
   *5d. Geopolitical events and international developments*
   Events outside the US that affect the universe through supply chains, commodity markets, risk appetite, or cross-border trade.
@@ -171,12 +171,7 @@ Discrete events from government and international actors that create step-functi
   - **Trade agreements and disputes:** tariff announcements, trade deal progress, WTO rulings, bilateral tensions. Semis and tech most exposed to US-China dynamics, energy to OPEC and sanctions policy, financials to cross-border capital flow regulations
 
   *5e. Regulatory and policy event calendar*
-  The scheduling dimension — what's coming and when.
-  - Known event dates: FOMC meetings, CPI/PPI/PCE releases, congressional hearings involving universe names or sectors, regulatory comment deadlines, court hearing dates for antitrust cases, OPEC+ meetings, Treasury auction schedule
-  - Event clustering risk: when multiple significant events fall in the same window (CPI + FOMC + OPEC in the same week), combined uncertainty compounds. The PM needs to know when clustering creates elevated risk so it can adjust position sizing and thesis duration
-  - Unscheduled event monitoring: emergency Fed actions, surprise executive orders, geopolitical escalations. The ingestion layer can't predict these, but baseline research maintains awareness of conditions that increase probability (elevated geopolitical tension, unusual Fed speaker urgency, political dynamics suggesting imminent executive action)
-
-  *Cross-reference note:* Read alongside the macro event calendar in quant 6g. Quant 6g provides the release schedule with consensus estimates (the "what and when"); this provides the interpretive context (the "why it matters and what the range of outcomes looks like"). The qualitative research layer needs both.
+  The regulatory / policy / geopolitical scheduling dimension — known event dates (FOMC meetings, CPI/PPI/PCE releases, congressional hearings, regulatory comment deadlines, court hearings, OPEC+ meetings, Treasury auctions), event clustering risk, and unscheduled-event risk factors — feeds the unified [`EventCalendar`](../schema/events.py) (Events:CAL) alongside the macro release calendar. The interpretive qualitative context (what each event means for the thesis landscape) lives in the qualitative-research agent's catalyst-watch synthesis; the scheduling and surprise scoring live on the unified entity.
 
 **6. Sector-specific qualitative catalysts**
 Qualitative signals unique to specific sectors. These don't fit neatly into cross-sector categories because they require domain-specific knowledge and their relevance is confined to a single sector's researcher agent.

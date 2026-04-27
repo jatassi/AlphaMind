@@ -235,30 +235,6 @@ _Schema additions, well-scoped multi-file edits, or single-component contributio
 
 _New infrastructure, cross-cutting consolidations, or UI surfaces._
 
-#### Unified event calendar _(Analysis layer)_
-
-- [ ] Specify the merge of qualitative-5e (catalyst calendar) + quantitative-6g (economic calendar) into a single sector-tagged feed in the data layer. _Source: [qualitative-research.md](design/03-analysis-layer/qualitative-research.md)._
-
-**Unblocks.**
-
-- [qualitative-research.md](design/03-analysis-layer/qualitative-research.md) — co-blockers: _Earnings transcript NLP pipeline_.
-
-**Context.** Two near-overlapping calendar entities exist today: `MacroEventCalendar` ([schema/macro.py](design/01-data-layer/schema/macro.py), Q6:6g — economic releases, FOMC, NFP, ISM, Treasury auctions, Fed speakers) and `PolicyEventCalendar` ([schema/regulatory.py](design/01-data-layer/schema/regulatory.py), Qual5:5e — FOMC, CPI/PPI/PCE, hearings, court dates, OPEC, Treasury auctions, regulatory deadlines). The two `event_type` enumerations overlap on FOMC, CPI, PPI, PCE, NFP, OPEC, and Treasury auctions. Storage already pre-collapsed the redundancy: `event_calendar` ([storage.md §Events](design/01-data-layer/collector/storage.md)) is "All scheduled events with an `event_type` discriminator. Consolidates Q6g (macro events), Qual5 (regulatory / policy / geopolitical), and Qual5e earnings calendar entries into one shape." [qualitative-research.md §Dependencies](design/03-analysis-layer/qualitative-research.md) lists "Unified event calendar" as Not specified. The schema package still emits two separate calendar entities; the consumer-side analysis layer expects one merged feed with sector tags.
-
-**Options.**
-
-1. **Single `EventCalendar` entity with sector tags; deprecate `MacroEventCalendar` + `PolicyEventCalendar`.** Replace both with one `EventCalendar` ([schema/events.py](design/01-data-layer/schema/events.py), new module) carrying a unified `Event` supporting type. The `event_type` enumeration is the union of the two existing sets; `affected_sectors: list[AlphaMindSector]` is required (empty list for genuinely market-wide events; populated for sector-tilted releases per [quantitative.md §6g](design/01-data-layer/external/quantitative.md) "hot CPI hits tech harder than energy"). Event-clustering risk and macro-surprise-index fields fold in from the two source entities. Storage stays as-is (`event_calendar` already conforms). Producers (the FRED/Finnhub/SEC EDGAR collectors) write through one path; consumers read one entity.
-2. **Keep the two source entities; add a derived `UnifiedCalendarFeed` view.** Preserve `MacroEventCalendar` and `PolicyEventCalendar` as data-layer producer outputs (collector emits each from its native source). Add a distillation-layer derived view that joins both into a sector-tagged feed for the qualitative-research agent's in-context calendar block.
-3. **Per-source ingestion modules emitting to one `EventCalendar` entity.** Each ingestion source (`fred/calendar.py`, `finnhub/calendar.py`, `sec_edgar/calendar.py`, `manual/calendar.py`) parses its native format and writes to the shared `event_calendar` storage table via one consolidated `EventCalendar` schema. Per-source contracts live as collector module boundaries, not as separate schema entities.
-
-**Steelmans.**
-
-- *Option 1.* Direct collapse to one entity matches what storage already did and what consumers already need. The two existing entities replicate fields (`upcoming_events`, `next_event`, `events_this_week`, clustering risk, anomalies) — the duplication is what the simplify-before-building constraint targets. Sector tagging on the unified `Event` is enforced once. Eliminating two redundant entities reduces schema surface, mapping YAML, and consumer cross-reference burden in one move.
-- *Option 2.* Producer-side preservation respects the source-system shape — FRED economic releases and SEC EDGAR/Federal Register policy events have genuinely different metadata profiles (consensus estimates vs. action_stage, surprise_bps vs. is_surprise). Forcing them into one wide entity creates a schema with mostly-null fields. Distillation-layer composition is the right place for the merge because it's a derived presentation, not a producer contract.
-- *Option 3.* The producer/consumer split is the existing architectural pattern: per-source ingestion modules; one shared storage shape; one read-side merged view. Collector module boundaries already isolate per-source parsing concerns, so a single `EventCalendar` entity at the schema layer keeps the consumer surface clean while preserving per-source isolation where it actually lives (in the collectors).
-
-**Recommendation.** **Option 1.** Storage already collapsed the two calendars into `event_calendar`; the schema package is the lagging artifact. Replace `MacroEventCalendar` (Q6:6g) and `PolicyEventCalendar` (Qual5:5e) with a single `EventCalendar` ([schema/events.py](design/01-data-layer/schema/events.py), new file under the existing schema package) containing one `Event` supporting type whose `event_type` is the union enum, `affected_sectors: list[AlphaMindSector]` is required, and `consensus_estimate`/`surprise_bps`/`actual_result` are optional (populated for releases, null for hearings/deadlines). Move `event_clustering_risk` and `unscheduled_event_risk_factors` from `PolicyEventCalendar` and `macro_surprise_index`/`event_proximity_alerts` from `MacroEventCalendar` into the unified entity. The producer-side collectors (`fred/`, `finnhub/calendar.py`, `sec_edgar/`) write through one path keyed on `event_calendar.event_id`. Per-producer concern is handled by the existing collector module split — each module owns its source-format parsing — without needing per-producer schema files because the entity is a deterministic ingestion target where the producers all serialize into the same storage row shape, not a multi-producer LLM-output contract. Mapping YAMLs `macro.yaml` and `regulatory.yaml` lose their calendar entries; a single `events.yaml` replaces them. Consumers (the qualitative-research agent's in-context block, the synthesizer's catalyst-watch source) read one entity.
-
 #### Options support — Counterfactual replay engine v2 _(Execution layer)_
 
 - [ ] Counterfactual replay engine v2: Black-Scholes-derived option pricing from underlying + IV surface. _Source: [counterfactual-replay-engine.md](design/05-execution-layer/counterfactual-replay-engine.md)._
@@ -405,7 +381,7 @@ The thresholds are concrete, deterministic, and reachable from observed paper-an
 
 **Unblocks.**
 
-- [qualitative-research.md](design/03-analysis-layer/qualitative-research.md) — co-blockers: _Unified event calendar_.
+- [qualitative-research.md](design/03-analysis-layer/qualitative-research.md) — sole remaining blocker.
 
 **Context.** Tier 2 of the `earnings_commentary` tool ([qualitative-research.md §earnings_commentary tool contract](design/03-analysis-layer/qualitative-research.md)) currently degrades to `partial_no_transcript` for every call — the schemas (`ManagementToneAnalysis`, `AnalystQADynamics`, `ForwardLookingStatement`, `NonAnswerFlag`, `QAExchange` in [schema/earnings_commentary.py](design/01-data-layer/schema/earnings_commentary.py)) and mappings ([mappings/earnings_commentary.yaml](design/01-data-layer/mappings/earnings_commentary.yaml)) exist but every transcript-derived field is `derived from TBD`. Storage is already pre-cleared for the hybrid pattern: metadata in `event_calendar` + `earnings_event_details`, transcript text on disk under `%USERPROFILE%\AlphaMind\data\news\` ([storage.md §Deferred categories — Qual4](design/01-data-layer/collector/storage.md)). The universe is ~65 names ([asset-universe.md](design/asset-universe.md)) clustering 2–4 calls/day across 4–6 weeks per quarter, so the pipeline is bursty, not continuous.
 

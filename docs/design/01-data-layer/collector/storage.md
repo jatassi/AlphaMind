@@ -346,7 +346,7 @@ Indexes: `(auction_date, tenor)`.
 
 #### `event_calendar`
 
-All scheduled events with an `event_type` discriminator. Consolidates Q6g (macro events), Qual5 (regulatory / policy / geopolitical), and Qual5e earnings calendar entries into one shape.
+All scheduled events with an `event_type` discriminator. Backs the unified [`EventCalendar`](../schema/events.py) entity (Events:CAL); also carries Q5:5b earnings-calendar rows via the `earnings_event_details` extension below.
 
 | Column | Type | Notes |
 |---|---|---|

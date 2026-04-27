@@ -1,8 +1,10 @@
 """Q6: Macro and Rates — entity definitions.
 
-7 entities covering yield curve/treasury rates, Fed policy expectations,
-inflation metrics, growth indicators, credit conditions, dollar/FX, and
-macro event calendar. FRED is the backbone source (free, 120 req/min).
+6 entities covering yield curve/treasury rates, Fed policy expectations,
+inflation metrics, growth indicators, credit conditions, and dollar/FX.
+FRED is the backbone source (free, 120 req/min). Macro releases participate
+in the unified [`EventCalendar`](events.py); upstream auction-schedule and
+Fed-speaker-event references reuse the `Event` supporting type from there.
 
 Design principle: "surprise over level" — for the 4-72hr horizon, the surprise
 component of macro data is almost always more actionable than the absolute level.
@@ -16,16 +18,16 @@ but no ticker field.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date
 
 from ._common import (
     AnomalyFlag,
     Direction,
     InflationRegime,
     InvocationMetadata,
-    SignalStrength,
     YieldCurveRegime,
 )
+from .events import Event
 
 __all__ = [
     "BreakevenInflation",
@@ -36,7 +38,6 @@ __all__ = [
     "CurveSpread",
     "DollarMoveAttribution",
     "EmploymentData",
-    "EventProximityFlag",
     "FedPolicyExpectations",
     "FedProbabilityAssessment",
     "FundingMarketMetrics",
@@ -45,8 +46,6 @@ __all__ = [
     "HousingData",
     "InflationDataRelease",
     "InflationMetrics",
-    "MacroEvent",
-    "MacroEventCalendar",
     "PMISubcomponent",
     "PrivateCreditMetrics",
     "PublicCreditMetrics",
@@ -330,33 +329,6 @@ class DollarMoveAttribution:
     explanation: str = ""  # Human-readable summary for LLM consumption
 
 
-@dataclass(frozen=True)
-class MacroEvent:
-    """A single economic event scheduled or recently released."""
-
-    event_name: str  # e.g., "FOMC Decision", "CPI Release", "NFP", "ISM Manufacturing"
-    event_datetime: datetime  # UTC timestamp of event (e.g., FOMC decision time, data release time)
-    event_type: str  # "fed_decision" | "inflation_data" | "employment" | "growth" | "credit" |
-    # "fed_speaker" | "treasury_auction"
-    consensus_estimate: float | None = None  # Expected value (if applicable)
-    actual_result: float | None = None  # Posted result after release
-    surprise_bps: float | None = None  # Actual minus estimate (bp), if applicable
-    surprise_direction: Direction = Direction.NEUTRAL  # BULLISH (beat) | BEARISH (miss) | NEUTRAL
-    surprise_magnitude: SignalStrength = SignalStrength.NONE  # How large the surprise is
-    affected_sectors: list[str] = field(
-        default_factory=list
-    )  # Sector codes affected (e.g., ["tech", "energy"])
-
-
-@dataclass(frozen=True)
-class EventProximityFlag:
-    """Alert that a market-moving event is imminent."""
-
-    next_event: str  # Event name (e.g., "CPI Release")
-    hours_until_event: float  # Time remaining until event (hours, float for minutes)
-    event_risk_level: SignalStrength  # STRONG (high-impact event), MODERATE, WEAK, NONE
-
-
 # ── Primary entities ─────────────────────────────────────────────────────────
 
 
@@ -413,7 +385,7 @@ class YieldCurve:
     latest_auction_5y: TreasuryAuctionResult | None = None
     latest_auction_10y: TreasuryAuctionResult | None = None
     latest_auction_30y: TreasuryAuctionResult | None = None
-    next_scheduled_auction: MacroEvent | None = None  # Upcoming auction with scheduled date/time
+    next_scheduled_auction: Event | None = None  # Upcoming auction with scheduled date/time
 
     # ── Anomalies ──
     anomalies: list[AnomalyFlag] = field(default_factory=list)
@@ -458,9 +430,7 @@ class FedPolicyExpectations:
     last_fomc_decision_size_bps: int  # Size of last move (25, 50, 75 bp), if any
 
     # ── Fed speaker impact (optional) ──
-    next_fed_speaker_event: MacroEvent | None = (
-        None  # Upcoming Chair/Vice Chair/FOMC member appearance
-    )
+    next_fed_speaker_event: Event | None = None  # Upcoming Chair/Vice Chair/FOMC member appearance
     recent_speaker_impact: float | None = (
         None  # Market reaction to most recent speaker appearance (bp move)
     )
@@ -666,62 +636,6 @@ class CurrencyAndDollar:
     dxy_commodity_correlation: str = "normal"  # "positive" (DXY up = commodities down) |
     # "negative" (diverging) | "neutral" (low correlation)
     correlation_strength: float = 0.5  # Abs value of correlation coefficient (0.0-1.0)
-
-    # ── Anomalies ──
-    anomalies: list[AnomalyFlag] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class MacroEventCalendar:
-    """Q6:6g — Economic event calendar with consensus, surprise scoring, and proximity.
-
-    Event dates (FOMC, CPI, NFP, ISM, GDP, etc.), consensus estimates,
-    macro surprise index, event proximity flags (within N hours), historical
-    event impact by sector.
-
-    The scheduling and scoring layer that ties everything else together. The
-    system needs to know not just what data is coming but when, and how recent
-    releases have compared to expectations.
-
-    Source: Finnhub (free tier)
-    Cadence: Daily
-    Feasibility: HIGH — economic calendar from Finnhub free tier
-    """
-
-    # ── Identity ──
-    metadata: InvocationMetadata
-
-    # ── Upcoming events in the next 7 days ──
-    upcoming_events: list[MacroEvent] = field(default_factory=list)
-    # Chronologically sorted. Major events: FOMC decisions, CPI/PPI/PCE, NFP,
-    # ISM/PMI, GDP, Fed speaker appearances, Treasury auctions.
-
-    # ── Imminent event proximity flag ──
-    event_proximity_alerts: list[EventProximityFlag] = field(default_factory=list)
-    # Events within N hours (distillation layer configurable, typically 24-48 hours).
-    # The sector analysts and Portfolio manager need to know when event risk is imminent.
-
-    # ── Running macro surprise index ──
-    macro_surprise_index: float = 0.0  # Similar to Citi Economic Surprise Index (ESI).
-    # Aggregate score of whether recent data has been beating
-    # or missing expectations. Positive = data stronger than consensus;
-    # negative = data weaker than consensus. Updated every data release.
-    surprise_index_trend: Direction = (
-        Direction.NEUTRAL
-    )  # Is the surprise index rising (improving data flow)
-    # or falling (deteriorating)?
-    surprise_index_change_5d: float = (
-        0.0  # 5-day change in the ESI (how fast perception is shifting)
-    )
-
-    # ── Historical event impact by sector (lookup table) ──
-    event_impact_by_sector: dict[str, float] = field(default_factory=dict)
-    # Map of event_type → avg sector-specific reaction (multiplier on absolute market reaction).
-    # e.g., {"hot_cpi": {"tech": 1.8, "semis": 1.2, "financials": 0.8, "energy": 0.6}}
-    # Helps the analyst size sector-specific theses around events.
-
-    # ── Most recent surprise release ──
-    latest_release: MacroEvent | None = None
 
     # ── Anomalies ──
     anomalies: list[AnomalyFlag] = field(default_factory=list)
