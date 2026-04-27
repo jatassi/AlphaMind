@@ -28,9 +28,9 @@ The volatility regime label is delivered as the `Regime:` line in the guardrail 
 
 ## Output
 
-A single document conforming to the [analyst output schema](analyst-output-schema.md) (Draft 2020-12). The schema is the authoritative contract; the field lists below are the readable reference. Each trade recommendation carries **structured** fields (machine-parseable, consumed by the [proposal pre-processor](proposal-pre-processor.md) and execution layer) and **narrative** fields (free-text reasoning, consumed by the [portfolio manager](portfolio-manager.md) for thesis quality evaluation).
+A single document conforming to the [analyst output schema](analyst-output-schema.md) (Draft 2020-12). The schema is the authoritative contract; the field lists below are the readable reference. Each recommendation carries **structured** fields (machine-parseable, consumed by the [proposal pre-processor](proposal-pre-processor.md) and execution layer) and **narrative** fields (free-text reasoning, consumed by the [portfolio manager](portfolio-manager.md)).
 
-Mode is `normal` (recommendations) under standard conditions and `watchlist` (lighter-weight entries, no sizing or bracket detail) under halt mode — see [state-delivery.md — Analyst — watchlist mode](../06-risk-guardrails/state-delivery.md#analyst--watchlist-mode).
+Mode is `normal` under standard conditions and `watchlist` (lighter-weight entries) under halt mode — see [state-delivery.md — Analyst — watchlist mode](../06-risk-guardrails/state-delivery.md#analyst--watchlist-mode).
 
 **Structured fields:**
 
@@ -49,12 +49,12 @@ Mode is `normal` (recommendations) under standard conditions and `watchlist` (li
 
 **Narrative fields:**
 
-- **Thesis narrative:** the reasoning for the trade — supporting signals, how they converge, the causal chain from catalyst to price movement. Includes source references (e.g., `[SA-TECH-3]`, `[QR-2]`)
+- **Thesis narrative:** the reasoning — supporting signals, how they converge, the causal chain from catalyst to price movement. Includes source references (e.g., `[SA-TECH-3]`, `[QR-2]`)
 - **Target rationale:** why this exit level and what catalyst should drive price there
-- **Invalidation rationale:** for each invalidation leg, why this specific condition indicates the thesis is wrong
-- **Position size rationale:** how the sizing maps to conviction level and the advisory band, accounting for the instrument's risk profile
+- **Invalidation rationale:** per leg, why this condition indicates the thesis is wrong
+- **Position size rationale:** how sizing maps to conviction level and the advisory band, accounting for the instrument's risk profile
 - **Entry window rationale** (when entry window is present): why the window exists and what happens after it closes
-- **Counterarguments acknowledged:** the strongest case against this trade, and why the analyst proceeds despite it
+- **Counterarguments acknowledged:** the strongest case against the trade, and why the analyst proceeds despite it
 
 ---
 
@@ -72,9 +72,9 @@ Every recommendation includes a conviction level from 1 to 5, defined by signal 
 
 **Bands overlap intentionally.** A moderate-conviction trade with defined risk (long options, max loss = premium) may justify the upper end of its band; a moderate-conviction trade with open-ended risk (short equity) sits at the lower end. The overlap expresses risk-profile nuance within a conviction level.
 
-**Bands are advisory.** The [portfolio manager](portfolio-manager.md) retains full sizing discretion. Deviations are captured via the command envelope's modification mechanism — the `conviction_disagreement` adjustment category tracks cases where the PM disagrees with the analyst's conviction-to-size mapping, and the feedback loop assesses whether overrides improve or worsen outcomes.
+**Bands are advisory.** The [portfolio manager](portfolio-manager.md) retains full sizing discretion. Deviations are captured via the command envelope's modification mechanism — the `conviction_disagreement` adjustment category tracks PM-vs-analyst sizing disagreements, and the feedback loop assesses whether overrides improve outcomes.
 
-**Sizing bands express capital at risk, not notional.** For defined-risk instruments (long options, max loss = premium), the band refers to premium at risk. For open-ended instruments (equity), the band refers to notional position value. The size rationale must make this mapping explicit — dollar amount, percentage of portfolio, and how the band was applied given the instrument's risk profile.
+**Sizing bands express capital at risk, not notional.** For defined-risk instruments, the band refers to premium at risk. For open-ended instruments (equity), the band refers to notional position value. The size rationale must make this mapping explicit — dollar amount, percentage of portfolio, and how the band was applied given the instrument's risk profile.
 
 **Calibration target:** A well-calibrated analyst exhibits higher thesis validation rates at higher conviction levels. If level-4/5 trades don't outperform level-2 trades, signal criteria need tightening or scale application has drifted. See [thesis quality trends](../01-data-layer/internal/portfolio-state.md) (category 6).
 
@@ -82,7 +82,7 @@ Every recommendation includes a conviction level from 1 to 5, defined by signal 
 
 ## Entry window
 
-The optional `entry_window` field communicates when the entry should execute and how edge decays over time, giving the [portfolio manager](portfolio-manager.md) information for prioritization across multiple recommendations.
+The optional `entry_window` field communicates when the entry should execute and how edge decays, giving the [portfolio manager](portfolio-manager.md) information for prioritization.
 
 **Field structure:**
 
@@ -142,21 +142,21 @@ Each entry is a prompt to re-evaluate the original thesis on current signals, no
 
 ## Pre-submission guardrail validation
 
-Before finalizing recommendations, the analyst validates each proposal against current guardrail state. Only guardrail-compliant proposals reach the PM, which then evaluates thesis quality and portfolio coherence rather than feasibility.
+Before finalizing recommendations, the analyst validates each proposal against current guardrail state, so the PM evaluates thesis quality and portfolio coherence rather than feasibility.
 
 **Two-layer approach:**
 
-1. **Headroom context (pre-loaded).** The [guardrail state header](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header) supplies current headroom at the start of the window — available capital, per-sector delta-adjusted exposure room, directional/gross exposure room, per-position size limits under the active regime. The analyst self-constrains during generation, so most proposals are compliant on the first pass.
+1. **Headroom context (pre-loaded).** The [guardrail state header](../06-risk-guardrails/state-delivery.md#analyst-guardrail-state-header) supplies current headroom — available capital, per-sector delta-adjusted exposure room, directional/gross exposure room, per-position size limits under the active regime. The analyst self-constrains during generation, so most proposals are compliant on the first pass.
 
 2. **Guardrail validation tool (deterministic check).** After drafting each recommendation, the analyst calls the tool. It accepts the proposed instrument, direction, and size; computes delta-adjusted exposure for options/strategies via the [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md) (same primitives as the engine's T3 check); and returns per-rule pass/fail with current and projected-after headroom.
 
-**On validation failure:** revise — reduce size, choose a lower-delta instrument, or drop the recommendation — and re-validate. Validation feedback is specific enough to guide revision: "semi sector delta-adjusted exposure would be 22.3%, limit is 20.0% — reduce by approximately 15% or choose a lower-delta instrument."
+**On failure:** revise — reduce size, choose a lower-delta instrument, or drop the recommendation — and re-validate. Feedback is specific enough to guide revision: "semi sector delta-adjusted exposure would be 22.3%, limit is 20.0% — reduce by approximately 15% or choose a lower-delta instrument."
 
-**On validation success:** the proposal is finalized. The PM can trust received proposals were guardrail-compliant at check time.
+**On success:** finalize. The PM can trust received proposals were guardrail-compliant at check time.
 
-**Caveat:** portfolio state may shift between analyst validation and PM command execution (market movement, fills resolving, regime changes). The execution layer performs a final authoritative check on every OMS command; rejections return synchronously so the PM can adjust — see [portfolio-manager.md](portfolio-manager.md) and [oms-commands.md](../05-execution-layer/oms-commands.md).
+**Caveat:** portfolio state may shift between analyst validation and PM command execution. The execution layer performs a final authoritative check on every OMS command; rejections return synchronously so the PM can adjust — see [portfolio-manager.md](portfolio-manager.md) and [oms-commands.md](../05-execution-layer/oms-commands.md).
 
-**Multi-proposal cumulative impact:** the validation tool tracks cumulative impact across an invocation's proposals — the second proposal's headroom check accounts for the first's projected impact. Prevents five individually-compliant proposals from collectively breaching a limit.
+**Multi-proposal cumulative impact:** the tool tracks cumulative impact across an invocation's proposals — the second proposal's headroom check accounts for the first's projected impact. Prevents individually-compliant proposals from collectively breaching a limit.
 
 ---
 
@@ -167,7 +167,7 @@ The synthesizer output contains typed references (e.g., `[SA-TECH-3]`, `[QR-4]`)
 **Workflow:**
 1. Read the synthesizer brief in full
 2. Form initial views on opportunities, risks, and thesis candidates
-3. Retrieve underlying source material by reference ID for findings needing deeper investigation — especially flagged contradictions or uncertainty
+3. Retrieve source material by reference ID for findings needing deeper investigation — especially flagged contradictions or uncertainty
 4. Incorporate retrieved detail into thesis construction where it strengthens the case
 
-The tool is optional — synthesis alone may suffice on quiet days. On volatile days with many flagged contradictions, retrieve more source material.
+Optional — synthesis alone may suffice on quiet days; volatile days with many flagged contradictions warrant more retrieval.
