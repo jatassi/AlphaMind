@@ -495,6 +495,64 @@ class PredictionMarketSnapshots(Base):
 
 
 # ---------------------------------------------------------------------------
+# Short selling — Q4
+# ---------------------------------------------------------------------------
+
+
+class ShortInterestSnapshot(Base):
+    """
+    Bi-monthly FINRA short interest.  One row per ticker per FINRA settlement date.
+
+    Source: ``https://cdn.finra.org/equity/otcmarket/biweekly/shrt{YYYYMMDD}.csv``
+    """
+
+    __tablename__ = "short_interest_snapshots"
+
+    settlement_date: Mapped[str] = mapped_column(Text, primary_key=True)
+    ticker: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("asset_universe.ticker", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    current_short_shares: Mapped[int] = mapped_column(Integer)
+    previous_short_shares: Mapped[int | None] = mapped_column(Integer)
+    avg_daily_volume_shares: Mapped[int | None] = mapped_column(Integer)
+    days_to_cover: Mapped[float | None] = mapped_column(Float)
+    change_pct: Mapped[float | None] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(Text)
+    ingested_at: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (
+        Index("ix_short_interest_snapshots_ticker_date", "ticker", "settlement_date"),
+    )
+
+
+class ShortVolumeDaily(Base):
+    """
+    Daily FINRA Reg SHO short sale volume.  One row per (trade_date, ticker, market).
+
+    Source: ``https://cdn.finra.org/equity/regsho/daily/{PREFIX}shvol{YYYYMMDD}.txt``
+    """
+
+    __tablename__ = "short_volume_daily"
+
+    trade_date: Mapped[str] = mapped_column(Text, primary_key=True)
+    ticker: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("asset_universe.ticker", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    market: Mapped[str] = mapped_column(Text, primary_key=True)
+    short_volume: Mapped[int] = mapped_column(Integer)
+    short_exempt_volume: Mapped[int] = mapped_column(Integer)
+    total_volume: Mapped[int] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(Text)
+    ingested_at: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (Index("ix_short_volume_daily_ticker_date", "ticker", "trade_date"),)
+
+
+# ---------------------------------------------------------------------------
 # Operations
 # ---------------------------------------------------------------------------
 

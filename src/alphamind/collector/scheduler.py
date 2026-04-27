@@ -27,6 +27,10 @@ from alphamind.data_sources.finnhub.calendar import (
     collect_ipo_calendar,
 )
 from alphamind.data_sources.finnhub.news import collect_news as finnhub_news_collect_news
+from alphamind.data_sources.finra.short_interest import (
+    collect_short_interest as finra_short_interest,
+)
+from alphamind.data_sources.finra.short_volume import collect_short_volume as finra_short_volume
 from alphamind.data_sources.fred.macro import collect_series as fred_macro_collect_series
 from alphamind.data_sources.kalshi.contracts import collect_snapshots as kalshi_collect_snapshots
 from alphamind.data_sources.marketaux.news import collect_news as marketaux_news_collect_news
@@ -81,6 +85,11 @@ COLLECTORS: dict[str, Callable[..., object]] = {
     "sec_edgar.rss": collect_8k_filings,
     "polymarket": polymarket_collect_snapshots,
     "kalshi": kalshi_collect_snapshots,
+    "finra.short_volume": finra_short_volume,
+    "finra.short_interest": finra_short_interest,
+    # Stories 05m and 05l — stubs replaced when those stories land
+    "finnhub.estimate_revisions": lambda **_: None,
+    "iborrowdesk.borrow_cost": lambda **_: None,
 }
 
 # Vendors — each gets its own single-worker executor
@@ -95,6 +104,8 @@ _VENDORS = [
     "sec_edgar",
     "polymarket",
     "kalshi",
+    "finra",
+    "iborrowdesk",
 ]
 
 _SCHEDULE_PATH = Path(__file__).parents[3] / "config" / "collector_schedule.yaml"

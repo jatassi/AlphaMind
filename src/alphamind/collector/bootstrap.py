@@ -42,6 +42,8 @@ from alphamind.data_sources.finnhub.calendar import (
     collect_fda_calendar,
     collect_ipo_calendar,
 )
+from alphamind.data_sources.finra.short_interest import bootstrap_short_interest
+from alphamind.data_sources.finra.short_volume import bootstrap_short_volume
 from alphamind.data_sources.polygon.corporate_actions import bootstrap_corporate_actions
 from alphamind.data_sources.polygon.equity import bootstrap_universe_bars
 from alphamind.data_sources.polygon.reference import collect_reference
@@ -53,7 +55,9 @@ log = logging.getLogger(__name__)
 # Known vendor names for --only dispatch validation
 # ---------------------------------------------------------------------------
 
-_KNOWN_VENDORS: frozenset[str] = frozenset({"polygon", "fred", "eia", "treasury", "bls", "finnhub"})
+_KNOWN_VENDORS: frozenset[str] = frozenset(
+    {"polygon", "fred", "eia", "treasury", "bls", "finnhub", "finra"}
+)
 
 # ---------------------------------------------------------------------------
 # FRED daily / monthly wrappers
@@ -199,6 +203,54 @@ def _run_step(label: str, fn: Any, *args: Any, **kwargs: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _bootstrap_plan() -> list[tuple[str, list[tuple[str, Any]]]]:
+    """Return the ordered bootstrap plan, evaluated at call time.
+
+    Evaluating lazily ensures that ``unittest.mock.patch`` applied to any
+    module-level name in this module takes effect when ``run_all`` runs.
+    """
+    return [
+        # Steps 1-3 — Polygon: seed -> reference -> corporate actions -> equity
+        (
+            "polygon",
+            [
+                ("assets.yaml seed", _seed_asset_universe),
+                ("polygon.reference", collect_reference),
+                ("polygon.corporate_actions", bootstrap_corporate_actions),
+                ("polygon.equity", bootstrap_universe_bars),
+            ],
+        ),
+        # Step 4 — Macro daily: FRED daily, EIA, Treasury
+        ("fred", [("fred.daily", _fred_bootstrap_daily)]),
+        ("eia", [("eia", eia_bootstrap_series)]),
+        ("treasury", [("treasury", bootstrap_auctions)]),
+        # Step 5 — Macro monthly: FRED monthly, BLS
+        ("fred", [("fred.monthly", _fred_bootstrap_monthly)]),
+        ("bls", [("bls", bls_bootstrap_series)]),
+        # Step 4b — Short selling: FINRA (no dependency on Polygon equity bootstrap)
+        (
+            "finra",
+            [
+                ("finra.short_volume", bootstrap_short_volume),
+                ("finra.short_interest", bootstrap_short_interest),
+            ],
+        ),
+        # Step 6 — Event + earnings calendar (Finnhub)
+        # IPO and FDA calendars have no dedicated bootstrap wrappers; the
+        # catch-up paths resolve a forward-90d window themselves when called
+        # with no ``since``. lifecycle.md § Bootstrap step 6 includes them.
+        (
+            "finnhub",
+            [
+                ("finnhub.earnings_calendar", bootstrap_earnings_calendar),
+                ("finnhub.economic_calendar", bootstrap_economic_calendar),
+                ("finnhub.ipo_calendar", collect_ipo_calendar),
+                ("finnhub.fda_calendar", collect_fda_calendar),
+            ],
+        ),
+    ]
+
+
 def run_all(only_vendor: str | None = None) -> None:
     """
     Orchestrate the full one-time bootstrap or a single vendor's bootstrap.
@@ -208,7 +260,7 @@ def run_all(only_vendor: str | None = None) -> None:
     only_vendor:
         When provided, run only that vendor's bootstrap steps.  Accepted
         values: ``"polygon"``, ``"fred"``, ``"eia"``, ``"treasury"``,
-        ``"bls"``, ``"finnhub"``.  ``None`` runs all vendors in order.
+        ``"bls"``, ``"finnhub"``, ``"finra"``.  ``None`` runs all vendors in order.
 
     Raises
     ------
@@ -220,46 +272,9 @@ def run_all(only_vendor: str | None = None) -> None:
 
     log.info("bootstrap: starting (only_vendor=%r)", only_vendor)
 
-    def _runs(vendor: str) -> bool:
-        return only_vendor is None or only_vendor == vendor
-
-    # ------------------------------------------------------------------
-    # Steps 1-3 - Polygon: seed -> reference -> corporate actions -> equity
-    # ------------------------------------------------------------------
-    if _runs("polygon"):
-        _run_step("assets.yaml seed", _seed_asset_universe)
-        _run_step("polygon.reference", collect_reference)
-        _run_step("polygon.corporate_actions", bootstrap_corporate_actions)
-        _run_step("polygon.equity", bootstrap_universe_bars)
-
-    # ------------------------------------------------------------------
-    # Step 4 — Macro daily: FRED daily, EIA, Treasury
-    # ------------------------------------------------------------------
-    if _runs("fred"):
-        _run_step("fred.daily", _fred_bootstrap_daily)
-    if _runs("eia"):
-        _run_step("eia", eia_bootstrap_series)
-    if _runs("treasury"):
-        _run_step("treasury", bootstrap_auctions)
-
-    # ------------------------------------------------------------------
-    # Step 5 — Macro monthly: FRED monthly, BLS
-    # ------------------------------------------------------------------
-    if _runs("fred"):
-        _run_step("fred.monthly", _fred_bootstrap_monthly)
-    if _runs("bls"):
-        _run_step("bls", bls_bootstrap_series)
-
-    # ------------------------------------------------------------------
-    # Step 6 — Event + earnings calendar (Finnhub)
-    # ------------------------------------------------------------------
-    if _runs("finnhub"):
-        _run_step("finnhub.earnings_calendar", bootstrap_earnings_calendar)
-        _run_step("finnhub.economic_calendar", bootstrap_economic_calendar)
-        # IPO and FDA calendars have no dedicated bootstrap wrappers; the
-        # catch-up paths resolve a forward-90d window themselves when called
-        # with no ``since``. lifecycle.md § Bootstrap step 6 includes them.
-        _run_step("finnhub.ipo_calendar", collect_ipo_calendar)
-        _run_step("finnhub.fda_calendar", collect_fda_calendar)
+    for vendor, steps in _bootstrap_plan():
+        if only_vendor is None or only_vendor == vendor:
+            for label, fn in steps:
+                _run_step(label, fn)
 
     log.info("bootstrap: complete")

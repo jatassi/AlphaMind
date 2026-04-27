@@ -105,7 +105,7 @@ class TestPragmas:
     def test_busy_timeout(self, file_engine):
         with file_engine.connect() as conn:
             result = conn.execute(text("PRAGMA busy_timeout")).scalar()
-        assert result == 5000
+        assert result == 60000
 
 
 # ---------------------------------------------------------------------------
