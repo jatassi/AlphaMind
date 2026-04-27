@@ -141,6 +141,8 @@ The pipeline and the monitor each bind a localhost-only HTTP server (FastAPI + U
 | `POST /control/set_halt_mode` | `{enabled, reason}` | Toggles the halt-mode flag |
 | `GET /events` | — | SSE stream of monitor state |
 
+Wire format — request bodies, response envelopes, error envelopes, and HTTP status code conventions — is specified in [pipeline-control-and-events-schema.md](pipeline-control-and-events-schema.md) and [monitor-control-and-events-schema.md](monitor-control-and-events-schema.md). Pipeline and monitor are distinct producers; each schema is the authoritative contract for its surface.
+
 The command center backend exposes a public-facing `/api/control/*` surface that the browser talks to. Each browser-facing endpoint is authenticated, audited (writes an `activity_log` entry with `source: operator_console`), and proxies to the appropriate localhost endpoint on the pipeline or monitor. Browsers never reach the pipeline or monitor directly.
 
 ### Live event stream
@@ -172,6 +174,8 @@ Pipeline and monitor each push a transient event stream over SSE. The command ce
 | `emergency_invocation_triggered` | `reason` |
 | `greeks_refreshed` | `underlying`, `refreshed_at` |
 | `heartbeat` | `timestamp` (sent every 15 s when no other event has been sent) |
+
+SSE framing and per-event payload shapes are specified in [pipeline-control-and-events-schema.md § Event schema](pipeline-control-and-events-schema.md#event-schema) and [monitor-control-and-events-schema.md § Event schema](monitor-control-and-events-schema.md#event-schema).
 
 These events carry no historical guarantee. If the SSE connection drops mid-invocation, the browser reconnects fresh; the live run watcher repopulates static state from the most recent `invocations` row plus current entity reads, then receives live events from the next push. No `Last-Event-ID` resume — live state is screen state, not history.
 

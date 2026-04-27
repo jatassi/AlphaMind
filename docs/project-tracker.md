@@ -73,6 +73,10 @@ Features below have full requirements landed in the design docs and zero outstan
 - [Guardrail evaluation primitives](design/06-risk-guardrails/guardrail-evaluation.md)
 - [Scenario tests](design/06-risk-guardrails/scenario-tests.md)
 
+### Command center
+
+- [Command center](design/command-center.md) ([pipeline wire format schema](design/pipeline-control-and-events-schema.md), [monitor wire format schema](design/monitor-control-and-events-schema.md))
+
 ### Cross-cutting
 
 - [LLM agent failure handling](design/llm-agent-failure-handling.md)
@@ -236,30 +240,6 @@ _Schema additions, well-scoped multi-file edits, or single-component contributio
 ### Substantial
 
 _New infrastructure, cross-cutting consolidations, or UI surfaces._
-
-#### Pipeline/monitor wire format _(Command center)_
-
-- [ ] Specify the `/control/*` HTTP surface and `/events` SSE stream wire format the pipeline and monitor processes expose to the command center backend. _Source: [command-center.md](design/command-center.md)._
-
-**Unblocks.**
-
-- [command-center.md](design/command-center.md) — sole remaining blocker.
-
-**Context.** `command-center.md § Control surface` and `§ Live event stream` already enumerate the endpoints (per-process control verbs, the event taxonomy with payload fields per event, the per-process SSE channel) and the architectural posture (loopback-bound FastAPI within each long-running process, command-center backend is the only client, no replay, browsers never reach pipeline/monitor directly). The wire-format work that remains is the precise request/response/event JSON shape: field names, types, error envelope, header conventions, the SSE framing per event. The pipeline and monitor each need their own contract — they are separate producers per the per-producer-schema discipline.
-
-**Options.**
-
-1. **Per-producer JSON Schema files matching the existing schema-files convention.** Two top-level schemas: `pipeline-control-and-events-schema.md` and `monitor-control-and-events-schema.md`, each a Draft 2020-12 JSON Schema (same convention as `pm-envelope-schema.md`, `oms-command-schema.md`, `analyst-output-schema.md`). Each schema carries the request bodies for its `POST /control/*` endpoints, the response envelope shape, and a `oneOf` over its event payloads keyed by `event` field. SSE framing wraps the payload (`event: <name>\ndata: <json>\n\n`) — framing rule lives in the schema's preamble.
-2. **OpenAPI emitted from FastAPI on each process plus a sibling event-schema doc.** The pipeline and monitor each run FastAPI, so each emits its own OpenAPI document at `/openapi.json` describing `POST /control/*` and `GET /events`. The command-center backend fetches these at start to validate its proxy logic. SSE event payloads — which OpenAPI doesn't model well — live in two sibling JSON Schema files (`pipeline-events-schema.md`, `monitor-events-schema.md`).
-3. **Single combined wire-format spec doc, prose-led.** One markdown spec, `pipeline-monitor-wire-format.md`, that documents both processes' control verbs and event streams in a unified prose-led format with embedded JSON examples. Validation is Pydantic models in the implementation; the doc is the contract.
-
-**Steelmans.**
-
-- *Option A.* Mirrors how every other multi-producer contract in the project is documented — analyst, strategist, PM, OMS, engine envelope each have their own JSON Schema file. The pipeline and the monitor are distinct producers; the project already split engine envelopes from PM envelopes for exactly this reason. JSON Schema gives the FastAPI request/response models a lift-off point on each side and gives the command-center backend deterministic contracts to validate against. The schemas are inherent inputs to the type-sharing surface (`openapi-typescript`) the frontend stack already uses.
-2. *Option B.* FastAPI generates OpenAPI for free; writing a separate JSON Schema is duplicate work. The control endpoints are HTTP, OpenAPI is the HTTP-API contract format, the frontend type-sharing strategy already targets OpenAPI. Carving SSE event payloads into a sibling JSON Schema document handles the one thing OpenAPI doesn't model.
-- *Option C.* One unified doc avoids navigating between two schema files when the operator is reasoning about the integration end-to-end. The pipeline and monitor SSE streams are multiplexed downstream into a single browser-facing `/api/events` per `command-center.md`, so the operator does in fact think about them together.
-
-**Recommendation.** **Option A — per-producer JSON Schema files.** The pipeline and monitor are separate producers of separate event taxonomies; conflating them via a shared variant union is exactly the per-producer-schema anti-pattern flagged in prior feedback. The JSON Schema convention matches every existing multi-producer contract (PM envelope, engine envelope, OMS command, analyst output) and feeds the existing `openapi-typescript` type-sharing path through FastAPI's automatic schema reuse. Option B's "use OpenAPI for HTTP" is right for the HTTP verbs but wrong for events; Option A unifies both surfaces under one convention without inventing a new doc shape.
 
 #### Validation methodology: interrupted-window handling _(Feedback loop)_
 
