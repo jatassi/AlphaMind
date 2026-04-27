@@ -1,17 +1,16 @@
-# API Key & Account Checklist for Source-to-Target Mapping Validation
+# API key & vendor inventory
 
-Before building the detailed field-level mappings, we'll hit every endpoint to capture actual response shapes. Below is every account and API key needed, organized by priority.
+Reference inventory of every external data provider AlphaMind reads from: authentication model, AlphaMind data domains served, and the specific endpoints each adapter touches. Used by the data-layer collector and as the lookup when keys need rotation.
 
 ---
 
-## Paid Accounts (API keys required)
+## Paid (API key required)
 
 ### 1. Polygon.io (Stocks Starter + Options Starter)
 - **Cost:** $58/mo combined ($46/mo annual)
 - **Sign up:** https://polygon.io/pricing
-- **What we need:** Single API key (covers both Stocks and Options subscriptions)
 - **Domains served:** Q1 (Price & Volume), Q3 (Derivatives/Options), Q6f (Forex rates), Q8 (Commodity tickers via stock-like symbols), Q10 (Corporate actions — dividends, splits), Ref (reference data, ticker details)
-- **Key endpoints to probe:**
+- **Endpoints:**
   - `GET /v2/aggs/ticker/AAPL/range/1/minute/2025-01-02/2025-01-02` — 1-min bars
   - `GET /v2/aggs/ticker/AAPL/range/15/minute/2025-01-02/2025-01-02` — 15-min bars
   - `GET /v2/aggs/ticker/AAPL/range/1/day/2024-01-01/2025-01-01` — daily bars
@@ -32,21 +31,16 @@ Before building the detailed field-level mappings, we'll hit every endpoint to c
   - `GET /v3/reference/exchanges` — exchange reference
   - `GET /v2/aggs/ticker/C:EURUSD/range/1/day/2024-01-01/2025-01-01` — forex pair
   - `GET /v2/aggs/ticker/X:BTCUSD/range/1/day/2024-01-01/2025-01-01` — crypto pair (if needed)
-- [ ] **Account created**
-- [ ] **API key obtained**
-- [ ] **Stocks Starter subscription active**
-- [ ] **Options Starter subscription active**
 
 ---
 
-## Free Accounts (API key required)
+## Free (API key required)
 
 ### 2. FRED (Federal Reserve Economic Data)
 - **Cost:** Free
 - **Sign up:** https://fred.stlouisfed.org/docs/api/api_key.html
-- **What we need:** API key (instant after free registration)
 - **Domains served:** Q6 (Macro — yields, inflation, employment, credit spreads, DXY, VIX, fed funds), Q8d (gold price), Q11a (VIX)
-- **Key endpoints to probe:**
+- **Endpoints:**
   - `GET /fred/series/observations?series_id=DGS10` — 10-year Treasury yield
   - `GET /fred/series/observations?series_id=DGS2` — 2-year yield
   - `GET /fred/series/observations?series_id=T10Y2Y` — 10Y-2Y spread
@@ -62,54 +56,42 @@ Before building the detailed field-level mappings, we'll hit every endpoint to c
   - `GET /fred/series/observations?series_id=SOFR` — SOFR rate
   - `GET /fred/series/observations?series_id=DFEDTARU` — Fed Funds upper target
   - `GET /fred/series?search_text=yield+curve` — series search (for discovery)
-- [ ] **Account created**
-- [ ] **API key obtained**
 
 ### 3. BLS (Bureau of Labor Statistics) API v2
 - **Cost:** Free
 - **Sign up:** https://data.bls.gov/registrationEngine/
-- **What we need:** API key (v2 registration for higher rate limits)
 - **Domains served:** Q6d (Employment detail — NFP, claims, ADP supplements)
-- **Key endpoints to probe:**
+- **Endpoints:**
   - `POST /publicAPI/v2/timeseries/data/` with body `{"seriesid": ["CES0000000001"], "startyear": "2024", "endyear": "2025"}` — Total nonfarm payrolls
   - `POST /publicAPI/v2/timeseries/data/` with body `{"seriesid": ["LNS14000000"]}` — Unemployment rate
   - `POST /publicAPI/v2/timeseries/data/` with body `{"seriesid": ["CUSR0000SA0"]}` — CPI-U (detailed)
-- [ ] **Account created**
-- [ ] **API key obtained**
 
 ### 4. EIA (Energy Information Administration)
 - **Cost:** Free
 - **Sign up:** https://www.eia.gov/opendata/register.php
-- **What we need:** API key
 - **Domains served:** Q8a (Crude oil inventory/production), Q8b (Natural gas storage), Q8e (Crack spreads/refinery), Qual6b (Energy catalysts)
-- **Key endpoints to probe:**
+- **Endpoints:**
   - `GET /v2/petroleum/stoc/wstk/data/?api_key={key}&frequency=weekly&data[0]=value&facets[product][]=EPC0&sort[0][column]=period&sort[0][direction]=desc&length=10` — Weekly crude inventory
   - `GET /v2/natural-gas/stor/wkly/data/?api_key={key}&frequency=weekly&data[0]=value&length=10` — Weekly gas storage
   - `GET /v2/petroleum/pri/spt/data/?api_key={key}&frequency=daily&data[0]=value&facets[series][]=RWTC&length=10` — WTI spot price
   - `GET /v2/petroleum/pnp/wiup/data/?api_key={key}&frequency=weekly&data[0]=value&length=5` — Refinery utilization
-- [ ] **Account created**
-- [ ] **API key obtained**
 
 ### 5. Alpaca Markets
 - **Cost:** Free (paper trading account, no deposit)
 - **Sign up:** https://app.alpaca.markets/signup
-- **What we need:** API key + secret (paper trading)
 - **Domains served:** Q1 (backup OHLCV), Execution layer (paper trading — future use)
-- **Key endpoints to probe:**
+- **Endpoints:**
   - `GET /v2/stocks/AAPL/bars?timeframe=1Min&start=2025-01-02T00:00:00Z&end=2025-01-02T23:59:59Z` — 1-min bars
   - `GET /v2/stocks/AAPL/bars?timeframe=1Day&start=2024-01-01&end=2025-01-01` — daily bars
   - `GET /v2/stocks/AAPL/trades/latest` — latest trade
   - `GET /v2/stocks/AAPL/quotes/latest` — latest quote
   - `GET /v2/stocks/AAPL/snapshot` — snapshot
-- [ ] **Account created**
-- [ ] **API key + secret obtained**
 
 ### 6. Finnhub
 - **Cost:** Free tier
 - **Sign up:** https://finnhub.io/register
-- **What we need:** API key (instant)
 - **Domains served:** Q5e (Earnings calendar), Q5f (Analyst ratings), Q6g (Macro economic calendar), Q10d (Investor events), Qual1a (News), Qual5e (Policy calendar)
-- **Key endpoints to probe:**
+- **Endpoints:**
   - `GET /api/v1/calendar/earnings?from=2025-01-01&to=2025-03-01` — earnings calendar
   - `GET /api/v1/stock/recommendation?symbol=AAPL` — analyst recommendations
   - `GET /api/v1/news?category=general` — general market news
@@ -120,64 +102,47 @@ Before building the detailed field-level mappings, we'll hit every endpoint to c
   - `GET /api/v1/stock/peers?symbol=AAPL` — company peers
   - `GET /api/v1/sec-filings?symbol=AAPL` — SEC filings
   - `GET /api/v1/fda-advisory-committee-calendar` — FDA calendar
-- [ ] **Account created**
-- [ ] **API key obtained**
 
 ### 7. StockTwits
 - **Cost:** Free
 - **Sign up:** https://stocktwits.com/ (create account) then request API access
-- **What we need:** API key / OAuth token
 - **Domains served:** Qual2a (Social sentiment)
-- **Key endpoints to probe:**
+- **Endpoints:**
   - `GET /api/2/streams/symbol/AAPL.json` — ticker stream with sentiment
   - `GET /api/2/trending/symbols.json` — trending tickers
   - `GET /api/2/streams/trending.json` — trending messages
-- [ ] **Account created**
-- [ ] **API access obtained**
 
 ### 8. Marketaux
 - **Cost:** Free tier (100 req/day)
 - **Sign up:** https://www.marketaux.com/register
-- **What we need:** API token
 - **Domains served:** Qual1a (News with pre-computed sentiment scores)
-- **Key endpoints to probe:**
+- **Endpoints:**
   - `GET /v1/news/all?symbols=AAPL&filter_entities=true&api_token={token}` — ticker news with sentiment
   - `GET /v1/news/all?countries=us&api_token={token}` — US market news
-- [ ] **Account created**
-- [ ] **API token obtained**
 
 ### 9. Kalshi
 - **Cost:** Free (no deposit required)
 - **Sign up:** https://kalshi.com/sign-up
-- **What we need:** Email + password (API uses session token with 30-min expiry)
 - **Domains served:** Qual3a (Monetary policy odds), Qual3b (Regulatory/political outcomes), Qual3c (Geopolitical)
-- **Key endpoints to probe:**
+- **Endpoints:**
   - `POST /trade-api/v2/login` — get session token
   - `GET /trade-api/v2/events` — list events
   - `GET /trade-api/v2/markets?series_ticker=FED` — Fed-related markets
   - `GET /trade-api/v2/markets/{ticker}` — single market detail
   - `GET /trade-api/v2/series` — event series
   - `GET /trade-api/v2/markets/{ticker}/orderbook` — order book
-- [ ] **Account created**
-- [ ] **Login credentials ready for token generation**
 
 ### 10. Google Trends API
 - **Cost:** Free (1,500 req/day)
 - **Sign up:** https://console.cloud.google.com/ → enable Google Trends API
-- **What we need:** GCP project + API key or OAuth credentials
 - **Domains served:** Qual2b (Alternative sentiment — search interest)
-- **Key endpoints to probe:**
+- **Endpoints:**
   - Interest over time for ticker-related terms
   - Related queries / rising queries
-- [ ] **GCP project created**
-- [ ] **Google Trends API enabled**
-- [ ] **API key or OAuth credentials obtained**
 
 ---
 
-## No Authentication Required (open access)
-
-These sources don't need API keys — I can probe them directly. Listed for completeness.
+## No authentication (open access)
 
 ### 11. Treasury Fiscal Data
 - **Auth:** None
@@ -185,7 +150,6 @@ These sources don't need API keys — I can probe them directly. Listed for comp
 - **Endpoints:**
   - `GET /services/api/fiscal_service/v1/accounting/od/avg_interest_rates`
   - `GET /services/api/fiscal_service/v2/accounting/od/auctions_query`
-- [x] **No setup needed**
 
 ### 12. SEC EDGAR
 - **Auth:** User-Agent header only (format: `CompanyName email@address`)
@@ -194,7 +158,6 @@ These sources don't need API keys — I can probe them directly. Listed for comp
   - `GET /api/xbrl/companyfacts/CIK0000320193.json` — Apple XBRL facts
   - `GET /cgi-bin/browse-edgar?action=getcompany&CIK=AAPL&type=10-K&dateb=&owner=include&count=5&search_text=&action=getcompany` — filing search
   - `GET /cgi-bin/browse-edgar?action=getcompany&CIK=AAPL&type=4&dateb=&owner=include&count=10` — Form 4 (insider)
-- [x] **No setup needed** (just need to set User-Agent header)
 
 ### 13. CFTC COT Reports
 - **Auth:** None
@@ -202,7 +165,6 @@ These sources don't need API keys — I can probe them directly. Listed for comp
 - **Endpoints:**
   - Bulk CSV download from CFTC website
   - Public Reporting Environment API
-- [x] **No setup needed**
 
 ### 14. FINRA (Short Interest + ATS Transparency)
 - **Auth:** None (file downloads)
@@ -211,7 +173,6 @@ These sources don't need API keys — I can probe them directly. Listed for comp
   - Short interest bulk files
   - ATS transparency weekly files
   - Daily short volume files
-- [x] **No setup needed**
 
 ### 15. Polymarket
 - **Auth:** None (read-only)
@@ -220,7 +181,6 @@ These sources don't need API keys — I can probe them directly. Listed for comp
   - `GET /markets` (Gamma API)
   - `GET /books` (CLOB API)
   - `GET /prices` (CLOB API)
-- [x] **No setup needed**
 
 ### 16. Yahoo Finance (yfinance library)
 - **Auth:** None (Python library, unofficial)
@@ -230,14 +190,12 @@ These sources don't need API keys — I can probe them directly. Listed for comp
   - Python: `yfinance.Ticker("AAPL").get_eps_revisions()`
   - Python: `yfinance.Ticker("AAPL").get_analyst_price_targets()`
   - Python: `yfinance.Ticker("AAPL").options` + `option_chain()`
-- [x] **No setup needed** (pip install yfinance)
 
 ### 17. iBorrowDesk (scraping)
 - **Auth:** None
 - **Domains served:** Q4b (Borrow cost/fee rates)
 - **Endpoints:**
   - Scrape `https://iborrowdesk.com/report/{ticker}` (React SPA — needs headless browser)
-- [x] **No setup needed** (needs Playwright/Selenium)
 
 ### 18. Earnings Transcripts (Motley Fool / Quartr / YouTube)
 - **Auth:** None (scraping-based)
@@ -246,26 +204,30 @@ These sources don't need API keys — I can probe them directly. Listed for comp
   - Scrape fool.com/earnings-call-transcripts/
   - Quartr API (if available)
   - YouTube webcast URLs + Whisper transcription
-- [x] **No setup needed** (scraping pipeline)
 
 ---
 
-## Summary: What Jackson Needs to Provide
+## Summary
 
-| # | Source | Cost | Action Required |
-|---|--------|------|-----------------|
-| 1 | Polygon.io | $58/mo | Sign up, subscribe to Stocks Starter + Options Starter, provide API key |
-| 2 | FRED | Free | Register, provide API key |
-| 3 | BLS | Free | Register for v2 API, provide API key |
-| 4 | EIA | Free | Register, provide API key |
-| 5 | Alpaca | Free | Create paper trading account, provide API key + secret |
-| 6 | Finnhub | Free | Register, provide API key |
-| 7 | StockTwits | Free | Create account, request API access, provide key |
-| 8 | Marketaux | Free | Register, provide API token |
-| 9 | Kalshi | Free | Create account, provide email + password (for token auth) |
-| 10 | Google Trends | Free | Create GCP project, enable API, provide key |
+| # | Source | Auth | Cost |
+|---|--------|------|------|
+| 1 | Polygon.io | API key | $58/mo |
+| 2 | FRED | API key | Free |
+| 3 | BLS | API key | Free |
+| 4 | EIA | API key | Free |
+| 5 | Alpaca | API key + secret | Free (paper) |
+| 6 | Finnhub | API key | Free |
+| 7 | StockTwits | API key / OAuth | Free |
+| 8 | Marketaux | API token | Free |
+| 9 | Kalshi | Email + password (session token) | Free |
+| 10 | Google Trends | GCP API key / OAuth | Free |
+| 11 | Treasury Fiscal Data | None | Free |
+| 12 | SEC EDGAR | User-Agent header | Free |
+| 13 | CFTC COT Reports | None | Free |
+| 14 | FINRA | None | Free |
+| 15 | Polymarket | None | Free |
+| 16 | Yahoo Finance (yfinance) | None | Free |
+| 17 | iBorrowDesk | None (scraping) | Free |
+| 18 | Earnings Transcripts | None (scraping) | Free |
 
-**Total accounts to create: 10**
-**Total cost: $58/mo** (Polygon only — everything else is free)
-
-Once you provide the API keys, I'll systematically hit every endpoint listed above, capture the actual JSON response shapes, and use those to build accurate field-level mappings with zero guesswork.
+Live keys are stored locally in `docs/design/01-data-layer/api-keys.md` (gitignored) and consumed via `.env` per `data_sources.yaml`.
