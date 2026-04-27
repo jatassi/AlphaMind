@@ -397,7 +397,39 @@ Reachable from: the validation status row in the weekly digest, the supersession
 
 #### Monthly view
 
-Outcome-tier metrics with conditioning slices (regime, sector, conviction band, prompt version, model version), citation-chain visualizations, anti-pattern accuracy curves. Specific layout drafted once resolved-thesis volume supports meaningful outcome-tier reading (per [feedback-loop.md § Pending](feedback-loop.md#pending)).
+The trajectory counterpart to the weekly digest, intended for ~30-minute monthly consumption (operator alone or with [`/feedback-review`](../../.claude/skills/feedback-review/SKILL.md) in monthly mode). Calibration-first layout: outcome curves that drive structural prompt revisions sit at the top, citation-chain and anti-pattern accuracy below. Process metrics live on the weekly digest — this view is outcome-only.
+
+Every panel renders a time-series curve over the operator's selected window with 80% credible bands and per-bucket sample-size annotations. Panels remain accessible before resolved-thesis volume crosses the configured minimum (operator-tunable in [`config/digest.yaml`](configuration-management.md#digestyaml)) — credible bands render as faded shapes and a "Needs N more resolved theses" banner overlays the panel until the read becomes meaningful, so the operator can watch the shape accumulate before it's read-able.
+
+Global conditioning control bar across the top of the page; a single change re-renders every panel below. Dimensions match [feedback-loop.md § Conditioning surface](feedback-loop.md#conditioning-surface):
+
+| Dimension | Control | Default |
+|---|---|---|
+| Window | Length picker (3 / 6 / 12 / 24 months ending current month) | 12 months |
+| Regime | Multi-select (`low_vol`, `normal`, `elevated`, `crisis`) | All |
+| Sector | Multi-select over the master sector list | All |
+| Conviction band | Multi-select (`1–2`, `3`, `4–5`) | All |
+| Prompt version | Multi-select over prompt git SHAs active in window | Latest only |
+| Model version | Multi-select over Claude model IDs active in window | Latest only |
+| `vs. prior period` | Toggle | Off |
+
+When `vs. prior period` is on, every panel overlays the prior equal-length window's curve as a dimmer trace under the current. When two or more values are selected on a single dimension and that dimension's "Compare across" toggle is on, panels split into one trace per selected value rather than filtering — the per-regime conviction-calibration comparison the operator runs most often becomes a single click.
+
+Layout, top to bottom:
+
+1. **Calibration band — analyst and strategist.** Two panels side-by-side. *Conviction calibration* (analyst) plots per-conviction-level (1 through 5) thesis validation rate as one trace per level with credible bands; the structural-revision signal is whether higher-conviction levels track materially above lower ones over time. *Status calibration* (strategist) plots per-status (on-track, partially-realized, at-risk, stale, invalidated) forward-N-day adverse-outcome rate as one trace per status with credible bands; the structural signal is whether status traces are *distinguishable* — overlapping bands mean the strategist isn't producing actionable status calibration. Both panels click through to a per-agent drill-down (described below). Source: [Decision-layer outcome metrics](feedback-loop.md#decision-layer).
+
+2. **PM accuracy band.** Two panels side-by-side, both sourced from `counterfactual_replays` filtered to evaluated + medium/high confidence per [feedback-loop.md § Counterfactual replay](feedback-loop.md#counterfactual-replay). *Rejection accuracy* plots the trailing-window fraction of PM-rejected proposals whose counterfactual P/L would have been profitable, with credible band; sub-tabs split the trace by criterion fired and by source agent (analyst vs. strategist). *Modification effectiveness* plots the trailing-window paired delta between modified-form realized outcomes and counterfactual original-form outcomes, with credible band; sub-tabs split by `adjustment_category`. Both panels click through to the PM drill-down. Source: [PM outcome metrics](feedback-loop.md#portfolio-manager).
+
+3. **Citation-chain panel.** Three stacked sub-charts on a shared time x-axis, one trace per upstream source (tech-semis researcher, financials researcher, energy researcher, qualitative researcher, adaptive researcher, correlation/regime brief): synthesizer citation rate per source, decision-layer citation rate per source, signal survival rate per source. The cross-read [feedback-loop.md § Citation-chain metrics](feedback-loop.md#citation-chain-metrics--the-cross-layer-flagship) anchors on becomes legible at a glance — high synthesizer citation with low signal survival flags a noisy source the synthesizer is being misled by; high synthesizer drop with high decision-layer citation flags a synthesizer recall failure. Source: [Citation-chain metrics](feedback-loop.md#citation-chain-metrics--the-cross-layer-flagship).
+
+4. **Anti-pattern detector accuracy.** One sub-row per canonical anti-pattern (`sunk_cost_persistence`, `rationalized_continuation`, `thesis_contradiction_suppression`, `engine_originated_closure_signal`, `conviction_inflation`); each sub-row plots the trailing-window forward-outcome delta between PM-tagged positions and the same-conviction-band untagged baseline, with credible band. A detector firing on noise — flat or negative delta over a wide window — is the signal that the PM prompt's pattern definition needs revisiting. Source: [PM anti-pattern detector accuracy](feedback-loop.md#portfolio-manager).
+
+Per-agent drill-down: clicking any calibration or PM-accuracy panel navigates to a focused single-agent layout that surfaces the agent's outcome panels from this view alongside its process panels from the weekly digest, with the active prompt SHAs for the window listed at the top — the unit the operator iterates against when revising a prompt. Reused across analyst, strategist, and PM, parameterized by agent name. The conditioning bar persists across the navigation.
+
+Session-mode affordances: standard `highlight_metric`, `navigate_to_view`, `annotate`, `pin_for_comparison` work as elsewhere; Claude can `annotate` a conditioning-bar control to suggest a filter the operator applies. `pin_for_comparison` on a calibration panel keeps that panel visible across navigation, supporting the "before vs. after the prompt edit" workflow [`/feedback-review`](../../.claude/skills/feedback-review/SKILL.md) monthly mode walks through.
+
+Reachable from: the trajectory sparklines in the weekly digest (clicking any of the four outcome-tier sparklines deep-links to the corresponding panel here with the conditioning bar pre-populated), the F. Quality and feedback nav, and `/feedback-review` monthly-mode landing.
 
 #### Retrospective view
 
