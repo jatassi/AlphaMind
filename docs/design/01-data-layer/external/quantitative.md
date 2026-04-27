@@ -475,12 +475,6 @@ For energy, commodities are the direct driver (crude/energy-stock moves are mech
   - Commodity ETF flows: USO, GLD, SLV, UNG net flows — real-time retail and institutional commodity appetite
   - Managed money positioning trend: direction and velocity matter more than level
 
-**~~9. Sentiment and positioning~~ — DISSOLVED**
-All components absorbed into existing categories: fund flows → 7b (cross-sector rotation), margin debt and leverage → 7d (intermarket regime signals), sentiment surveys → 7d, equity index futures positioning → 3c (open interest and positioning landscape). Put/call ratios were already in 3f, retail/institutional segmentation triangulated from existing signals (see 2a), commodity positioning in 8f, institutional ownership in 5g.
-
-**~~10. Market structure and internals~~ — DISSOLVED**
-All components already covered: breadth indicators → 7c (index vs. constituent behavior), advance/decline → 7c, new highs/lows → 7c, sector relative strength → 7b (cross-sector rotation), correlation regime detection → 7g. Market-wide microstructure health metrics (aggregate spreads, volume, liquidity score) added to 7c during category 9 dissolution.
-
 **11. Volatility regime**
 Market-wide volatility environment as a systemic signal. Other categories measure volatility at the ticker level (3a, 1f) or correlation level (7e); this captures the VIX-derived regime that affects every sector and changes the entire playbook: position sizing, thesis duration, entry/exit tactics, setup types.
 
