@@ -44,7 +44,7 @@ SERIES: list[dict[str, Any]] = [
     {
         "series_id": "eia.refinery_utilization",
         "route": "/v2/petroleum/pnp/wiup/",
-        "facets": {},
+        "facets": {"series": ["WPULEUS3"]},
         "frequency": "weekly",
     },
 ]

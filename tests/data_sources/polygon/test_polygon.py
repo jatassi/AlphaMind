@@ -293,13 +293,64 @@ class TestCollectUniverseBars:
             assert sess.query(OhlcvBars).count() == 0
 
     def test_session_column_regular_hours(self) -> None:
-        """Bar at 14:30 UTC = 10:30 ET — regular session."""
+        """Intraday bar at 14:30 UTC = 10:30 ET — regular session."""
         from alphamind.data_sources.polygon import equity
 
         sf, _ = _make_db()
         _seed_asset_universe(sf, ["AAPL"], [])
 
         ts = int(datetime(2026, 4, 25, 14, 30, tzinfo=UTC).timestamp() * 1000)
+        client = MagicMock()
+        client.get_aggs.side_effect = [[_make_agg(ts)], [_make_agg(ts, o=99.0)]] * 10
+        client.acquire_rate_limit = MagicMock()
+
+        equity.collect_universe_bars(
+            ticker_scope=["AAPL"],
+            timeframes=["15min"],
+            since=datetime(2026, 4, 24, tzinfo=UTC),
+            _client=client,
+            _session_factory=sf,
+            _repo=_fake_repo(),
+        )
+
+        with sf() as sess:
+            row = sess.query(OhlcvBars).first()
+        assert row.session == "regular"
+
+    def test_session_column_pre_market(self) -> None:
+        """Intraday bar at 10:00 UTC = 06:00 ET — pre-market."""
+        from alphamind.data_sources.polygon import equity
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL"], [])
+
+        ts = int(datetime(2026, 4, 25, 10, 0, tzinfo=UTC).timestamp() * 1000)
+        client = MagicMock()
+        client.get_aggs.side_effect = [[_make_agg(ts)], [_make_agg(ts, o=99.0)]] * 10
+        client.acquire_rate_limit = MagicMock()
+
+        equity.collect_universe_bars(
+            ticker_scope=["AAPL"],
+            timeframes=["15min"],
+            since=datetime(2026, 4, 24, tzinfo=UTC),
+            _client=client,
+            _session_factory=sf,
+            _repo=_fake_repo(),
+        )
+
+        with sf() as sess:
+            row = sess.query(OhlcvBars).first()
+        assert row.session == "pre_market"
+
+    def test_session_column_daily_bar_is_regular(self) -> None:
+        """Daily bars use 'regular' regardless of midnight-ET timestamp quirks."""
+        from alphamind.data_sources.polygon import equity
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, ["AAPL"], [])
+
+        # Polygon emits daily bars at midnight ET (= 04:00 UTC)
+        ts = int(datetime(2026, 4, 25, 4, 0, tzinfo=UTC).timestamp() * 1000)
         client = MagicMock()
         client.get_aggs.side_effect = [[_make_agg(ts)], [_make_agg(ts, o=99.0)]] * 10
         client.acquire_rate_limit = MagicMock()
@@ -316,31 +367,6 @@ class TestCollectUniverseBars:
         with sf() as sess:
             row = sess.query(OhlcvBars).first()
         assert row.session == "regular"
-
-    def test_session_column_pre_market(self) -> None:
-        """Bar at 10:00 UTC = 06:00 ET — pre-market."""
-        from alphamind.data_sources.polygon import equity
-
-        sf, _ = _make_db()
-        _seed_asset_universe(sf, ["AAPL"], [])
-
-        ts = int(datetime(2026, 4, 25, 10, 0, tzinfo=UTC).timestamp() * 1000)
-        client = MagicMock()
-        client.get_aggs.side_effect = [[_make_agg(ts)], [_make_agg(ts, o=99.0)]] * 10
-        client.acquire_rate_limit = MagicMock()
-
-        equity.collect_universe_bars(
-            ticker_scope=["AAPL"],
-            timeframes=["1d"],
-            since=datetime(2026, 4, 24, tzinfo=UTC),
-            _client=client,
-            _session_factory=sf,
-            _repo=_fake_repo(),
-        )
-
-        with sf() as sess:
-            row = sess.query(OhlcvBars).first()
-        assert row.session == "pre_market"
 
     def test_partial_failure_records_error_summary(self) -> None:
         """Failure on second ticker still writes first ticker's rows."""

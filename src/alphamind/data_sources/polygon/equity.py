@@ -41,17 +41,22 @@ _ET = zoneinfo.ZoneInfo("America/New_York")
 # ---------------------------------------------------------------------------
 
 
-def _classify_session(ts_ms: int) -> str:
+def _classify_session(ts_ms: int, timeframe: str) -> str:
     """
     Return the NYSE trading session label for the bar starting at *ts_ms*
     (milliseconds since epoch, UTC).
 
-    Sessions (ET):
+    Daily and weekly bars aggregate the regular trading session by definition,
+    so the timestamp's time-of-day (often midnight ET) is not meaningful.
+
+    Intraday session boundaries (ET):
       04:00-09:30  pre_market
       09:30-16:00  regular
       16:00-20:00  after_hours
       otherwise    overnight
     """
+    if timeframe in ("1d", "1w"):
+        return "regular"
     dt_utc = datetime.fromtimestamp(ts_ms / 1000, tz=UTC)
     dt_et = dt_utc.astimezone(_ET)
     total_minutes = dt_et.hour * 60 + dt_et.minute
@@ -152,7 +157,7 @@ def collect_universe_bars(
                             timeframe=tf,
                             period_start=bar_start,
                             period_end=bar_start,
-                            session=_classify_session(ab.timestamp),
+                            session=_classify_session(ab.timestamp, tf),
                             adj_open=ab.open,
                             adj_high=ab.high,
                             adj_low=ab.low,

@@ -6,7 +6,8 @@ Writes ``macro_observations`` rows for employment and inflation series.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+import os
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import and_, func, select
@@ -16,6 +17,16 @@ from alphamind.data_sources._common import track_run
 from alphamind.data_sources.bls.client import BLSClient
 from alphamind.data_sources.bls.series import SERIES
 from alphamind.persistence.models import MacroObservations
+from alphamind.persistence.session import make_engine, make_session_factory
+
+
+def _resolve_api_key(api_key: str | None) -> str:
+    if api_key is not None:
+        return api_key
+    env_value = os.environ.get("BLS_API_KEY")
+    if not env_value:
+        raise RuntimeError("BLS_API_KEY is not set in the environment")
+    return env_value
 
 
 def _period_to_date(year: str, period: str) -> str:
@@ -67,31 +78,38 @@ def _load_latest_revisions(
 
 
 def collect_series(
-    series_ids: list[str],
+    series_ids: list[str] | None = None,
     *,
-    since: date,
-    api_key: str,
-    session_factory: Any,
+    since: date | None = None,
+    api_key: str | None = None,
+    session_factory: Any = None,
 ) -> int:
     """
-    Fetch the given BLS series since ``since`` and persist to ``macro_observations``.
+    Fetch BLS series since ``since`` and persist to ``macro_observations``.
 
-    Parameters
-    ----------
-    series_ids:
-        BLS series IDs to fetch.
-    since:
-        Earliest observation date (year boundary; BLS API uses full years).
-    api_key:
-        BLS v2 registration key.
-    session_factory:
-        SQLAlchemy session factory (e.g., from :func:`make_session_factory`).
+    All parameters are optional so the runner can call ``collect_series()`` /
+    ``collect_series(since=None)`` without context. Defaults:
 
-    Returns
-    -------
-    int
-        Number of new rows written.
+    - ``series_ids`` → all configured series in ``SERIES``.
+    - ``since`` → first day of last calendar month (BLS series are monthly).
+    - ``api_key`` → ``BLS_API_KEY`` env var.
+    - ``session_factory`` → default engine targeting the configured DB path.
+
+    Returns the number of new rows written.
     """
+    if series_ids is None:
+        series_ids = list(SERIES.keys())
+    if since is None:
+        today = datetime.now(UTC).date()
+        since = (today.replace(day=1) - timedelta(days=1)).replace(day=1)
+    api_key = _resolve_api_key(api_key)
+    if session_factory is None:
+        from alphamind.persistence.models import Base
+
+        engine = make_engine()
+        Base.metadata.create_all(engine)
+        session_factory = make_session_factory(engine)
+
     now = datetime.now(UTC)
     start_year = str(since.year)
     end_year = str(now.year)
@@ -152,27 +170,11 @@ def collect_series(
 
 def bootstrap_series(
     *,
-    api_key: str,
-    session_factory: Any,
+    api_key: str | None = None,
+    session_factory: Any = None,
     _now: datetime | None = None,
 ) -> int:
-    """
-    Pull 24 months of history for all configured BLS series.
-
-    Parameters
-    ----------
-    api_key:
-        BLS v2 registration key.
-    session_factory:
-        SQLAlchemy session factory.
-    _now:
-        Injectable "current time" for testing.
-
-    Returns
-    -------
-    int
-        Total rows written.
-    """
+    """Pull 24 months of history for all configured BLS series."""
     now = _now if _now is not None else datetime.now(UTC)
     return collect_series(
         list(SERIES.keys()),
