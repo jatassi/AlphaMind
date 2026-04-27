@@ -19,3 +19,14 @@ Alert the user before disabling the linter or any rule in any form — including
 - Always spawn subagents asynchronously
 - Always list model name (Sonnet or Opus) in subagent title like this: [Sonnet | Opus] <Title>
 
+## Your Location
+If you are running on Windows, you are on the production server. 
+
+If you are running on MacOS, you are on the development machine. Production database and logs are located here:
+- Database: `/Volumes/Users/jacks/AlphaMind/data/alphamind.db`
+- Logs: 
+    - `/Volumes/Users/jacks/AlphaMind/logs/bootstrap.out` 
+    - `/Volumes/Users/jacks/AlphaMind/logs/collector.err.log`
+    - `/Volumes/Users/jacks/AlphaMind/logs/collector.log`
+    - `/Volumes/Users/jacks/AlphaMind/logs/collector.out.log`
+If these locations aren't accessible, alert the user
