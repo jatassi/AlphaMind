@@ -143,9 +143,9 @@ NFLX  [fail: beta]
   Options OI (NTM):  118,000 contracts                               pass
 ```
 
-The report is the only output. The operator reads it and decides which failures warrant a YAML edit — the operator-driven Class A review pattern from [02-distillation-layer/threshold-calibration.md § Update process](02-distillation-layer/threshold-calibration.md#update-process), automated computation plus manual judgment.
+The report is the only output. The operator reads it and decides which failures warrant a YAML edit — the operator-driven Class A review pattern from [02-distillation-layer/threshold-calibration.md § Update process](02-distillation-layer/threshold-calibration.md#update-process).
 
-A data-source failure for one ticker (Polygon no data, Finnhub error) is reported as `unknown` for that criterion. The ticker carries forward unchanged pending successful re-validation; the operator does not act on a missing measurement.
+A data-source failure for one ticker (Polygon no data, Finnhub error) is reported as `unknown` for that criterion. The ticker carries forward unchanged pending successful re-validation.
 
 When every ticker passes in a single run, the operator updates `last_full_validation` to that date in the same edit that lands any add/remove decisions.
 
@@ -157,11 +157,11 @@ Default: **monthly during paper trading**, **quarterly once live**. Plus on-dema
 
 **Structured triggers — re-validate immediately:**
 
-- A held position has sustained liquidity deterioration (widened spread or volume <50% of recent baseline) — re-validate that ticker.
-- Ticker's index inclusion changes (e.g., dropped from S&P 500) — often correlates with coverage and liquidity changes.
-- A corporate event affects eligibility: merger close, spin-off completion, going-private, bankruptcy.
-- The feedback loop ([project-tracker.md § Phase 4](../project-tracker.md#phase-4--maturation-before-live-transition)) shows a sector with persistently weak thesis quality — re-validate that sector.
-- A regime jump to crisis or back to low-vol — beta and ADV shift enough to warrant a check, especially near threshold edges.
+- Held position has sustained liquidity deterioration (widened spread or volume <50% of recent baseline) — re-validate that ticker.
+- Ticker's index inclusion changes (e.g., dropped from S&P 500).
+- Corporate event affects eligibility: merger close, spin-off completion, going-private, bankruptcy.
+- Feedback loop ([project-tracker.md § Phase 4](../project-tracker.md#phase-4--maturation-before-live-transition)) shows a sector with persistently weak thesis quality — re-validate that sector.
+- Regime jump to crisis or back to low-vol — beta and ADV shift enough to warrant a check, especially near threshold edges.
 
 Cadence is the floor; structured triggers stack on top.
 
@@ -169,18 +169,18 @@ Cadence is the floor; structured triggers stack on top.
 
 ## Add and remove process
 
-**Adding a candidate.** Operator nominates a ticker (typically by sector — "we should have ABC in financials"), runs validation, reads the report. If all five pass, edit `assets.yaml` to add the ticker to the sector array. Effective at next invocation reload.
+**Adding a candidate.** Operator nominates a ticker (typically by sector), runs validation, reads the report. If all five pass, edit `assets.yaml` to add to the sector array. Effective at next invocation reload.
 
-**Removing a failing ticker that the system does not hold.** Delete from `assets.yaml`. Effective at next reload; downstream data ingestion stops scoping that ticker.
+**Removing a failing ticker not held.** Delete from `assets.yaml`. Effective at next reload; downstream data ingestion stops scoping that ticker.
 
 **Removing a failing ticker the system holds.** Two paths based on the failing criterion:
 
-- **Close-first.** When the failing criterion materially affects trade risk (liquidity deterioration widening exit slippage, market-cap drop signaling structural deterioration), close the position via the strategist or direct intervention, then remove.
-- **Carry-to-exit.** When the failure is a drift without immediate risk implication (beta dropped from 0.85 to 0.75 in a calm regime), leave the ticker in place until the position closes naturally, then remove.
+- **Close-first.** When the failing criterion materially affects trade risk (liquidity deterioration widening exit slippage, market-cap drop signaling structural deterioration), close via the strategist or direct intervention, then remove.
+- **Carry-to-exit.** When the failure is a drift without immediate risk implication (beta dropped from 0.85 to 0.75 in a calm regime), leave in place until the position closes naturally, then remove.
 
-The operator's calibration log records the decision and rationale alongside the YAML diff. `assets.yaml` is the single source of truth for what is in scope.
+The operator's calibration log records the decision and rationale alongside the YAML diff. `assets.yaml` is the single source of truth for what's in scope.
 
-Sector-level edits (adding healthcare, dropping energy) are out of scope — they reshape `sectors:` keys, per-profile `active_sectors`, the analysis-layer domain researcher catalog, and researcher prompts.
+Sector-level edits (adding healthcare, dropping energy) are out of scope — they reshape `sectors:` keys, per-profile `active_sectors`, the domain researcher catalog, and researcher prompts.
 
 ---
 
@@ -188,7 +188,7 @@ Sector-level edits (adding healthcare, dropping energy) are out of scope — the
 
 The validation procedure surfaces names *in* the universe that stopped qualifying. Candidate discovery is the inverse: names *outside* the universe that *would* qualify. Operator-driven, slower cadence — typically alongside a regular validation cycle.
 
-**Pool definition.** Each sector maps to a canonical sector ETF in `discovery_sources`. The ETF's current holdings define the discovery pool. The four defaults — XLK (SPDR Tech), SOXX (iShares Semis), XLF (SPDR Financials), XLE (SPDR Energy) — are the broadly-recognized index proxies, and their issuers publish daily holdings at stable URLs. Holdings drift as the index rebalances; the pool reflects sector membership at run time.
+**Pool definition.** Each sector maps to a canonical sector ETF in `discovery_sources`. The ETF's current holdings define the discovery pool. The four defaults — XLK (SPDR Tech), SOXX (iShares Semis), XLF (SPDR Financials), XLE (SPDR Energy) — are broadly-recognized index proxies whose issuers publish daily holdings at stable URLs. Holdings drift as the index rebalances; the pool reflects sector membership at run time.
 
 **Vendor support.** `vendor: spdr` resolves to the State Street XLSX endpoint; `vendor: ishares` resolves to the iShares CSV endpoint with `ishares_product_id` encoded in the URL. Holdings parsers reject non-equity rows (cash, currency forwards, futures, disclaimer text) by ticker-shape regex and, for iShares, by the `Asset Class` column.
 
@@ -199,7 +199,7 @@ The validation procedure surfaces names *in* the universe that stopped qualifyin
 3. Run the five validation criteria against each remaining candidate.
 4. Surface passing candidates; report failing candidates as a one-line summary so the operator sees what almost qualified.
 
-**Output is informational.** Discovery emits a report keyed by sector. The operator reviews and adds via the standard [Adding a candidate](#add-and-remove-process) procedure. The script never edits `assets.yaml`.
+**Output is informational.** Discovery emits a report keyed by sector. The operator reviews and adds via [Adding a candidate](#add-and-remove-process). The script never edits `assets.yaml`.
 
 **When to run.** Quarterly during paper trading (alongside re-validation), or on a [structured trigger](#re-evaluation-cadence). Heavier than validation (155+ candidates × 5 criteria) — not a per-invocation operation.
 
@@ -207,7 +207,7 @@ The validation procedure surfaces names *in* the universe that stopped qualifyin
 
 ## Validation invariants
 
-Run as part of the cross-reference and semantic self-test layers ([configuration-management.md § Validation](configuration-management.md#validation)) when `assets.yaml` loads. Failure aborts the invocation and alerts the operator.
+Run as part of cross-reference and semantic self-test layers ([configuration-management.md § Validation](configuration-management.md#validation)) when `assets.yaml` loads. Failure aborts the invocation and alerts the operator.
 
 | Invariant | Layer | Reason |
 |---|---|---|
@@ -220,7 +220,7 @@ Run as part of the cross-reference and semantic self-test layers ([configuration
 | Every `discovery_sources[*].vendor` is in `{spdr, ishares}`; iShares entries carry an `ishares_product_id` | Parse-time | The fetcher dispatches on vendor and requires the product ID for iShares URLs. |
 | Every benchmark `role`, if `benchmarks` is present, is in `{broad_market, breadth, sector_etf, intermarket}` | Parse-time | The role is consumed by the data-source layer to scope cross-asset queries. |
 
-The invariants confirm the file is well-formed. They do not re-run the five validation criteria at config load — those are the offline procedure's job on the cadence above.
+The invariants confirm the file is well-formed. They do not re-run the five validation criteria at config load — that's the offline procedure's job on the cadence above.
 
 ---
 
