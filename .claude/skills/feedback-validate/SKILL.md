@@ -32,7 +32,7 @@ When the operator's intent is "I just made an edit," call `list_pending_validati
 
 The pre-registration is the whole point. Treat it as a contract: nothing the operator says after the post-change data lands can change what was agreed here.
 
-REGISTER also accepts seeded fields when invoked from EVALUATE step 9 to register a paired post-rollback validation following a `mandatory_clean_failure` outcome. Seeded values are a starting point, not a constraint — walk the operator through confirming or adjusting each seeded field with the same discipline as a fresh registration.
+REGISTER also accepts seeded fields when invoked from EVALUATE step 10 to register a paired post-rollback validation following a `mandatory_clean_failure` outcome. Seeded values are a starting point, not a constraint — walk the operator through confirming or adjusting each seeded field with the same discipline as a fresh registration.
 
 ### Required fields
 
@@ -77,26 +77,27 @@ Open a review session via `create_review_session()` (backed by `POST /review-ses
 
 In strict order, do not deviate:
 
-1. **State the registration verbatim.** Read out the pre-registered fields. The operator hears their own past words. This is the anti-rationalization anchor.
-2. **Show pre-edit window data.** Highlight the metric over the pre-edit window. State the value with a posterior band.
-3. **Show post-edit window data.** Highlight the same metric over the post-edit window. State the value with a posterior band.
-4. **Compute the comparison.** Conditioned on regime (the active regime distribution in each window must be similar enough to compare; if not, flag), conditioned on Claude model version (any model update straddling the windows breaks attribution; if so, flag), and conditioned on whether other concurrent prompt edits landed in the window (if so, flag).
-5. **Surface confounder issues.** If any confounder is materially different across the windows, the right verdict is `inconclusive`. Say so.
-6. **State the verdict.** One of:
+1. **Check for supersession.** If `get_validation` returned a non-null `superseded_at`, the EVALUATE walk does not run. The validation evaluation view shows the supersession banner (reason + triggering shift + re-register affordance) per [command-center.md § Validation evaluation view](../../../docs/design/command-center.md#validation-evaluation-view). Confirm to the operator: "This validation was superseded by {reason} on {timestamp} — its window is structurally unreadable. Want to re-register a fresh validation against the post-shift context?" If yes, hand off to REGISTER seeded with the prior registration's edited artifact, watched metrics, expected direction, expected magnitude, and success/failure criteria; the operator confirms or revises before submitting. Either way, do not submit a validation outcome — superseded validations do not produce outcome records per [state-persistence.md § Validations](../../../docs/design/05-execution-layer/state-persistence.md).
+2. **State the registration verbatim.** Read out the pre-registered fields. The operator hears their own past words. This is the anti-rationalization anchor.
+3. **Show pre-edit window data.** Highlight the metric over the pre-edit window. State the value with a posterior band.
+4. **Show post-edit window data.** Highlight the same metric over the post-edit window. State the value with a posterior band.
+5. **Compute the comparison.** Conditioned on regime (the active regime distribution in each window must be similar enough to compare; if not, flag), conditioned on Claude model version (any model update straddling the windows breaks attribution; if so, flag), and conditioned on whether other concurrent prompt edits landed in the window (if so, flag). Confounders flagged here are residual — anything structural enough to break the contract would have triggered supersession in step 1.
+6. **Surface confounder issues.** If any confounder is materially different across the windows, the right verdict is `inconclusive`. Say so.
+7. **State the verdict.** One of:
    - `improved` — post-window meets the success criterion with confidence
    - `degraded` — post-window meets the failure criterion with confidence
    - `no_change` — post-window distinguishable from neither success nor failure; falls in the middle
    - `inconclusive` — sample size insufficient or confounders prevent attribution
-7. **Derive the rollback status.** Per [feedback-loop.md § Rollback evidence protocol](../../../docs/design/feedback-loop.md#rollback-evidence-protocol):
-   - `mandatory_clean_failure` if the verdict is `degraded`, the post-edit window crossed the pre-registered failure criterion, and no confounder was flagged in step 5.
+8. **Derive the rollback status.** Per [feedback-loop.md § Rollback evidence protocol](../../../docs/design/feedback-loop.md#rollback-evidence-protocol):
+   - `mandatory_clean_failure` if the verdict is `degraded`, the post-edit window crossed the pre-registered failure criterion, and no confounder was flagged in step 6.
    - `optional_pending_retrospective` if the verdict is `degraded` with a confounder flagged, OR `no_change` when the registration's expected direction was `improved`, OR `inconclusive` when the most recent prior outcome on the same `edited_artifact` (looked up via `list_outcomes_by_artifact(edited_artifact)`) was also `inconclusive`.
    - `not_applicable` otherwise.
-   State the derived status and the rule that produced it. The rule is the registration's failure criterion plus step 5's confounder check — no new judgment is introduced here.
-8. **Capture the outcome.** Call `submit_validation_outcome(validation_id, verdict, posterior_summary, confounder_notes, narrative, rollback_status)` (writes a validation outcome entity per [state-persistence.md § Validation outcomes](../../../docs/design/05-execution-layer/state-persistence.md)). The validation is now closed; the record is permanent.
-9. **Handle the rollback status.**
-   - If `mandatory_clean_failure`: pre-fill a paired post-rollback validation registration in the same session via `register_validation(...)` seeded with `edited_artifact`, `watched_metric_ids`, and `window_length_days` from the failed validation; `expected_direction = improved`; `success_criterion` auto-derived as "metric returns to within posterior band of the pre-failed-edit baseline"; `failure_criterion` auto-derived as "metric stays at or worsens from the failed-edit post-edit window value." The `pre_edit_version` defaults to the failed edit's `post_edit_version`; the `post_edit_version` is left for the operator to fill at the moment of revert (typically HEAD after `git revert`). Walk the operator through confirming or adjusting the seeded fields before commit.
-   - If `optional_pending_retrospective`: state that the entry will surface in the next [`/feedback-retrospective`](../feedback-retrospective/SKILL.md)'s Suggested follow-ups section, where the operator's accept/reject decision will land as `decision_type: follow_up` per [state-persistence.md § Retrospective decisions](../../../docs/design/05-execution-layer/state-persistence.md). No further action in the current session.
-   - If `not_applicable`: state so explicitly and end the EVALUATE walk.
+   State the derived status and the rule that produced it. The rule is the registration's failure criterion plus step 6's confounder check — no new judgment is introduced here.
+9. **Capture the outcome.** Call `submit_validation_outcome(validation_id, verdict, posterior_summary, confounder_notes, narrative, rollback_status)` (writes a validation outcome entity per [state-persistence.md § Validation outcomes](../../../docs/design/05-execution-layer/state-persistence.md)). The validation is now closed; the record is permanent.
+10. **Handle the rollback status.**
+    - If `mandatory_clean_failure`: pre-fill a paired post-rollback validation registration in the same session via `register_validation(...)` seeded with `edited_artifact`, `watched_metric_ids`, and `window_length_days` from the failed validation; `expected_direction = improved`; `success_criterion` auto-derived as "metric returns to within posterior band of the pre-failed-edit baseline"; `failure_criterion` auto-derived as "metric stays at or worsens from the failed-edit post-edit window value." The `pre_edit_version` defaults to the failed edit's `post_edit_version`; the `post_edit_version` is left for the operator to fill at the moment of revert (typically HEAD after `git revert`). Walk the operator through confirming or adjusting the seeded fields before commit.
+    - If `optional_pending_retrospective`: state that the entry will surface in the next [`/feedback-retrospective`](../feedback-retrospective/SKILL.md)'s Suggested follow-ups section, where the operator's accept/reject decision will land as `decision_type: follow_up` per [state-persistence.md § Retrospective decisions](../../../docs/design/05-execution-layer/state-persistence.md). No further action in the current session.
+    - If `not_applicable`: state so explicitly and end the EVALUATE walk.
 
 ### Anti-patterns in evaluation
 
@@ -104,7 +105,7 @@ In strict order, do not deviate:
 - **Skipping the verbatim re-read.** It feels redundant. It is not — it anchors the evaluation against drift.
 - **Stretching the window.** If the window is up and the data is inconclusive, the verdict is `inconclusive`. Extending the window requires explicit operator direction with a stated reason (typically a confounder that argues for waiting), not silent slippage.
 - **Confounder hand-waving.** "There was a regime change but the numbers still look better" — regime change means the comparison is contaminated. Flag and resolve before evaluating.
-- **Inventing a confounder to escape `mandatory_clean_failure`.** Step 7's rollback derivation is mechanical: a confounder noted in step 5 downgrades the rollback obligation. The operator may not introduce a confounder at step 7 that wasn't observed at step 5. Confounders surface from the comparison itself, not from reluctance to roll back.
+- **Inventing a confounder to escape `mandatory_clean_failure`.** Step 8's rollback derivation is mechanical: a confounder noted in step 6 downgrades the rollback obligation. The operator may not introduce a confounder at step 8 that wasn't observed at step 6. Confounders surface from the comparison itself, not from reluctance to roll back.
 
 ---
 

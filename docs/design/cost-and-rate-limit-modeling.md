@@ -25,6 +25,7 @@ Pre-paper-trading: numbers are best estimates from agent specs and Anthropic's p
 | Pipeline schedule and invocation cadence | [architecture/infrastructure.md § Scheduling](../architecture/infrastructure.md#scheduling) |
 | Failure-path semantics (retry, abort, cap-hit handling) | [llm-agent-failure-handling.md](llm-agent-failure-handling.md) |
 | Adaptive-researcher tool-use bounds | [03-analysis-layer/adaptive-research.md](03-analysis-layer/adaptive-research.md) |
+| Per-trigger agent roster and budget envelope | [configuration-management.md § run_types/](configuration-management.md#run_typestriggeryaml) |
 | Continuous monitor scope, emergency invocation triggers | [05-execution-layer/architecture.md § Continuous monitor](05-execution-layer/architecture.md), [06-risk-guardrails/breach-behavior.md § Emergency invocation trigger](06-risk-guardrails/breach-behavior.md#emergency-invocation-trigger) |
 | Operator-action surface (pause scheduler, switch profile, halt mode) | [command-center.md § Operator actions](command-center.md#operator-actions) |
 
@@ -100,7 +101,7 @@ Emergency invocations triggered by the continuous monitor add a variable tail: *
 
 ### Per-invocation agent surface
 
-Per [architecture/llm-integration.md § Agent inventory](../architecture/llm-integration.md#agent-inventory), every invocation runs the same nine LLM agents in the same orchestration shape:
+Per [architecture/llm-integration.md § Agent inventory](../architecture/llm-integration.md#agent-inventory), the agent inventory is nine LLM agents in the same orchestration shape, filtered per firing trigger by the [`run_types/` overlay](configuration-management.md#run_typestriggeryaml):
 
 | Agent | Layer | Model | Parallelism |
 |---|---|---|---|
@@ -109,7 +110,7 @@ Per [architecture/llm-integration.md § Agent inventory](../architecture/llm-int
 | Energy analyst | Analysis | Sonnet | Parallel group |
 | Portfolio analyst | Analysis | Sonnet | Parallel group |
 | Qualitative researcher | Analysis | Sonnet | Parallel group |
-| Adaptive researcher | Analysis | Sonnet | Sequential after parallel group |
+| Adaptive researcher | Analysis | Sonnet | Sequential after parallel group; omitted on off-hours rolling and weekend-Saturday triggers |
 | Synthesizer | Analysis | Sonnet | Sequential after adaptive |
 | Analyst | Decision | Opus | Parallel pair |
 | Strategist | Decision | Opus | Parallel pair |
@@ -141,7 +142,7 @@ Token volumes per agent are documented at the agent-spec level. Aggregated for t
 | Portfolio manager | ~6,000 | ~3,000 |
 | **Opus subtotal** | **~11,000** | **~5,500** |
 
-**Per-invocation total: ~52,400 tokens (~36K Sonnet, ~16.5K Opus).**
+**Per-invocation total: ~52,400 tokens (~36K Sonnet, ~16.5K Opus).** Triggers that omit the adaptive researcher (off-hours rolling, weekend-Saturday — together 21 of 28 scheduled invocations per normal week) drop ~3,100 Sonnet tokens and one Sonnet call from the per-invocation total. The weekly Opus envelope — the binding constraint — is unaffected by run-type composition since the decision-layer trio fires on every trigger.
 
 Full-system profile ($100K, 6–15 positions, options/shorts enabled) increases strategist and PM input/output proportional to position count and adds the options/shorts sections to the analyst's guardrail header. Per-invocation total scales to **~65,000–80,000 tokens** in normal operation, with the increase concentrated in Opus.
 

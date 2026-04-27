@@ -90,7 +90,7 @@ Inventory of every external data provider AlphaMind reads from: authentication m
 ### 6. Finnhub
 - **Cost:** Free tier
 - **Sign up:** https://finnhub.io/register
-- **Domains served:** Q5e (Earnings calendar), Q5f (Analyst ratings), Q6g (Macro economic calendar), Q10d (Investor events), Qual1a (News), Qual5e (Policy calendar)
+- **Domains served:** Q5b (Earnings calendar), Q5f (Analyst ratings), Events:CAL (unified macro + policy event calendar), Q10d (Investor events), Qual1a (News)
 - **Endpoints:**
   - `GET /api/v1/calendar/earnings?from=2025-01-01&to=2025-03-01` — earnings calendar
   - `GET /api/v1/stock/recommendation?symbol=AAPL` — analyst recommendations

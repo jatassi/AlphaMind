@@ -117,6 +117,20 @@ Not a historical log — a single mutable record representing current state. His
 
 ---
 
+**Saved queries.** Operator-scoped persistent state for the [ad-hoc query surface](../command-center.md#ad-hoc-query-surface). One record per saved view. Command-center-managed; the OMS does not read or write this entity.
+
+Saved query record:
+- Saved query ID (unique, immutable)
+- Name (operator-supplied)
+- SQL: the canonical query text the surface composes from form state, or the operator's hand-edited variant
+- Form state: optional JSON snapshot of the surface's entity + filter selections at save time, used to re-hydrate the form on load. Null when the operator chose a SQL-only save, or when a previously-saved form-state no longer maps to the current entity catalog
+- Created timestamp
+- Last-run timestamp: updated each time the saved query executes
+
+Mutable: rename and SQL edit are supported via `PATCH /api/feedback/ad-hoc-query/saved/{id}`. The SQL field is the durable contract; `form_state` is a re-hydration convenience that may go stale across schema or form-layout evolution.
+
+---
+
 ### Tier 2 — Lifecycle entities
 
 Append-only records capturing history, in three groups: **event records** (fill records, corporate-action ledger, activity log entries) document state mutations and serve [raw state category 5](../01-data-layer/internal/portfolio-state.md); **provenance records** (process lifetimes, invocation records, agent calls) document the process, invocation, and per-agent-call context the feedback loop conditions on; **feedback-loop records** (counterfactual replays, validations, validation outcomes, retrospective reports, retrospective decisions) capture analytical artifacts. All Tier 2 entities are immutable once written.
@@ -369,7 +383,7 @@ Identity fields:
 - PM decision envelope ID: foreign key to the originating `pm_decision` activity log entry's envelope_id
 - Replay kind: `rejection` (PM rejected the proposal — replay simulates the un-rejected form) or `modification_original_form` (PM modified the proposal — replay simulates the un-modified form alongside the actual modified-form trade)
 - Replay status: `evaluated` (the engine produced a counterfactual P/L) or `unevaluable` (the engine could not produce one)
-- Unevaluable reason: enum, set only when status is `unevaluable`: `unsupported_instrument` (options or multi-leg strategy proposals; v1 is equity-only), `data_missing` (historical price data not available over the replay window), `corporate_action_in_window` (a corporate action fired on the underlying during the replay window)
+- Unevaluable reason: enum, set only when status is `unevaluable`: `unsupported_instrument` (multi-leg strategy proposals — equity and single-leg options are both supported from v2), `unsupported_bracket_type` (option proposal whose hard-backstop leg is P/L-based on the option's own price; per-bar option pricing is not modeled), `data_missing` (historical underlying price data not available over the replay window, or for option proposals no IV-surface snapshot available at or before the entry or exit timestamp within the data pipeline's normal refresh interval), `corporate_action_in_window` (a corporate action fired on the underlying during the replay window)
 
 Entry simulation fields (set only when replay status is `evaluated`):
 - Entered: boolean — whether the simulated entry order would have filled within the entry window
@@ -408,6 +422,8 @@ Validation record:
 - Edited artifact: source path of the prompt or config file that was changed (e.g., `prompts/decision/strategist.md`)
 - Pre-edit version: git SHA of the artifact prior to the edit
 - Post-edit version: git SHA of the artifact after the edit (typically HEAD at registration time)
+- Registered regime: regime label active at registration time (snapshotted from the distillation layer's regime classification on the registering invocation), used as the supersession comparison anchor
+- Registered model ID: Claude model ID active at registration time (snapshotted from `agent_calls` provenance on the registering invocation), used as the supersession comparison anchor
 - Watched metric IDs: ordered list of metric identifiers from the [feedback-loop metric inventory](../feedback-loop.md) the validation will assess
 - Window length days: how long until evaluation is meaningful
 - Expected direction: `improved`, `unchanged`, or `degraded`
@@ -415,8 +431,10 @@ Validation record:
 - Success criterion: concrete threshold the operator and Claude agreed counts as the change working
 - Failure criterion: concrete threshold that counts as the change not working or making things worse
 - Evaluation due timestamp: registered timestamp + window length
+- Superseded timestamp: when the validation was auto-superseded by a mid-window conditioning shift (null while the window is still readable); written by the supersession detector per [feedback-loop.md § Mid-window supersession](../feedback-loop.md#mid-window-supersession)
+- Superseded reason: structural reason the supersession fired (`regime_transition`, `model_version_change`, `concurrent_edit_on_watched_artifact`); null while the window is still readable
 
-Evaluation status is derived from the existence of a joining validation outcome record, not stored on the validation record itself.
+Evaluation status is derived: a validation is `superseded` when `superseded_at` is non-null, `evaluated` when a joining validation outcome record exists, `pending` otherwise. Outcome records are not written for superseded validations.
 
 ---
 

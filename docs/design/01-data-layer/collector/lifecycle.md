@@ -22,7 +22,7 @@ Bootstrap provides enough history that high-frequency baselines reach `calibrate
 | Macro monthly (Q6) | FRED + BLS | 24 months | `macro_surprise_percentile=90` requires a 24-month percentile distribution. |
 | EIA energy (Q6) | EIA | 252 days | Weekly inventory; one year covers seasonality. |
 | Treasury auctions (Q6) | Treasury fiscal data | 12 months | Trend context for auction-quality metrics. |
-| Event calendar (Q6g + Qual5 + earnings) | Finnhub | Forward 90 days | Forward-looking by nature. |
+| Event calendar (Events:CAL + Q5:5b earnings) | Finnhub | Forward 90 days | Forward-looking by nature. |
 | Options chain (Q3) | — | None — start fresh | Historical options expensive; distillation accepts `bootstrap` state. |
 | News (Qual1) | — | None — start fresh | Free-tier rate limits; forward-only. |
 | Prediction markets (Qual3) | — | None — start fresh | Delta-over-level principle. |

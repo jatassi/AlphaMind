@@ -84,7 +84,7 @@ Some tools provide data not routinely ingested for the full universe but availab
 
 The bound creates prioritization pressure: triage selects the highest-value questions, knowing most anomalies go uninvestigated this cycle. Persistent anomalies re-flag next cycle, producing a natural persistence-weighted queue — sustained anomalies eventually get investigated.
 
-**Cost implications:** Most variable-cost component of the pipeline. Range: near-zero on quiet cycles to the full 3–5 thread budget on volatile ones. The per-run scoping TODO in the [README](README.md) addresses how the adaptive budget varies — pre-open runs likely warrant more (overnight developments); after-hours runs less.
+**Cost implications:** Most variable-cost component of the pipeline. Range: near-zero on quiet cycles to the full 3–5 thread budget on volatile ones. The agent's per-invocation budget — `cumulative_tool_call_limit` and `cumulative_tool_token_budget` in `agents.yaml` — is overridable per firing trigger via [`run_types/<trigger>.yaml`](../configuration-management.md#run_typestriggeryaml). Pre-open and weekend-Sunday carry the full budget (overnight developments, pre-Monday positioning); off-hours rolling and weekend-Saturday omit the adaptive researcher from the roster entirely (persistent anomalies are picked up on the next high-density run).
 
 ---
 

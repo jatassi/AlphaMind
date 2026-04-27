@@ -1,12 +1,12 @@
 # Configuration management
 
-All operator-tunable values live in YAML files under a single `config/` tree; secrets in `.env`. The surface organizes around four named bundles — **profile**, **regime**, **mode**, **overlay** — with a flat tail of independent knobs (scheduler, data sources, agents, venue, execution, guardrail metadata, LLM failure policy). A resolver runs at invocation start, composes active bundles, and produces a resolved-config snapshot agents and the engine consume.
+All operator-tunable values live in YAML files under a single `config/` tree; secrets in `.env`. The surface organizes around five named bundles — **profile**, **regime**, **mode**, **overlay**, **run-type** — with a flat tail of independent knobs (scheduler, data sources, agents, venue, execution, guardrail metadata, LLM failure policy). A resolver runs at invocation start, composes active bundles, and produces a resolved-config snapshot agents and the engine consume.
 
 ## Principles
 
 **YAML is the operator interface.** Operators edit YAML only. Pydantic models in the loader provide typed access and parse-time validation.
 
-**Cascade the named bundles, keep the tail flat.** Profile, regime, mode, and overlay are named concepts in [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md), [regime-adaptation.md](06-risk-guardrails/regime-adaptation.md), and [state-delivery.md](06-risk-guardrails/state-delivery.md). Bundling correlated knobs under these names gives typo-proof composition and a review surface.
+**Cascade the named bundles, keep the tail flat.** Profile, regime, mode, and overlay are named concepts in [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md), [regime-adaptation.md](06-risk-guardrails/regime-adaptation.md), and [state-delivery.md](06-risk-guardrails/state-delivery.md); run-type is keyed off the firing trigger declared in `scheduler.yaml`. Bundling correlated knobs under these names gives typo-proof composition and a review surface.
 
 **Reload at invocation boundary.** Per [mid-pipeline-failure-handling.md](mid-pipeline-failure-handling.md)'s fresh-context principle, each invocation re-reads config at start. Operator edits land at the next trigger.
 
@@ -46,6 +46,9 @@ config/
     normal.yaml | halt.yaml
   overlays/
     pre-event.yaml | stress.yaml
+  run_types/
+    pre_open.yaml | market_hours_rolling.yaml | pre_close.yaml |
+    off_hours_rolling.yaml | weekend_saturday.yaml | weekend_sunday.yaml
 .env                                     # secrets, referenced by name from YAML
 ```
 
@@ -313,6 +316,9 @@ source_signal_survival_drop:
 
 validation_window_end:
   days_before_due: 7                   # fire when an active validation is within this many days of evaluation-due, or already overdue
+
+validation_superseded:
+  enabled: true                        # fire when an active validation was auto-superseded during the week (regime transition, model version change, or concurrent edit on the watched artifact)
 ```
 
 ### `assets.yaml`
@@ -432,6 +438,75 @@ final_invocation_before_event:
   block_new_positions: true
 ```
 
+### `run_types/<trigger>.yaml`
+
+Per-trigger overlay that scopes the analysis pipeline to the firing invocation type. One file per trigger key declared in `scheduler.yaml`. The active selection is automatic — the scheduler passes the firing trigger key into the resolver, which loads `run_types/{firing_trigger}.yaml`.
+
+The bundle is **deterministic-only**: it controls two surfaces — the agent roster (which agents fire) and the budget envelope (per-agent latency, output-token, and tool-loop caps; news-digest depth). It does **not** inject any run-type instruction into LLM prompts. Behavioral shaping flows from the synthesizer brief's data composition (which already differs per trigger time — overnight news on pre-open, end-of-day flow on pre-close) and the structural budget envelope. This avoids LLM anchoring on numeric targets in agent prompts.
+
+```yaml
+# pre_open.yaml — high-density: overnight news, pre-market flow, FOMC overnight moves
+agents:
+  enabled:
+    - tech_semis_analyst
+    - financials_analyst
+    - energy_analyst
+    - portfolio_analyst
+    - qualitative_researcher
+    - adaptive_researcher
+    - synthesizer
+    - analyst
+    - strategist
+    - pm
+  overrides:
+    adaptive_researcher:
+      cumulative_tool_call_limit:   25
+      cumulative_tool_token_budget: 4000
+      latency_budget_seconds:       300
+qualitative_researcher:
+  news_digest:
+    top_n_per_sector:    5
+    top_n_high_priority: 3
+```
+
+```yaml
+# off_hours_rolling.yaml — low-density: overnight rolling, signal density drops
+agents:
+  enabled:
+    - tech_semis_analyst
+    - financials_analyst
+    - energy_analyst
+    - portfolio_analyst
+    - qualitative_researcher
+    - synthesizer
+    - analyst
+    - strategist
+    - pm
+  # adaptive_researcher omitted: ~25 tool-calls and one Sonnet call drop from
+  # the workload; persistent anomalies are picked up on the next pre-open run.
+qualitative_researcher:
+  news_digest:
+    top_n_per_sector:    3
+    top_n_high_priority: 3
+```
+
+The remaining overlay files (`market_hours_rolling.yaml`, `pre_close.yaml`, `weekend_saturday.yaml`, `weekend_sunday.yaml`) follow the same shape. Starting values across the trigger set, calibrated against the cost-and-rate-limit envelope and refined once paper-trading data lands:
+
+| Trigger | Adaptive researcher | Adaptive tool-call cap | Adaptive token cap | News-digest top-N per sector |
+|---|---|---|---|---|
+| `pre_open` | enabled | 25 | 4000 | 5 |
+| `market_hours_rolling` | enabled | 20 | 3000 | 5 |
+| `pre_close` | enabled | 15 | 2500 | 4 |
+| `off_hours_rolling` | omitted | — | — | 3 |
+| `weekend_saturday` | omitted | — | — | 3 |
+| `weekend_sunday` | enabled | 20 | 3000 | 5 |
+
+The three decision-layer agents (analyst, strategist, PM) and the synthesizer fire on every run type — the run-type bundle never disables the decision layer. The four parallel analysis-layer agents (three sector analysts, portfolio analyst) likewise fire on every run type. Only the adaptive researcher and the qualitative researcher's news-digest depth carry per-trigger variance in v1.
+
+**Override semantics.** `agents.enabled` is the authoritative roster for the invocation; the resolver drops every agent not listed. `agents.overrides.<agent>.<field>` shallow-overrides the matching key from `agents.yaml`; unspecified fields inherit the `agents.yaml` default. `qualitative_researcher.news_digest.*` overrides news-digest sizing.
+
+**Scope.** The bundle does not carry rule values, regime multipliers, or action-vocabulary transforms — those are owned by profile, regime, and mode respectively. It does not carry feature flags — those are owned by profile. It does not carry a `run_type` string for prompt injection — by design.
+
 ### `llm_failure.yaml`
 Retry policy per failure mode from [llm-agent-failure-handling.md](llm-agent-failure-handling.md).
 
@@ -466,8 +541,9 @@ The resolver runs once at invocation start and produces a resolved-config snapsh
 | Regime | Distillation layer per invocation | `regimes/{current_regime}.yaml` |
 | Mode | Pipeline state (halt or normal) | `modes/{current_mode}.yaml` |
 | Overlays | Event calendar, stress detector | `overlays/*.yaml` (zero or more active) |
+| Run-type | Scheduler firing trigger | `run_types/{firing_trigger}.yaml` |
 
-Composition order for numeric rule limits: profile base → regime multiplier → active overlay multipliers (multiplicative). Mode transform applied last, restricting action vocabulary and guardrail state header sections.
+Composition order for numeric rule limits: profile base → regime multiplier → active overlay multipliers (multiplicative). Mode transform applied next, restricting action vocabulary and guardrail state header sections. Run-type overlay applied last, restricting the agent roster and clamping the per-agent budget envelope and news-digest depth — touches different keys than the prior dimensions, so the order is independent of cascade arithmetic but applied last for review-surface consistency.
 
 Profile transitions are manual per [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md#transitioning-between-profiles); the `Profile boundary crossed` alert rule in [`config/alerts.yaml`](command-center.md#alerting) emits an Operational advisory whenever `portfolio_summary.total_equity` falls outside the active profile's `capital_range_usd`, symmetric for upward (graduation candidate) and downward (downgrade candidate) crossings.
 
@@ -475,7 +551,7 @@ Profile transitions are manual per [rules-and-limits.md](06-risk-guardrails/rule
 
 **Deploy-time only (require process restart):** paths in `main.yaml`, SQLite pragmas set at connection open, Python/package versions, NSSM service definition, `.env` file location.
 
-**Invocation-time reload (picked up at next scheduled trigger):** everything else in the YAML tree. Rule values, regime multipliers, agent budgets, feature flags per profile, data-source registry entries, venue parameters, execution knobs, mode behavioral contracts, overlay parameters.
+**Invocation-time reload (picked up at next scheduled trigger):** everything else in the YAML tree. Rule values, regime multipliers, agent budgets, feature flags per profile, data-source registry entries, venue parameters, execution knobs, mode behavioral contracts, overlay parameters, run-type agent roster and budget overrides.
 
 **Never config (in code):** schema files and the reference-ID taxonomy they define, the OMS command ID template, the breach-response decision tree per rule, composition-resolver logic, schema validation procedures.
 
@@ -485,7 +561,7 @@ Three layers, run in order at each invocation's config load:
 
 **Parse-time.** Pydantic models enforce types, enums, required fields, and ranges. A type failure or missing required field is a structural error: load fails, invocation aborts, operator alerted. Same fail-closed shape as [llm-agent-failure-handling.md](llm-agent-failure-handling.md).
 
-**Cross-reference.** Checks relationships between files: `active_profile` in `main.yaml` names a file that exists in `profiles/`; `active_sectors` in every profile is a subset of the sector keys in `assets.yaml`'s `sectors:` map; every rule ID referenced by a profile's `rule_values` exists in `guardrails.yaml`'s registry; every regime's `multipliers` covers every rule present in every profile; `api_key_env` and `api_secret_env` references resolve to keys present in `.env`; agent `model` values are in the allowed-models list; every tool name in an agent's `tools` list is a registered tool.
+**Cross-reference.** Checks relationships between files: `active_profile` in `main.yaml` names a file that exists in `profiles/`; `active_sectors` in every profile is a subset of the sector keys in `assets.yaml`'s `sectors:` map; every rule ID referenced by a profile's `rule_values` exists in `guardrails.yaml`'s registry; every regime's `multipliers` covers every rule present in every profile; `api_key_env` and `api_secret_env` references resolve to keys present in `.env`; agent `model` values are in the allowed-models list; every tool name in an agent's `tools` list is a registered tool; every trigger key in `scheduler.yaml`'s `triggers:` map has a matching `run_types/{key}.yaml`; every agent name in any run-type's `agents.enabled` exists in `agents.yaml`; every override field in `agents.overrides` is a known field on the parent agent's config.
 
 **Semantic self-test.** Invariants requiring computation: cumulative-drawdown `progressive_tiers` are monotonically increasing in trigger percentage; no regime multiplier drives a rule limit to zero or negative for any profile; escalation zones are ordered `warning < critical < hard_block`; each profile's `capital_range_usd` does not overlap another profile's; every ticker symbol in `assets.yaml` is unique across all sectors and benchmarks and matches `^[A-Z][A-Z0-9.]*$`; each sector listed in any profile's `active_sectors` has at least one ticker in `assets.yaml`; `last_full_validation` in `assets.yaml` is no later than today; feature-flag closure — for each profile with `options_enabled: false`, no options rule appears in `rule_values`, no options-specific agent appears in `agents.yaml`'s active set, and no options-dependent field appears in guardrail state header configuration; in `digest.yaml`, every `baseline_window_weeks` ≥ 1, `anti_pattern_spike.multiplier_vs_baseline` > 1.0, `anti_pattern_spike.min_occurrences_this_week` ≥ 0, `sector_underperform.median_offset_sigma` > 0, `delta_pp_threshold` values in `(0, 100]`, and `validation_window_end.days_before_due` ≥ 0.
 
@@ -502,10 +578,6 @@ The semantic self-test validates closure per flag per profile. A failure indicat
 The scheduler re-reads the entire YAML tree before each invocation begins. Validation runs to completion before any agent is invoked or engine action taken. Successful validation produces the resolved-config snapshot that persists for the invocation duration.
 
 Aligns with the fresh-context principle from [mid-pipeline-failure-handling.md](mid-pipeline-failure-handling.md) and APScheduler's `max_instances=1` guarantee.
-
-## Deferred items
-
-**Per-run-type pipeline overlays** — the README TODO about tailored configs per invocation trigger (pre-open, intraday, pre-close, after-hours) — are deferred until after the base config is in place. Likely shape: a `run_types/` directory parallel to `modes/`, composed at resolution time based on the firing trigger.
 
 ---
 

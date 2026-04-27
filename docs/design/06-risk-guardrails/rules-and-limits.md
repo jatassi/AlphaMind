@@ -461,7 +461,40 @@ Profiles are validated and deployed sequentially:
 2. Accumulate real P/L data at micro → **paper trade at small** → tune → **deploy real capital at small**
 3. Repeat for medium and large tiers
 
-Each tier graduation is gated on demonstrated profitability with real capital at the current tier. Exact profitability criteria TBD.
+Tier graduation requires both a **mechanical floor** (deterministic thresholds over real-capital outcomes at the current tier, evaluated against the [feedback-loop dashboard's Section 3 trajectories](../feedback-loop.md#section-3--trajectory)) and an **operator confirmation** ([`/feedback-review`](../feedback-loop.md#skills) walks the conditioning slices to surface regime-confound failure modes that no static threshold catches). Both gates must clear before the operator switches `active_profile`. The "operating window" referenced below is the period spanning the most recent real-capital deployment at the current tier through to the proposed graduation.
+
+#### Mechanical floor — per tier
+
+The four credible-band sparklines in [Section 3](../feedback-loop.md#section-3--trajectory) (win rate, conviction calibration spread, status calibration spread, PM rejection accuracy) supply the substrate; their `"needs N more observations"` annotations encode the sample-size discipline. Resolved-thesis count thresholds align with the [thesis performance review trigger](#profile-micro-1500) (every 20 completed trades) — graduation requires roughly 1.5–2 completed cycles, which is also where the credible bands typically clear the dashboard's insufficient-sample threshold.
+
+**Micro → small.** All of:
+
+- **At least 30 resolved theses at micro real-capital.** Roughly 1.5 cycles of the thesis performance review trigger; sufficient for the four Section-3 credible-band sparklines to clear their insufficient-sample annotations.
+- **Cumulative realized P/L positive** across the operating window.
+- **Conviction calibration spread positive** with an 80% credible band that excludes zero — the analyst's conviction scale is producing the expectancy gradient [analyst.md](../04-decision-layer/analyst.md) defines.
+- **Thesis performance review** has completed at least one cycle (the trigger that fires at 20 trades) with a positive operator determination.
+
+**Small → medium.** All micro→small criteria, plus:
+
+- **Cumulative drawdown stayed at or below the 8% response band** — the 8% trigger may have fired (and the [progressive-response tightening](breach-behavior.md#cumulative-drawdown-response) exercised), but the 10% and 12% bands did not. Concentration management discipline at the tier whose risk priority is concentration.
+- **`conviction_disagreement` adjustment effectiveness positive** — PM modifications categorized as [`conviction_disagreement`](../04-decision-layer/portfolio-manager.md) correlate with improved outcomes over the window. The medium tier introduces options-greeks dimensions where PM sizing-discipline calibration is what manages them.
+
+**Medium → large.** All small→medium criteria, plus:
+
+- **Paper-vs-live slippage drag matches** — the [paper-evaluation harness](../05-execution-layer/paper-evaluation-harness.md)'s impact estimate sits within the posterior band of realized live execution drag for the operating window. Operationalizes the harness-is-calibrated principle at the tier where market impact begins to matter.
+- **Regime adaptation exercised** — the operating window covered at least one regime transition with the [strategist → PM remedy](regime-adaptation.md) for transition breaches executed, and the cumulative-drawdown response stayed at or below the 8% band through the transition.
+
+#### Operator confirmation
+
+Before switching `active_profile`, the operator runs [`/feedback-review`](../feedback-loop.md#skills) over the at-tier window and confirms:
+
+- The mechanical-floor metrics are not driven by a single regime, sector, or conviction band — checked via the dashboard's conditioning slices (regime, sector, conviction band, prompt version, model version).
+- No active validations registered via [`/feedback-validate`](../feedback-loop.md#skills) are pending evaluation at the tier transition.
+- [Section 5 notable-shifts flags](../feedback-loop.md#section-5--notable-shifts) over the operating window do not surface unresolved anti-pattern spikes, citation-chain shifts, or source signal-survival drops that the mechanical floor's outcome metrics could mask.
+
+The graduation action is the operator's edit of `main.yaml`'s `active_profile` (or use of [`POST /control/switch_profile`](../command-center.md#control-surface)). The config edit is the audited graduation artifact; the [`/feedback-review`](../feedback-loop.md#skills) session is transient by design.
+
+Where insufficient data forces an `inconclusive` reading on the calibration-spread sparklines, the operator continues at the current tier until the credible band tightens — the same sample-size discipline the dashboard's insufficient-sample annotation operationalizes for self-review.
 
 ### Transitioning between profiles
 

@@ -1,8 +1,9 @@
 """Qual 5: Regulatory, Policy, and Geopolitical Events — entity definitions.
 
-5 entities covering Fed communications, regulatory actions/rulings,
-executive action, geopolitical events, and a regulatory/policy event calendar.
-SEC EDGAR, Federal Register, and FRED are the primary free sources.
+4 entities covering Fed communications, regulatory actions/rulings,
+executive action, and geopolitical events. SEC EDGAR, Federal Register,
+and FRED are the primary free sources. Scheduled regulatory and policy
+events feed the unified [`EventCalendar`](events.py).
 """
 
 from __future__ import annotations
@@ -23,8 +24,6 @@ __all__ = [
     "ExecutiveAction",
     "FedCommunication",
     "GeopoliticalEvent",
-    "PolicyEvent",
-    "PolicyEventCalendar",
     "RegulatoryAction",
     "StatementChange",
 ]
@@ -57,38 +56,6 @@ class StatementChange:
     hawkish_dovish_impact: Direction
     """Directional impact of change: BULLISH (dovish rate cuts/accommodation),
     BEARISH (hawkish tightening/restrictive), NEUTRAL, or MIXED."""
-
-
-@dataclass(frozen=True)
-class PolicyEvent:
-    """A single scheduled regulatory, policy, or macroeconomic event on the calendar.
-
-    Used by PolicyEventCalendar to track individual events and detect clustering risk.
-    """
-
-    event_id: str
-    """Unique identifier for tracking event across updates and reprioritizations."""
-
-    event_type: str
-    """Categorical event type: 'fomc' | 'cpi' | 'ppi' | 'pce' | 'nfp' |
-    'congressional_hearing' | 'court_date' | 'opec' | 'treasury_auction' |
-    'regulatory_deadline' | 'earnings_cluster' | 'rate_decision_other_central_bank'."""
-
-    event_date: date
-    """Scheduled date of event (or estimated date if subject to change)."""
-
-    description: str
-    """Human-readable event description (e.g., 'FOMC Rate Decision', 'CPI Release')."""
-
-    affected_sectors: list[AlphaMindSector]
-    """Which sectors are most directly impacted by this event. Empty if broad market."""
-
-    expected_volatility_impact: SignalStrength
-    """How much volatility should we expect from this event? STRONG, MODERATE, WEAK, NONE."""
-
-    consensus_estimate: str | None
-    """Qualitative consensus or numerical estimate (e.g., 'CPI +0.3% MoM',
-    'NFP +150k')."""
 
 
 # ── Main entities ────────────────────────────────────────────────────────────
@@ -422,52 +389,3 @@ class GeopoliticalEvent:
     anomalies: list[AnomalyFlag] = field(default_factory=list)
     """Detected anomalies (e.g., 'unexpected escalation', 'market repricing slower than
     geopolitical severity')."""
-
-
-@dataclass(frozen=True)
-class PolicyEventCalendar:
-    """Qual 5:5e — Known regulatory/policy event dates with clustering risk detection.
-
-    Event dates (FOMC, economic releases, hearings, deadlines, court dates),
-    event clustering risk (multiple events in same window), unscheduled event
-    monitoring conditions.
-
-    Market impact: Clustering of multiple high-impact events (e.g., FOMC + CPI + earnings)
-    in the same week compounds uncertainty and can trigger outsized volatility swings
-    (±3-5% intraday range). The Portfolio manager must reduce position sizing and widen stops
-    when clustering risk is high.
-
-    Source: Finnhub economic calendar (free)
-    Cadence: Daily
-    Feasibility: HIGH — economic calendar from Finnhub, FOMC/OPEC dates public
-    """
-
-    upcoming_events: list[PolicyEvent]
-    """Upcoming events in the next 30 days, ordered by date."""
-
-    next_event: PolicyEvent
-    """The single most imminent event (from upcoming_events[0])."""
-
-    events_this_week: list[PolicyEvent]
-    """Events scheduled for this calendar week (through Friday close). Subset of upcoming_events."""
-
-    event_clustering_risk: SignalStrength
-    """Quantification of clustering risk: STRONG = 3+ high-impact events within 5 days,
-    MODERATE = 2 high-impact events, WEAK = 1 or scattered, NONE = no significant events."""
-
-    clustering_description: str
-    """Narrative description of which events are clustering and why it matters
-    (e.g., 'FOMC decision (Wed) + CPI release (Thu) + earnings cluster (Fri) concentrates
-    volatility risk; recommend 50% position sizing reduction')."""
-
-    metadata: InvocationMetadata
-    """Pipeline invocation metadata."""
-
-    unscheduled_event_risk_factors: list[str] = field(default_factory=list)
-    """Conditions increasing probability of surprise unscheduled events
-    (e.g., 'elevated geopolitical tensions', 'credit spreads widening', 'Fed speaker on
-    calendar but not yet announced')."""
-
-    anomalies: list[AnomalyFlag] = field(default_factory=list)
-    """Detected anomalies (e.g., 'event density spike detected', 'unusual multi-event
-    clustering pattern')."""
