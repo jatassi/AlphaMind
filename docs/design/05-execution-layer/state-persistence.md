@@ -117,6 +117,20 @@ Not a historical log — a single mutable record representing current state. His
 
 ---
 
+**Saved queries.** Operator-scoped persistent state for the [ad-hoc query surface](../command-center.md#ad-hoc-query-surface). One record per saved view. Command-center-managed; the OMS does not read or write this entity.
+
+Saved query record:
+- Saved query ID (unique, immutable)
+- Name (operator-supplied)
+- SQL: the canonical query text the surface composes from form state, or the operator's hand-edited variant
+- Form state: optional JSON snapshot of the surface's entity + filter selections at save time, used to re-hydrate the form on load. Null when the operator chose a SQL-only save, or when a previously-saved form-state no longer maps to the current entity catalog
+- Created timestamp
+- Last-run timestamp: updated each time the saved query executes
+
+Mutable: rename and SQL edit are supported via `PATCH /api/feedback/ad-hoc-query/saved/{id}`. The SQL field is the durable contract; `form_state` is a re-hydration convenience that may go stale across schema or form-layout evolution.
+
+---
+
 ### Tier 2 — Lifecycle entities
 
 Append-only records capturing history, in three groups: **event records** (fill records, corporate-action ledger, activity log entries) document state mutations and serve [raw state category 5](../01-data-layer/internal/portfolio-state.md); **provenance records** (process lifetimes, invocation records, agent calls) document the process, invocation, and per-agent-call context the feedback loop conditions on; **feedback-loop records** (counterfactual replays, validations, validation outcomes, retrospective reports, retrospective decisions) capture analytical artifacts. All Tier 2 entities are immutable once written.

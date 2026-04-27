@@ -421,7 +421,95 @@ Cross-retrospective decisions ledger (deferred): a separate view filtering `retr
 
 #### Ad-hoc query surface
 
-For everything not on curated views — direct query against the persistence layer with a SQL-like interface, filterable by date range, agent name, sector, regime, prompt version, and conditioning dimensions defined in [feedback-loop.md](feedback-loop.md).
+The unconstrained tail of the F. Quality and feedback view group — everything [feedback-loop.md](feedback-loop.md) names but the curated views (digest, validation evaluation, monthly, retrospective) do not render. Driven by [`/feedback-review`](../../.claude/skills/feedback-review/SKILL.md) ad-hoc deep-dives, [`/feedback-retrospective`](../../.claude/skills/feedback-retrospective/SKILL.md) Phase 1 ingestion, and operator self-review.
+
+A hybrid form-to-SQL surface: a structured form covers the routine [conditioning slices](feedback-loop.md#conditioning-surface) the curated views and skills already lean on; a "show as SQL" pane reveals the composed query in an editable console for open-ended investigation; saved views persist as SQL strings so they survive form-layout evolution. Read-only by construction.
+
+Layout: a single page with three regions stacked top to bottom — the **filter form**, the **show-as-SQL pane** (collapsible), and the **result table**. A **saved-queries rail** sits to the left of the filter form, listing the operator's saved views by name with one-click load. Above the result table: a small toolbar with **Run**, **Save view**, **Export CSV**, and **Reset**.
+
+##### Entity catalog
+
+The form's first control. Picking an entity selects the filter pane shape, the default column set, and the SQL the form composes. The catalog covers the substrate the [metric inventory](feedback-loop.md#metric-inventory) and [conditioning surface](feedback-loop.md#conditioning-surface) already exercise:
+
+| Entity | Source | Default columns |
+|---|---|---|
+| Agent calls | `agent_calls` | `invocation_id`, `agent_name`, `model_id`, `system_prompt_content_hash`, `success`, `error_class`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `wall_clock_ms`, `started_at` |
+| Activity log | `activity_log` | `entry_id`, `invocation_id`, `timestamp`, `event_type`, `position_id`, `thesis_id`, `source` |
+| PM envelopes | `activity_log` filtered to `event_type = 'pm_decision'` | `envelope_id`, `invocation_id`, `timestamp`, `source_agent`, `verdict`, `criterion_failures`, `anti_patterns_identified`, `modification_count`, `command_count` |
+| Theses | `theses` (with optional `thesis_components` join) | `thesis_id`, `position_id`, `status`, `resolution_category`, `resolution_timestamp`, `generation_timestamp` |
+| Counterfactual replays | `counterfactual_replays` | `replay_id`, `envelope_id`, `replay_kind`, `replay_status`, `unevaluable_reason`, `confidence`, `realized_pl`, `replay_engine_version`, `replay_timestamp` |
+| Invocations | `invocations` | `invocation_id`, `started_at`, `run_type`, `status`, `active_profile`, `active_regime`, `active_mode`, `active_overlays`, `resolved_config_hash` |
+| Validations | `validations` left-joined to `validation_outcomes` | `validation_id`, `edited_artifact`, `watched_metric_ids`, `expected_direction`, `registered_at`, `evaluation_due_at`, `verdict`, `evaluated_at` |
+| Retrospective decisions | `retrospective_decisions` | `decision_id`, `report_id`, `decision_type`, `item_identifier`, `verdict`, `captured_timestamp`, `linked_validation_id` |
+
+Every entity except invocations carries an implicit `LEFT JOIN invocations ON invocation_id` so the conditioning surface is available regardless of the chosen entity. The join is composed by the form, not pasted by the operator.
+
+##### Filter form
+
+Three filter blocks, all optional except the time range:
+
+1. **Time range.** Always present and required. Pre-set buttons (`last 7 days`, `last 30 days`, `last 90 days`, `quarter-to-date`, `custom`) plus a custom-range date picker. Maps to the entity's primary timestamp column — `started_at` for invocations and agent calls, `timestamp` for activity log and PM envelopes, `resolution_timestamp` for resolved theses (with fallback to `generation_timestamp` when filtering active theses), `replay_timestamp` for replays, `registered_at` for validations, `captured_timestamp` for retrospective decisions.
+2. **Entity-specific filters.** A pane keyed to the chosen entity. Examples — agent calls: `agent_name` multi-select, `success` boolean, `error_class` multi-select, `model_id` multi-select; activity log: `event_type` multi-select, `source` multi-select, `position_id` text input; PM envelopes: `source_agent` multi-select, `verdict` multi-select, `criterion_failures` contains-any multi-select, `anti_patterns_identified` contains-any multi-select; theses: `status` multi-select, `resolution_category` multi-select, `sector` multi-select (joined through `positions`); counterfactual replays: `replay_kind` multi-select, `replay_status` multi-select, `confidence` multi-select; validations: `edited_artifact` path-prefix input, `expected_direction` multi-select, `verdict` multi-select.
+3. **Conditioning surface.** Constant across entities — the [conditioning surface](feedback-loop.md#conditioning-surface) controls, joined through `invocations`: `active_regime` multi-select, sector multi-select, `active_profile` multi-select, `active_mode` multi-select, `active_overlays` contains-any multi-select, prompt-version selector (per-agent: resolves to a `system_prompt_content_hash` set), `model_id` multi-select, time-of-day-bucket multi-select (pre-open / intraday / pre-close / off-hours, derived from `invocations.started_at`).
+
+The prompt-version and `model_id` filters compose differently per entity: directly against `agent_calls` for the agent calls entity, and via an `EXISTS (SELECT 1 FROM agent_calls a WHERE a.invocation_id = e.invocation_id AND ...)` subquery for entities that don't carry these columns. The form picks the right shape automatically.
+
+Below the filter blocks: **sort** (column + direction), **row limit** (default 1000, capped at 10000 in-page), and **Run**. CSV export uses a separate streaming path with its own cap.
+
+##### Show-as-SQL pane
+
+Collapsed by default. Toggling open reveals the SQL the form just composed in a Monaco editor pane, SQLite-dialect-highlighted. Editing the SQL is allowed; the form above grays out as soon as an edit lands and a "Reset to form" button appears. **Run** executes whatever is in the editor when the pane is open, and whatever the form composed when the pane is closed.
+
+The composed SQL is canonicalized — joins, aliases, and column ordering are stable across runs of the same form state — so saved queries round-trip as readable, diffable text.
+
+##### Saved queries
+
+Persisted by the command center backend per [state-persistence.md § Saved queries](05-execution-layer/state-persistence.md). Each record carries the SQL text and an optional form-state JSON snapshot.
+
+Save flow: **Save view** opens a small dialog with a name field and a "save SQL + form state" / "save SQL only" toggle (defaults to both). Saving with form state restores the form to its saved selections on load; saving SQL-only drops directly into the show-as-SQL pane. Saved queries that no longer compose back to the form (because the schema or form layout has evolved) fall through to SQL-only — the SQL is the durable contract.
+
+Saved-queries rail: lists by name with last-run-at, sorted most-recent-first; inline rename; delete with confirmation.
+
+##### Result rendering
+
+A TanStack Table beneath the form, columns from the entity's default set plus any column referenced by the SQL `SELECT`. Per-row affordances:
+
+- **ID chips link out.** Every `invocation_id`, `position_id`, `thesis_id`, `order_id`, `envelope_id`, `replay_id`, `validation_id`, and `report_id` rendered in a result row is a chip that deep-links to that record's primary view (per-invocation detail, position detail, thesis detail, validation evaluation view, retrospective view, etc.) — the same chip behavior as the per-invocation detail page.
+- **Row expansion.** Clicking a row expands an inline panel with the underlying record. For agent calls, the panel renders the persisted `system_prompt.md`, `output.json`, and `tools_definition.json` from the snapshot reference fields. For PM envelopes, the panel renders the full envelope (verdict, criterion pass/fail, modifications, anti-patterns, rationale) — the same shape rendered in per-invocation detail. For theses, the panel renders the joined `thesis_components`. For replays, the panel renders entry/exit simulation fields with the configured price overlay when available.
+
+Above the table: row-count display (`Showing 847 of 847` or `Showing first 1000 — more rows match; export CSV for the full set`) and the configured row cap.
+
+##### Export CSV
+
+**Export CSV** runs the same query the table just rendered, streamed as `text/csv` from `GET /api/feedback/ad-hoc-query/export?saved_id={id}` for saved queries or `POST /api/feedback/ad-hoc-query/export` with `{sql}` for inline queries. Streaming bypasses the in-page row cap; the export-only cap is configured separately in `config/command-center.yaml` (default 100,000 rows; refusal beyond cap returns a structured error).
+
+Filename: `adhoc_{entity}_{YYYYMMDD-HHMMSS}.csv` for inline queries, `adhoc_{saved_query_name}_{YYYYMMDD-HHMMSS}.csv` for saved. CSV columns match the rendered table; cells are quoted per RFC 4180; nested JSON columns (`active_overlays`, `criterion_failures`, `anti_patterns_identified`, `posterior_summary`) serialize as JSON strings.
+
+##### Read-only enforcement
+
+Three layers:
+
+1. **Statement parser.** The submitted SQL is parsed at the API boundary; any statement other than `SELECT` or `WITH ... SELECT` is rejected with the offending token in the error message. Uses `sqlglot` (the same dialect-aware parser the codebase already pulls in for SQLAlchemy compilation), not regex.
+2. **Read-only connection.** The execution path opens an `aiosqlite` connection in read-only mode (URI form: `file:%USERPROFILE%/AlphaMind/data/state.db?mode=ro`). DDL/DML reaching this connection fails at the SQLite layer.
+3. **Statement timeout.** A wall-clock timeout (default 10 seconds, configurable in `config/command-center.yaml`) cancels the underlying connection if a query exceeds it; returns a structured timeout error and logs the offending SQL for operator review.
+
+##### API surface
+
+| Method + path | Body / params | Effect |
+|---|---|---|
+| `POST /api/feedback/ad-hoc-query/compose` | `{entity, filters, conditioning, sort, limit}` | Returns `{sql}` — the canonical SQL the form composes to. Pure function; no DB hit. |
+| `POST /api/feedback/ad-hoc-query/execute` | `{sql, limit?}` | Executes against the read-only connection; returns `{columns, rows, row_count, truncated, execution_ms}`. |
+| `POST /api/feedback/ad-hoc-query/saved` | `{name, sql, form_state?}` | Creates a saved query; returns `{saved_query_id}`. |
+| `GET /api/feedback/ad-hoc-query/saved` | — | Lists the operator's saved queries (`saved_query_id`, `name`, `last_run_at`, `has_form_state`). |
+| `GET /api/feedback/ad-hoc-query/saved/{id}` | — | Returns one saved query (SQL plus `form_state`). |
+| `PATCH /api/feedback/ad-hoc-query/saved/{id}` | `{name?, sql?, form_state?}` | Renames or updates fields. |
+| `DELETE /api/feedback/ad-hoc-query/saved/{id}` | — | Deletes the saved query. |
+| `GET /api/feedback/ad-hoc-query/export` | `?saved_id={id}` | Streams CSV from a saved query's SQL. |
+| `POST /api/feedback/ad-hoc-query/export` | `{sql}` | Streams CSV from inline SQL. |
+
+`compose` is its own endpoint (not a query parameter on `execute`) because Skills want the composed SQL for inspection without paying the execution cost.
+
+Reachable from: direct URL `/feedback/ad-hoc-query`; from session mode via `navigate_to_view` with `view_path: "quality-and-feedback/ad-hoc-query"` for an empty surface or `view_path: "quality-and-feedback/ad-hoc-query?saved_id={id}"` for a specific saved query; from the weekly digest header. The standard session-mode affordances (`highlight_chart_point`, `annotate`, `pin_for_comparison`) operate on result-table rows by row id (`{saved_query_id}:row_{ordinal}` or `inline:row_{ordinal}` for unsaved queries) — no new affordance verbs.
 
 ---
 
