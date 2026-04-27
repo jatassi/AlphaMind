@@ -98,6 +98,13 @@ def collect_universe_bars(
     """
     if _client is None:
         _client = PolygonClient()
+    if _session_factory is None:
+        from alphamind.persistence.models import Base
+        from alphamind.persistence.session import make_engine, make_session_factory
+
+        engine = make_engine()
+        Base.metadata.create_all(engine)
+        _session_factory = make_session_factory(engine)
     tfs = timeframes if timeframes is not None else _TIMEFRAMES
     now_utc = datetime.now(UTC)
     since_dt = since if since is not None else now_utc - timedelta(days=5)
@@ -164,8 +171,7 @@ def collect_universe_bars(
                         )
                     )
 
-                if _session_factory is not None:
-                    _upsert_bars(_session_factory, rows_to_write)
+                _upsert_bars(_session_factory, rows_to_write)
                 rows_written += len(rows_to_write)
 
         run.rows_written = rows_written

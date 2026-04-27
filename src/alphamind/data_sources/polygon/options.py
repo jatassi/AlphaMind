@@ -40,6 +40,13 @@ def collect_options_chains(
     """
     if _client is None:
         _client = PolygonClient()
+    if _session_factory is None:
+        from alphamind.persistence.models import Base
+        from alphamind.persistence.session import make_engine, make_session_factory
+
+        engine = make_engine()
+        Base.metadata.create_all(engine)
+        _session_factory = make_session_factory(engine)
 
     snapshot_ts = _snapshot_ts if _snapshot_ts is not None else datetime.now(UTC).isoformat()
     ingested_at = datetime.now(UTC).isoformat()
@@ -60,79 +67,71 @@ def collect_options_chains(
                     raise
                 continue
 
-            if _session_factory is None:
-                continue
-
-            contract_rows: list[OptionsContracts] = []
-            snapshot_rows: list[OptionsContractSnapshots] = []
-
-            for snap in snapshots:
-                details = snap.details
-                contract_ticker = details.ticker
-                exp_date = details.expiration_date
-                strike = details.strike_price
-                contract_type = details.contract_type
-
-                greeks = snap.greeks
-                delta = greeks.delta if greeks else None
-                gamma = greeks.gamma if greeks else None
-                theta = greeks.theta if greeks else None
-                vega = greeks.vega if greeks else None
-
-                iv = snap.implied_volatility
-                oi = snap.open_interest
-                day = snap.day
-                volume = day.volume if day else None
-                lq = snap.last_quote
-                bid = lq.bid if lq else None
-                ask = lq.ask if lq else None
-                lt = snap.last_trade
-                last_price = lt.price if lt else None
-                ua = snap.underlying_asset
-                underlying_price = ua.price if ua else None
-                rho = getattr(snap, "rho", None)
-
-                contract_rows.append(
-                    OptionsContracts(
-                        contract_ticker=contract_ticker,
-                        underlying_ticker=underlying,
-                        expiration_date=exp_date,
-                        strike_price=float(strike),
-                        contract_type=contract_type,
-                        first_seen_at=snapshot_ts,
-                        last_seen_at=snapshot_ts,
-                        source="polygon",
-                    )
-                )
-                snapshot_rows.append(
-                    OptionsContractSnapshots(
-                        snapshot_ts=snapshot_ts,
-                        contract_ticker=contract_ticker,
-                        underlying_ticker=underlying,
-                        open_interest=int(oi) if oi is not None else None,
-                        volume_today=int(volume) if volume is not None else None,
-                        last_price=float(last_price) if last_price is not None else None,
-                        bid=float(bid) if bid is not None else None,
-                        ask=float(ask) if ask is not None else None,
-                        implied_volatility=float(iv) if iv is not None else None,
-                        delta=float(delta) if delta is not None else None,
-                        gamma=float(gamma) if gamma is not None else None,
-                        theta=float(theta) if theta is not None else None,
-                        vega=float(vega) if vega is not None else None,
-                        rho=float(rho) if rho is not None else None,
-                        underlying_price=float(underlying_price)
-                        if underlying_price is not None
-                        else None,
-                        source="polygon",
-                        ingested_at=ingested_at,
-                    )
-                )
-
+            contract_rows, snapshot_rows = _build_rows(
+                snapshots, underlying, snapshot_ts, ingested_at
+            )
             _upsert_contracts(_session_factory, contract_rows, snapshot_ts)
             _upsert_snapshots(_session_factory, snapshot_rows)
             rows_written += len(snapshot_rows)
 
         run.rows_written = rows_written
+
+
+def _build_rows(
+    snapshots: list[Any],
+    underlying: str,
+    snapshot_ts: str,
+    ingested_at: str,
+) -> tuple[list[OptionsContracts], list[OptionsContractSnapshots]]:
+    """Convert a Polygon snapshot list to ORM rows for both options tables."""
+    contract_rows: list[OptionsContracts] = []
+    snapshot_rows: list[OptionsContractSnapshots] = []
+    for snap in snapshots:
+        details = snap.details
+        greeks = snap.greeks
+        day = snap.day
+        lq = snap.last_quote
+        lt = snap.last_trade
+        ua = snap.underlying_asset
+
+        contract_rows.append(
+            OptionsContracts(
+                contract_ticker=details.ticker,
+                underlying_ticker=underlying,
+                expiration_date=details.expiration_date,
+                strike_price=float(details.strike_price),
+                contract_type=details.contract_type,
+                first_seen_at=snapshot_ts,
+                last_seen_at=snapshot_ts,
+                source="polygon",
+            )
+        )
+        snapshot_rows.append(
+            OptionsContractSnapshots(
+                snapshot_ts=snapshot_ts,
+                contract_ticker=details.ticker,
+                underlying_ticker=underlying,
+                open_interest=int(snap.open_interest) if snap.open_interest is not None else None,
+                volume_today=int(day.volume) if day and day.volume is not None else None,
+                last_price=float(lt.price) if lt and lt.price is not None else None,
+                bid=float(lq.bid) if lq and lq.bid is not None else None,
+                ask=float(lq.ask) if lq and lq.ask is not None else None,
+                implied_volatility=float(snap.implied_volatility)
+                if snap.implied_volatility is not None
+                else None,
+                delta=float(greeks.delta) if greeks and greeks.delta is not None else None,
+                gamma=float(greeks.gamma) if greeks and greeks.gamma is not None else None,
+                theta=float(greeks.theta) if greeks and greeks.theta is not None else None,
+                vega=float(greeks.vega) if greeks and greeks.vega is not None else None,
+                rho=float(getattr(snap, "rho", None))
+                if getattr(snap, "rho", None) is not None
+                else None,
+                underlying_price=float(ua.price) if ua and ua.price is not None else None,
+                source="polygon",
+                ingested_at=ingested_at,
+            )
+        )
+    return contract_rows, snapshot_rows
 
 
 def _upsert_contracts(session_factory: Any, rows: list[OptionsContracts], snapshot_ts: str) -> None:

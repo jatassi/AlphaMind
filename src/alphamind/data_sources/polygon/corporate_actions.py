@@ -41,6 +41,13 @@ def collect_corporate_actions(
     """
     if _client is None:
         _client = PolygonClient()
+    if _session_factory is None:
+        from alphamind.persistence.models import Base
+        from alphamind.persistence.session import make_engine, make_session_factory
+
+        engine = make_engine()
+        Base.metadata.create_all(engine)
+        _session_factory = make_session_factory(engine)
 
     since_str = since.strftime("%Y-%m-%d") if since is not None else None
     ingested_at = datetime.now(UTC).isoformat()
@@ -102,8 +109,7 @@ def collect_corporate_actions(
                     )
                 )
 
-            if _session_factory is not None:
-                _upsert_actions(_session_factory, rows)
+            _upsert_actions(_session_factory, rows)
             rows_written += len(rows)
 
         run.rows_written = rows_written

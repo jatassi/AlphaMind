@@ -37,6 +37,13 @@ def collect_reference(
     """
     if _client is None:
         _client = PolygonClient()
+    if _session_factory is None:
+        from alphamind.persistence.models import Base
+        from alphamind.persistence.session import make_engine, make_session_factory
+
+        engine = make_engine()
+        Base.metadata.create_all(engine)
+        _session_factory = make_session_factory(engine)
 
     @with_retries(RetryShape.critical, _sleep=lambda _: None)
     def _fetch_details(ticker: str) -> Any:
@@ -52,9 +59,6 @@ def collect_reference(
             except Exception:
                 if single:
                     raise
-                continue
-
-            if _session_factory is None:
                 continue
 
             last_updated = datetime.now(UTC).isoformat()
