@@ -2,7 +2,7 @@
 
 How AlphaMind gets better month over month. The feedback loop bridges the structured reasoning artifacts the system produces (analyst conviction labels, strategist status classifications, PM verdicts with criterion pass/fail and identified anti-patterns, synthesizer citations) to the outcomes those artifacts produced (thesis resolutions, realized P/L, position closures), so the operator can refine prompt and configuration quality over time.
 
-The operator is the agent of all changes — the system does not self-tune, aligning with the uniformly-fail-closed posture elsewhere in the architecture. The feedback loop's job is to make those decisions as well-informed as possible.
+The operator is the agent of all changes — the system does not self-tune, aligning with the uniformly-fail-closed posture elsewhere. The feedback loop's job is to make those decisions as well-informed as possible.
 
 ---
 
@@ -10,15 +10,15 @@ The operator is the agent of all changes — the system does not self-tune, alig
 
 **In scope:** performance tuning. Detecting where reasoning artifacts diverge from outcomes, surfacing what to tune, validating whether tunes worked.
 
-**Out of scope:** operational health, alerting, live dashboards. Those belong to the [command center](command-center.md). The feedback loop assumes the system is technically functioning and asks instead whether it is *getting better*.
+**Out of scope:** operational health, alerting, live dashboards. Those belong to the [command center](command-center.md). The feedback loop assumes the system is technically functioning and asks whether it is *getting better*.
 
-The unit of analysis is the **reasoning artifact paired with its outcome trail** — a conviction-4 label paired with the trade's resolution category, a `sunk_cost_persistence` tag paired with the held position's eventual realized P/L, a synthesizer citation chain paired with whether the cited findings ended up in validated thesis components. Every such pairing is a *prediction* the system made, and every prediction is retrospectively scoreable. That bridging is the feedback loop's substrate.
+The unit of analysis is the **reasoning artifact paired with its outcome trail** — a conviction-4 label paired with the trade's resolution category, a `sunk_cost_persistence` tag paired with the held position's eventual realized P/L, a synthesizer citation chain paired with whether the cited findings ended up in validated thesis components. Every such pairing is a *prediction* the system made; every prediction is retrospectively scoreable.
 
 ---
 
 ## The three jobs
 
-The loop supports the operator (working with Claude as a consultant) in three distinct cognitive tasks. Each gets different mechanisms and different cadences.
+The loop supports the operator (working with Claude as a consultant) in three distinct cognitive tasks. Each gets different mechanisms and cadences.
 
 | Job | What it answers | Primary mechanism |
 |---|---|---|
@@ -26,7 +26,7 @@ The loop supports the operator (working with Claude as a consultant) in three di
 | **Prescription** | What specific change should we consider? | Operator + Claude, working from Discovery evidence to a concrete prompt or configuration edit |
 | **Validation** | Did the last change actually help? | Pre/post comparison on a pre-registered metric over a pre-defined window, with explicit uncertainty bands and confounder controls |
 
-Most quant feedback loops only do Discovery. Most LLM-app evals only do operational monitoring. The leverage and the design difficulty sit in Prescription and Validation — they are where teams fool themselves with confirmation bias and where most "we tried X and it worked" claims fail to replicate.
+Most quant feedback loops only do Discovery; most LLM-app evals only do operational monitoring. The leverage and design difficulty sit in Prescription and Validation — where teams fool themselves with confirmation bias and where most "we tried X and it worked" claims fail to replicate.
 
 ---
 
@@ -34,19 +34,19 @@ Most quant feedback loops only do Discovery. Most LLM-app evals only do operatio
 
 ### Deterministic analytics is the spine
 
-A continuous analytics layer aggregates the activity log, agent call records, thesis records, position records, and counterfactual replay records into queryable views. This is what feeds Discovery (the weekly digest, the dashboards in the command center), what makes Validation possible (reproducible pre/post metrics), and what powers operator-driven ad-hoc investigation.
+A continuous analytics layer aggregates activity log, agent call records, thesis records, position records, and counterfactual replay records into queryable views. Feeds Discovery (the weekly digest, command center dashboards), makes Validation possible (reproducible pre/post metrics), and powers operator-driven ad-hoc investigation.
 
-Most metrics in the inventory below derive directly from this layer's queries, with no additional infrastructure beyond the [provenance fields](05-execution-layer/state-persistence.md) and the [counterfactual replay engine](05-execution-layer/counterfactual-replay-engine.md) already specified.
+Most metrics in the inventory below derive directly from this layer's queries, with no additional infrastructure beyond the [provenance fields](05-execution-layer/state-persistence.md) and [counterfactual replay engine](05-execution-layer/counterfactual-replay-engine.md) already specified.
 
 ### LLM retrospective is a periodic supplement
 
-A periodic offline retrospective — calendar-anchored, not continuous — reads N invocations end-to-end and produces a structured report on patterns the deterministic layer can't surface. It is the mechanism for finding new things to instrument: when the retrospective consistently surfaces the same pattern across multiple sessions, that pattern becomes a candidate for promotion to a deterministic metric.
+A periodic offline retrospective — calendar-anchored, not continuous — reads N invocations end-to-end and produces a structured report on patterns the deterministic layer can't surface. It's the mechanism for finding new things to instrument: when the retrospective consistently surfaces the same pattern across multiple sessions, that pattern becomes a candidate for promotion to a deterministic metric.
 
-The retrospective runs interactively in a Claude Code session (the operator and Claude review together), not as an unattended batch report. The act of reviewing IS the work; unattended reports tend to be skimmed.
+The retrospective runs interactively in a Claude Code session (operator and Claude review together), not as an unattended batch report. The act of reviewing IS the work; unattended reports tend to be skimmed.
 
 ### Why this split
 
-Validation requires reproducible metrics. LLM retrospective output is qualitative and cross-session noisy — useful for Discovery, unusable for Validation. Deterministic analytics is always-on, cheap, and produces stable comparison surfaces; LLM retrospective is token-expensive and periodic, so it can afford depth but not frequency. Each plays to its strength.
+Validation requires reproducible metrics. LLM retrospective output is qualitative and cross-session noisy — useful for Discovery, unusable for Validation. Deterministic analytics is always-on, cheap, and produces stable comparison surfaces; LLM retrospective is token-expensive and periodic, affording depth but not frequency.
 
 ---
 
@@ -60,7 +60,7 @@ Three tiers, mapped to what becomes observable in each window.
 | Weekly | week-over-week | Process metrics with small but meaningful samples — PM rejection patterns by criterion, anti-pattern raw counts, criterion pass/fail distributions, status transition counts | Read the weekly digest before the trading week opens; ad-hoc deep-dive if anything surfaces |
 | Monthly / quarterly | month- or quarter-over-quarter | Outcome metrics with statistical power — conviction calibration, status calibration, anti-pattern detector accuracy, P/L attribution | Sit with Claude in a `/feedback-review` session for monthly; `/feedback-retrospective` for quarterly LLM-driven open-ended review |
 
-Outcome-tier metrics need real resolved-thesis volume before they're meaningful — patience is structural, not optional. The operator may *want* to look at outcome metrics weekly; the metric should *show* a posterior band wide enough that no honest reading triggers a change. Time-dilation strategies (counterfactual replay especially) accelerate observability on the rejected/held path but do not manufacture forward outcomes for trades the system actually took.
+Outcome-tier metrics need real resolved-thesis volume before they're meaningful — patience is structural. The operator may *want* to look at outcome metrics weekly; the metric should *show* a posterior band wide enough that no honest reading triggers a change. Time-dilation strategies (counterfactual replay) accelerate observability on the rejected/held path but do not manufacture forward outcomes for trades the system actually took.
 
 ---
 
@@ -68,23 +68,23 @@ Outcome-tier metrics need real resolved-thesis volume before they're meaningful 
 
 A load-bearing distinction throughout the inventory.
 
-**Process metrics (P)** — high frequency, low noise. Move enough week-over-week to support iteration on prompt-discipline tweaks. Examples: PM rejection rate per criterion, anti-pattern frequency, conviction distribution, status transition counts. These are the right surface for fast adjustment of discipline issues (e.g., the strategist drifting toward generic rationales).
+**Process metrics (P)** — high frequency, low noise. Move enough week-over-week to support iteration on prompt-discipline tweaks. Examples: PM rejection rate per criterion, anti-pattern frequency, conviction distribution, status transition counts. The right surface for fast adjustment of discipline issues.
 
-**Outcome metrics (O)** — low frequency, high noise. Need months of resolved-thesis volume before they support inference. Examples: conviction calibration, status calibration, realized P/L vs. expected. These anchor high-stakes signal-criteria revisions (e.g., redefining what counts as conviction-4 evidence).
+**Outcome metrics (O)** — low frequency, high noise. Need months of resolved-thesis volume before they support inference. Examples: conviction calibration, status calibration, realized P/L vs. expected. Anchor high-stakes signal-criteria revisions.
 
-The discipline: weight process metrics for fast-iteration tweaks; weight outcome metrics for high-stakes structural changes. Display them differently so the operator does not unconsciously read short-window outcome noise as actionable signal. Goodhart awareness applies throughout — a metric prominently displayed becomes a target. Phrase metrics as diagnostics, not scorecards, and prefer Bayesian posterior bands over point estimates for everything outcome-tier.
+Discipline: weight process metrics for fast-iteration tweaks; weight outcome metrics for high-stakes structural changes. Display them differently so the operator doesn't unconsciously read short-window outcome noise as actionable signal. Goodhart awareness throughout — a metric prominently displayed becomes a target. Phrase metrics as diagnostics, not scorecards, and prefer Bayesian posterior bands over point estimates for everything outcome-tier.
 
 ---
 
 ## Metric inventory
 
-Organized to mirror the system structure: one section per layer, with per-agent metrics within each, then cross-cutting metrics, then a dedicated section on **citation-chain metrics** that span layers.
+Organized to mirror the system structure: one section per layer with per-agent metrics, then cross-cutting metrics, then **citation-chain metrics** that span layers.
 
 For each metric: name, P/O type, what it measures, computation hint, meaningful window.
 
 ### Data layer
 
-Deterministic data fetchers, no LLMs. Performance metrics here are about whether the inputs to downstream agents are high-quality.
+Deterministic data fetchers, no LLMs. Metrics here are about whether the inputs to downstream agents are high-quality.
 
 | Metric | P/O | What it measures | Computation | Window |
 |---|---|---|---|---|
@@ -95,7 +95,7 @@ Deterministic data fetchers, no LLMs. Performance metrics here are about whether
 
 ### Distillation layer
 
-Programmatic anomaly detection, regime classification, lead-lag computation. No LLMs. Performance metrics are signals for adjusting Class A thresholds.
+Programmatic anomaly detection, regime classification, lead-lag computation. No LLMs. Metrics are signals for adjusting Class A thresholds.
 
 | Metric | P/O | What it measures | Computation | Window |
 |---|---|---|---|---|
@@ -123,11 +123,11 @@ Three sector domain researchers (tech-semis, financials, energy), portfolio anal
 | Signal validation rate | O | When this agent's findings feed theses, do those theses validate? | Per-component validation rate, conditioned on cited source brief | Quarterly |
 | Anomaly catch rate | O | Did this agent address anomalies the distillation layer flagged in its sector? | Anomalies addressed / anomalies in sector | Monthly |
 
-**Cross-agent comparison within layer:** the same metrics viewed side-by-side per researcher. Particularly: signal validation rate compared across the three sector researchers, and finding density per token (output volume / context tokens consumed). This is the surface that detects "researcher X is producing low-signal content compared to peers."
+**Cross-agent comparison within layer:** the same metrics side-by-side per researcher — particularly signal validation rate compared across the three sector researchers, and finding density per token (output volume / context tokens consumed). Detects "researcher X is producing low-signal content compared to peers."
 
 #### Synthesizer-specific metrics
 
-The synthesizer has no structured output, just prose with embedded references. Quality measurable through the reference-ID structure:
+The synthesizer has no structured output, just prose with embedded references. Quality is measurable through the reference-ID structure:
 
 | Metric | P/O | What it measures | Computation | Window |
 |---|---|---|---|---|
@@ -136,7 +136,7 @@ The synthesizer has no structured output, just prose with embedded references. Q
 | Contradiction surfacing rate | P | Is it flagging contradictions in upstream briefs? | Manual or LLM-judged classification of synthesis paragraphs | Monthly |
 | Brief length vs. upstream length | P | Compression ratio | Synthesis tokens / sum of upstream tokens | Weekly |
 
-Synthesizer recall directly measures "is the synthesizer discarding key details?" — high recall failure means signal is being left on the table that decision agents have to retrieve themselves.
+Synthesizer recall measures "is the synthesizer discarding key details?" — high recall failure means signal is being left on the table that decision agents have to retrieve themselves.
 
 #### Adaptive researcher specific
 
@@ -256,7 +256,7 @@ These are queries over existing data, conditioned on the [invocation provenance 
 
 ## Citation-chain metrics — the cross-layer flagship
 
-Citation-chain metrics deserve their own section because they span layers and answer cross-layer questions the per-layer metrics cannot. They are fully computable from the existing reference ID taxonomy and the persisted agent outputs.
+Citation-chain metrics span layers and answer cross-layer questions the per-layer metrics cannot. Fully computable from the existing reference ID taxonomy and persisted agent outputs.
 
 The reference ID hierarchy:
 
@@ -292,37 +292,37 @@ Each arrow is a measurement point.
 | Signal survival rate per source | Refs from X that ended in a validated thesis component / total refs from X | Which sources produce predictive signals |
 | Per-source validation rate | Among theses citing X: validated count / total | Whether a source's signals tend to be right |
 
-**This surfaces low-signal upstream agents:** if one sector researcher's signal survival rate is materially lower than the others over a month, that researcher is the candidate for prompt revision. Combine with synthesizer citation rate per source — if the synthesizer is also down-citing that researcher, the synthesizer is correctly detecting low signal. If the synthesizer is citing at parity but downstream validation is low, the synthesizer is being misled by a noisy upstream.
+**This surfaces low-signal upstream agents:** if one sector researcher's signal survival rate is materially lower than the others over a month, that researcher is the candidate for prompt revision. Combine with synthesizer citation rate per source — if the synthesizer is also down-citing that researcher, it's correctly detecting low signal. If citing at parity but downstream validation is low, the synthesizer is being misled by a noisy upstream.
 
-**This surfaces synthesizer drop errors:** synthesizer recall counts dropped findings that decision agents had to retrieve themselves — high recall failure means signal is being left on the table.
+**This surfaces synthesizer drop errors:** synthesizer recall counts dropped findings that decision agents had to retrieve themselves.
 
-These metrics require parsing reference IDs across persisted agent outputs (the `agent_calls.output_artifact_ref` files) and joining to thesis component records. Not a data capture gap, but a query-tooling investment — a small reference-ID parsing library is the right unit of work.
+These metrics require parsing reference IDs across persisted agent outputs (the `agent_calls.output_artifact_ref` files) and joining to thesis component records — a small reference-ID parsing library is the right unit of work.
 
 ---
 
 ## Counterfactual replay
 
-PM rejections and PM modifications produce no observable forward outcomes by default — the trades they would have produced were never taken. Without observability on these decisions, PM evaluation quality is unmeasurable.
+PM rejections and modifications produce no observable forward outcomes by default — the trades were never taken. Without observability on these decisions, PM evaluation quality is unmeasurable.
 
-The [counterfactual replay engine](05-execution-layer/counterfactual-replay-engine.md) closes that gap by deterministically simulating PM-rejected and PM-modified-away proposals against historical underlying price data, producing a hypothetical realized P/L per replay. Records land in the `counterfactual_replays` entity (per [state-persistence.md](05-execution-layer/state-persistence.md)) and join to the originating PM envelope.
+The [counterfactual replay engine](05-execution-layer/counterfactual-replay-engine.md) closes the gap by deterministically simulating PM-rejected and PM-modified-away proposals against historical underlying price data, producing a hypothetical realized P/L per replay. Records land in the `counterfactual_replays` entity (per [state-persistence.md](05-execution-layer/state-persistence.md)) and join to the originating PM envelope.
 
-This unlocks: PM rejection accuracy, modification effectiveness, anti-pattern detector accuracy, sizing modification effectiveness — all of which appear as outcome metrics in the inventory above.
+Unlocks: PM rejection accuracy, modification effectiveness, anti-pattern detector accuracy, sizing modification effectiveness.
 
-The engine is daily batch (with on-demand override via the command center or the `/feedback-review` skill). Equity-only; options and multi-leg strategies are recorded as unevaluable. Low-confidence replays are persisted but excluded from aggregated metrics at query time.
+The engine is daily batch (with on-demand override via the command center or `/feedback-review` skill). Equity-only; options and multi-leg strategies are recorded as unevaluable. Low-confidence replays are persisted but excluded from aggregated metrics at query time.
 
 ---
 
 ## Confounder management
 
-The biggest confounders that can corrupt feedback-loop inference:
+Biggest confounders that corrupt feedback-loop inference:
 
-- **Market / volatility regime shifts** — calibration appears to drift but really regime moved
+- **Market / volatility regime shifts** — calibration appears to drift but regime moved
 - **Anthropic model updates** — Claude can drift in behavior between releases without our prompts changing
 - **Other concurrent prompt edits** — if two prompts change in the same window, neither change is attributable
 - **Data source quality changes** — Polygon shape change, source brief outage
 - **Random variance** — most short-window movements
 
-The structural support already in place (per [state-persistence.md](05-execution-layer/state-persistence.md) provenance fields):
+Structural support in place (per [state-persistence.md](05-execution-layer/state-persistence.md) provenance fields):
 
 - Active regime, profile, mode, overlays, and resolved config hash recorded per invocation
 - Active model ID recorded per agent call
@@ -330,13 +330,13 @@ The structural support already in place (per [state-persistence.md](05-execution
 - Active SDK versions and pip-freeze hash recorded per process lifetime
 - Data source freshness and calibration state snapshot recorded per invocation
 
-The discipline that uses that structure:
+Discipline using that structure:
 
-- **Track the relevant context alongside every metric.** Aggregations in the analytics layer are conditioned on regime, prompt version, and model version by default — never displayed as unconditional aggregates that smear across confounders.
-- **One-change-at-a-time.** At most one prompt edit per evaluation window. Boring; powerful. If multiple edits are needed, they ship serially with one window's wait between, not as a batch.
-- **Pre-registration.** When a change is made, the operator and Claude write down the expected direction and rough magnitude of impact *before* observing post-change data. Defeats post-hoc rationalization, which is the failure mode this discipline exists to prevent.
-- **Hold-out periods.** When in doubt, wait another window before declaring victory.
-- **Backtest as sanity check** for regime-sensitive changes — if a change holds across multiple historical regimes (via the deterministic-layer backtest discussed under time-dilation strategies), that is stronger evidence than forward observation alone. (Backtest-for-deterministic-layer is open infrastructure work; not yet committed.)
+- **Track the relevant context alongside every metric.** Aggregations are conditioned on regime, prompt version, and model version by default — never displayed as unconditional aggregates that smear across confounders.
+- **One-change-at-a-time.** At most one prompt edit per evaluation window. If multiple edits are needed, they ship serially with one window's wait between, not as a batch.
+- **Pre-registration.** When a change is made, the operator and Claude write down the expected direction and rough magnitude of impact *before* observing post-change data. Defeats post-hoc rationalization.
+- **Hold-out periods.** When in doubt, wait another window.
+- **Backtest as sanity check** for regime-sensitive changes — if a change holds across multiple historical regimes, that's stronger evidence than forward observation alone. (Backtest-for-deterministic-layer is open infrastructure work.)
 
 ---
 
@@ -352,25 +352,25 @@ Three skills are the primary interface for operator-and-Claude interactive revie
 
 ### Dashboard as shared canvas
 
-All three skills run against the [command center's review-session surface](command-center.md#review-sessions). The integration model mirrors the Claude Code IDE pattern: Claude has *passive awareness* of what the operator is currently viewing and selecting; each prompt turn, the skill calls `GET /review-sessions/{id}/state` to inject the operator's current dashboard context (current view, what they have highlighted or selected, recent navigation history) into Claude's context. Claude reasons about that state plus the operator's message plus the underlying analytics, then issues `POST /review-sessions/{id}/control` calls to highlight metrics, navigate the dashboard, annotate chart points, or pin items for comparison as part of its response. The operator continues using the dashboard normally and responds verbally in the chat.
+All three skills run against the [command center's review-session surface](command-center.md#review-sessions). The integration model mirrors the Claude Code IDE pattern: Claude has *passive awareness* of what the operator is currently viewing and selecting; each prompt turn, the skill calls `GET /review-sessions/{id}/state` to inject the operator's current dashboard context (current view, what they have highlighted or selected, recent navigation history) into Claude's context. Claude reasons about that state plus the operator's message plus the underlying analytics, then issues `POST /review-sessions/{id}/control` calls to highlight metrics, navigate the dashboard, annotate chart points, or pin items for comparison. The operator continues using the dashboard normally and responds verbally in the chat.
 
-Asymmetric by design: Claude writes via tool calls and reads via tool calls; the operator drives the dashboard themselves. This is the dashboard-as-shared-canvas model — both parties act on the same surface, neither party's actions automatically trigger the other.
+Asymmetric by design: Claude writes via tool calls and reads via tool calls; the operator drives the dashboard themselves. Dashboard-as-shared-canvas — both parties act on the same surface; neither's actions automatically trigger the other.
 
-The v1 affordance vocabulary (highlight metric, highlight chart point, navigate to view, annotate, pin for comparison, clear-*), the session lifecycle endpoints, and the session state shape are specified in [command-center.md § Review sessions](command-center.md#review-sessions).
+The v1 affordance vocabulary, session lifecycle endpoints, and session state shape are in [command-center.md § Review sessions](command-center.md#review-sessions).
 
 ---
 
 ## Dashboard and digest curation
 
-The [command center's Quality and feedback view group](command-center.md) is the rendering surface. It serves both self-review (the operator browses on their own) and session mode (operator + Claude reviewing together via the [Skills](#skills)).
+The [command center's Quality and feedback view group](command-center.md) is the rendering surface, serving both self-review (operator browses alone) and session mode (operator + Claude reviewing together via the [Skills](#skills)).
 
 ### Curation heuristic
 
-The dashboard surfaces anything the operator might review on their own outside a Claude session, plus visual representations of the history of key metrics so that positive or negative trajectory is gaugeable at a glance. The full metric inventory above is the universe; the dashboard renders a curated subset, with everything else accessible via ad-hoc query through the same persistence layer.
+The dashboard surfaces anything the operator might review on their own outside a Claude session, plus visual history of key metrics so trajectory is gaugeable at a glance. The full metric inventory is the universe; the dashboard renders a curated subset, with everything else accessible via ad-hoc query.
 
 ### Surface composition
 
-A **weekly digest** — single scrollable view designed for ~5-minute consumption Sunday morning before the trading week opens. Live by default (always reflects current data when opened) and snapshotted weekly to a `weekly_digest_snapshots` table on a fixed schedule (8am ET Sunday) so historical week-to-week comparison is queryable without raw-data reconstruction. Generated deterministically — no LLM tokens. Section content below; thresholds for the notable-shift flags are operator-tunable in `config/digest.yaml`.
+A **weekly digest** — single scrollable view designed for ~5-minute consumption Sunday morning before the trading week opens. Live by default (always reflects current data when opened) and snapshotted weekly to a `weekly_digest_snapshots` table on a fixed schedule (8am ET Sunday) so historical week-to-week comparison is queryable. Generated deterministically — no LLM tokens. Thresholds for notable-shift flags are operator-tunable in `config/digest.yaml`.
 
 #### Section 1 — Headline outcomes
 
@@ -443,46 +443,46 @@ Renders as a small stacked bar plus per-bucket counts. The operator scans this f
 
 ---
 
-Roughly 25 deterministic numbers across the six sections plus variable rows in Sections 4 and 5. Process metrics dominate; outcome metrics in Section 3 carry explicit credible bands and sample-threshold annotations. Pull-only.
+Roughly 25 deterministic numbers across six sections plus variable rows in Sections 4 and 5. Process metrics dominate; outcome metrics in Section 3 carry explicit credible bands and sample-threshold annotations. Pull-only.
 
-A **monthly view** — outcome-tier metrics, conditioning slices (regime, sector, conviction band, prompt version, model version), citation-chain visualizations, anti-pattern accuracy curves. Trajectory visualizations are the primary affordance here. The view's specific layout is drafted once enough resolved-thesis volume exists for the outcome metrics to carry meaningful credible bands.
+A **monthly view** — outcome-tier metrics, conditioning slices (regime, sector, conviction band, prompt version, model version), citation-chain visualizations, anti-pattern accuracy curves. Trajectory visualizations are the primary affordance. Layout drafted once enough resolved-thesis volume exists for outcome metrics to carry meaningful credible bands.
 
 An **ad-hoc query surface** — for everything not on the curated views.
 
 ### Session mode overlay
 
-When a [Skill](#skills) opens a [review session](command-center.md#review-sessions), the same dashboard pages — including the weekly digest — gain highlighting / annotation / view-control affordances. The dashboard becomes a shared canvas: Claude can highlight a metric Claude wants the operator to look at; the operator can highlight a metric they want Claude to discuss; both parties read the same surface.
+When a [Skill](#skills) opens a [review session](command-center.md#review-sessions), the same dashboard pages — including the weekly digest — gain highlighting / annotation / view-control affordances. Claude highlights a metric Claude wants the operator to look at; the operator highlights one they want Claude to discuss; both parties read the same surface.
 
-The session-mode affordances are dimmed when no session is active so self-review stays uncluttered. The digest is a natural starting page for `/feedback-review` since Claude can use it as the entry point and drill into specific items by navigating to other views via `navigate_to_view`.
+Session-mode affordances are dimmed when no session is active so self-review stays uncluttered. The digest is a natural starting page for `/feedback-review` — Claude uses it as entry point and drills into specific items via `navigate_to_view`.
 
 ---
 
 ## Validation methodology
 
-Validation is operationalized through the [`/feedback-validate` skill](#skills): pre-registration of expected impact captured at change time as a contract, criteria frozen at registration, posterior bands rather than point estimates, confounder conditioning mandatory, "inconclusive" as a first-class verdict, one change per validation window. The skill's REGISTER and EVALUATE flows enforce these in their orchestration; the [validation evaluation view](command-center.md#validation-evaluation-view) is the dashboard surface the EVALUATE flow walks through.
+Validation is operationalized through the [`/feedback-validate` skill](#skills): pre-registration of expected impact captured at change time as a contract, criteria frozen at registration, posterior bands rather than point estimates, confounder conditioning mandatory, "inconclusive" as a first-class verdict, one change per validation window. The skill's REGISTER and EVALUATE flows enforce these; the [validation evaluation view](command-center.md#validation-evaluation-view) is the dashboard surface EVALUATE walks through.
 
 ---
 
 ## Pending
 
-A few items intentionally wait on either data accumulation, the dashboard build, or operating the system.
+Items waiting on data accumulation, dashboard build, or operating the system.
 
 ### Waiting on data accumulation
 
-Outcome-tier surfaces need real resolved-thesis volume before the design is meaningful — drafting them earlier produces a layout calibrated against assumptions rather than data.
+Outcome-tier surfaces need real resolved-thesis volume before the design is meaningful.
 
-- **Monthly view metric set and conditioning-slice UI.** Structure (outcome metrics with regime / sector / conviction-band / prompt-version / model-version conditioning) is named in [Dashboard and digest curation](#dashboard-and-digest-curation); specific layout, metric subset, and slice-comparison UI ship once resolved-thesis count crosses the threshold for meaningful credible bands.
-- **Retrospective view layout.** The retrospective is calendar-anchored quarterly; the dashboard view that renders a `retrospective_reports` record is drafted alongside the first quarterly retrospective.
+- **Monthly view metric set and conditioning-slice UI.** Structure named in [Dashboard and digest curation](#dashboard-and-digest-curation); specific layout, metric subset, and slice-comparison UI ship once resolved-thesis count crosses the threshold for meaningful credible bands.
+- **Retrospective view layout.** Calendar-anchored quarterly; the dashboard view rendering a `retrospective_reports` record is drafted alongside the first quarterly retrospective.
 
 ### Waiting on the dashboard build
 
-- **`config/digest.yaml` schema.** The key/value tree for the operator-tunable notable-shift thresholds (defaults named in [Section 5 — Notable shifts](#section-5--notable-shifts)). Drafted as part of the dashboard build's config wiring.
+- **`config/digest.yaml` schema.** Key/value tree for operator-tunable notable-shift thresholds. Drafted as part of the dashboard build's config wiring.
 - **Ad-hoc query surface UI.** Filter dimensions, query input shape, result rendering, export. Drafted with the dashboard frontend.
 
 ### Waiting on operating the system
 
-- **Validation methodology edge cases.** Two procedures the existing methodology framework points at but does not yet specify: handling interrupted windows (when a regime shift or model update straddles the validation window mid-run), and the protocol for what evidence is sufficient to roll back a previously-shipped change. Both surface naturally as the system runs and validations accumulate.
-- **Skill prompt iteration.** The three skill drafts (`/feedback-review`, `/feedback-validate`, `/feedback-retrospective`) cover the orchestration logic and discipline; behavioral specifics will refine once the skills are evaluable against real review sessions, validations, and retrospectives. Normal skill iteration, not a design gap.
+- **Validation methodology edge cases.** Two procedures the existing framework points at but doesn't specify: handling interrupted windows (regime shift or model update straddling the validation window mid-run), and protocol for what evidence is sufficient to roll back a shipped change. Both surface naturally as the system runs.
+- **Skill prompt iteration.** The three skill drafts cover orchestration logic and discipline; behavioral specifics refine once the skills are evaluable against real sessions. Normal skill iteration, not a design gap.
 
 ---
 
