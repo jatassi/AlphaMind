@@ -92,24 +92,24 @@ def _auction_record(
     record_date: str = "2026-03-15",
     security_term: str = "10-Year",
     high_yield: str = "4.25",
+    avg_med_yield: str = "4.245",
     bid_to_cover_ratio: str = "2.35",
-    tail_basis_point: str = "0.5",
-    primary_dealer_amt_pct: str = "12.5",
-    indirect_bidder_amt_pct: str = "65.3",
-    direct_bidder_amt_pct: str = "22.2",
-    total_accepted_amt: str = "35000",
+    primary_dealer_accepted: str = "4_375_000_000",
+    indirect_bidder_accepted: str = "22_855_000_000",
+    direct_bidder_accepted: str = "7_770_000_000",
+    total_accepted: str = "35_000_000_000",
 ) -> dict:
-    """Build a single fake auction record with defaults."""
+    """Build a single fake auction record with defaults matching the live v1 API shape."""
     return {
         "record_date": record_date,
         "security_term": security_term,
         "high_yield": high_yield,
+        "avg_med_yield": avg_med_yield,
         "bid_to_cover_ratio": bid_to_cover_ratio,
-        "tail_basis_point": tail_basis_point,
-        "primary_dealer_amt_pct": primary_dealer_amt_pct,
-        "indirect_bidder_amt_pct": indirect_bidder_amt_pct,
-        "direct_bidder_amt_pct": direct_bidder_amt_pct,
-        "total_accepted_amt": total_accepted_amt,
+        "primary_dealer_accepted": primary_dealer_accepted,
+        "indirect_bidder_accepted": indirect_bidder_accepted,
+        "direct_bidder_accepted": direct_bidder_accepted,
+        "total_accepted": total_accepted,
     }
 
 
@@ -182,12 +182,12 @@ class TestCollectAuctions:
                     record_date="2026-03-15",
                     security_term="10-Year",
                     high_yield="4.25",
+                    avg_med_yield="4.245",
                     bid_to_cover_ratio="2.35",
-                    tail_basis_point="0.5",
-                    primary_dealer_amt_pct="12.5",
-                    indirect_bidder_amt_pct="65.3",
-                    direct_bidder_amt_pct="22.2",
-                    total_accepted_amt="35000",
+                    primary_dealer_accepted="4_375_000_000",
+                    indirect_bidder_accepted="22_855_000_000",
+                    direct_bidder_accepted="7_770_000_000",
+                    total_accepted="35_000_000_000",
                 )
             ]
         )
@@ -210,11 +210,11 @@ class TestCollectAuctions:
         assert row.tenor == "10Y"
         assert row.auction_yield_bp == pytest.approx(425.0)  # 4.25 * 100
         assert row.bid_to_cover == pytest.approx(2.35)
-        assert row.tail_bp == pytest.approx(0.5)
-        assert row.primary_dealer_pct == pytest.approx(12.5)
-        assert row.indirect_pct == pytest.approx(65.3)
-        assert row.direct_pct == pytest.approx(22.2)
-        assert row.auction_size_usd == pytest.approx(35.0)  # 35000 / 1000
+        assert row.tail_bp == pytest.approx(0.5)  # (4.25 - 4.245) * 100
+        assert row.primary_dealer_pct == pytest.approx(12.5)  # 4.375B / 35B * 100
+        assert row.indirect_pct == pytest.approx(65.3)  # 22.855B / 35B * 100
+        assert row.direct_pct == pytest.approx(22.2)  # 7.77B / 35B * 100
+        assert row.auction_size_usd == pytest.approx(35.0)  # 35B / 1e9
         assert row.source == "treasury"
 
 

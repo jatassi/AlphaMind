@@ -14,7 +14,7 @@ from alphamind.data_sources.treasury.client import TreasuryClient
 from alphamind.persistence.models import Base, TreasuryAuctions
 from alphamind.persistence.session import make_engine, make_session_factory
 
-_AUCTIONS_PATH = "/services/api/fiscal_service/v2/accounting/od/auctions_query"
+_AUCTIONS_PATH = "/services/api/fiscal_service/v1/accounting/od/auctions_query"
 _PAGE_SIZE = 100
 
 # Maps API security_term values to storage short form
@@ -47,12 +47,12 @@ def _fetch_all_pages(since: date) -> list[dict[str, Any]]:
                 "record_date",
                 "security_term",
                 "high_yield",
+                "avg_med_yield",
                 "bid_to_cover_ratio",
-                "tail_basis_point",
-                "primary_dealer_amt_pct",
-                "indirect_bidder_amt_pct",
-                "direct_bidder_amt_pct",
-                "total_accepted_amt",
+                "primary_dealer_accepted",
+                "indirect_bidder_accepted",
+                "direct_bidder_accepted",
+                "total_accepted",
             ]
         ),
         "filter": f"record_date:gte:{since.isoformat()},security_term:in:({security_terms})",
@@ -77,6 +77,12 @@ def _fetch_all_pages(since: date) -> list[dict[str, Any]]:
     return all_records
 
 
+def _pct(numerator: float | None, denominator: float | None) -> float | None:
+    if numerator is None or denominator is None or denominator == 0:
+        return None
+    return numerator / denominator * 100.0
+
+
 def _record_to_row(record: dict[str, Any]) -> TreasuryAuctions | None:
     """Convert an API record dict to a TreasuryAuctions ORM row, or None if tenor unknown."""
     security_term = record.get("security_term", "")
@@ -87,11 +93,20 @@ def _record_to_row(record: dict[str, Any]) -> TreasuryAuctions | None:
     auction_date = record.get("record_date", "")
     auction_id = f"{auction_date}_{tenor}"
 
-    raw_yield = _float_or_none(record.get("high_yield"))
-    auction_yield_bp = raw_yield * 100.0 if raw_yield is not None else None
+    high_yield = _float_or_none(record.get("high_yield"))
+    avg_med_yield = _float_or_none(record.get("avg_med_yield"))
+    auction_yield_bp = high_yield * 100.0 if high_yield is not None else None
+    tail_bp = (
+        (high_yield - avg_med_yield) * 100.0
+        if high_yield is not None and avg_med_yield is not None
+        else None
+    )
 
-    raw_size = _float_or_none(record.get("total_accepted_amt"))
-    auction_size_usd = raw_size / 1000.0 if raw_size is not None else None
+    total_accepted = _float_or_none(record.get("total_accepted"))
+    primary_amt = _float_or_none(record.get("primary_dealer_accepted"))
+    indirect_amt = _float_or_none(record.get("indirect_bidder_accepted"))
+    direct_amt = _float_or_none(record.get("direct_bidder_accepted"))
+    auction_size_usd = total_accepted / 1e9 if total_accepted is not None else None
 
     return TreasuryAuctions(
         auction_id=auction_id,
@@ -99,10 +114,10 @@ def _record_to_row(record: dict[str, Any]) -> TreasuryAuctions | None:
         auction_date=auction_date,
         auction_yield_bp=auction_yield_bp,
         bid_to_cover=_float_or_none(record.get("bid_to_cover_ratio")),
-        tail_bp=_float_or_none(record.get("tail_basis_point")),
-        primary_dealer_pct=_float_or_none(record.get("primary_dealer_amt_pct")),
-        indirect_pct=_float_or_none(record.get("indirect_bidder_amt_pct")),
-        direct_pct=_float_or_none(record.get("direct_bidder_amt_pct")),
+        tail_bp=tail_bp,
+        primary_dealer_pct=_pct(primary_amt, total_accepted),
+        indirect_pct=_pct(indirect_amt, total_accepted),
+        direct_pct=_pct(direct_amt, total_accepted),
         auction_size_usd=auction_size_usd,
         source="treasury",
         ingested_at=datetime.now(UTC).isoformat(),
