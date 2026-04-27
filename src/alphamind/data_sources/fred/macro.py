@@ -32,7 +32,7 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import select
 
-from alphamind.data_sources._common import track_run
+from alphamind.data_sources._common import default_session_factory, resume_since, track_run
 from alphamind.data_sources.fred.client import FredClient
 from alphamind.data_sources.fred.series import DAILY_SERIES, MONTHLY_SERIES
 from alphamind.persistence.models import MacroObservations
@@ -152,8 +152,8 @@ def _bulk_fetch_latest(
 
 
 def collect_series(
-    series_ids: list[str],
-    since: date,
+    series_ids: list[str] | None = None,
+    since: date | None = None,
     *,
     client: FredClient | None = None,
     session_factory: Any = None,
@@ -165,9 +165,12 @@ def collect_series(
     Parameters
     ----------
     series_ids:
-        List of FRED series IDs to collect.
+        List of FRED series IDs to collect.  Defaults to
+        ``DAILY_SERIES + MONTHLY_SERIES``.
     since:
-        Earliest observation date to request.
+        Earliest observation date to request.  Defaults to the last stored
+        observation date minus a 2-day overlap, or 30 days ago if the table
+        is empty.
     client:
         Injectable :class:`~alphamind.data_sources.fred.client.FredClient`.
         When *None*, a default client is constructed using config.
@@ -186,12 +189,19 @@ def collect_series(
         client = FredClient()  # fredapi resolves FRED_API_KEY from env
 
     if session_factory is None:
-        from alphamind.persistence.models import Base
-        from alphamind.persistence.session import make_engine, make_session_factory
+        session_factory = default_session_factory()
 
-        engine = make_engine()
-        Base.metadata.create_all(engine)
-        session_factory = make_session_factory(engine)
+    if series_ids is None:
+        series_ids = DAILY_SERIES + MONTHLY_SERIES
+
+    if since is None:
+        since = resume_since(
+            column=MacroObservations.observation_date,
+            filters=(MacroObservations.source == _SOURCE,),
+            default_lookback=timedelta(days=30),
+            overlap=timedelta(days=2),
+            session_factory=session_factory,
+        ).date()
 
     with track_run(_COLLECTOR_NAME, _repo=_repo) as run:
         rows_written = 0

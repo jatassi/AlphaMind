@@ -18,14 +18,14 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import httpx
 from sqlalchemy import select
 
-from alphamind.data_sources._common import track_run
+from alphamind.data_sources._common import default_session_factory, resume_since, track_run
 from alphamind.data_sources.sec_edgar.client import SecEdgarClient
 from alphamind.persistence.models import AssetUniverse, NewsArticles, NewsArticleTickers
 
@@ -42,11 +42,16 @@ _ATOM_NS = "http://www.w3.org/2005/Atom"
 _ITEM_RE = re.compile(r"Item\s+(\d+\.\d+)", re.IGNORECASE)
 
 
+def _default_user_agent() -> str:
+    """Return the SEC User-Agent from env or a safe fallback."""
+    return os.environ.get("SEC_EDGAR_USER_AGENT", "AlphaMind alphamind@example.com")
+
+
 def collect_8k_filings(
-    since: datetime,
+    since: datetime | None = None,
     *,
-    session_factory: Any,
-    user_agent: str,
+    session_factory: Any = None,
+    user_agent: str | None = None,
     _transport: httpx.BaseTransport | None = None,
     _sleep: Callable[[float], None] = time.sleep,
     _repo: Any = None,
@@ -58,11 +63,15 @@ def collect_8k_filings(
     Parameters
     ----------
     since:
-        Only filings on or after this UTC date are written (YYYY-MM-DD prefix compared).
+        Only filings on or after this UTC date are written (YYYY-MM-DD prefix
+        compared).  Defaults to the latest stored SEC 8-K article minus a
+        2-hour overlap, or 24 hours ago when the table is empty.
     session_factory:
-        SQLAlchemy session factory bound to the target database.
+        SQLAlchemy session factory bound to the target database.  Defaults to
+        ``default_session_factory()``.
     user_agent:
         ``User-Agent`` header value required by SEC (``AlphaMind <email>``).
+        Defaults to ``$SEC_EDGAR_USER_AGENT`` env var or a safe placeholder.
     _transport:
         Injectable httpx transport for testing.
     _sleep:
@@ -73,6 +82,21 @@ def collect_8k_filings(
         Root directory for body text files.  Defaults to
         ``$USERPROFILE/AlphaMind/data/news``.
     """
+    if session_factory is None:
+        session_factory = default_session_factory()
+
+    if since is None:
+        since = resume_since(
+            column=NewsArticles.published_at,
+            filters=(NewsArticles.source == "sec_edgar_8k_rss",),
+            default_lookback=timedelta(hours=24),
+            overlap=timedelta(hours=2),
+            session_factory=session_factory,
+        )
+
+    if user_agent is None:
+        user_agent = _default_user_agent()
+
     client = SecEdgarClient(
         user_agent=user_agent,
         _transport=_transport,

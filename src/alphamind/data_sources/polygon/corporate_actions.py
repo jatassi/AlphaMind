@@ -13,7 +13,14 @@ import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from alphamind.data_sources._common import RetryShape, track_run, with_retries
+from alphamind.data_sources._common import (
+    RetryShape,
+    active_universe_tickers,
+    default_session_factory,
+    resume_since,
+    track_run,
+    with_retries,
+)
 from alphamind.data_sources.polygon.client import PolygonClient
 from alphamind.persistence.models import CorporateActions
 
@@ -21,7 +28,7 @@ _BOOTSTRAP_DAYS = 252
 
 
 def collect_corporate_actions(
-    ticker_scope: list[str],
+    ticker_scope: list[str] | None = None,
     since: datetime | None = None,
     *,
     _client: Any = None,
@@ -36,20 +43,28 @@ def collect_corporate_actions(
     ----------
     ticker_scope:
         Universe tickers (not benchmarks — corporate actions are equity-only).
+        Defaults to active equity-universe tickers from ``asset_universe``.
     since:
-        Lower bound for ``ex_date`` / ``execution_date`` filter.
+        Lower bound for ``ex_date`` / ``execution_date`` filter.  Defaults to
+        ``resume_since`` over ``corporate_actions`` with a 7-day lookback.
     """
     if _client is None:
         _client = PolygonClient()
-    if _session_factory is None:
-        from alphamind.persistence.models import Base
-        from alphamind.persistence.session import make_engine, make_session_factory
+    _session_factory = _session_factory or default_session_factory()
+    if ticker_scope is None:
+        ticker_scope = active_universe_tickers(
+            include_benchmarks=False, session_factory=_session_factory
+        )
+    if since is None:
+        since = resume_since(
+            column=CorporateActions.ex_date,
+            filters=(CorporateActions.source == "polygon",),
+            default_lookback=timedelta(days=7),
+            overlap=timedelta(days=1),
+            session_factory=_session_factory,
+        )
 
-        engine = make_engine()
-        Base.metadata.create_all(engine)
-        _session_factory = make_session_factory(engine)
-
-    since_str = since.strftime("%Y-%m-%d") if since is not None else None
+    since_str = since.strftime("%Y-%m-%d")
     ingested_at = datetime.now(UTC).isoformat()
 
     @with_retries(RetryShape.important, _sleep=lambda _: None)
@@ -73,46 +88,54 @@ def collect_corporate_actions(
                 continue
 
             splits = _fetch_splits(ticker)
-
-            rows: list[CorporateActions] = []
-            for d in dividends:
-                action_id = d.id or _hash_id("polygon", ticker, d.ex_dividend_date, "dividend")
-                rows.append(
-                    CorporateActions(
-                        action_id=action_id,
-                        ticker=ticker,
-                        action_type="cash_dividend",
-                        declaration_date=d.declaration_date or None,
-                        ex_date=d.ex_dividend_date,
-                        record_date=d.record_date or None,
-                        payable_date=d.pay_date or None,
-                        cash_amount_per_share=float(d.cash_amount) if d.cash_amount else None,
-                        source="polygon",
-                        ingested_at=ingested_at,
-                    )
-                )
-
-            for s in splits:
-                action_id = s.id or _hash_id("polygon", ticker, s.execution_date, "split")
-                split_from = float(s.split_from) if s.split_from else 1.0
-                split_to = float(s.split_to) if s.split_to else 1.0
-                ratio = split_to / split_from if split_from != 0 else None
-                rows.append(
-                    CorporateActions(
-                        action_id=action_id,
-                        ticker=ticker,
-                        action_type="split",
-                        ex_date=s.execution_date,
-                        ratio=ratio,
-                        source="polygon",
-                        ingested_at=ingested_at,
-                    )
-                )
-
+            rows = _build_rows(ticker, dividends, splits, ingested_at)
             _upsert_actions(_session_factory, rows)
             rows_written += len(rows)
 
         run.rows_written = rows_written
+
+
+def _build_rows(
+    ticker: str,
+    dividends: list[Any],
+    splits: list[Any],
+    ingested_at: str,
+) -> list[CorporateActions]:
+    """Build ORM rows from raw Polygon dividend and split objects."""
+    rows: list[CorporateActions] = []
+    for d in dividends:
+        action_id = d.id or _hash_id("polygon", ticker, d.ex_dividend_date, "dividend")
+        rows.append(
+            CorporateActions(
+                action_id=action_id,
+                ticker=ticker,
+                action_type="cash_dividend",
+                declaration_date=d.declaration_date or None,
+                ex_date=d.ex_dividend_date,
+                record_date=d.record_date or None,
+                payable_date=d.pay_date or None,
+                cash_amount_per_share=float(d.cash_amount) if d.cash_amount else None,
+                source="polygon",
+                ingested_at=ingested_at,
+            )
+        )
+    for s in splits:
+        action_id = s.id or _hash_id("polygon", ticker, s.execution_date, "split")
+        split_from = float(s.split_from) if s.split_from else 1.0
+        split_to = float(s.split_to) if s.split_to else 1.0
+        ratio = split_to / split_from if split_from != 0 else None
+        rows.append(
+            CorporateActions(
+                action_id=action_id,
+                ticker=ticker,
+                action_type="split",
+                ex_date=s.execution_date,
+                ratio=ratio,
+                source="polygon",
+                ingested_at=ingested_at,
+            )
+        )
+    return rows
 
 
 def _hash_id(source: str, ticker: str, date: str, action: str) -> str:

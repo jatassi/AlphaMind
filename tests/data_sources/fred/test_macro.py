@@ -390,6 +390,27 @@ def test_collect_series_records_failed_on_full_error(engine, session_factory, mo
 # ---------------------------------------------------------------------------
 
 
+def test_collect_series_callable_with_no_args(engine, session_factory, mock_repo) -> None:
+    """collect_series() is callable with no positional args (cron registry contract)."""
+    from alphamind.data_sources.fred.macro import collect_series
+
+    mock_client = MagicMock()
+    mock_client.get_series.return_value = pd.Series(dtype=float)
+    mock_client.get_series_info.return_value = _make_series_info("D", "Percent")
+
+    # No series_ids, no since — must not raise
+    collect_series(
+        client=mock_client,
+        session_factory=session_factory,
+        _repo=mock_repo,
+    )
+
+
+# ---------------------------------------------------------------------------
+# bootstrap_series — depth
+# ---------------------------------------------------------------------------
+
+
 def test_bootstrap_series_uses_90_days_for_daily(engine, session_factory, mock_repo) -> None:
     """bootstrap_series() requests ~90 days of history for daily series."""
     from alphamind.data_sources.fred.macro import (

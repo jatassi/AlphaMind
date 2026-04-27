@@ -569,6 +569,24 @@ class TestCollectSeriesFailure:
 # ---------------------------------------------------------------------------
 
 
+class TestCollectSeriesNoArgs:
+    """collect_series is callable with no positional args (cron registry contract)."""
+
+    def test_callable_with_no_args(self, db_factory) -> None:
+        mock_client = MagicMock()
+        mock_client.fetch_series.return_value = []
+        repo = _FakeRunRepo()
+
+        from alphamind.data_sources.eia.energy import collect_series
+
+        # No series, no since — must not raise
+        collect_series(
+            _repo=repo,
+            _client=mock_client,
+            _session_factory=db_factory,
+        )
+
+
 class TestBootstrapSeries:
     def test_bootstrap_passes_252_day_since(self) -> None:
         from alphamind.data_sources.eia import energy

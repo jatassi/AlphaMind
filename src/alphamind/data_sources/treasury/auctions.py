@@ -6,13 +6,12 @@ Pulls auction results from the Treasury Fiscal Data API for tenors of interest:
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from alphamind.data_sources._common import track_run
+from alphamind.data_sources._common import default_session_factory, resume_since, track_run
 from alphamind.data_sources.treasury.client import TreasuryClient
-from alphamind.persistence.models import Base, TreasuryAuctions
-from alphamind.persistence.session import make_engine, make_session_factory
+from alphamind.persistence.models import TreasuryAuctions
 
 _AUCTIONS_PATH = "/services/api/fiscal_service/v1/accounting/od/auctions_query"
 _PAGE_SIZE = 100
@@ -125,7 +124,7 @@ def _record_to_row(record: dict[str, Any]) -> TreasuryAuctions | None:
 
 
 def collect_auctions(
-    since: date,
+    since: date | None = None,
     *,
     _session_factory: Any = None,
     _repo: Any = None,
@@ -135,16 +134,24 @@ def collect_auctions(
     Parameters
     ----------
     since:
-        Start date for the collection window (inclusive).
+        Start date for the collection window (inclusive).  Defaults to the
+        last stored auction date minus a 7-day overlap, or 30 days ago if
+        the table is empty.
     _session_factory:
         Optional session factory override for testing.
     _repo:
         Optional repository override for testing (passed to track_run).
     """
     if _session_factory is None:
-        engine = make_engine()
-        Base.metadata.create_all(engine)
-        _session_factory = make_session_factory(engine)
+        _session_factory = default_session_factory()
+
+    if since is None:
+        since = resume_since(
+            column=TreasuryAuctions.auction_date,
+            default_lookback=timedelta(days=30),
+            overlap=timedelta(days=7),
+            session_factory=_session_factory,
+        ).date()
 
     with track_run("treasury.auctions", _repo=_repo) as run:
         records = _fetch_all_pages(since)

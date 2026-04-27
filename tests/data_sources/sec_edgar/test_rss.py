@@ -383,3 +383,36 @@ class TestFailureHandling:
         with db_with_ticker() as sess:
             articles = sess.execute(select(NewsArticles)).scalars().all()
         assert len(articles) == 0
+
+
+# ---------------------------------------------------------------------------
+# AC: collect_8k_filings callable with no positional args (runner-registry)
+# ---------------------------------------------------------------------------
+
+
+class TestCollect8kFilingsNoArgs:
+    def test_callable_with_no_args(self, db_with_ticker, tmp_path) -> None:
+        """collect_8k_filings() is callable with no positional args."""
+        from unittest.mock import patch
+
+        transport = _make_http_transport(_SAMPLE_RSS, _SAMPLE_BODY_HTML)
+        run_repo = _FakeRunRepo()
+
+        with (
+            patch(
+                "alphamind.data_sources.sec_edgar.rss.resume_since",
+                return_value=datetime(2024, 3, 1, tzinfo=UTC),
+            ),
+            patch(
+                "alphamind.data_sources.sec_edgar.rss.default_session_factory",
+                return_value=db_with_ticker,
+            ),
+        ):
+            collect_8k_filings(
+                session_factory=db_with_ticker,
+                user_agent="AlphaMind test@test.com",
+                _transport=transport,
+                _sleep=lambda _: None,
+                _repo=run_repo,
+                body_dir=tmp_path,
+            )

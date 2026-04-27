@@ -20,13 +20,11 @@ from alphamind.persistence.session import make_engine, make_session_factory
 
 
 @pytest.fixture()
-def db_session():
-    """Provide an in-memory SQLite session pre-populated with schema."""
+def session_factory():
+    """Provide an in-memory SQLite session factory pre-populated with schema."""
     engine = make_engine(":memory:")
     Base.metadata.create_all(engine)
-    session_factory = make_session_factory(engine)
-    with session_factory() as sess:
-        yield sess
+    return make_session_factory(engine)
 
 
 def _make_events_payload(series_tickers: list[str]) -> dict:
@@ -93,7 +91,7 @@ def _make_mock_client(events_payload: dict, markets_payloads: dict[str, dict]) -
 
 
 class TestCollectSnapshots:
-    def test_contracts_upserted_for_known_series(self, db_session) -> None:
+    def test_contracts_upserted_for_known_series(self, session_factory) -> None:
         """Contracts for known series tickers are inserted into prediction_market_contracts."""
         from alphamind.data_sources.kalshi.contracts import collect_snapshots
 
@@ -107,22 +105,23 @@ class TestCollectSnapshots:
         repo.insert_running.return_value = None
         repo.update_success.return_value = None
 
-        collect_snapshots(since, client=client, session=db_session, _repo=repo)
+        collect_snapshots(since, client=client, session_factory=session_factory, _repo=repo)
 
-        contracts = db_session.query(PredictionMarketContracts).all()
-        assert len(contracts) == 1
-        assert contracts[0].contract_id == "FED-24DEC-0525"
-        assert contracts[0].platform == "kalshi"
-        assert contracts[0].category in ("monetary_policy", "fed", "other")
+        with session_factory() as sess:
+            contracts = sess.query(PredictionMarketContracts).all()
+            assert len(contracts) == 1
+            assert contracts[0].contract_id == "FED-24DEC-0525"
+            assert contracts[0].platform == "kalshi"
+            assert contracts[0].category in ("monetary_policy", "fed", "other")
 
-    def test_contracts_have_correct_category_for_fed(self, db_session) -> None:
+    def test_contracts_have_correct_category_for_fed(self, session_factory) -> None:
         """FED series_ticker maps to monetary_policy category."""
         from alphamind.data_sources.kalshi.contracts import SERIES_CATEGORY_MAP
 
         assert "FED" in SERIES_CATEGORY_MAP
         assert SERIES_CATEGORY_MAP["FED"] == "monetary_policy"
 
-    def test_unknown_series_defaults_to_other(self, db_session) -> None:
+    def test_unknown_series_defaults_to_other(self, session_factory) -> None:
         """Unknown series_ticker maps to 'other' with a warning."""
         from alphamind.data_sources.kalshi.contracts import collect_snapshots
 
@@ -135,17 +134,18 @@ class TestCollectSnapshots:
         repo.insert_running.return_value = None
         repo.update_success.return_value = None
 
-        collect_snapshots(since, client=client, session=db_session, _repo=repo)
+        collect_snapshots(since, client=client, session_factory=session_factory, _repo=repo)
 
-        contracts = db_session.query(PredictionMarketContracts).all()
-        assert len(contracts) == 1
-        assert contracts[0].category == "other"
+        with session_factory() as sess:
+            contracts = sess.query(PredictionMarketContracts).all()
+            assert len(contracts) == 1
+            assert contracts[0].category == "other"
 
     # ------------------------------------------------------------------
     # Snapshot probability fields
     # ------------------------------------------------------------------
 
-    def test_snapshot_yes_probability_derived_correctly(self, db_session) -> None:
+    def test_snapshot_yes_probability_derived_correctly(self, session_factory) -> None:
         """yes_probability = (yes_bid + yes_ask) / 200."""
         from alphamind.data_sources.kalshi.contracts import collect_snapshots
 
@@ -158,13 +158,14 @@ class TestCollectSnapshots:
         repo.insert_running.return_value = None
         repo.update_success.return_value = None
 
-        collect_snapshots(since, client=client, session=db_session, _repo=repo)
+        collect_snapshots(since, client=client, session_factory=session_factory, _repo=repo)
 
-        snap = db_session.query(PredictionMarketSnapshots).first()
-        assert snap is not None
-        assert abs(snap.yes_probability - 0.65) < 1e-9  # (60+70)/200
+        with session_factory() as sess:
+            snap = sess.query(PredictionMarketSnapshots).first()
+            assert snap is not None
+            assert abs(snap.yes_probability - 0.65) < 1e-9  # (60+70)/200
 
-    def test_snapshot_bid_ask_in_dollars(self, db_session) -> None:
+    def test_snapshot_bid_ask_in_dollars(self, session_factory) -> None:
         """bid = yes_bid/100, ask = yes_ask/100 (dollars)."""
         from alphamind.data_sources.kalshi.contracts import collect_snapshots
 
@@ -177,18 +178,19 @@ class TestCollectSnapshots:
         repo.insert_running.return_value = None
         repo.update_success.return_value = None
 
-        collect_snapshots(since, client=client, session=db_session, _repo=repo)
+        collect_snapshots(since, client=client, session_factory=session_factory, _repo=repo)
 
-        snap = db_session.query(PredictionMarketSnapshots).first()
-        assert snap is not None
-        assert abs(snap.bid - 0.60) < 1e-9
-        assert abs(snap.ask - 0.70) < 1e-9
+        with session_factory() as sess:
+            snap = sess.query(PredictionMarketSnapshots).first()
+            assert snap is not None
+            assert abs(snap.bid - 0.60) < 1e-9
+            assert abs(snap.ask - 0.70) < 1e-9
 
     # ------------------------------------------------------------------
     # Closed markets update resolution_outcome
     # ------------------------------------------------------------------
 
-    def test_closed_market_sets_resolution_outcome_yes(self, db_session) -> None:
+    def test_closed_market_sets_resolution_outcome_yes(self, session_factory) -> None:
         """Closed market with result='yes' sets resolution_outcome on the contract."""
         from alphamind.data_sources.kalshi.contracts import collect_snapshots
 
@@ -201,13 +203,14 @@ class TestCollectSnapshots:
         repo.insert_running.return_value = None
         repo.update_success.return_value = None
 
-        collect_snapshots(since, client=client, session=db_session, _repo=repo)
+        collect_snapshots(since, client=client, session_factory=session_factory, _repo=repo)
 
-        contract = db_session.query(PredictionMarketContracts).first()
-        assert contract is not None
-        assert contract.resolution_outcome == "yes"
+        with session_factory() as sess:
+            contract = sess.query(PredictionMarketContracts).first()
+            assert contract is not None
+            assert contract.resolution_outcome == "yes"
 
-    def test_closed_market_sets_resolution_outcome_no(self, db_session) -> None:
+    def test_closed_market_sets_resolution_outcome_no(self, session_factory) -> None:
         from alphamind.data_sources.kalshi.contracts import collect_snapshots
 
         client = _make_mock_client(
@@ -223,17 +226,18 @@ class TestCollectSnapshots:
         repo.insert_running.return_value = None
         repo.update_success.return_value = None
 
-        collect_snapshots(since, client=client, session=db_session, _repo=repo)
+        collect_snapshots(since, client=client, session_factory=session_factory, _repo=repo)
 
-        contract = db_session.query(PredictionMarketContracts).first()
-        assert contract is not None
-        assert contract.resolution_outcome == "no"
+        with session_factory() as sess:
+            contract = sess.query(PredictionMarketContracts).first()
+            assert contract is not None
+            assert contract.resolution_outcome == "no"
 
     # ------------------------------------------------------------------
     # No duplicate snapshot rows on re-run
     # ------------------------------------------------------------------
 
-    def test_no_duplicate_snapshots_on_rerun(self, db_session) -> None:
+    def test_no_duplicate_snapshots_on_rerun(self, session_factory) -> None:
         """Running collect_snapshots twice with the same window adds no duplicate rows."""
         from alphamind.data_sources.kalshi.contracts import collect_snapshots
 
@@ -250,26 +254,27 @@ class TestCollectSnapshots:
         collect_snapshots(
             since,
             client=client,
-            session=db_session,
+            session_factory=session_factory,
             _repo=repo,
             _snapshot_ts="2024-06-01T12:00:00+00:00",
         )
         collect_snapshots(
             since,
             client=client,
-            session=db_session,
+            session_factory=session_factory,
             _repo=repo,
             _snapshot_ts="2024-06-01T12:00:00+00:00",
         )
 
-        snaps = db_session.query(PredictionMarketSnapshots).all()
-        assert len(snaps) == 1
+        with session_factory() as sess:
+            snaps = sess.query(PredictionMarketSnapshots).all()
+            assert len(snaps) == 1
 
     # ------------------------------------------------------------------
     # Failure records failed in collection_runs, no data rows
     # ------------------------------------------------------------------
 
-    def test_failure_records_failed_in_collection_runs(self, db_session) -> None:
+    def test_failure_records_failed_in_collection_runs(self, session_factory) -> None:
         """When collection fails, the repo records failed and no data rows are written."""
         from alphamind.data_sources.kalshi.contracts import collect_snapshots
 
@@ -282,12 +287,13 @@ class TestCollectSnapshots:
         repo.update_failed.return_value = None
 
         with pytest.raises(RuntimeError, match="network error"):
-            collect_snapshots(since, client=client, session=db_session, _repo=repo)
+            collect_snapshots(since, client=client, session_factory=session_factory, _repo=repo)
 
         repo.update_failed.assert_called_once()
         # No data rows
-        assert db_session.query(PredictionMarketContracts).count() == 0
-        assert db_session.query(PredictionMarketSnapshots).count() == 0
+        with session_factory() as sess:
+            assert sess.query(PredictionMarketContracts).count() == 0
+            assert sess.query(PredictionMarketSnapshots).count() == 0
 
     # ------------------------------------------------------------------
     # SERIES_CATEGORY_MAP coverage
@@ -299,3 +305,28 @@ class TestCollectSnapshots:
 
         for ticker in ("FED", "CPI", "OPEC", "ELECTION"):
             assert ticker in SERIES_CATEGORY_MAP, f"{ticker} missing from SERIES_CATEGORY_MAP"
+
+
+# ---------------------------------------------------------------------------
+# Runner contract: callable with no args (mocked client + injected session_factory)
+# ---------------------------------------------------------------------------
+
+
+class TestNoArgsCallable:
+    def test_collect_snapshots_callable_with_no_args(self) -> None:
+        """collect_snapshots() is callable with no positional args (runner contract)."""
+        from alphamind.data_sources.kalshi.contracts import collect_snapshots
+
+        engine = make_engine(":memory:")
+        Base.metadata.create_all(engine)
+        sf = make_session_factory(engine)
+
+        mock_client = _make_mock_client(
+            {"events": []},
+            {},
+        )
+        repo = MagicMock()
+        repo.insert_running.return_value = None
+        repo.update_success.return_value = None
+
+        collect_snapshots(client=mock_client, session_factory=sf, _repo=repo)

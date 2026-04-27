@@ -455,3 +455,31 @@ class TestMarketWideQuery:
         call_kwargs = client.get_news.call_args[1]
         assert call_kwargs.get("symbols") is None
         assert call_kwargs.get("countries") == "us"
+
+
+class TestCollectNewsNoArgs:
+    def test_callable_with_no_args(self, db_session, fake_repo, tmp_path) -> None:
+        """collect_news() is callable with no positional args (runner-registry contract)."""
+        from unittest.mock import patch
+
+        client = MagicMock()
+        client.get_news.return_value = []
+
+        from datetime import UTC, datetime
+
+        with (
+            patch(
+                "alphamind.data_sources.marketaux.news.active_universe_tickers",
+                return_value=["AAPL"],
+            ),
+            patch(
+                "alphamind.data_sources.marketaux.news.resume_since",
+                return_value=datetime(2024, 1, 15, tzinfo=UTC),
+            ),
+        ):
+            collect_news(
+                _client=client,
+                _session_factory=db_session,
+                _repo=fake_repo,
+                _body_dir=str(tmp_path),
+            )

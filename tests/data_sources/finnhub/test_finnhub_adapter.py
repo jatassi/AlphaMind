@@ -531,6 +531,36 @@ class TestCollectNews:
         links = session.query(NewsArticleTickers).all()
         assert len(links) == 0
 
+    def test_collect_news_callable_with_no_args(
+        self, engine, session_factory, seeded_tickers, fake_repo, tmp_path
+    ) -> None:
+        """collect_news() is callable with no positional args (runner-registry contract)."""
+        from unittest.mock import patch
+
+        with (
+            patch("finnhub.Client") as mock_client,
+            patch(
+                "alphamind.data_sources.finnhub.news.active_universe_tickers",
+                return_value=["AAPL"],
+            ),
+            patch(
+                "alphamind.data_sources.finnhub.news.resume_since",
+                return_value=datetime(2026, 4, 25, tzinfo=UTC),
+            ),
+            patch.dict(os.environ, {"ALPHAMIND_NEWS_DIR": str(tmp_path)}),
+        ):
+            mock_sdk = mock_client.return_value
+            mock_sdk.company_news.return_value = []
+            mock_sdk.general_news.return_value = []
+
+            from alphamind.data_sources.finnhub.news import collect_news
+
+            collect_news(
+                _engine=engine,
+                _session_factory=session_factory,
+                _repo=fake_repo,
+            )
+
 
 class TestEarningsCalendar:
     def _make_earnings_item(

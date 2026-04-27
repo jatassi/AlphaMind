@@ -11,13 +11,20 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from alphamind.data_sources._common import RetryShape, track_run, with_retries
+from alphamind.data_sources._common import (
+    RetryShape,
+    active_universe_tickers,
+    default_session_factory,
+    track_run,
+    with_retries,
+)
 from alphamind.data_sources.polygon.client import PolygonClient
 from alphamind.persistence.models import AssetUniverse
 
 
 def collect_reference(
-    ticker_scope: list[str],
+    ticker_scope: list[str] | None = None,
+    since: Any = None,
     *,
     _client: Any = None,
     _session_factory: Any = None,
@@ -33,17 +40,20 @@ def collect_reference(
     Parameters
     ----------
     ticker_scope:
-        Both universe and benchmark tickers are accepted.
+        Both universe and benchmark tickers are accepted.  Defaults to all
+        active tickers (universe + benchmarks) from ``asset_universe``.
+    since:
+        Accepted for runner-contract compatibility; reference data is
+        always current state so the value does not affect collection.
     """
+    del since  # accepted for runner-contract compatibility; ignored
     if _client is None:
         _client = PolygonClient()
-    if _session_factory is None:
-        from alphamind.persistence.models import Base
-        from alphamind.persistence.session import make_engine, make_session_factory
-
-        engine = make_engine()
-        Base.metadata.create_all(engine)
-        _session_factory = make_session_factory(engine)
+    _session_factory = _session_factory or default_session_factory()
+    if ticker_scope is None:
+        ticker_scope = active_universe_tickers(
+            include_benchmarks=True, session_factory=_session_factory
+        )
 
     @with_retries(RetryShape.critical, _sleep=lambda _: None)
     def _fetch_details(ticker: str) -> Any:

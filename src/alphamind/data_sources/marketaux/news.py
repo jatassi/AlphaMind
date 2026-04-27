@@ -11,17 +11,24 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from alphamind.data_sources._common import track_run
+from alphamind.data_sources._common import (
+    active_universe_tickers,
+    default_session_factory,
+    resume_since,
+    track_run,
+)
 from alphamind.data_sources.marketaux.client import MarketauxClient
 from alphamind.persistence.models import NewsArticles, NewsArticleTickers
 
 _TICKER_BATCH_SIZE = 5  # Marketaux free-tier max symbols per request
+
+_UNSET = object()  # sentinel for "caller did not supply ticker_scope"
 
 # Sentiment thresholds per story spec
 _SENTIMENT_POS_THRESHOLD = 0.15
@@ -161,8 +168,8 @@ def _ingest_articles(
 
 
 def collect_news(
-    ticker_scope: list[str] | None,
-    since: str,
+    ticker_scope: list[str] | None = _UNSET,  # type: ignore[assignment]
+    since: str | None = None,
     *,
     _client: MarketauxClient | None = None,
     _session_factory: Any = None,
@@ -175,11 +182,13 @@ def collect_news(
     Parameters
     ----------
     ticker_scope:
-        List of tickers to query (batched in groups of 5).  Pass ``None``
-        for a market-wide US query only.
+        List of tickers to query (batched in groups of 5).  When omitted,
+        defaults to active universe tickers (benchmarks excluded).  Pass
+        ``None`` explicitly for a market-wide US query only.
     since:
         ISO 8601 datetime string; only articles published after this are
-        fetched.
+        fetched.  Defaults to the latest stored Marketaux article minus a
+        1-hour overlap, or 24 hours ago when the table is empty.
     _client:
         Injectable MarketauxClient (for testing).
     _session_factory:
@@ -193,12 +202,22 @@ def collect_news(
         raise RuntimeError("_client is required (use MarketauxClient)")
 
     if _session_factory is None:
-        from alphamind.persistence.models import Base
-        from alphamind.persistence.session import make_engine, make_session_factory
+        _session_factory = default_session_factory()
 
-        engine = make_engine()
-        Base.metadata.create_all(engine)
-        _session_factory = make_session_factory(engine)
+    if ticker_scope is _UNSET:
+        ticker_scope = active_universe_tickers(
+            include_benchmarks=False, session_factory=_session_factory
+        )
+
+    if since is None:
+        _since_dt = resume_since(
+            column=NewsArticles.published_at,
+            filters=(NewsArticles.source == "marketaux",),
+            default_lookback=timedelta(hours=24),
+            overlap=timedelta(hours=1),
+            session_factory=_session_factory,
+        )
+        since = _since_dt.isoformat()
 
     body_dir = _body_dir if _body_dir is not None else _default_body_dir()
     outlets = _load_outlets()

@@ -15,6 +15,7 @@ Integrates:
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 import httpx
@@ -48,13 +49,13 @@ class KalshiClient:
 
     def __init__(
         self,
-        email: str,
-        password: str,
+        email: str | None = None,
+        password: str | None = None,
         *,
         rate_limiter: RateLimiter | None = None,
     ) -> None:
-        self._email = email
-        self._password = password
+        self._email = email if email is not None else os.environ["KALSHI_EMAIL"]
+        self._password = password if password is not None else os.environ["KALSHI_PASSWORD"]
         self._http = httpx.Client(timeout=30.0)
         self._rl = rate_limiter if rate_limiter is not None else _rate_limiter
         self._token: str | None = None

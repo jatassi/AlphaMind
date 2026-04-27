@@ -906,3 +906,86 @@ class TestCollectReference:
             )
 
         repo.update_failed.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# No-args callability (runner COLLECTORS registry requirement)
+# ---------------------------------------------------------------------------
+
+
+class TestNoArgsCallability:
+    """Each collector is callable with no positional args when client +
+    session_factory are injected and the DB is seeded."""
+
+    def _make_equity_client(self) -> MagicMock:
+        client = MagicMock()
+        client.get_aggs.return_value = []
+        client.acquire_rate_limit = MagicMock()
+        return client
+
+    def _make_options_client(self) -> MagicMock:
+        client = MagicMock()
+        client.list_snapshot_options_chain.return_value = []
+        client.acquire_rate_limit = MagicMock()
+        return client
+
+    def _make_corporate_client(self) -> MagicMock:
+        client = MagicMock()
+        client.list_dividends.return_value = iter([])
+        client.list_splits.return_value = iter([])
+        client.acquire_rate_limit = MagicMock()
+        return client
+
+    def _make_reference_client(self) -> MagicMock:
+        client = MagicMock()
+        client.get_ticker_details.return_value = _make_ticker_details()
+        client.acquire_rate_limit = MagicMock()
+        return client
+
+    def test_collect_universe_bars_no_args(self) -> None:
+        from alphamind.data_sources.polygon import equity
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, TICKERS, BENCHMARKS)
+
+        equity.collect_universe_bars(
+            _client=self._make_equity_client(),
+            _session_factory=sf,
+            _repo=_fake_repo(),
+        )
+
+    def test_collect_options_chains_no_args(self) -> None:
+        from alphamind.data_sources.polygon import options
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, TICKERS, BENCHMARKS)
+
+        options.collect_options_chains(
+            _client=self._make_options_client(),
+            _session_factory=sf,
+            _repo=_fake_repo(),
+        )
+
+    def test_collect_corporate_actions_no_args(self) -> None:
+        from alphamind.data_sources.polygon import corporate_actions
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, TICKERS, BENCHMARKS)
+
+        corporate_actions.collect_corporate_actions(
+            _client=self._make_corporate_client(),
+            _session_factory=sf,
+            _repo=_fake_repo(),
+        )
+
+    def test_collect_reference_no_args(self) -> None:
+        from alphamind.data_sources.polygon import reference
+
+        sf, _ = _make_db()
+        _seed_asset_universe(sf, TICKERS, BENCHMARKS)
+
+        reference.collect_reference(
+            _client=self._make_reference_client(),
+            _session_factory=sf,
+            _repo=_fake_repo(),
+        )

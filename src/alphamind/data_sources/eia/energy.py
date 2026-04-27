@@ -9,7 +9,7 @@ Writes ``macro_observations`` rows for the four configured EIA series:
 
 Public API
 ----------
-collect_series(series, since, *, _repo, _client, _session_factory)
+collect_series(series=None, since=None, *, _repo, _client, _session_factory)
     Pull data for each series entry and persist to ``macro_observations``.
 
 bootstrap_series(*, _repo, _session_factory)
@@ -22,7 +22,7 @@ import os
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from alphamind.data_sources._common import track_run
+from alphamind.data_sources._common import default_session_factory, resume_since, track_run
 from alphamind.data_sources.eia.series import SERIES
 from alphamind.persistence.models import MacroObservations
 
@@ -67,8 +67,8 @@ def _make_default_client() -> Any:
 
 
 def collect_series(
-    series: list[dict[str, Any]],
-    since: date,
+    series: list[dict[str, Any]] | None = None,
+    since: date | None = None,
     *,
     _repo: Any = None,
     _client: Any = None,
@@ -85,8 +85,11 @@ def collect_series(
     ----------
     series:
         List of series dicts from :mod:`~alphamind.data_sources.eia.series`.
+        Defaults to :data:`~alphamind.data_sources.eia.series.SERIES`.
     since:
-        Earliest observation date to fetch (inclusive).
+        Earliest observation date to fetch (inclusive).  Defaults to the last
+        stored observation date minus a 2-day overlap, or 30 days ago if the
+        table is empty.
     _repo:
         Optional collection-runs repository override (for testing).
     _client:
@@ -97,12 +100,19 @@ def collect_series(
     client = _client if _client is not None else _make_default_client()
 
     if _session_factory is None:
-        from alphamind.persistence.models import Base
-        from alphamind.persistence.session import make_engine, make_session_factory
+        _session_factory = default_session_factory()
 
-        engine = make_engine()
-        Base.metadata.create_all(engine)
-        _session_factory = make_session_factory(engine)
+    if series is None:
+        series = SERIES
+
+    if since is None:
+        since = resume_since(
+            column=MacroObservations.observation_date,
+            filters=(MacroObservations.source == "eia",),
+            default_lookback=timedelta(days=30),
+            overlap=timedelta(days=2),
+            session_factory=_session_factory,
+        ).date()
 
     with track_run("eia.energy", _repo=_repo) as run:
         rows_to_write: list[MacroObservations] = []

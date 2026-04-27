@@ -3,7 +3,7 @@ Polygon equity bars collection.
 
 Exports
 -------
-collect_universe_bars(timeframes, ticker_scope, since, ...)
+collect_universe_bars(ticker_scope, timeframes, since, ...)
 bootstrap_universe_bars(...)
 """
 
@@ -13,7 +13,14 @@ import zoneinfo
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from alphamind.data_sources._common import RetryShape, track_run, with_retries
+from alphamind.data_sources._common import (
+    RetryShape,
+    active_universe_tickers,
+    default_session_factory,
+    resume_since,
+    track_run,
+    with_retries,
+)
 from alphamind.data_sources.polygon.client import PolygonClient
 from alphamind.persistence.models import OhlcvBars
 
@@ -76,7 +83,7 @@ def _classify_session(ts_ms: int, timeframe: str) -> str:
 
 
 def collect_universe_bars(
-    ticker_scope: list[str],
+    ticker_scope: list[str] | None = None,
     timeframes: list[str] | None = None,
     since: datetime | None = None,
     *,
@@ -95,24 +102,34 @@ def collect_universe_bars(
     Parameters
     ----------
     ticker_scope:
-        List of tickers to collect.  Pass universe + benchmarks as needed.
+        List of tickers to collect.  Defaults to all active universe +
+        benchmark tickers from ``asset_universe``.
     timeframes:
         Subset of ``["15min","1h","4h","1d","1w"]``.  Defaults to all five.
     since:
-        Lower bound (inclusive) for ``period_start``.  Defaults to now - 5d.
+        Lower bound (inclusive) for ``period_start``.  Defaults to
+        ``resume_since`` over ``ohlcv_bars`` with a 1-day lookback.
     """
     if _client is None:
         _client = PolygonClient()
-    if _session_factory is None:
-        from alphamind.persistence.models import Base
-        from alphamind.persistence.session import make_engine, make_session_factory
-
-        engine = make_engine()
-        Base.metadata.create_all(engine)
-        _session_factory = make_session_factory(engine)
+    _session_factory = _session_factory or default_session_factory()
+    if ticker_scope is None:
+        ticker_scope = active_universe_tickers(
+            include_benchmarks=True, session_factory=_session_factory
+        )
     tfs = timeframes if timeframes is not None else _TIMEFRAMES
     now_utc = datetime.now(UTC)
-    since_dt = since if since is not None else now_utc - timedelta(days=5)
+    since_dt = (
+        since
+        if since is not None
+        else resume_since(
+            column=OhlcvBars.period_start,
+            filters=(OhlcvBars.source == "polygon",),
+            default_lookback=timedelta(days=1),
+            overlap=timedelta(hours=1),
+            session_factory=_session_factory,
+        )
+    )
     from_str = since_dt.strftime("%Y-%m-%d")
     to_str = now_utc.strftime("%Y-%m-%d")
 
@@ -208,7 +225,8 @@ def bootstrap_universe_bars(
 
     Reads active ticker scope from the ``asset_universe`` table.
     """
-    tickers = _load_active_tickers(_session_factory)
+    sf = _session_factory or default_session_factory()
+    tickers = active_universe_tickers(include_benchmarks=True, session_factory=sf)
     since = datetime.now(UTC) - timedelta(days=_BOOTSTRAP_DAYS)
 
     collect_universe_bars(
@@ -216,20 +234,6 @@ def bootstrap_universe_bars(
         timeframes=_TIMEFRAMES,
         since=since,
         _client=_client,
-        _session_factory=_session_factory,
+        _session_factory=sf,
         _repo=_repo,
     )
-
-
-def _load_active_tickers(session_factory: Any) -> list[str]:
-    """Return all active tickers (universe + benchmarks) from ``asset_universe``."""
-    from alphamind.persistence.models import AssetUniverse
-    from alphamind.persistence.session import make_engine, make_session_factory
-
-    if session_factory is None:
-        engine = make_engine()
-        session_factory = make_session_factory(engine)
-
-    with session_factory() as sess:
-        rows = sess.query(AssetUniverse).filter_by(is_active=1).all()
-    return [r.ticker for r in rows]

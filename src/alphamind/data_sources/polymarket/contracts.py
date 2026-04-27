@@ -9,16 +9,14 @@ prediction_market_snapshots row per active contract per invocation.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from alphamind.data_sources._common import track_run
+from alphamind.data_sources._common import default_session_factory, resume_since, track_run
 from alphamind.persistence.models import (
-    Base,
     PredictionMarketContracts,
     PredictionMarketSnapshots,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
 
 log = logging.getLogger(__name__)
 
@@ -117,12 +115,93 @@ def _now() -> datetime:
 
 
 # ---------------------------------------------------------------------------
+# Per-market processing
+# ---------------------------------------------------------------------------
+
+
+def _process_market(sess: Any, market: dict[str, Any], snapshot_ts: str) -> int:
+    """
+    Process one Polymarket market dict: upsert contract + write snapshot.
+
+    Returns 1 if a new snapshot row was written, 0 otherwise.
+    """
+    condition_id: str = market["conditionId"]
+    liquidity: float = float(market.get("liquidity") or 0.0)
+    if liquidity < _LIQUIDITY_MIN:
+        return 0
+
+    tags: list[str] = market.get("tags") or []
+    category = _derive_category(tags)
+    if category == "other":
+        log.warning(
+            "polymarket: unknown category for contract %s tags=%r — defaulting to 'other'",
+            condition_id,
+            tags,
+        )
+
+    prices = _fetch_prices(condition_id)
+    if prices is None or "yes" not in prices:
+        log.warning(
+            "polymarket: skipping non-binary contract %s (no 'yes' price in response)",
+            condition_id,
+        )
+        return 0
+
+    yes_prob: float = float(prices["yes"])
+    bid: float | None = float(prices["bid"]) if prices.get("bid") is not None else None
+    ask: float | None = float(prices["ask"]) if prices.get("ask") is not None else None
+    volume_24h: float | None = float(market.get("volume24hr") or 0.0) or None
+
+    is_closed: bool = bool(market.get("closed", False))
+    raw_outcome: str | None = market.get("outcome")
+    resolution: str | None = (
+        (raw_outcome.lower() if raw_outcome else "undecided") if is_closed else None
+    )
+
+    existing = sess.get(PredictionMarketContracts, condition_id)
+    if existing is None:
+        sess.add(
+            PredictionMarketContracts(
+                contract_id=condition_id,
+                platform=_PLATFORM,
+                description=market.get("question", ""),
+                category=category,
+                resolution_date=market.get("endDate"),
+                resolution_outcome=resolution,
+                created_at=market.get("createdAt", snapshot_ts),
+                last_seen_at=snapshot_ts,
+            )
+        )
+    else:
+        existing.last_seen_at = snapshot_ts
+        existing.category = category
+        if resolution is not None:
+            existing.resolution_outcome = resolution
+
+    if sess.get(PredictionMarketSnapshots, (condition_id, snapshot_ts)) is None:
+        sess.add(
+            PredictionMarketSnapshots(
+                contract_id=condition_id,
+                snapshot_ts=snapshot_ts,
+                yes_probability=yes_prob,
+                volume_24h_usd=volume_24h,
+                liquidity_usd=liquidity,
+                bid=bid,
+                ask=ask,
+                ingested_at=snapshot_ts,
+            )
+        )
+        return 1
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main collection function
 # ---------------------------------------------------------------------------
 
 
 def collect_snapshots(
-    since: datetime,
+    since: datetime | None = None,
     *,
     _session_factory: Any = None,
     _repo: Any = None,
@@ -134,102 +213,31 @@ def collect_snapshots(
     ----------
     since:
         Lower-bound timestamp for the collection window (forward-only).
+        Defaults to ``resume_since`` against ``prediction_market_snapshots``
+        (1-hour lookback).  Accepted for runner-contract compatibility; the
+        snapshot collector always captures current state.
     _session_factory:
         SQLAlchemy session factory override (for tests).
     _repo:
         ``track_run`` repo override (for tests).
     """
     if _session_factory is None:
-        engine = make_engine()
-        Base.metadata.create_all(engine)
-        _session_factory = make_session_factory(engine)
+        _session_factory = default_session_factory()
+
+    if since is None:
+        since = resume_since(
+            column=PredictionMarketSnapshots.snapshot_ts,
+            default_lookback=timedelta(hours=1),
+            overlap=timedelta(0),
+            session_factory=_session_factory,
+        )
 
     with track_run("polymarket.contracts", _repo=_repo) as run:
         markets = _fetch_markets(since)
         snapshot_ts = _now().isoformat()
-        rows_written = 0
 
         with _session_factory() as sess:
-            for market in markets:
-                condition_id: str = market["conditionId"]
-                liquidity: float = float(market.get("liquidity") or 0.0)
-
-                # --- Liquidity gate ---
-                if liquidity < _LIQUIDITY_MIN:
-                    continue
-
-                # --- Category derivation ---
-                tags: list[str] = market.get("tags") or []
-                category = _derive_category(tags)
-                if category == "other":
-                    log.warning(
-                        "polymarket: unknown category for contract %s tags=%r"
-                        " — defaulting to 'other'",
-                        condition_id,
-                        tags,
-                    )
-
-                # --- Prices ---
-                prices = _fetch_prices(condition_id)
-
-                # Non-binary market detection
-                if prices is None or "yes" not in prices:
-                    log.warning(
-                        "polymarket: skipping non-binary contract %s (no 'yes' price in response)",
-                        condition_id,
-                    )
-                    continue
-
-                yes_prob: float = float(prices["yes"])
-                bid: float | None = float(prices["bid"]) if prices.get("bid") is not None else None
-                ask: float | None = float(prices["ask"]) if prices.get("ask") is not None else None
-                volume_24h: float | None = float(market.get("volume24hr") or 0.0) or None
-
-                # --- Closed / resolution ---
-                is_closed: bool = bool(market.get("closed", False))
-                raw_outcome: str | None = market.get("outcome")
-                if is_closed:
-                    resolution: str | None = raw_outcome.lower() if raw_outcome else "undecided"
-                else:
-                    resolution = None
-
-                # --- Upsert contract ---
-                existing = sess.get(PredictionMarketContracts, condition_id)
-                if existing is None:
-                    contract = PredictionMarketContracts(
-                        contract_id=condition_id,
-                        platform=_PLATFORM,
-                        description=market.get("question", ""),
-                        category=category,
-                        resolution_date=market.get("endDate"),
-                        resolution_outcome=resolution,
-                        created_at=market.get("createdAt", snapshot_ts),
-                        last_seen_at=snapshot_ts,
-                    )
-                    sess.add(contract)
-                else:
-                    existing.last_seen_at = snapshot_ts
-                    existing.category = category
-                    if resolution is not None:
-                        existing.resolution_outcome = resolution
-
-                # --- Write snapshot (INSERT OR IGNORE via merge) ---
-                snap_pk = (condition_id, snapshot_ts)
-                existing_snap = sess.get(PredictionMarketSnapshots, snap_pk)
-                if existing_snap is None:
-                    snap = PredictionMarketSnapshots(
-                        contract_id=condition_id,
-                        snapshot_ts=snapshot_ts,
-                        yes_probability=yes_prob,
-                        volume_24h_usd=volume_24h,
-                        liquidity_usd=liquidity,
-                        bid=bid,
-                        ask=ask,
-                        ingested_at=snapshot_ts,
-                    )
-                    sess.add(snap)
-                    rows_written += 1
-
+            rows_written = sum(_process_market(sess, m, snapshot_ts) for m in markets)
             sess.commit()
 
         run.rows_written = rows_written

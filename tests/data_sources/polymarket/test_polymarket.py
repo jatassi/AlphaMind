@@ -482,6 +482,25 @@ class TestFailureHandling:
 
 
 # ---------------------------------------------------------------------------
+# Runner contract: callable with no args (mocked I/O + injected session_factory)
+# ---------------------------------------------------------------------------
+
+
+class TestNoArgsCallable:
+    def test_collect_snapshots_callable_with_no_args(self) -> None:
+        """collect_snapshots() is callable with no positional args (runner contract)."""
+        from alphamind.data_sources.polymarket.contracts import collect_snapshots
+
+        _engine, session_factory = _make_session_and_engine()
+
+        with (
+            patch(_FETCH_MARKETS, return_value=[]),
+            patch(_FETCH_PRICES, return_value=_make_price_response()),
+        ):
+            collect_snapshots(_session_factory=session_factory, _repo=_FakeRunRepo())
+
+
+# ---------------------------------------------------------------------------
 # AC: non-binary markets are skipped with a warn-log
 # ---------------------------------------------------------------------------
 

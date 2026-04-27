@@ -342,6 +342,25 @@ class TestPagination:
 # ---------------------------------------------------------------------------
 
 
+class TestCollectAuctionsNoArgs:
+    """collect_auctions is callable with no positional args (cron registry contract)."""
+
+    def test_callable_with_no_args(self, session_factory, fake_repo) -> None:
+        page = _make_api_page([])
+
+        with patch(
+            "alphamind.data_sources.treasury.auctions._client.get",
+            return_value=page,
+        ):
+            from alphamind.data_sources.treasury.auctions import collect_auctions
+
+            # No since — must not raise
+            collect_auctions(
+                _session_factory=session_factory,
+                _repo=fake_repo,
+            )
+
+
 class TestBootstrapAuctions:
     """bootstrap_auctions covers 12 months of history."""
 

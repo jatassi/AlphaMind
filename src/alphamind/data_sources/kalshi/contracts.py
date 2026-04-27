@@ -23,9 +23,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.orm import Session
 
-from alphamind.data_sources._common import track_run
+from alphamind.data_sources._common import default_session_factory, track_run
 from alphamind.data_sources.kalshi.client import KalshiClient
 from alphamind.persistence.models import PredictionMarketContracts, PredictionMarketSnapshots
 
@@ -80,10 +79,10 @@ def _map_result(result: str | None) -> str | None:
 
 
 def collect_snapshots(
-    _since: str,
+    since: str | None = None,
     *,
-    client: KalshiClient,
-    session: Session,
+    client: KalshiClient | None = None,
+    session_factory: Any = None,
     _repo: Any = None,
     _snapshot_ts: str | None = None,
 ) -> None:
@@ -97,18 +96,27 @@ def collect_snapshots(
 
     Parameters
     ----------
-    _since:
-        ISO 8601 timestamp used as a lower-bound filter hint (passed to the
-        events endpoint; Kalshi ignores unknown query params gracefully).
+    since:
+        Accepted for runner-contract compatibility; Kalshi snapshots always
+        reflect current state so its value does not affect collection.
     client:
-        Authenticated :class:`~alphamind.data_sources.kalshi.client.KalshiClient`.
-    session:
-        SQLAlchemy :class:`~sqlalchemy.orm.Session` bound to the target DB.
+        :class:`~alphamind.data_sources.kalshi.client.KalshiClient`.
+        Defaults to ``KalshiClient()`` which reads ``KALSHI_EMAIL`` and
+        ``KALSHI_PASSWORD`` from the environment.
+    session_factory:
+        SQLAlchemy session factory bound to the target DB.
+        Defaults to ``default_session_factory()``.
     _repo:
         Optional repository override for ``track_run`` (for testing).
     _snapshot_ts:
         Optional fixed snapshot timestamp (for deterministic testing).
     """
+    if client is None:
+        client = KalshiClient()
+    if session_factory is None:
+        session_factory = default_session_factory()
+    del since  # accepted for runner-contract compatibility; ignored by snapshot semantics
+
     ingested_at = datetime.now(UTC).isoformat()
     snapshot_ts = _snapshot_ts or ingested_at
 
@@ -118,74 +126,73 @@ def collect_snapshots(
 
         rows_written = 0
 
-        for event in events:
-            series_ticker: str = event.get("series_ticker", "")
-            category = _derive_category(series_ticker)
+        with session_factory() as session:
+            for event in events:
+                series_ticker: str = event.get("series_ticker", "")
+                category = _derive_category(series_ticker)
 
-            markets_payload = client.get("/markets", series_ticker=series_ticker)
-            markets: list[dict] = markets_payload.get("markets", [])
+                markets_payload = client.get("/markets", series_ticker=series_ticker)
+                markets: list[dict] = markets_payload.get("markets", [])
 
-            for market in markets:
-                contract_id: str = market["ticker"]
-                description: str = market.get("title", "")
-                close_time: str | None = market.get("close_time")
-                open_time: str | None = market.get("open_time", ingested_at)
-                market_status: str = market.get("status", "active")
-                result: str | None = market.get("result")
+                for market in markets:
+                    contract_id: str = market["ticker"]
+                    description: str = market.get("title", "")
+                    close_time: str | None = market.get("close_time")
+                    open_time: str | None = market.get("open_time", ingested_at)
+                    market_status: str = market.get("status", "active")
+                    result: str | None = market.get("result")
 
-                resolution_outcome = (
-                    _map_result(result) if market_status in ("closed", "finalized") else None
-                )
+                    resolution_outcome = (
+                        _map_result(result) if market_status in ("closed", "finalized") else None
+                    )
 
-                # UPSERT contract (slow-changing reference row)
-                stmt = sqlite_insert(PredictionMarketContracts).values(
-                    contract_id=contract_id,
-                    platform="kalshi",
-                    description=description,
-                    category=category,
-                    resolution_date=close_time,
-                    resolution_outcome=resolution_outcome,
-                    created_at=open_time,
-                    last_seen_at=ingested_at,
-                )
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["contract_id"],
-                    set_={
-                        "resolution_outcome": resolution_outcome,
-                        "last_seen_at": ingested_at,
-                        "description": description,
-                        "category": category,
-                        "resolution_date": close_time,
-                    },
-                )
-                session.execute(stmt)
+                    stmt = sqlite_insert(PredictionMarketContracts).values(
+                        contract_id=contract_id,
+                        platform="kalshi",
+                        description=description,
+                        category=category,
+                        resolution_date=close_time,
+                        resolution_outcome=resolution_outcome,
+                        created_at=open_time,
+                        last_seen_at=ingested_at,
+                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["contract_id"],
+                        set_={
+                            "resolution_outcome": resolution_outcome,
+                            "last_seen_at": ingested_at,
+                            "description": description,
+                            "category": category,
+                            "resolution_date": close_time,
+                        },
+                    )
+                    session.execute(stmt)
 
-                # Snapshot row — primary key (contract_id, snapshot_ts) prevents duplicates
-                yes_bid: int = market.get("yes_bid", 0)
-                yes_ask: int = market.get("yes_ask", 0)
-                yes_probability = (yes_bid + yes_ask) / 200.0
-                bid = yes_bid / 100.0
-                ask = yes_ask / 100.0
-                volume: int = market.get("volume", 0)
-                last_price: int = market.get("last_price", 0)
-                liquidity_usd = volume * last_price / 100.0
+                    yes_bid: int = market.get("yes_bid", 0)
+                    yes_ask: int = market.get("yes_ask", 0)
+                    yes_probability = (yes_bid + yes_ask) / 200.0
+                    bid = yes_bid / 100.0
+                    ask = yes_ask / 100.0
+                    volume: int = market.get("volume", 0)
+                    last_price: int = market.get("last_price", 0)
+                    liquidity_usd = volume * last_price / 100.0
 
-                snap_stmt = sqlite_insert(PredictionMarketSnapshots).values(
-                    contract_id=contract_id,
-                    snapshot_ts=snapshot_ts,
-                    yes_probability=yes_probability,
-                    volume_24h_usd=None,
-                    liquidity_usd=liquidity_usd,
-                    bid=bid,
-                    ask=ask,
-                    ingested_at=ingested_at,
-                )
-                snap_stmt = snap_stmt.on_conflict_do_nothing(
-                    index_elements=["contract_id", "snapshot_ts"]
-                )
-                result_proxy = session.execute(snap_stmt)
-                if result_proxy.rowcount > 0:
-                    rows_written += 1
+                    snap_stmt = sqlite_insert(PredictionMarketSnapshots).values(
+                        contract_id=contract_id,
+                        snapshot_ts=snapshot_ts,
+                        yes_probability=yes_probability,
+                        volume_24h_usd=None,
+                        liquidity_usd=liquidity_usd,
+                        bid=bid,
+                        ask=ask,
+                        ingested_at=ingested_at,
+                    )
+                    snap_stmt = snap_stmt.on_conflict_do_nothing(
+                        index_elements=["contract_id", "snapshot_ts"]
+                    )
+                    result_proxy = session.execute(snap_stmt)
+                    if result_proxy.rowcount > 0:
+                        rows_written += 1
 
-        session.commit()
+            session.commit()
         run.rows_written = rows_written

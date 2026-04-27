@@ -12,14 +12,20 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from alphamind.data_sources._common import RetryShape, track_run, with_retries
+from alphamind.data_sources._common import (
+    RetryShape,
+    active_universe_tickers,
+    default_session_factory,
+    track_run,
+    with_retries,
+)
 from alphamind.data_sources.polygon.client import PolygonClient
 from alphamind.persistence.models import OptionsContracts, OptionsContractSnapshots
 
 
 def collect_options_chains(
-    ticker_scope: list[str],
-    _since: datetime | None = None,
+    ticker_scope: list[str] | None = None,
+    since: datetime | None = None,
     *,
     _client: Any = None,
     _session_factory: Any = None,
@@ -34,19 +40,22 @@ def collect_options_chains(
     Parameters
     ----------
     ticker_scope:
-        Underlying tickers whose chains to collect.
+        Underlying tickers whose chains to collect.  Defaults to active
+        equity-universe tickers (benchmarks excluded — options are equity-only).
+    since:
+        Accepted for interface uniformity; unused (options are forward-only
+        snapshot collection).
     _snapshot_ts:
         Override the snapshot timestamp (injected in tests for idempotency).
     """
+    del since  # accepted for runner-contract compatibility; ignored by snapshot semantics
     if _client is None:
         _client = PolygonClient()
-    if _session_factory is None:
-        from alphamind.persistence.models import Base
-        from alphamind.persistence.session import make_engine, make_session_factory
-
-        engine = make_engine()
-        Base.metadata.create_all(engine)
-        _session_factory = make_session_factory(engine)
+    _session_factory = _session_factory or default_session_factory()
+    if ticker_scope is None:
+        ticker_scope = active_universe_tickers(
+            include_benchmarks=False, session_factory=_session_factory
+        )
 
     snapshot_ts = _snapshot_ts if _snapshot_ts is not None else datetime.now(UTC).isoformat()
     ingested_at = datetime.now(UTC).isoformat()

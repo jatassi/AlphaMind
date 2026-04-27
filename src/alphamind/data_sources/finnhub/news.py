@@ -17,7 +17,14 @@ from typing import Any
 import finnhub
 import yaml  # type: ignore[import-untyped]
 
-from alphamind.data_sources._common import RateLimiter, RetryShape, track_run, with_retries
+from alphamind.data_sources._common import (
+    RateLimiter,
+    RetryShape,
+    active_universe_tickers,
+    resume_since,
+    track_run,
+    with_retries,
+)
 from alphamind.persistence.models import Base, NewsArticles, NewsArticleTickers
 from alphamind.persistence.session import make_engine, make_session_factory
 
@@ -114,8 +121,52 @@ def _fetch_general_news(sdk: finnhub.Client) -> list[dict]:
     return sdk.general_news("general") or []
 
 
-def collect_news(
+def _gather_items(
+    sdk: finnhub.Client,
     ticker_scope: list[str],
+    from_date: str,
+    to_date: str,
+    rate_limiter: RateLimiter | None,
+) -> list[tuple[dict, str | None]]:
+    """Fetch company news per ticker and market-wide general news."""
+    items: list[tuple[dict, str | None]] = []
+    for ticker in ticker_scope:
+        if rate_limiter:
+            rate_limiter.acquire(_PROVIDER)
+        for item in _fetch_company_news(sdk, ticker, from_date, to_date):
+            items.append((item, ticker))
+    if rate_limiter:
+        rate_limiter.acquire(_PROVIDER)
+    for item in _fetch_general_news(sdk):
+        items.append((item, None))
+    return items
+
+
+def _write_items(items: list[tuple[dict, str | None]], sf: Any, outlets: dict[str, str]) -> int:
+    """Persist fetched items and return count of newly inserted rows."""
+    rows_written = 0
+    with sf() as sess:
+        for item, primary_ticker in items:
+            url = item.get("url") or ""
+            published_unix = item.get("datetime") or 0
+            published_at = datetime.fromtimestamp(published_unix, tz=UTC).isoformat()
+            art_id = _article_id(url, published_at)
+            headline = item.get("headline") or ""
+            body = item.get("summary") or ""
+            outlet = item.get("source")
+            inserted = _upsert_article(
+                sess, art_id, headline, outlet, url, published_at, body, outlets
+            )
+            if inserted and primary_ticker:
+                _upsert_ticker_link(sess, art_id, primary_ticker)
+            if inserted:
+                rows_written += 1
+        sess.commit()
+    return rows_written
+
+
+def collect_news(
+    ticker_scope: list[str] | None = None,
     since: datetime | None = None,
     *,
     _engine: Any = None,
@@ -130,56 +181,34 @@ def collect_news(
     Parameters
     ----------
     ticker_scope:
-        List of tickers to request company-specific news for.
+        List of tickers to request company-specific news for.  Defaults to
+        active universe tickers (benchmarks excluded).
     since:
-        Earliest published_at to request.  Defaults to 24 hours ago.
+        Earliest published_at to request.  Defaults to the latest stored
+        Finnhub article minus a 1-hour overlap, or 24 hours ago when the
+        table is empty.
     """
     engine = _engine or make_engine()
     sf = _session_factory or make_session_factory(engine)
     Base.metadata.create_all(engine)
 
+    if ticker_scope is None:
+        ticker_scope = active_universe_tickers(include_benchmarks=False, session_factory=sf)
+    if since is None:
+        since = resume_since(
+            column=NewsArticles.published_at,
+            filters=(NewsArticles.source == "finnhub",),
+            default_lookback=timedelta(hours=_DEFAULT_LOOKBACK_HOURS),
+            overlap=timedelta(hours=1),
+            session_factory=sf,
+        )
+
     sdk = finnhub.Client(api_key=_get_api_key())
     outlets = _load_outlets()
-
     now = datetime.now(UTC)
-    if since is None:
-        since = now - timedelta(hours=_DEFAULT_LOOKBACK_HOURS)
-
     from_date = since.strftime("%Y-%m-%d")
     to_date = now.strftime("%Y-%m-%d")
 
     with track_run("finnhub.news", _repo=_repo) as run:
-        all_items: list[tuple[dict, str | None]] = []
-
-        for ticker in ticker_scope:
-            if _rate_limiter:
-                _rate_limiter.acquire(_PROVIDER)
-            for item in _fetch_company_news(sdk, ticker, from_date, to_date):
-                all_items.append((item, ticker))
-
-        if _rate_limiter:
-            _rate_limiter.acquire(_PROVIDER)
-        for item in _fetch_general_news(sdk):
-            all_items.append((item, None))
-
-        rows_written = 0
-        with sf() as sess:
-            for item, primary_ticker in all_items:
-                url = item.get("url") or ""
-                published_unix = item.get("datetime") or 0
-                published_at = datetime.fromtimestamp(published_unix, tz=UTC).isoformat()
-                art_id = _article_id(url, published_at)
-                headline = item.get("headline") or ""
-                body = item.get("summary") or ""
-                outlet = item.get("source")
-
-                inserted = _upsert_article(
-                    sess, art_id, headline, outlet, url, published_at, body, outlets
-                )
-                if inserted and primary_ticker:
-                    _upsert_ticker_link(sess, art_id, primary_ticker)
-                if inserted:
-                    rows_written += 1
-            sess.commit()
-
-        run.rows_written = rows_written
+        items = _gather_items(sdk, ticker_scope, from_date, to_date, _rate_limiter)
+        run.rows_written = _write_items(items, sf, outlets)
