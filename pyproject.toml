@@ -121,6 +121,7 @@ module = [
     "exchange_calendars.*",
     "apscheduler.*",
     "alphamind.*",
+    "pandas.*",
 ]
 ignore_missing_imports = true
 

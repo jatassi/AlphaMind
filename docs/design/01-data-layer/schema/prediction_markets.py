@@ -20,24 +20,32 @@ DESIGN NOTES:
 - Ingestion cadence: every invocation (lightweight API calls). Distillation layer
   computes deltas and flags >5pp moves as anomalies.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
-from typing import Optional
+from datetime import date
 
 from ._common import (
     AlphaMindSector,
     AnomalyFlag,
-    DataConfidence,
-    Direction,
     InvocationMetadata,
-    SignalStrength,
     Ticker,
 )
 
+__all__ = [
+    "FOMCMeetingOdds",
+    "GeopoliticalContract",
+    "GeopoliticalOutcome",
+    "MonetaryPolicyOutcome",
+    "PolicyContract",
+    "RateProbabilityPair",
+    "RegulatoryPoliticalOutcome",
+]
+
 
 # ── Supporting types for MonetaryPolicyOutcome ─────────────────────────────────
+
 
 @dataclass(frozen=True)
 class RateProbabilityPair:
@@ -52,8 +60,9 @@ class RateProbabilityPair:
     where tail risk lies and whether the market expects a wide range of outcomes
     or a narrow consensus.
     """
-    rate_bps: int                    # Basis points (e.g., 450 = 4.50%)
-    probability: float               # Probability mass at this level (0.0–1.0)
+
+    rate_bps: int  # Basis points (e.g., 450 = 4.50%)
+    probability: float  # Probability mass at this level (0.0-1.0)
 
 
 @dataclass(frozen=True)
@@ -68,16 +77,18 @@ class FOMCMeetingOdds:
     are computed from the path of meeting-by-meeting odds. Days until meeting helps
     the system prioritize which meetings are most relevant right now.
     """
-    meeting_date: date               # FOMC meeting date (e.g., 2026-03-15)
-    probability_hike: float          # P(rate hike) (0.0–1.0)
-    probability_cut: float           # P(rate cut) (0.0–1.0)
-    probability_hold: float          # P(no change) (0.0–1.0)
-    expected_bp_magnitude: int       # Expected magnitude if hike/cut (e.g., 25 for 0.25%)
-    days_until_meeting: int          # Days from now until this meeting
-    market_consensus_action: str     # "hike" | "cut" | "hold" — the most likely outcome
+
+    meeting_date: date  # FOMC meeting date (e.g., 2026-03-15)
+    probability_hike: float  # P(rate hike) (0.0-1.0)
+    probability_cut: float  # P(rate cut) (0.0-1.0)
+    probability_hold: float  # P(no change) (0.0-1.0)
+    expected_bp_magnitude: int  # Expected magnitude if hike/cut (e.g., 25 for 0.25%)
+    days_until_meeting: int  # Days from now until this meeting
+    market_consensus_action: str  # "hike" | "cut" | "hold" — the most likely outcome
 
 
 # ── Supporting types for RegulatoryPoliticalOutcome ────────────────────────────
+
 
 @dataclass(frozen=True)
 class PolicyContract:
@@ -98,21 +109,23 @@ class PolicyContract:
     A contract that was 30% likely 7 days ago but now 50% means the market
     repriced materially.
     """
-    contract_id: str                 # Polymarket or Kalshi contract ID (unique identifier)
-    description: str                 # Human-readable contract title
-    category: str                    # "antitrust" | "trade" | "financial_reg" | "tax" | "election"
-    probability: float               # Current market probability (0.0–1.0)
-    delta_24hr: float                # Change in probability over last 24 hours (pp)
-    delta_7d: float                  # Change in probability over last 7 days (pp)
-    platform: str                    # "polymarket" | "kalshi" | "metaculus"
-    contract_liquidity_usd: float    # USD liquidity depth (larger = more reliable)
-    prior_probability: Optional[float] = None  # Probability from 7d ago (to compute delta)
+
+    contract_id: str  # Polymarket or Kalshi contract ID (unique identifier)
+    description: str  # Human-readable contract title
+    category: str  # "antitrust" | "trade" | "financial_reg" | "tax" | "election"
+    probability: float  # Current market probability (0.0-1.0)
+    delta_24hr: float  # Change in probability over last 24 hours (pp)
+    delta_7d: float  # Change in probability over last 7 days (pp)
+    platform: str  # "polymarket" | "kalshi" | "metaculus"
+    contract_liquidity_usd: float  # USD liquidity depth (larger = more reliable)
+    prior_probability: float | None = None  # Probability from 7d ago (to compute delta)
     affected_tickers: list[Ticker] = field(default_factory=list)  # Which tickers this impacts
     affected_sectors: list[AlphaMindSector] = field(default_factory=list)  # Which sectors
-    resolution_date: Optional[date] = None  # When this contract will resolve (if known)
+    resolution_date: date | None = None  # When this contract will resolve (if known)
 
 
 # ── Supporting types for GeopoliticalOutcome ──────────────────────────────────
+
 
 @dataclass(frozen=True)
 class GeopoliticalContract:
@@ -132,22 +145,24 @@ class GeopoliticalContract:
     levels of severity. Helps the system prioritize which geopolitical outcomes
     matter most for its portfolio.
     """
-    contract_id: str                 # Unique market identifier
-    description: str                 # Contract title
-    theater: str                     # "taiwan_strait" | "middle_east" | "russia_ukraine" | "china_economic" | "opec"
-    escalation_level: str            # "low" | "medium" | "high" | "critical" — severity classification
-    probability: float               # Current market probability (0.0–1.0)
-    delta_24hr: float                # Change in probability over last 24 hours (pp)
-    delta_7d: float                  # Change in probability over last 7 days (pp)
-    platform: str                    # "polymarket" | "kalshi" | "metaculus"
-    contract_liquidity_usd: float    # USD liquidity (higher = more reliable)
-    prior_probability: Optional[float] = None  # Probability from 7d ago
+
+    contract_id: str  # Unique market identifier
+    description: str  # Contract title
+    theater: str  # "taiwan_strait" | "middle_east" | "russia_ukraine" | "china_economic" | "opec"
+    escalation_level: str  # "low" | "medium" | "high" | "critical" — severity classification
+    probability: float  # Current market probability (0.0-1.0)
+    delta_24hr: float  # Change in probability over last 24 hours (pp)
+    delta_7d: float  # Change in probability over last 7 days (pp)
+    platform: str  # "polymarket" | "kalshi" | "metaculus"
+    contract_liquidity_usd: float  # USD liquidity (higher = more reliable)
+    prior_probability: float | None = None  # Probability from 7d ago
     affected_tickers: list[Ticker] = field(default_factory=list)  # Tickers most sensitive
     affected_sectors: list[AlphaMindSector] = field(default_factory=list)  # Sectors affected
-    resolution_date: Optional[date] = None  # When contract resolves
+    resolution_date: date | None = None  # When contract resolves
 
 
 # ── Main entities ──────────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class MonetaryPolicyOutcome:
@@ -158,7 +173,7 @@ class MonetaryPolicyOutcome:
     action probability, prediction market vs. futures divergence.
 
     This is a MARKET-WIDE entity (no ticker field). It captures the market's
-    consensus expectations about Fed policy over the next 6–24 months.
+    consensus expectations about Fed policy over the next 6-24 months.
 
     Data is ingested from Polymarket and Kalshi APIs every invocation cycle.
     The distillation layer computes 24hr and 7d deltas, flags >5pp moves, and
@@ -168,7 +183,7 @@ class MonetaryPolicyOutcome:
     Why: Fed rate expectations are a primary driver of equity valuations, sector
     rotation, and carry costs. Prediction markets are more reliable than Fed
     guidance because money is at risk. Terminal rate distribution shows where
-    the market thinks rates will end up, not just the next 1–2 meetings.
+    the market thinks rates will end up, not just the next 1-2 meetings.
     Inter-meeting action probability flags crisis tail risk (emergency cuts).
 
     Source: Polymarket API (free, 300 req/10s) + Kalshi API (free, CFTC-regulated)
@@ -176,6 +191,7 @@ class MonetaryPolicyOutcome:
     Cadence: Every invocation (~30 min)
     Feasibility: HIGH
     """
+
     upcoming_fomc_meetings: list[FOMCMeetingOdds]
     """List of upcoming FOMC meetings with odds for hike/cut/hold.
 
@@ -196,7 +212,7 @@ class MonetaryPolicyOutcome:
     inter_meeting_action_probability: float
     """Probability of emergency Fed action (cut or hike) between scheduled FOMC meetings.
 
-    Range: 0.0–1.0. Used to flag tail risk of crisis response. If this is >20%,
+    Range: 0.0-1.0. Used to flag tail risk of crisis response. If this is >20%,
     the system should widen stop losses and reduce long-duration positions.
     Zero or near-zero in normal regimes; spikes during financial stress.
     """
@@ -239,21 +255,21 @@ class MonetaryPolicyOutcome:
     Distributions are richer than point estimates.
     """
 
-    divergence_description: Optional[str] = None
+    divergence_description: str | None = None
     """Plain-English description of the divergence (if one exists).
 
     Example: "Markets price 60% chance of 25bp hike in March meeting; fed funds
     futures price 35%. Markets may be over-weighting hawkish dot plot comments."
     """
 
-    divergence_magnitude_bp: Optional[int] = None
+    divergence_magnitude_bp: int | None = None
     """Magnitude of divergence in basis points of implied rate (if divergence is True).
 
     Example: if futures price 450bp terminal rate but markets price 475bp, this is 25bp.
     Larger divergences are more actionable.
     """
 
-    rate_path_shift_24hr: Optional[float] = None
+    rate_path_shift_24hr: float | None = None
     """24-hour shift in the expected rate path (basis points).
 
     Example: yesterday the market expected 450bp terminal rate, today 465bp.
@@ -297,6 +313,7 @@ class RegulatoryPoliticalOutcome:
     Cadence: Every invocation (~30 min)
     Feasibility: HIGH
     """
+
     metadata: InvocationMetadata
     """Pipeline invocation metadata."""
 
@@ -369,6 +386,7 @@ class GeopoliticalOutcome:
     Cadence: Every invocation (~30 min)
     Feasibility: HIGH
     """
+
     opec_futures_divergence: bool
     """True if OPEC prediction market odds diverge materially from oil futures curve (Q8:8a).
 

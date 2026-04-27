@@ -17,15 +17,15 @@ Key insights:
     - First reporter's commentary in a earnings season sets sector expectations;
       peers' guidance is anchored to bellwether tone and beat/miss ratio.
     - Capex commentary from hyperscalers on AI spending is the single most important
-      qualitative catalyst for tech/semis on a 4–72 hour horizon.
+      qualitative catalyst for tech/semis on a 4-72 hour horizon.
     - Conference presentations (GTC, re:Invent, AWS announcements) can reprice
       names significantly within the thesis horizon.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
-from typing import Optional
+from datetime import UTC, date, datetime
 
 from ._common import (
     AlphaMindSector,
@@ -36,8 +36,24 @@ from ._common import (
     Ticker,
 )
 
+__all__ = [
+    "AnalystQADynamics",
+    "BellwetherRead",
+    "ConferencePresentation",
+    "CrossCompanyEarningsIntel",
+    "ForwardLookingStatement",
+    "ManagementToneAnalysis",
+    "NonAnswerFlag",
+    "QAExchange",
+    "QuestionTheme",
+    "SupplyChainSignal",
+    "TargetUpdate",
+    "TopicEmphasis",
+]
+
 
 # ── Supporting types for ManagementToneAnalysis ──────────────────────────────
+
 
 @dataclass(frozen=True)
 class ForwardLookingStatement:
@@ -46,6 +62,7 @@ class ForwardLookingStatement:
     These statements (guidance, expectations, assumptions) are the raw material for
     assessing management confidence and identifying narrative regime changes.
     """
+
     text: str
     """The extracted statement verbatim or near-verbatim."""
 
@@ -56,7 +73,7 @@ class ForwardLookingStatement:
     """Is the statement optimistic (bullish), cautious (bearish), or neutral?"""
 
     confidence_level: float
-    """Explicit or implicit confidence (0.0–1.0). High = "expect", Low = "hope/may"."""
+    """Explicit or implicit confidence (0.0-1.0). High = "expect", Low = "hope/may"."""
 
 
 @dataclass(frozen=True)
@@ -67,17 +84,19 @@ class TopicEmphasis:
     concerned about or excited about. Shifts in emphasis across quarters are
     regime-change indicators.
     """
+
     topic: str
     """Topic name: 'AI', 'margins', 'capex', 'supply_chain', 'competition', etc."""
 
     time_allocation_pct: float
-    """Percentage of prepared remarks devoted to this topic (0.0–100.0)."""
+    """Percentage of prepared remarks devoted to this topic (0.0-100.0)."""
 
     vs_prior_quarter_change: float
     """Change in time allocation vs. prior quarter (-100.0 to +100.0 pct points)."""
 
 
 # ── Supporting types for AnalystQADynamics ───────────────────────────────────
+
 
 @dataclass(frozen=True)
 class QuestionTheme:
@@ -86,6 +105,7 @@ class QuestionTheme:
     Clustering reveals what the institutional investor base collectively cares about
     most. Dominance in certain themes signals high uncertainty or skepticism.
     """
+
     theme: str
     """Cluster label: 'demand', 'competition', 'margins', 'capex', 'guidance_confidence'."""
 
@@ -93,7 +113,7 @@ class QuestionTheme:
     """Number of questions in this theme."""
 
     pct_of_questions: float
-    """Percentage of total questions (0.0–100.0)."""
+    """Percentage of total questions (0.0-100.0)."""
 
     is_dominant_concern: bool
     """True if this is the #1 concern by question volume."""
@@ -107,6 +127,7 @@ class NonAnswerFlag:
     about (capex plans, competitive threats, demand visibility), it's a bearish signal.
     Severity indicates how much pressure the analyst applied.
     """
+
     question_topic: str
     """The topic management dodged: 'capex', 'competition', 'demand', 'margins'."""
 
@@ -124,6 +145,7 @@ class QAExchange:
     High-signal exchanges are those where the analyst pressed hard or management
     revealed important information (or failed to provide it).
     """
+
     analyst_firm: str
     """The analyst's firm: 'Goldman Sachs', 'Morgan Stanley', etc."""
 
@@ -139,6 +161,7 @@ class QAExchange:
 
 # ── Supporting types for CrossCompanyEarningsIntel ────────────────────────────
 
+
 @dataclass(frozen=True)
 class BellwetherRead:
     """Sector bellwether earnings commentary that sets expectations for peers.
@@ -147,6 +170,7 @@ class BellwetherRead:
     establishes tone and beat/miss anchors. Peer guidance is unconsciously
     calibrated to bellwether remarks.
     """
+
     ticker: Ticker
     """The bellwether company's ticker."""
 
@@ -156,13 +180,13 @@ class BellwetherRead:
     demand_commentary_direction: Direction
     """Management's framing of demand: bullish, bearish, neutral, mixed."""
 
-    pricing_commentary: Optional[str]
+    pricing_commentary: str | None
     """Any commentary on pricing power, ASP trends, or margin outlook."""
 
-    competitive_commentary: Optional[str]
+    competitive_commentary: str | None
     """How management framed competitive intensity and market share."""
 
-    macro_commentary: Optional[str]
+    macro_commentary: str | None
     """Management's framing of macro environment and customer spending intentions."""
 
     implications_for_sector: str
@@ -178,6 +202,7 @@ class SupplyChainSignal:
     bullish for ASML, QCOM, etc. If Intel mentions margin pressure from TSMC,
     that's competitive context.
     """
+
     reporting_ticker: Ticker
     """The company that made the remark."""
 
@@ -196,6 +221,7 @@ class SupplyChainSignal:
 
 # ── Supporting types for ConferencePresentation ───────────────────────────────
 
+
 @dataclass(frozen=True)
 class TargetUpdate:
     """Long-term target guidance announced at a conference or investor day.
@@ -204,10 +230,11 @@ class TargetUpdate:
     rates, margin targets) are high-conviction signals of management's confidence
     in the strategy.
     """
+
     metric: str
     """The target metric: 'revenue_cagr', 'eps_growth', 'fcf_growth', 'margin_target'."""
 
-    prior_target: Optional[float]
+    prior_target: float | None
     """Prior guidance or consensus on this metric (if available)."""
 
     new_target: float
@@ -218,6 +245,7 @@ class TargetUpdate:
 
 
 # ── Main entities ────────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True)
 class ManagementToneAnalysis:
@@ -236,6 +264,7 @@ class ManagementToneAnalysis:
     Cadence: Earnings season. Feasibility: MEDIUM — multi-source transcript
     pipeline with NLP tone classification.
     """
+
     ticker: Ticker
     """Company ticker."""
 
@@ -252,13 +281,14 @@ class ManagementToneAnalysis:
     """Aggregate tone of prepared remarks: bullish, bearish, neutral, mixed."""
 
     tone_vs_prior_quarter: Direction
-    """Direction of tone shift vs. prior quarter: bullish (improved), bearish (worsened), neutral (stable)."""
+    """Direction of tone shift vs. prior quarter: bullish (improved), bearish (worsened),
+    neutral (stable)."""
 
     tone_shift_magnitude: float
-    """How dramatic the shift was (0.0–1.0). 0 = no shift, 1.0 = extreme reversal."""
+    """How dramatic the shift was (0.0-1.0). 0 = no shift, 1.0 = extreme reversal."""
 
     hedging_language_score: float
-    """Hedge score (0.0–1.0) in this quarter's remarks. Higher = more qualification
+    """Hedge score (0.0-1.0) in this quarter's remarks. Higher = more qualification
     language ('may', 'hope', 'resilient') vs. certainty ('expect', 'will')."""
 
     hedging_change_vs_prior: str
@@ -281,10 +311,15 @@ class ManagementToneAnalysis:
     """Notable direct quotes that moved the market or diverged significantly from
     prior language. Context-setting for adaptive research deep dives."""
 
-    metadata: InvocationMetadata = field(default_factory=lambda: InvocationMetadata(
-        invocation_id="", invocation_type="", collected_at=datetime.now(),
-        data_confidence=DataConfidence.MEDIUM, vol_regime=None
-    ))
+    metadata: InvocationMetadata = field(
+        default_factory=lambda: InvocationMetadata(
+            invocation_id="",
+            invocation_type="",
+            collected_at=datetime.now(tz=UTC),
+            data_confidence=DataConfidence.MEDIUM,
+            vol_regime=None,
+        )
+    )
     """Pipeline metadata: invocation ID, collection timestamp, confidence level."""
 
     anomalies: list[AnomalyFlag] = field(default_factory=list)
@@ -306,6 +341,7 @@ class AnalystQADynamics:
     Earnings season. Feasibility: MEDIUM — NLP required for Q&A clustering
     and evasion detection.
     """
+
     ticker: Ticker
     """Company ticker."""
 
@@ -327,7 +363,7 @@ class AnalystQADynamics:
     unsatisfactory answer). Higher = more institutional pressure for clarity."""
 
     management_responsiveness_score: float
-    """How directly management answered questions (0.0–1.0).
+    """How directly management answered questions (0.0-1.0).
     0 = evasive throughout, 1.0 = direct answers to all substantive questions."""
 
     question_themes: list[QuestionTheme] = field(default_factory=list)
@@ -340,10 +376,15 @@ class AnalystQADynamics:
     high_signal_exchanges: list[QAExchange] = field(default_factory=list)
     """Notable Q&A exchanges that shifted expectations or revealed uncertainty."""
 
-    metadata: InvocationMetadata = field(default_factory=lambda: InvocationMetadata(
-        invocation_id="", invocation_type="", collected_at=datetime.now(),
-        data_confidence=DataConfidence.MEDIUM, vol_regime=None
-    ))
+    metadata: InvocationMetadata = field(
+        default_factory=lambda: InvocationMetadata(
+            invocation_id="",
+            invocation_type="",
+            collected_at=datetime.now(tz=UTC),
+            data_confidence=DataConfidence.MEDIUM,
+            vol_regime=None,
+        )
+    )
     """Pipeline metadata: invocation ID, collection timestamp, confidence level."""
 
     anomalies: list[AnomalyFlag] = field(default_factory=list)
@@ -361,13 +402,14 @@ class CrossCompanyEarningsIntel:
     momentum (broad trends), and strategic pivot signals.
 
     Capex guidance from hyperscalers is the most critical qualitative input for
-    the 4–72 hour thesis horizon in tech/semis.
+    the 4-72 hour thesis horizon in tech/semis.
 
     Market-wide/sector-wide entity (not per-ticker). Source: Derived from
-    Qual 4:4a–4b across universe. Cadence: Earnings season (rolling update
+    Qual 4:4a-4b across universe. Cadence: Earnings season (rolling update
     as companies report). Feasibility: MEDIUM — cross-company synthesis is
     analysis layer output, aggregating transcript intelligence.
     """
+
     sector: AlphaMindSector
     """Sector: TECH, SEMIS, FINANCIALS, ENERGY."""
 
@@ -378,10 +420,10 @@ class CrossCompanyEarningsIntel:
     """Are companies broadly guiding up (bullish), down (bearish), in-line (neutral)?"""
 
     beat_rate_pct: float
-    """Sector earnings beat rate so far this season (0.0–100.0)."""
+    """Sector earnings beat rate so far this season (0.0-100.0)."""
 
     guidance_raise_rate_pct: float
-    """Percentage of companies raising guidance (0.0–100.0)."""
+    """Percentage of companies raising guidance (0.0-100.0)."""
 
     season_momentum: str
     """Qualitative season momentum: 'strong_beats' (broad positive surprises),
@@ -407,10 +449,15 @@ class CrossCompanyEarningsIntel:
     """Sector-wide narrative shifts from prepared remarks. E.g., 'AI capex pullback',
     'margin defense pivot', 'geographic diversification emphasis'."""
 
-    metadata: InvocationMetadata = field(default_factory=lambda: InvocationMetadata(
-        invocation_id="", invocation_type="", collected_at=datetime.now(),
-        data_confidence=DataConfidence.MEDIUM, vol_regime=None
-    ))
+    metadata: InvocationMetadata = field(
+        default_factory=lambda: InvocationMetadata(
+            invocation_id="",
+            invocation_type="",
+            collected_at=datetime.now(tz=UTC),
+            data_confidence=DataConfidence.MEDIUM,
+            vol_regime=None,
+        )
+    )
     """Pipeline metadata: invocation ID, collection timestamp, confidence level."""
 
     anomalies: list[AnomalyFlag] = field(default_factory=list)
@@ -424,13 +471,14 @@ class ConferencePresentation:
     Captures events like GTC (NVIDIA), AWS re:Invent, Google I/O, Microsoft Build,
     earnings-day investor briefings, and analyst days. These presentations can
     announce long-term strategic shifts, major product/capex commitments, or
-    competitive positioning changes that move the market 4–72 hours post-event.
+    competitive positioning changes that move the market 4-72 hours post-event.
 
     Per-ticker entity. Source: SEC EDGAR 8-K Item 7.01 + company IR event calendars
-    + Finnhub. Fallback: Manual monitoring. Cadence: Event-driven (~2–3 major
+    + Finnhub. Fallback: Manual monitoring. Cadence: Event-driven (~2-3 major
     events per year per name). Feasibility: LOW-MEDIUM — ~70% automated coverage
     via 8-K monitoring; investor day slide decks often require manual extraction.
     """
+
     ticker: Ticker
     """Company ticker."""
 
@@ -464,15 +512,20 @@ class ConferencePresentation:
     """Indicated changes in strategy: 'pivoting to AI infrastructure', 'expanding
     into automotive', 'shifting to subscription model'."""
 
-    metadata: InvocationMetadata = field(default_factory=lambda: InvocationMetadata(
-        invocation_id="", invocation_type="", collected_at=datetime.now(),
-        data_confidence=DataConfidence.MEDIUM, vol_regime=None
-    ))
+    metadata: InvocationMetadata = field(
+        default_factory=lambda: InvocationMetadata(
+            invocation_id="",
+            invocation_type="",
+            collected_at=datetime.now(tz=UTC),
+            data_confidence=DataConfidence.MEDIUM,
+            vol_regime=None,
+        )
+    )
     """Pipeline metadata: invocation ID, collection timestamp, confidence level."""
 
     is_high_priority: bool = False
     """True for major catalyst events (GTC, re:Invent, I/O from mega-caps).
-    Signals that this event is likely to move the market within the 4–72hr horizon."""
+    Signals that this event is likely to move the market within the 4-72hr horizon."""
 
     cross_company_context: str = ""
     """How this presentation fits with concurrent or recent presentations at

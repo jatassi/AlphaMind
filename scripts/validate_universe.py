@@ -34,9 +34,9 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pandas as pd
@@ -130,7 +130,7 @@ class PolygonClient:
         final["apiKey"] = self._api_key
         resp = self._client.get(full, params=final)
         resp.raise_for_status()
-        return resp.json()
+        return cast(dict[str, Any], resp.json())
 
     def _paginated(self, path: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
@@ -148,7 +148,7 @@ class PolygonClient:
         return self._paginated(path, {"adjusted": "true", "sort": "asc", "limit": 50000})
 
     def ticker_reference(self, ticker: str) -> dict[str, Any]:
-        return self._get(f"/v3/reference/tickers/{ticker}").get("results", {})
+        return cast(dict[str, Any], self._get(f"/v3/reference/tickers/{ticker}").get("results", {}))
 
     def options_chain_at_expiry(
         self,
@@ -193,7 +193,7 @@ class FinnhubClient:
         return resp.json()
 
     def recommendations(self, symbol: str) -> list[dict[str, Any]]:
-        return self._get("/stock/recommendation", {"symbol": symbol})
+        return cast(list[dict[str, Any]], self._get("/stock/recommendation", {"symbol": symbol}))
 
 
 # --- ETF holdings fetchers (discovery mode) ---------------------------------
@@ -211,8 +211,9 @@ def _fetch_spdr_holdings(etf: str) -> list[str]:
     blank) followed by a header row with `Name, Ticker, Identifier, ...`.
     """
     url = SPDR_HOLDINGS_URL.format(etf_lower=etf.lower())
-    resp = httpx.get(url, timeout=30.0, follow_redirects=True,
-                     headers={"User-Agent": ETF_USER_AGENT})
+    resp = httpx.get(
+        url, timeout=30.0, follow_redirects=True, headers={"User-Agent": ETF_USER_AGENT}
+    )
     resp.raise_for_status()
     df = pd.read_excel(io.BytesIO(resp.content), skiprows=4)
     return _filter_equity_tickers(df["Ticker"])
@@ -227,8 +228,9 @@ def _fetch_ishares_holdings(etf: str, product_id: str) -> list[str]:
     to reject those rows along with cash placeholders and futures entries.
     """
     url = ISHARES_HOLDINGS_URL.format(product_id=product_id, etf=etf)
-    resp = httpx.get(url, timeout=30.0, follow_redirects=True,
-                     headers={"User-Agent": ETF_USER_AGENT})
+    resp = httpx.get(
+        url, timeout=30.0, follow_redirects=True, headers={"User-Agent": ETF_USER_AGENT}
+    )
     resp.raise_for_status()
     df = pd.read_csv(io.StringIO(resp.text), skiprows=9)
     if "Asset Class" in df.columns:
@@ -300,8 +302,11 @@ def check_analyst_coverage(finnhub: FinnhubClient, ticker: str) -> CriterionResu
     threshold = f">={ANALYST_COVERAGE_MIN}"
     if not recs:
         return CriterionResult(
-            "Analyst coverage", False, "no recommendations returned",
-            threshold, error="empty response",
+            "Analyst coverage",
+            False,
+            "no recommendations returned",
+            threshold,
+            error="empty response",
         )
     latest = recs[0]  # Finnhub returns most-recent first
     total = sum(latest.get(k, 0) for k in ("strongBuy", "buy", "hold", "sell", "strongSell"))
@@ -354,7 +359,11 @@ def check_beta(polygon: PolygonClient, ticker: str, as_of: date) -> CriterionRes
     var_s = statistics.variance(r_s)
     if var_s == 0:
         return CriterionResult(
-            "Beta", False, "SPY zero variance", threshold, error="degenerate variance",
+            "Beta",
+            False,
+            "SPY zero variance",
+            threshold,
+            error="degenerate variance",
         )
     beta = _covariance(r_t, r_s) / var_s
     return CriterionResult("Beta", abs(beta) >= BETA_MIN, f"{beta:.2f}", threshold)
@@ -366,10 +375,17 @@ def check_market_cap(polygon: PolygonClient, ticker: str) -> CriterionResult:
     market_cap = ref.get("market_cap")
     if not market_cap:
         return CriterionResult(
-            "Market cap", False, "market_cap missing", threshold, error="no field",
+            "Market cap",
+            False,
+            "market_cap missing",
+            threshold,
+            error="no field",
         )
     return CriterionResult(
-        "Market cap", market_cap >= MARKET_CAP_MIN_USD, _fmt_usd(market_cap), threshold,
+        "Market cap",
+        market_cap >= MARKET_CAP_MIN_USD,
+        _fmt_usd(market_cap),
+        threshold,
     )
 
 
@@ -411,7 +427,11 @@ def check_options_oi(polygon: PolygonClient, ticker: str, as_of: date) -> Criter
     recent_bars = polygon.daily_bars(ticker, as_of - timedelta(days=10), as_of)
     if not recent_bars:
         return CriterionResult(
-            "Options OI (NTM)", False, "no recent price for spot", threshold, error="no spot",
+            "Options OI (NTM)",
+            False,
+            "no recent price for spot",
+            threshold,
+            error="no spot",
         )
     spot = recent_bars[-1]["c"]
     lo = spot * (1 - OPTIONS_NEAR_MONEY_PCT)
@@ -420,9 +440,11 @@ def check_options_oi(polygon: PolygonClient, ticker: str, as_of: date) -> Criter
     contracts = polygon.options_chain_at_expiry(ticker, target_expiry, lo, hi)
     if not contracts:
         return CriterionResult(
-            "Options OI (NTM)", False,
+            "Options OI (NTM)",
+            False,
             f"no contracts at {target_expiry.isoformat()} within ±{OPTIONS_NEAR_MONEY_PCT:.0%}",
-            threshold, error="empty chain",
+            threshold,
+            error="empty chain",
         )
 
     total_oi = sum(int(c.get("open_interest") or 0) for c in contracts)
@@ -442,11 +464,11 @@ def validate_ticker(
 ) -> TickerReport:
     report = TickerReport(ticker=ticker, sector=sector)
     runners: list[tuple[str, Callable[[], CriterionResult]]] = [
-        ("ADV",               lambda: check_adv(polygon, ticker, as_of)),
-        ("Analyst coverage",  lambda: check_analyst_coverage(finnhub, ticker)),
-        ("Beta",              lambda: check_beta(polygon, ticker, as_of)),
-        ("Market cap",        lambda: check_market_cap(polygon, ticker)),
-        ("Options OI (NTM)",  lambda: check_options_oi(polygon, ticker, as_of)),
+        ("ADV", lambda: check_adv(polygon, ticker, as_of)),
+        ("Analyst coverage", lambda: check_analyst_coverage(finnhub, ticker)),
+        ("Beta", lambda: check_beta(polygon, ticker, as_of)),
+        ("Market cap", lambda: check_market_cap(polygon, ticker)),
+        ("Options OI (NTM)", lambda: check_options_oi(polygon, ticker, as_of)),
     ]
     for label, fn in runners:
         try:
@@ -482,7 +504,8 @@ def format_one_line(report: TickerReport) -> str:
     """Compact one-line summary for the suppressed-fails section in discovery."""
     fails = [
         f"{r.name}={r.detail}" + (f" [{r.error}]" if r.error else "")
-        for r in report.results if r.status != "pass"
+        for r in report.results
+        if r.status != "pass"
     ]
     return f"  {report.ticker:<6} {' | '.join(fails)}"
 
@@ -524,8 +547,10 @@ def run_discovery(
             continue
 
         candidates = [t for t in holdings if t not in in_universe]
-        print(f"=== {sector} (via {spec['etf']}, {len(holdings)} holdings, "
-              f"{len(candidates)} not in universe) ===")
+        print(
+            f"=== {sector} (via {spec['etf']}, {len(holdings)} holdings, "
+            f"{len(candidates)} not in universe) ==="
+        )
         print()
 
         passes: list[TickerReport] = []
@@ -556,40 +581,65 @@ def run_discovery(
     return 0
 
 
-def main() -> int:
+def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--config", default="config/assets.yaml", type=Path,
+        "--config",
+        default="config/assets.yaml",
+        type=Path,
         help="Path to assets.yaml (default: config/assets.yaml)",
     )
     parser.add_argument(
-        "--date", default=None,
+        "--date",
+        default=None,
         help="Validation date YYYY-MM-DD (default: today)",
     )
     parser.add_argument(
-        "--ticker", default=None,
+        "--ticker",
+        default=None,
         help="Validate a single ticker (must be present in assets.yaml)",
     )
     parser.add_argument(
-        "--discover", action="store_true",
+        "--discover",
+        action="store_true",
         help="Discovery mode: evaluate ETF holdings not in universe, surface candidates",
     )
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def _run_validations(
+    polygon: PolygonClient,
+    finnhub: FinnhubClient,
+    pairs: list[tuple[str, str]],
+    as_of: date,
+) -> tuple[int, int, int]:
+    pass_n = fail_n = unknown_n = 0
+    for ticker, sector in pairs:
+        report = validate_ticker(polygon, finnhub, ticker, sector, as_of)
+        overall = report.overall
+        if overall == "pass":
+            pass_n += 1
+        elif overall.startswith("unknown"):
+            unknown_n += 1
+        else:
+            fail_n += 1
+        print(format_report(report))
+        print()
+    return pass_n, fail_n, unknown_n
+
+
+def _validate_setup(args: argparse.Namespace) -> tuple[str, str, dict[str, Any]] | int:
     if args.discover and args.ticker:
         print("error: --discover and --ticker are mutually exclusive", file=sys.stderr)
         return 2
 
-    sys.stdout.reconfigure(line_buffering=True)  # stream per-ticker progress when piped
-    load_dotenv()  # picks up .env at the repo root if present
-
     polygon_key = os.environ.get("POLYGON_API_KEY")
     finnhub_key = os.environ.get("FINNHUB_API_KEY")
     missing = [
-        n for n, v in [("POLYGON_API_KEY", polygon_key), ("FINNHUB_API_KEY", finnhub_key)]
-        if not v
+        n for n, v in [("POLYGON_API_KEY", polygon_key), ("FINNHUB_API_KEY", finnhub_key)] if not v
     ]
     if missing:
         print(f"error: missing environment variables: {', '.join(missing)}", file=sys.stderr)
@@ -602,13 +652,28 @@ def main() -> int:
     with args.config.open() as f:
         config = yaml.safe_load(f) or {}
     config["__source_path__"] = str(args.config)
-    sectors: dict[str, list[str]] = config.get("sectors") or {}
-    if not sectors:
+    if not config.get("sectors"):
         print(f"error: no sectors in {args.config}", file=sys.stderr)
         return 2
 
-    as_of = date.fromisoformat(args.date) if args.date else date.today()
+    assert polygon_key is not None  # narrowed by `missing` check above
+    assert finnhub_key is not None
+    return polygon_key, finnhub_key, config
 
+
+def main() -> int:
+    args = _parse_args()
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(line_buffering=True)  # stream per-ticker progress when piped
+    load_dotenv()  # picks up .env at the repo root if present
+
+    setup = _validate_setup(args)
+    if isinstance(setup, int):
+        return setup
+    polygon_key, finnhub_key, config = setup
+    sectors: dict[str, list[str]] = config["sectors"]
+
+    as_of = date.fromisoformat(args.date) if args.date else datetime.now(tz=UTC).date()
     polygon = PolygonClient(polygon_key)
     finnhub = FinnhubClient(finnhub_key)
 
@@ -616,7 +681,9 @@ def main() -> int:
         return run_discovery(polygon, finnhub, config, as_of)
 
     pairs: list[tuple[str, str]] = [
-        (t, sector) for sector, tickers in sectors.items() for t in tickers
+        (t, sector)
+        for sector, tickers in sectors.items()
+        for t in tickers
         if not args.ticker or t == args.ticker
     ]
     if not pairs:
@@ -631,18 +698,8 @@ def main() -> int:
     print(f"Tickers under review: {len(pairs)}")
     print()
 
-    pass_n = fail_n = unknown_n = 0
-    for ticker, sector in pairs:
-        report = validate_ticker(polygon, finnhub, ticker, sector, as_of)
-        overall = report.overall
-        if overall == "pass":
-            pass_n += 1
-        elif overall.startswith("unknown"):
-            unknown_n += 1
-        else:
-            fail_n += 1
-        print(format_report(report))
-        print()
+    _, fail_n, unknown_n = _run_validations(polygon, finnhub, pairs, as_of)
+    pass_n = len(pairs) - fail_n - unknown_n
 
     print("---")
     print(f"Summary: {pass_n} pass, {fail_n} fail, {unknown_n} unknown")

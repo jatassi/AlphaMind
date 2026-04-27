@@ -4,21 +4,30 @@
 executive action, geopolitical events, and a regulatory/policy event calendar.
 SEC EDGAR, Federal Register, and FRED are the primary free sources.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Optional
 
 from ._common import (
-    AnomalyFlag,
     AlphaMindSector,
-    DataConfidence,
+    AnomalyFlag,
     Direction,
     InvocationMetadata,
     SignalStrength,
     Ticker,
 )
+
+__all__ = [
+    "ExecutiveAction",
+    "FedCommunication",
+    "GeopoliticalEvent",
+    "PolicyEvent",
+    "PolicyEventCalendar",
+    "RegulatoryAction",
+    "StatementChange",
+]
 
 
 # ── Supporting types ─────────────────────────────────────────────────────────
@@ -31,6 +40,7 @@ class StatementChange:
     Used by FedCommunication to track evolution of Fed language, which
     is often a leading indicator of policy intent before rate decisions.
     """
+
     section: str
     """Section of statement (e.g., 'economic_outlook', 'inflation', 'labor_market',
     'monetary_policy_stance', 'forward_guidance')."""
@@ -38,10 +48,10 @@ class StatementChange:
     change_type: str
     """Type of change: 'added' | 'removed' | 'modified'."""
 
-    old_text: Optional[str]
+    old_text: str | None
     """Previous wording (None if section was added)."""
 
-    new_text: Optional[str]
+    new_text: str | None
     """New wording (None if section was removed)."""
 
     hawkish_dovish_impact: Direction
@@ -55,6 +65,7 @@ class PolicyEvent:
 
     Used by PolicyEventCalendar to track individual events and detect clustering risk.
     """
+
     event_id: str
     """Unique identifier for tracking event across updates and reprioritizations."""
 
@@ -75,7 +86,7 @@ class PolicyEvent:
     expected_volatility_impact: SignalStrength
     """How much volatility should we expect from this event? STRONG, MODERATE, WEAK, NONE."""
 
-    consensus_estimate: Optional[str]
+    consensus_estimate: str | None
     """Qualitative consensus or numerical estimate (e.g., 'CPI +0.3% MoM',
     'NFP +150k')."""
 
@@ -125,65 +136,65 @@ class FedCommunication:
     """Changes from the prior statement. Empty if no statement comparison available."""
 
     # ── Press Conference fields ────
-    chair_tone: Optional[Direction] = None
+    chair_tone: Direction | None = None
     """Chair's overall tone in press conference: BULLISH, BEARISH, NEUTRAL, MIXED."""
 
     key_phrases: list[str] = field(default_factory=list)
     """Notable phrases or statements from the chair (e.g., 'patient on rate cuts',
     'data-dependent', 'inflation sticky')."""
 
-    tone_shift_vs_prior: Optional[Direction] = None
+    tone_shift_vs_prior: Direction | None = None
     """Did the chair sound more dovish or hawkish than last communication?
     BULLISH = more dovish, BEARISH = more hawkish, NEUTRAL = same, MIXED if unclear."""
 
     # ── Minutes fields ────
-    dissent_count: Optional[int] = None
+    dissent_count: int | None = None
     """Number of voting members who dissented or voiced minority views in minutes."""
 
     new_debate_topics: list[str] = field(default_factory=list)
     """New policy topics debated (e.g., 'bank stress test adequacy', 'climate risk')."""
 
-    hawkish_lean_pct: Optional[float] = None
-    """Percentage of members whose language leaned hawkish (0.0–1.0)."""
+    hawkish_lean_pct: float | None = None
+    """Percentage of members whose language leaned hawkish (0.0-1.0)."""
 
     # ── Beige Book fields ────
-    economic_conditions_summary: Optional[str] = None
+    economic_conditions_summary: str | None = None
     """High-level summary of economic conditions reported by districts."""
 
-    labor_market_assessment: Optional[str] = None
+    labor_market_assessment: str | None = None
     """Anecdotal labor market commentary (wage pressures, hiring, turnover)."""
 
-    inflation_commentary: Optional[str] = None
+    inflation_commentary: str | None = None
     """Anecdotal inflation pressures and pricing dynamics."""
 
     # ── Individual Speaker fields ────
-    speaker_name: Optional[str] = None
+    speaker_name: str | None = None
     """Name of speaker (e.g., 'Jerome Powell', 'Beth Hammack')."""
 
-    speaker_role: Optional[str] = None
+    speaker_role: str | None = None
     """Role: 'Chair' | 'Vice Chair' | 'Voting Member' | 'Non-Voting Member'."""
 
-    influence_tier: Optional[int] = None
+    influence_tier: int | None = None
     """Influence tier: 1=Chair (highest), 2=Vice Chairs, 3=voting members,
     4=non-voting members."""
 
-    is_voting_member: Optional[bool] = None
+    is_voting_member: bool | None = None
     """Whether the speaker is a current voting member of the FOMC."""
 
-    hawkish_dovish_shift: Optional[Direction] = None
+    hawkish_dovish_shift: Direction | None = None
     """Speaker's hawkish/dovish position relative to consensus: BULLISH, BEARISH, NEUTRAL."""
 
-    key_statement: Optional[str] = None
+    key_statement: str | None = None
     """Most important or surprising statement from this speaker."""
 
     # ── Non-Fed Central Bank fields ────
-    central_bank: Optional[str] = None
+    central_bank: str | None = None
     """If communication_type is 'non_fed_central_bank': 'ECB' | 'BOJ' | 'BOE' | 'PBOC' | 'SNB'."""
 
-    decision_type: Optional[str] = None
+    decision_type: str | None = None
     """Type of decision/announcement: 'rate_decision' | 'qe_change' | 'policy_shift'."""
 
-    was_surprise: Optional[bool] = None
+    was_surprise: bool | None = None
     """Was the decision/announcement unexpected by markets?"""
 
     # ── Market impact synthesis ────
@@ -204,8 +215,8 @@ class RegulatoryAction:
     CFPB/banking regulators (enforcement, stress tests), EPA/energy regulators,
     international regulators (EU DMA, China tech, export controls).
 
-    Market impact: Enforcement actions can repricing a target stock 5–20%. Antitrust
-    investigations often trigger 6–12 month repricing horizons as court outcomes
+    Market impact: Enforcement actions can repricing a target stock 5-20%. Antitrust
+    investigations often trigger 6-12 month repricing horizons as court outcomes
     become clearer. Capital requirement changes directly affect banking sector
     buyback capacity and profitability.
 
@@ -254,22 +265,23 @@ class RegulatoryAction:
     affected_sectors: list[AlphaMindSector] = field(default_factory=list)
     """Affected sectors (e.g., regulatory cap on bank lending limits Financials sector)."""
 
-    primary_ticker: Optional[Ticker] = None
+    primary_ticker: Ticker | None = None
     """If targeting a specific company, its ticker symbol."""
 
-    prediction_market_probability: Optional[float] = None
+    prediction_market_probability: float | None = None
     """Cross-reference with Qual 3:3b prediction market odds if applicable.
     E.g., 'conviction in FTC win against Big Tech was 65%'."""
 
-    compliance_cost_estimate: Optional[str] = None
+    compliance_cost_estimate: str | None = None
     """Qualitative assessment of financial impact
-    (e.g., '$500M–$1B in legal fees and settlements', 'Minimal impact')."""
+    (e.g., '$500M-$1B in legal fees and settlements', 'Minimal impact')."""
 
     precedent_setting: bool = False
     """Could this ruling set precedent for similar actions against other companies?"""
 
     anomalies: list[AnomalyFlag] = field(default_factory=list)
-    """Detected anomalies (e.g., 'unexpected enforcement pivot', 'broader scope than anticipated')."""
+    """Detected anomalies (e.g., 'unexpected enforcement pivot',
+    'broader scope than anticipated')."""
 
 
 @dataclass(frozen=True)
@@ -279,9 +291,9 @@ class ExecutiveAction:
     Executive orders (trade, technology policy, energy, financial regulation),
     administrative actions and orders.
 
-    Market impact: Trade tariffs repricing typically happens over 1–4 weeks as
+    Market impact: Trade tariffs repricing typically happens over 1-4 weeks as
     supply chain implications become clear. Tech policy (AI regulation, chip export
-    controls) can reprize semiconductors and tech cap stocks 5–15% intraday.
+    controls) can reprize semiconductors and tech cap stocks 5-15% intraday.
     Energy policy reprices crude/natgas and integrated oil/E&P companies.
 
     Source: Federal Register (free) + news APIs
@@ -332,7 +344,8 @@ class ExecutiveAction:
     """Directly affected ticker symbols."""
 
     anomalies: list[AnomalyFlag] = field(default_factory=list)
-    """Detected anomalies (e.g., 'unexpected reversal of prior policy', 'market repricing faster than historical norm')."""
+    """Detected anomalies (e.g., 'unexpected reversal of prior policy', 'market repricing
+    faster than historical norm')."""
 
 
 @dataclass(frozen=True)
@@ -344,9 +357,9 @@ class GeopoliticalEvent:
     economic policy (stimulus, property, trade, PBOC), OPEC+ dynamics,
     trade agreements/disputes (tariffs, WTO rulings).
 
-    Market impact: Taiwan Strait escalation reprices semis 10–30% within hours
+    Market impact: Taiwan Strait escalation reprices semis 10-30% within hours
     due to supply chain concentration risk. Middle East conflicts reprices energy
-    5–20% and broad equities via risk-off. China property/stimulus news reprices
+    5-20% and broad equities via risk-off. China property/stimulus news reprices
     commodity exporters and semiconductors. OPEC+ production changes reprices
     crude and integrated oils over days/weeks.
 
@@ -373,7 +386,7 @@ class GeopoliticalEvent:
     BULLISH = de-escalation (good for risk appetite), NEUTRAL, MIXED."""
 
     escalation_level: int
-    """Current escalation level (1–5): 1=rhetorical/diplomatic, 2=minor military activity,
+    """Current escalation level (1-5): 1=rhetorical/diplomatic, 2=minor military activity,
     3=significant military maneuvers/sanctions, 4=limited conflict/blockade,
     5=active warfare/full crisis."""
 
@@ -395,11 +408,11 @@ class GeopoliticalEvent:
     affected_tickers: list[Ticker] = field(default_factory=list)
     """Specific tickers expected to be repriced."""
 
-    primary_commodity_impact: Optional[str] = None
+    primary_commodity_impact: str | None = None
     """Which commodity is most directly affected: 'crude' | 'natgas' | 'copper' |
     'semiconductors' | 'other'."""
 
-    prediction_market_cross_ref: Optional[float] = None
+    prediction_market_cross_ref: float | None = None
     """Probability estimate from Qual 3:3c prediction markets
     (e.g., '15% probability of Taiwan military action within 90 days')."""
 
@@ -407,7 +420,8 @@ class GeopoliticalEvent:
     """Surprise event (unscheduled)? True triggers priority routing to Portfolio manager."""
 
     anomalies: list[AnomalyFlag] = field(default_factory=list)
-    """Detected anomalies (e.g., 'unexpected escalation', 'market repricing slower than geopolitical severity')."""
+    """Detected anomalies (e.g., 'unexpected escalation', 'market repricing slower than
+    geopolitical severity')."""
 
 
 @dataclass(frozen=True)
@@ -420,7 +434,7 @@ class PolicyEventCalendar:
 
     Market impact: Clustering of multiple high-impact events (e.g., FOMC + CPI + earnings)
     in the same week compounds uncertainty and can trigger outsized volatility swings
-    (±3–5% intraday range). The Portfolio manager must reduce position sizing and widen stops
+    (±3-5% intraday range). The Portfolio manager must reduce position sizing and widen stops
     when clustering risk is high.
 
     Source: Finnhub economic calendar (free)
@@ -451,7 +465,9 @@ class PolicyEventCalendar:
 
     unscheduled_event_risk_factors: list[str] = field(default_factory=list)
     """Conditions increasing probability of surprise unscheduled events
-    (e.g., 'elevated geopolitical tensions', 'credit spreads widening', 'Fed speaker on calendar but not yet announced')."""
+    (e.g., 'elevated geopolitical tensions', 'credit spreads widening', 'Fed speaker on
+    calendar but not yet announced')."""
 
     anomalies: list[AnomalyFlag] = field(default_factory=list)
-    """Detected anomalies (e.g., 'event density spike detected', 'unusual multi-event clustering pattern')."""
+    """Detected anomalies (e.g., 'event density spike detected', 'unusual multi-event
+    clustering pattern')."""
