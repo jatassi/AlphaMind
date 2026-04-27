@@ -162,7 +162,7 @@ The default cadence is **monthly during paper trading** and **quarterly once liv
 - A held position experiences sustained liquidity deterioration (sustained widening of the bid-ask spread or volume below 50% of recent baseline) — re-validate that single ticker.
 - A ticker's index inclusion changes (e.g., dropped from S&P 500), which often correlates with structural changes in coverage and liquidity.
 - A corporate event affects the eligibility of an existing ticker: merger close, spin-off completion, going-private transaction, bankruptcy filing.
-- The feedback loop ([remaining-work.md § Phase 4](remaining-work.md#phase-4--maturation-before-live-transition)) shows a sector with persistently weak thesis quality — re-validate that sector for whether its current names match the rest of the universe's information density.
+- The feedback loop ([project-tracker.md § Phase 4](../project-tracker.md#phase-4--maturation-before-live-transition)) shows a sector with persistently weak thesis quality — re-validate that sector for whether its current names match the rest of the universe's information density.
 - A regime jump to crisis or back to low-vol — beta and ADV characteristics shift enough to warrant a check, especially for tickers near a threshold edge.
 
 The cadence is the floor; structured triggers add re-validation events on top.
@@ -233,4 +233,4 @@ The invariants confirm the file is well-formed. They do not re-run the five vali
 - Where `assets.yaml` reloads: [configuration-management.md § Reload model](configuration-management.md#reload-model)
 - Data sources used by the validation procedure: [01-data-layer/external/quantitative.md](01-data-layer/external/quantitative.md), [01-data-layer/api-key-checklist.md](01-data-layer/api-key-checklist.md)
 - Analogous operator-driven calibration pattern: [02-distillation-layer/threshold-calibration.md § Update process](02-distillation-layer/threshold-calibration.md#update-process)
-- Phase 4 feedback loop (when shipped): [remaining-work.md § Phase 4](remaining-work.md#phase-4--maturation-before-live-transition)
+- Phase 4 feedback loop (when shipped): [project-tracker.md § Phase 4](../project-tracker.md#phase-4--maturation-before-live-transition)

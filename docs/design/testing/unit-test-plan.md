@@ -382,7 +382,7 @@ Design questions the test catalog surfaced during scoping, now closed:
 
 ## Cross-references
 
-- Phase 3 testing items: [remaining-work.md](../remaining-work.md)
+- Phase 3 testing items: [project-tracker.md](../../project-tracker.md)
 - Guardrail scenario walkthroughs (design validation): [scenario-tests.md](../06-risk-guardrails/scenario-tests.md)
 - OMS command ID discipline: [oms-command-ids.md](../oms-command-ids.md)
 - Broker submission retry and abandonment: [state-persistence.md § Phase 2 write path](../05-execution-layer/state-persistence.md)

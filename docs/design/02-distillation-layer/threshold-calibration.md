@@ -213,7 +213,7 @@ Static thresholds are reviewed on a regular cadence with a structured trigger li
 - Multiple invocations with zero anomalies of a given class across the universe over a window where market activity would be expected to produce some. Indicates the threshold is too tight.
 - The continuous monitor's emergency invocation trigger fires repeatedly within a short window without the underlying market state warranting it (false positive on `regime_skip_emergency_trigger`).
 - A regime transition that should clearly have been `confirmed` based on observed market behavior is consistently labeled `early` (or vice versa). Indicates `regime_transition_confirmed_invocations` is mistuned.
-- Feedback-loop output (Phase 4, [remaining-work.md](../remaining-work.md)) shows that a class of anomaly flags has poor predictive value for thesis outcomes.
+- Feedback-loop output (Phase 4, [project-tracker.md](../../project-tracker.md)) shows that a class of anomaly flags has poor predictive value for thesis outcomes.
 
 **Review procedure** (each is a YAML edit landing at the next invocation's reload, per [configuration-management.md § Reload model](../configuration-management.md#reload-model)):
 
@@ -279,4 +279,4 @@ The DB schema definitions belong with the rest of the persistence schema in the 
 - Emergency invocation trigger consuming `regime_skip_emergency_trigger`: [breach-behavior.md § Emergency invocation trigger](../06-risk-guardrails/breach-behavior.md#emergency-invocation-trigger)
 - Signal quality conventions the bootstrap tag aligns with: [domain-researchers/tech-semis.md](../03-analysis-layer/domain-researchers/tech-semis.md), [qualitative-research.md](../03-analysis-layer/qualitative-research.md), [adaptive-research.md](../03-analysis-layer/adaptive-research.md)
 - Fail-closed principle the bootstrap policy is calibrated against: [api-failure-handling.md § Design principle](../01-data-layer/api-failure-handling.md#design-principle--no-degraded-decisions)
-- Operator review feedback source (when shipped): [remaining-work.md § Phase 4](../remaining-work.md)
+- Operator review feedback source (when shipped): [project-tracker.md § Phase 4](../../project-tracker.md)

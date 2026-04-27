@@ -4,7 +4,7 @@ How the operator monitors active runs, reviews past runs, edits configuration, m
 
 This spec covers the *features* of the command center — what it surfaces, what it lets the operator do, how it alerts, how access is controlled. The tech stack, framework choices, and interaction protocol with the pipeline and monitor processes are designed in a follow-on conversation; this doc establishes the requirements that conversation has to satisfy.
 
-The command center is the implementation of the Phase 4 monitoring & alerting design item from [remaining-work.md](remaining-work.md#phase-4--maturation-before-live-transition). Its scope grew during alignment to include configuration editing and operator-initiated control actions, because both are natural neighbors of the monitoring surface and use the same authentication, audit, and access model.
+The command center is the implementation of the Phase 4 monitoring & alerting design item from [project-tracker.md](../project-tracker.md#phase-4--maturation-before-live-transition). Its scope grew during alignment to include configuration editing and operator-initiated control actions, because both are natural neighbors of the monitoring surface and use the same authentication, audit, and access model.
 
 ---
 
@@ -26,7 +26,7 @@ The command center is the implementation of the Phase 4 monitoring & alerting de
 | Configuration file layout, composition resolver, validation layers | [configuration-management.md](configuration-management.md) |
 | Per-rule guardrail definitions and breach mechanics | [06-risk-guardrails/rules-and-limits.md](06-risk-guardrails/rules-and-limits.md), [06-risk-guardrails/breach-behavior.md](06-risk-guardrails/breach-behavior.md) |
 | Continuous monitor responsibilities | [05-execution-layer/architecture.md § Continuous monitor](05-execution-layer/architecture.md) |
-| Feedback-loop analytics (thesis outcomes, calibration, prompt iteration) | Phase 4 [Feedback loop design](remaining-work.md#phase-4--maturation-before-live-transition) — not yet landed |
+| Feedback-loop analytics (thesis outcomes, calibration, prompt iteration) | Phase 4 [Feedback loop design](../project-tracker.md#phase-4--maturation-before-live-transition) — not yet landed |
 | Tech stack, framework selection, interaction protocol with the pipeline/monitor | Follow-on conversation; this spec defers it explicitly |
 
 The command center is an additive read-and-control surface over data that already lives in the system of record. It does not own positions, orders, theses, fills, configuration, or any other primary state. Every datum it shows traces back to an existing table or file.
@@ -591,7 +591,7 @@ Every state-mutating endpoint logs an entry to the activity log with `source: op
 
 This is a Phase 4 design spec. The command center itself is unimplemented as of writing; the supporting primitives in [infrastructure.md § Observability](../architecture/infrastructure.md#observability) (the `invocations` table and the file archive) are also Phase-4-and-later implementation work.
 
-One related work item is tracked separately in [remaining-work.md](remaining-work.md):
+One related work item is tracked separately in [project-tracker.md](../project-tracker.md):
 
 1. **Feedback-loop design.** The [Quality and feedback](#f-quality-and-feedback-stub) view section is stubbed; concrete metrics, time windows, and visualizations land alongside the feedback-loop spec.
 
@@ -608,4 +608,4 @@ One related work item is tracked separately in [remaining-work.md](remaining-wor
 - Per-invocation file archive layout: [architecture/infrastructure.md § Layer 2: Invocation archive](../architecture/infrastructure.md#layer-2-invocation-archive-files)
 - Source-brief reference-ID taxonomy: [03-analysis-layer/synthesizer.md](03-analysis-layer/synthesizer.md)
 - PM envelope schema and rejection structure: [04-decision-layer/pm-envelope-schema.md](04-decision-layer/pm-envelope-schema.md)
-- Phase 4 feedback loop (when shipped): [remaining-work.md § Phase 4](remaining-work.md#phase-4--maturation-before-live-transition)
+- Phase 4 feedback loop (when shipped): [project-tracker.md § Phase 4](../project-tracker.md#phase-4--maturation-before-live-transition)

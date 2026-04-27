@@ -473,4 +473,4 @@ Design questions the scoping surfaced, now closed:
 - Unit test plan (adjacent deterministic surfaces): [unit-test-plan.md](unit-test-plan.md)
 - Integration test plan (validator propagation, not detection): [integration-test-plan.md](integration-test-plan.md)
 - LLM integration architecture (Agent SDK, per-agent configuration): [../architecture/llm-integration.md](../../architecture/llm-integration.md)
-- Remaining-work checklist: [remaining-work.md](../remaining-work.md)
+- Project tracker: [project-tracker.md](../../project-tracker.md)

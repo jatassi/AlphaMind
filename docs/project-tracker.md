@@ -1,8 +1,8 @@
-# Remaining design work
+# Project tracker
 
-Ordered by the outside-in approach documented in [design-decisions.md](design-decisions.md). Items within each phase are roughly sequenced by dependency — earlier items inform later ones. Check off items as they're completed.
+The source of truth for aggregated progress on the AlphaMind build. Each phase below captures a coherent slice of work; items within a phase are roughly sequenced by dependency. Check off items as they're completed.
 
-See [gap-analysis.md](gap-analysis.md) for detailed descriptions of what each item needs to cover.
+Phases 0–4 are the design pass — defining contracts before writing code, ordered per the [outside-in approach](design/design-decisions.md). Implementation phases will be appended as they're scoped.
 
 ---
 

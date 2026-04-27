@@ -395,5 +395,5 @@ Changes landed alongside this doc:
 
 Open follow-ups not blocking on this doc:
 
-- The [Feedback loop design](remaining-work.md#phase-4--maturation-before-live-transition) item, when it lands, will likely add a per-agent cost-per-quality-unit metric that depends on the per-call token tracking specified here.
+- The [Feedback loop design](../project-tracker.md#phase-4--maturation-before-live-transition) item, when it lands, will likely add a per-agent cost-per-quality-unit metric that depends on the per-call token tracking specified here.
 - Once paper-trading measurements are available, this doc is updated with measured values and the alert thresholds are revised. That is the first re-evaluation trigger above, not a separate work item.

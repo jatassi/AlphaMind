@@ -132,7 +132,7 @@ Recommendations are presented conviction descending, with entry window urgency a
 
 ### Deferred
 
-The behavioral enforcement of "each proposal stands on its own merits; do not cross-compare" is a system-prompt concern, captured under the [pending analyst system prompt item](../remaining-work.md#analyst-agent).
+The behavioral enforcement of "each proposal stands on its own merits; do not cross-compare" is a system-prompt concern, captured under the [pending analyst system prompt item](../../project-tracker.md#analyst-agent).
 
 ---
 
