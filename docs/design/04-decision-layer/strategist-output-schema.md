@@ -1,17 +1,17 @@
 # Strategist output schema
 
-Formal JSON Schema (Draft 2020-12) for the strategist agent's invocation output. This is the machine-readable contract that corresponds to the prose field list in [strategist.md](strategist.md). The [proposal pre-processor](proposal-pre-processor.md) reads the structured fields; the [portfolio manager](portfolio-manager.md) reads the narrative fields.
+Formal JSON Schema (Draft 2020-12) for the strategist agent's invocation output. Machine-readable contract for the field list in [strategist.md](strategist.md). The [proposal pre-processor](proposal-pre-processor.md) reads the structured fields; the [portfolio manager](portfolio-manager.md) reads the narrative fields.
 
 ## Scope
 
 - **Contract surface:** one strategist invocation produces one output document matching this schema.
-- **LLM vs. tool populated:** the strategist agent produces every field except `exposure_impact` (computed from position data for close/reduce, from the guardrail validation tool for add) and `guardrail_validation_result`, which is populated by the [guardrail validation tool](../06-risk-guardrails/state-delivery.md#guardrail-validation-tool) at pre-submission check time (see [strategist.md — Pre-submission guardrail validation](strategist.md#pre-submission-guardrail-validation)). The final persisted output includes both.
-- **Modes:** `normal` (standard position management) or `defensive_posture` (halt-mode operation — see [strategist.md — Halt mode and defensive-posture behavior](strategist.md#halt-mode-and-defensive-posture-behavior)). The permissible action enum and some required portfolio-level fields differ by mode. Both modes produce position assessments, pending order assessments, and portfolio-level observations; the schema is a strict superset.
-- **Feature-flag interaction:** the schema is superset — it permits options and strategy-action parameters — but the guardrail validation tool returns `FAIL` with reason `feature_disabled` for disabled instrument classes. The strategist's guardrail state header omits options/short sections when disabled, naturally preventing disabled-feature actions upstream.
+- **LLM vs. tool populated:** the strategist produces every field except `exposure_impact` (computed from position data for close/reduce, from the guardrail validation tool for add) and `guardrail_validation_result`, populated by the [guardrail validation tool](../06-risk-guardrails/state-delivery.md#guardrail-validation-tool) at pre-submission check time (see [strategist.md — Pre-submission guardrail validation](strategist.md#pre-submission-guardrail-validation)). Persisted output includes both.
+- **Modes:** `normal` or `defensive_posture` (halt-mode — see [strategist.md — Halt mode and defensive-posture behavior](strategist.md#halt-mode-and-defensive-posture-behavior)). The permissible action enum and some required portfolio-level fields differ by mode. Both modes produce position assessments, pending order assessments, and portfolio-level observations; the schema is a strict superset.
+- **Feature-flag interaction:** the schema permits options and strategy-action parameters, but the guardrail validation tool returns `FAIL` with reason `feature_disabled` for disabled instrument classes. The strategist's guardrail state header omits options/short sections when disabled, preventing disabled-feature actions upstream.
 
 ## Cross-references
 
-Enum values and structural constraints trace back to these authoritative sources:
+Enum values and structural constraints trace back to these sources:
 
 | Field | Source |
 |---|---|
@@ -605,19 +605,19 @@ Enum values and structural constraints trace back to these authoritative sources
 
 ## Notes on cross-field invariants
 
-Some invariants cannot be expressed cleanly in JSON Schema and must be enforced by the validation pipeline:
+Enforced by the validation pipeline rather than the schema:
 
-- **`action_parameters.action` must match `recommended_action`** — the discriminator on the action-parameters union is denormalized for validator convenience; the validation pipeline should verify equality.
-- **`thesis_status: "invalidated"` requires `recommended_action: "close"`.** Encoded conditionally; any invalidated position that is not paired with a close will fail validation.
-- **`mode: "defensive_posture"` restricts `recommended_action` to `hold | reduce | close | adjust-bracket`** — this is enforced as a mode-level conditional that should be added to the schema's `allOf` block once the defensive-posture conditional on `portfolio_level_observations` is confirmed in integration testing. The behavioral spec in [strategist.md](strategist.md#halt-mode-and-defensive-posture-behavior) is authoritative until that validator is finalized.
-- **`remedy_flag` values must correspond to breach identifiers in the strategist's guardrail state header.** The pre-processor should cross-reference and produce an annotation when a remedy_flag does not match a flagged breach.
+- **`action_parameters.action` must match `recommended_action`** — the discriminator on the action-parameters union is denormalized; the pipeline verifies equality.
+- **`thesis_status: "invalidated"` requires `recommended_action: "close"`.** Encoded conditionally; any invalidated position not paired with close fails validation.
+- **`mode: "defensive_posture"` restricts `recommended_action` to `hold | reduce | close | adjust-bracket`** — enforced as a mode-level conditional in the schema's `allOf` block. The behavioral spec in [strategist.md](strategist.md#halt-mode-and-defensive-posture-behavior) is authoritative until that validator is finalized.
+- **`remedy_flag` values must correspond to breach identifiers in the strategist's guardrail state header.** The pre-processor cross-references and produces an annotation on mismatch.
 - **Pending-order `linked_position_assessment_id` must match an `assessment_id` in the same document.** Referential check.
-- **`position_id` on per-position assessments must match an open position in portfolio state.** Referential check against portfolio state.
-- **Action-quantity sanity.** A `reduce` with `quantity` equal to or greater than the current position quantity should have been a `close` with `quantity: "all"`; a close_parameters `quantity: "all"` on a position with no remaining shares is inconsistent. Checked against current portfolio state.
-- **`add` actions not permitted in `defensive_posture` mode.** Enforced by the behavioral spec; schema-level conditional to be added alongside the mode-level allOf.
+- **`position_id` on per-position assessments must match an open position.** Referential check against portfolio state.
+- **Action-quantity sanity.** A `reduce` with `quantity` ≥ current position quantity should have been `close` with `quantity: "all"`; `close_parameters quantity: "all"` on a position with no remaining shares is inconsistent. Checked against current portfolio state.
+- **`add` actions not permitted in `defensive_posture` mode.** Enforced by the behavioral spec; schema-level conditional alongside the mode-level allOf.
 
 ---
 
 ## Evolution
 
-When new fields are added to the strategist's output, they are added here first. This schema is the authoritative contract; prose updates in [strategist.md](strategist.md) follow.
+New fields are added here first; this schema is the authoritative contract. Prose updates in [strategist.md](strategist.md) follow.

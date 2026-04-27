@@ -1,16 +1,16 @@
 # Portfolio manager
 
-Operates in a fresh context window. **Mandate:** critically evaluate the analyst's and strategist's recommendations from a portfolio management perspective. Act as the skeptical manager who pressure-tests every thesis before committing capital and ensures portfolio coherence across new entries and position changes.
+Operates in a fresh context window. **Mandate:** critically evaluate the analyst's and strategist's recommendations from a portfolio management perspective. The skeptical manager who pressure-tests every thesis before committing capital and ensures portfolio coherence across new entries and position changes.
 
-**Key design principle:** the PM focuses on **judgment** — thesis quality, portfolio coherence, and strategic reasoning. Mechanical cross-referencing (same-name conflict detection, cumulative exposure computation, sector shift calculation) is handled by the [proposal pre-processor](proposal-pre-processor.md) before the PM's context window opens. Guardrail feasibility is handled by upstream validation (analyst/strategist pre-submission checks). The PM receives proposals that are guardrail-compliant and cross-annotated, and applies human-equivalent investment judgment.
+**Key design principle:** the PM focuses on **judgment** — thesis quality, portfolio coherence, strategic reasoning. Mechanical cross-referencing (same-name conflict detection, cumulative exposure computation, sector shift calculation) is handled by the [proposal pre-processor](proposal-pre-processor.md) before the PM's context window opens. Guardrail feasibility is handled by upstream validation (analyst/strategist pre-submission checks). The PM receives proposals that are guardrail-compliant and cross-annotated, and applies investment judgment.
 
-Risk management guardrails (max position size, max daily drawdown, correlation limits) are implemented as hard-coded programmatic constraints — not LLM-mediated. See [risk guardrails](../06-risk-guardrails/README.md). Proposals arrive at the PM already validated against guardrails; the PM validates its own modifications; the execution layer provides a final authoritative check with synchronous feedback.
+Risk guardrails (max position size, max daily drawdown, correlation limits) are hard-coded programmatic constraints — not LLM-mediated. See [risk guardrails](../06-risk-guardrails/README.md). Proposals arrive guardrail-validated; the PM validates its own modifications; the execution layer provides a final authoritative check with synchronous feedback.
 
 ---
 
 ## Inputs
 
-The PM's input bundle is delivered at invocation start. Source documents in parentheses are authoritative for each input's content.
+Delivered at invocation start. Source documents are authoritative for each input's content.
 
 | Input | Source | Description |
 |---|---|---|
@@ -27,40 +27,38 @@ Tools available during reasoning:
 | Thesis-component retrieval | [Retrieval tools — Thesis-component retrieval](#thesis-component-retrieval) | `get_thesis_components(position_id)` — pulls full component-level thesis record for one held position. Required because thesis records are delivered at summary level by default for the PM |
 | Guardrail validation tool | [state-delivery.md — Guardrail validation tool](../06-risk-guardrails/state-delivery.md#guardrail-validation-tool) | Deterministic check on PM modifications (sizing adjustments) before commands are finalized. See [Pre-submission guardrail check on PM modifications](#pm-originated-envelopes-pm_analyst-and-pm_strategist) |
 
-The volatility regime label is delivered as the `Regime:` line in the guardrail state header (not as a separate broadcast).
+The volatility regime label is delivered as the `Regime:` line in the guardrail state header.
 
 ---
 
 ## Output
 
-The PM's output is one or more **command envelopes** validating against [pm-envelope-schema.md](pm-envelope-schema.md) (formal JSON Schema, Draft 2020-12). Embedded OMS commands validate against [oms-command-schema.md](../05-execution-layer/oms-command-schema.md). Engine-originated envelopes are a sibling contract specified in [engine-envelope-schema.md](../05-execution-layer/engine-envelope-schema.md) — produced by the continuous monitor, not the PM.
+The PM's output is one or more **command envelopes** validating against [pm-envelope-schema.md](pm-envelope-schema.md) (Draft 2020-12). Embedded OMS commands validate against [oms-command-schema.md](../05-execution-layer/oms-command-schema.md). Engine-originated envelopes are a sibling contract in [engine-envelope-schema.md](../05-execution-layer/engine-envelope-schema.md) — produced by the continuous monitor.
 
-The PM emits one envelope per source proposal it evaluates (one `pm_analyst` envelope per analyst recommendation, one `pm_strategist` envelope per strategist position assessment, one per strategist pending-order assessment). A single PM invocation typically produces several envelopes. Approved envelopes carry the resulting OMS commands (OPEN/CLOSE/ADJUST/ADD/CANCEL); rejected envelopes carry an empty `commands` array and a populated rationale narrative — rejections are first-class records the feedback loop reads.
-
-The remainder of this section details the envelope structure, evaluation framework, and verdict aggregation.
+The PM emits one envelope per source proposal (one `pm_analyst` per analyst recommendation, one `pm_strategist` per strategist position or pending-order assessment). A single invocation typically produces several. Approved envelopes carry the resulting OMS commands (OPEN/CLOSE/ADJUST/ADD/CANCEL); rejected envelopes carry an empty `commands` array and a populated rationale — rejections are first-class records the feedback loop reads.
 
 ---
 
 ## Responsibilities
 
-- Evaluate thesis quality for new trade recommendations: Is the reasoning sound? Are there obvious counterarguments the analyst missed? (Reads analyst narrative fields)
+- Evaluate thesis quality for new trade recommendations: Is the reasoning sound? Are there counterarguments the analyst missed? (Reads analyst narrative fields)
 - Evaluate strategist position assessments: Does the recommended action align with current thesis status and market context? (Reads strategist narrative fields)
-- Resolve flagged conflicts: The pre-processor identifies same-name conflicts between analyst and strategist proposals — the PM makes the judgment call on how to resolve them (e.g., close the existing position AND enter the new one, or close and skip, or hold and skip)
-- Assess portfolio-level risk using pre-processor annotations: cumulative exposure impact, sector shift preview, and any flagged combined-set guardrail breaches inform the PM's approve/reject decisions
-- Adjust position sizing: Scale up high-conviction ideas, scale down marginal ones (with guardrail validation on modifications)
+- Resolve flagged conflicts: The pre-processor identifies same-name conflicts; the PM makes the judgment call (e.g., close existing AND enter new, or close and skip, or hold and skip)
+- Assess portfolio-level risk using pre-processor annotations: cumulative exposure impact, sector shift preview, and combined-set guardrail breaches inform approve/reject decisions
+- Adjust position sizing (with guardrail validation on modifications)
 - Reject recommendations that don't meet quality thresholds
-- Determine execution priority: The pre-processor provides an entry-window-based ordering; the PM can override based on thesis quality or strategic considerations
-- Execute approved trades and position changes through the [execution layer](../05-execution-layer/README.md)
+- Determine execution priority: the pre-processor provides entry-window-based ordering; the PM can override on thesis quality or strategic grounds
+- Execute approved trades through the [execution layer](../05-execution-layer/README.md)
 
 ---
 
 ## Envelope structure
 
-Every OMS command in the system is wrapped in a **command envelope** that provides full traceability regardless of where the command originated. This separates "what to execute" from "why and how it was decided."
+Every OMS command is wrapped in a **command envelope** providing full traceability regardless of origin. This separates "what to execute" from "why and how it was decided."
 
-The most common envelope type is **PM-originated** — the portfolio manager evaluates a proposal from the analyst or strategist, produces an envelope with its evaluation and any modifications, and the resulting OMS command(s). But envelopes can also be **engine-originated** — the continuous monitor detects a guardrail breach caused by market movement (not a new command) and generates a protective CLOSE command with a guardrail trigger record. Both envelope types share the same base structure, ensuring the activity log, feedback loop, and thesis resolution system operate uniformly on all commands.
+The most common envelope type is **PM-originated** — the PM evaluates a proposal, produces an envelope with its evaluation and modifications, and the resulting OMS command(s). Envelopes can also be **engine-originated** — the continuous monitor detects a guardrail breach from market movement and generates a protective CLOSE command with a guardrail trigger record. Both share the same base structure, ensuring the activity log, feedback loop, and thesis resolution system operate uniformly.
 
-The engine extracts OMS commands from the envelopes. The activity log stores the full envelopes, providing complete traceability from every execution action back to its origin and reasoning.
+The engine extracts OMS commands from envelopes. The activity log stores the full envelopes, providing traceability from every execution action back to its origin and reasoning.
 
 ### Base envelope structure (all provenance types)
 
@@ -71,43 +69,43 @@ The engine extracts OMS commands from the envelopes. The activity log stores the
 
 ### PM-originated envelopes (`pm_analyst` and `pm_strategist`)
 
-These are the primary envelope type — the PM's evaluation of proposals from the analyst or strategist.
+The primary envelope type — the PM's evaluation of proposals from the analyst or strategist.
 
-- **Source recommendation ID** and **recommendation type** (new_entry for analyst proposals, position_assessment for strategist proposals). For strategist proposals, also includes the position ID being assessed
-- **Evaluation:** the PM's verdict (approve, approve_with_modification, reject) and a structured quality assessment whose criterion set depends on source type. For new entries (`pm_analyst`): falsifiability, sizing proportionality, portfolio coherence, timing plausibility, counterargument consideration. For position actions (`pm_strategist`): status classification warrant, action-status alignment, action-specific justification, portfolio coherence. All criteria are pass/fail. See the [Evaluation framework](#evaluation-framework) section below for per-criterion evaluation detail, verdict aggregation, and failure patterns. Every envelope carries a concerns list (may be empty — populated from failed criteria plus any additional PM concerns) and a rationale narrative
-- **Modifications:** zero or more structured records of what the PM changed. Each modification records: field changed, original proposed value, approved value, adjustment category (risk_reduction, conviction_disagreement, capital_constraint, portfolio_balance, guardrail_rejection_response), and a per-modification rationale. Empty for pass-through approvals and rejections
+- **Source recommendation ID** and **recommendation type** (new_entry for analyst proposals, position_assessment for strategist proposals). For strategist proposals, also includes the position ID
+- **Evaluation:** the PM's verdict (approve, approve_with_modification, reject) and a structured quality assessment whose criterion set depends on source type. For new entries (`pm_analyst`): falsifiability, sizing proportionality, portfolio coherence, timing plausibility, counterargument consideration. For position actions (`pm_strategist`): status classification warrant, action-status alignment, action-specific justification, portfolio coherence. All pass/fail. See [Evaluation framework](#evaluation-framework) for per-criterion detail, verdict aggregation, and failure patterns. Every envelope carries a concerns list (may be empty) and a rationale narrative
+- **Modifications:** zero or more structured records of what the PM changed. Each records: field changed, original proposed value, approved value, adjustment category (risk_reduction, conviction_disagreement, capital_constraint, portfolio_balance, guardrail_rejection_response), and a per-modification rationale. Empty for pass-through approvals and rejections
 
-**Design note — rejections as first-class records:** Rejected proposals produce envelopes with no commands. The feedback loop can analyze "what proposals does the PM reject and why?" without needing an OMS command to attach the metadata to. See [project-tracker.md](../../project-tracker.md) phase 0 gap analysis for the full rationale.
+**Rejections as first-class records:** Rejected proposals produce envelopes with no commands. The feedback loop can analyze "what proposals does the PM reject and why?" without needing an OMS command to attach metadata to.
 
 ### Engine-originated envelopes (`engine_guardrail`)
 
-Generated by the continuous monitor when a guardrail breach is detected between invocations (or within an invocation's collect phase) due to market movement, regime changes, or margin events — not due to a new command failing validation. These envelopes carry a **guardrail trigger record** instead of a PM evaluation:
+Generated by the continuous monitor when a guardrail breach is detected between invocations (or within an invocation's collect phase) from market movement, regime changes, or margin events — not from a new command failing validation. These envelopes carry a **guardrail trigger record** instead of a PM evaluation:
 
 - **Trigger timestamp:** when the breach was detected
-- **Rule breached:** which specific guardrail rule was violated (e.g., daily drawdown limit, position-level max loss, margin call)
-- **Breach details:** current value, limit value, overage amount, and regime at the time of breach
-- **Position selection logic:** why this specific position was selected for reduction — e.g., "smallest position in breaching sector," "position with highest unrealized loss," "position triggering the position-level max loss limit." The selection logic is deterministic and configurable — see [breach-behavior.md](../06-risk-guardrails/breach-behavior.md)
-- **Close rationale type:** always `risk_management` with sub-type `engine_guardrail` — distinguishes engine-originated risk management closures from PM-originated risk management closures in the feedback loop
+- **Rule breached:** which guardrail rule was violated (e.g., daily drawdown limit, position-level max loss, margin call)
+- **Breach details:** current value, limit value, overage amount, and regime at breach time
+- **Position selection logic:** why this position was selected for reduction — e.g., "smallest position in breaching sector," "highest unrealized loss," "position triggering position-level max loss." Deterministic and configurable — see [breach-behavior.md](../06-risk-guardrails/breach-behavior.md)
+- **Close rationale type:** always `risk_management` with sub-type `engine_guardrail` — distinguishes engine-originated from PM-originated risk-management closures in the feedback loop
 
-**Constraints on engine-originated envelopes:** The engine may only issue CLOSE commands (full or partial) via this path. It cannot OPEN new positions, ADD to existing positions, or ADJUST brackets. This restricts engine autonomy to protective actions — reducing exposure to cure a breach. All constructive actions (entering, adding, adjusting) require PM judgment.
+**Constraints:** The engine issues CLOSE commands (full or partial) only via this path. Constructive actions (OPEN, ADD, ADJUST) require PM judgment.
 
-**Thesis resolution:** When an engine-originated CLOSE resolves a thesis, the resolution carries provenance `engine_guardrail` with the full trigger record. The feedback loop can segment these from PM-originated closures to answer: "how often does the engine force-close positions, and are those closures premature (the position would have recovered) or beneficial (the position would have continued losing)?"
+**Thesis resolution:** When an engine-originated CLOSE resolves a thesis, the resolution carries provenance `engine_guardrail` with the full trigger record. The feedback loop segments these from PM-originated closures to answer: "how often does the engine force-close positions, and are those closures premature or beneficial?"
 
-**PM visibility:** Engine-originated envelopes appear in the activity log and are included in the strategist's and PM's input bundles at the next invocation — surfaced both via the activity log delivered as part of [portfolio state §5](../01-data-layer/internal/portfolio-state.md) and as a prominence cue in the [PM guardrail state header's `Recent engine-originated actions` block](../06-risk-guardrails/state-delivery.md#portfolio-manager-guardrail-state-header). The PM sees: "the engine force-closed POS-AVGO-001 at 10:47 because semi sector exposure breached the elevated-regime limit (8.5% vs. 8.0% limit)." This gives the PM full awareness of between-invocation actions and the ability to factor them into subsequent decisions.
+**PM visibility:** Engine-originated envelopes appear in the activity log and the strategist's and PM's next-invocation input bundles — via [portfolio state §5](../01-data-layer/internal/portfolio-state.md) and the [PM guardrail state header's `Recent engine-originated actions` block](../06-risk-guardrails/state-delivery.md#portfolio-manager-guardrail-state-header). The PM sees: "engine force-closed POS-AVGO-001 at 10:47 because semi sector exposure breached the elevated-regime limit (8.5% vs. 8.0%)." Full awareness of between-invocation actions to factor into subsequent decisions.
 
-**Envelope processing order:** The PM evaluates all proposals and produces all envelopes before any commands are submitted to the engine. This allows the PM to consider cross-proposal interactions (e.g., an analyst new entry + a strategist close in the same name) and ensure the combined set of commands is coherent. Once all envelopes are produced, commands are submitted to the engine sequentially. See "Synchronous command feedback" below for how the PM handles rejections during this phase.
+**Envelope processing order:** The PM produces all envelopes before any commands submit to the engine. This allows consideration of cross-proposal interactions (e.g., an analyst new entry + a strategist close on the same name). Commands then submit sequentially. See "Synchronous command feedback" below.
 
-**Pre-submission guardrail check on PM modifications:** When the PM modifies a proposal's parameters (e.g., increasing position size from 10 to 15 contracts), the modified parameters are validated against guardrails before the command is finalized. The PM has access to the same guardrail validation tool as the analyst and strategist (see [analyst.md](analyst.md)). If a PM modification would breach a limit, the PM revises the modification or accepts the original sizing. This prevents the PM from inadvertently creating guardrail-violating commands through well-intentioned sizing adjustments.
+**Pre-submission guardrail check on PM modifications:** When the PM modifies a proposal's parameters (e.g., position size from 10 to 15 contracts), the modified parameters are validated before the command is finalized. The PM uses the same guardrail validation tool as the analyst and strategist (see [analyst.md](analyst.md)). If a modification would breach a limit, the PM revises or accepts the original sizing.
 
 ---
 
 ## Evaluation framework
 
-The PM applies two linked evaluation frameworks within every invocation: **thesis quality** for new-entry proposals from the [analyst](analyst.md), and **position-action quality** for existing-position recommendations from the [strategist](strategist.md). Both produce pass/fail flags that populate the envelope's `evaluation` field and, together with the cure-vs-reject principle below, determine the verdict (`approve`, `approve_with_modification`, `reject`).
+The PM applies two linked frameworks: **thesis quality** for new-entry proposals from the [analyst](analyst.md), and **position-action quality** for existing-position recommendations from the [strategist](strategist.md). Both produce pass/fail flags that populate the envelope's `evaluation` field and, with the cure-vs-reject principle, determine the verdict (`approve`, `approve_with_modification`, `reject`).
 
-**Structural, not ideological.** The criteria check whether required reasoning elements are present, internally consistent, and supported by the cited inputs — not whether the PM agrees with the specific call. Agreement on direction and sizing is a separate concern expressed through the verdict and modification records. A proposal can pass every thesis-quality criterion and still be rejected on portfolio-level grounds; conversely, a proposal whose direction the PM happens to favor must still fail if its reasoning is structurally incomplete.
+**Structural, not ideological.** Criteria check whether required reasoning elements are present, internally consistent, and supported by cited inputs — not whether the PM agrees with the call. Agreement on direction and sizing is a separate concern expressed through the verdict and modification records. A proposal can pass every thesis-quality criterion and still be rejected on portfolio-level grounds; conversely, a proposal whose direction the PM favors must still fail if its reasoning is structurally incomplete.
 
-**Retrieval for evaluation.** When a criterion turns on whether a narrative correctly characterizes an underlying signal, the PM uses [source-brief retrieval](#retrieval-tools) to check the cited analysis-brief reference directly. When a criterion turns on whether a strategist's status rationale correctly cites a thesis component, the PM uses [thesis-component retrieval](#retrieval-tools) to pull the component-level thesis record. This is the primary mechanism for catching narratives that mischaracterize the synthesizer, source briefs, or the underlying thesis.
+**Retrieval for evaluation.** When a criterion turns on whether a narrative correctly characterizes a signal, the PM uses [source-brief retrieval](#retrieval-tools) to check the cited analysis-brief reference. When a criterion turns on whether a strategist's status rationale cites a thesis component correctly, the PM uses [thesis-component retrieval](#retrieval-tools). This is the primary mechanism for catching narratives that mischaracterize the synthesizer, source briefs, or the underlying thesis.
 
 ### Thesis quality evaluation (new-entry proposals)
 
@@ -189,7 +187,7 @@ For each strategist position assessment, the PM evaluates the recommended action
 
 ### Verdict aggregation
 
-The pass/fail flags feed a verdict via a **cure-vs-reject principle**: a failure that can be cured by a sizing, parameter, or priority adjustment within the PM's authority becomes `approve_with_modification`; a failure that would require the originating agent to re-draft the thesis or status classification becomes `reject`. The PM does not rewrite theses or re-classify thesis status — those require the originating agent at the next invocation.
+The pass/fail flags feed a verdict via a **cure-vs-reject principle**: a failure curable by a sizing, parameter, or priority adjustment within PM authority becomes `approve_with_modification`; a failure requiring the originating agent to re-draft the thesis or status classification becomes `reject`. The PM does not rewrite theses or re-classify status — those require the originating agent at the next invocation.
 
 **Default mapping per failure mode (new-entry proposals):**
 
@@ -210,129 +208,129 @@ The pass/fail flags feed a verdict via a **cure-vs-reject principle**: a failure
 | Action-specific justification | depends on failure mode | A parameter-level issue the PM can correct without changing the action (e.g., converting an unjustified partial close to a full close when the thesis is classified `invalidated`) → modification. A missing add-conviction justification or a bracket-widening rationale that amounts to rationalization → reject. |
 | Portfolio coherence | typically modification | The PM can reorder, resize, or skip an otherwise-valid action to preserve book coherence; the action itself is not structurally flawed. |
 
-**Sizing-proportionality vs. conviction disagreement.** When the PM disagrees with the analyst's conviction-to-size mapping but the criterion technically passes (sizing falls within the band and the narrative supports the conviction), the PM may still modify. This is captured via the `conviction_disagreement` adjustment category on the modification record rather than a criterion failure. The feedback loop tracks whether PM overrides of conviction-band mappings improve or worsen outcomes over time.
+**Sizing-proportionality vs. conviction disagreement.** When the PM disagrees with the analyst's conviction-to-size mapping but the criterion passes (sizing within band, narrative supports the conviction), the PM may still modify. Captured via the `conviction_disagreement` adjustment category rather than a criterion failure. The feedback loop tracks whether overrides improve or worsen outcomes over time.
 
-**Pass-through approvals.** When all criteria pass and the PM has no modifications, the envelope records `verdict = approve` with an empty modifications list and an empty concerns list. This is the expected case for well-formed, well-fitting proposals and should be common — the framework flags structural problems, not disagreement for its own sake.
+**Pass-through approvals.** When all criteria pass and the PM has no modifications, the envelope records `verdict = approve` with empty modifications and concerns. The expected case for well-formed proposals — the framework flags structural problems, not disagreement for its own sake.
 
-**Concerns list vs. rationale narrative.** The structured concerns list is populated from failed criteria (one entry per failure, naming the criterion) plus any additional PM concerns not captured by a criterion (e.g., a timing concern that doesn't rise to a criterion failure but warrants flagging for the feedback loop). The rationale narrative is the PM's prose explanation — it names the failure pattern where applicable (see below), explains cross-criterion interactions, and documents the reasoning behind the verdict in a form the feedback loop can read.
+**Concerns list vs. rationale narrative.** The concerns list is populated from failed criteria (one entry per failure, naming the criterion) plus any additional PM concerns not captured by a criterion. The rationale narrative is the PM's prose explanation — names the failure pattern where applicable, explains cross-criterion interactions, and documents reasoning in a form the feedback loop can read.
 
 ### Anti-patterns the PM is watching for
 
-Several failure modes manifest across multiple criteria and are specifically degrading to system performance. When the PM detects one, the rationale narrative should name the pattern rather than list the criterion failures in isolation — the pattern name is what the feedback loop aggregates on.
+Several failure modes manifest across multiple criteria. When the PM detects one, the rationale narrative names the pattern rather than listing criterion failures in isolation — the pattern name is what the feedback loop aggregates on.
 
-**Conviction inflation.** A proposal whose narrative describes thin signal convergence (two signals, at least one flagged contradiction, a soft catalyst) carrying a conviction 4 or 5 label and sizing at the top of the advisory band. The sizing-proportionality criterion fails at the root (the conviction itself is inflated, not just the mapping) and the counterargument criterion often fails alongside (the contradiction is under-addressed). Tracked across invocations via the [pre-processor's conviction distribution annotation](proposal-pre-processor.md); a well-calibrated analyst should exhibit higher outcomes at higher conviction levels, and the PM's rejections for this pattern are the primary defense against calibration drift.
+**Conviction inflation.** A proposal whose narrative describes thin signal convergence (two signals, at least one flagged contradiction, a soft catalyst) carrying a conviction 4 or 5 label and sizing at the top of the advisory band. Sizing-proportionality fails at the root (the conviction itself is inflated, not just the mapping); counterargument often fails alongside (contradiction under-addressed). Tracked across invocations via the [pre-processor's conviction distribution annotation](proposal-pre-processor.md); the PM's rejections for this pattern are the primary defense against calibration drift.
 
-**Sunk-cost persistence.** A strategist `hold` recommendation on a position whose status has been `at-risk` or `stale` across multiple prior invocations without a new supporting signal in this invocation's rationale. The status-warrant and action-specific criteria catch the single-invocation manifestation; the PM's visibility into prior status via `prior_status` and the [activity log delivered as part of portfolio state §5](../01-data-layer/internal/portfolio-state.md) (specifically the PM decision log §5b sliding window) lets it recognize the aggregation over time that distinguishes sunk-cost holding from legitimate catalyst-proximity holding.
+**Sunk-cost persistence.** A strategist `hold` on a position whose status has been `at-risk` or `stale` across multiple prior invocations without a new supporting signal. Status-warrant and action-specific criteria catch the single-invocation manifestation; the PM's visibility into `prior_status` and the [activity log via portfolio state §5](../01-data-layer/internal/portfolio-state.md) (PM decision log §5b sliding window) lets it recognize the aggregation that distinguishes sunk-cost from legitimate catalyst-proximity holding.
 
-**Rationalized continuation.** A strategist `add` or `adjust-bracket` recommendation on a losing position, framed as responding to new information but whose rationale restates the entry thesis. The action-specific criterion catches this — the PM's default read on bracket-widening and horizon-extension is that the burden of proof sits with the strategist to name a concretely new signal. This is the mirror-image of the [ROLL command rationale](../design-decisions.md) the system explicitly excluded: the same cognitive shortcut the OMS vocabulary prevents structurally, the evaluation framework catches behaviorally.
+**Rationalized continuation.** A strategist `add` or `adjust-bracket` on a losing position, framed as responding to new information but whose rationale restates the entry thesis. Action-specific catches this — the default read on bracket-widening and horizon-extension is that the burden of proof sits with the strategist to name a concretely new signal. The mirror-image of the [ROLL command rationale](../design-decisions.md) the system excludes: the same cognitive shortcut the OMS vocabulary prevents structurally, the evaluation framework catches behaviorally.
 
-**Thesis-contradiction suppression.** A new-entry narrative or strategist status rationale that omits a contradiction or uncertainty the synthesizer flagged bearing on the cited signal. The counterargument-consideration criterion (for new entries) and the status-warrant criterion (for strategist actions) catch this; the source brief retrieval tool is how the PM verifies that a narrative's characterization matches the underlying brief when it smells wrong.
+**Thesis-contradiction suppression.** A new-entry narrative or strategist status rationale that omits a contradiction or uncertainty the synthesizer flagged bearing on the cited signal. Counterargument-consideration (new entries) and status-warrant (strategist actions) catch this; source-brief retrieval verifies the underlying characterization when something smells wrong.
 
-**Engine-originated closure as a signal.** When an engine-originated envelope appears in the activity log (e.g., an engine-forced close on a position-level max-loss breach), any strategist recommendation that treats the closed position's sector or thesis as unchanged is suspect. The PM's [guardrail state header surfaces recent engine-originated actions](../06-risk-guardrails/state-delivery.md#portfolio-manager-guardrail-state-header) as a prominence cue, and the activity log delivered as part of [portfolio state §5](../01-data-layer/internal/portfolio-state.md) carries the full record; the strategist may be ignoring a forced-close signal that bears on adjacent positions. This is a coherence-criterion failure when the strategist's cross-position observations don't account for the engine action.
+**Engine-originated closure as a signal.** When an engine-originated envelope appears in the activity log (e.g., a force-close on a position-level max-loss breach), any strategist recommendation treating the closed position's sector or thesis as unchanged is suspect. The PM's [guardrail state header surfaces recent engine-originated actions](../06-risk-guardrails/state-delivery.md#portfolio-manager-guardrail-state-header) as a prominence cue; the activity log via [portfolio state §5](../01-data-layer/internal/portfolio-state.md) carries the full record. A coherence-criterion failure when cross-position observations ignore the engine action.
 
 ---
 
 ## Existing position management guidance
 
-The evaluation framework covers the per-recommendation decisions the PM makes on strategist proposals. Three recurring scenarios warrant explicit guidance because they surface repeatedly, intersect multiple criteria, and benefit from a consistent default procedure: **aging theses**, **partial invalidation**, and the **time-limit approach**. This section also makes the PM's modification authority explicit for existing positions, which the [envelope model](#pm-originated-envelopes-pm_analyst-and-pm_strategist) implies but does not state directly.
+The evaluation framework covers per-recommendation decisions on strategist proposals. Three recurring scenarios warrant explicit guidance — they surface repeatedly, intersect multiple criteria, and benefit from a consistent default procedure: **aging theses**, **partial invalidation**, and the **time-limit approach**. This section also makes the PM's modification authority explicit, which the [envelope model](#pm-originated-envelopes-pm_analyst-and-pm_strategist) implies but does not state directly.
 
 ### Scope of PM authority for existing-position envelopes
 
-The PM modifies strategist recommendations within a bounded authority. Understanding the boundaries is what prevents the PM from drifting into the strategist's lane (position-level thesis expertise, status classification) or into the analyst's lane (new-entry thesis construction).
+The PM modifies strategist recommendations within bounded authority — preventing drift into the strategist's lane (position-level thesis expertise, status classification) or the analyst's lane (new-entry thesis construction).
 
 **Permitted modifications:**
-- **Parameter adjustments within the recommended action.** Quantity of a reduce, stop level or target or deadline of an adjust-bracket, limit price of a close, order type on any exposure-changing action. The action type stays the same; only its parameters change. The `pre-submission guardrail check` applies — modified parameters must pass the validation tool before finalization.
-- **Risk-reducing complementary commands.** Adding an `adjust-bracket` command to a `hold` or `reduce` recommendation to tighten a stop or pull in a time leg. The complementary command is recorded as a modification on the envelope with adjustment category `risk_reduction` and a rationale explaining the added protection. The strategist's original action remains the primary action; the complementary command layers defensive context the strategist did not propose.
+- **Parameter adjustments within the recommended action.** Quantity of a reduce, stop level or target or deadline of an adjust-bracket, limit price of a close, order type on any exposure-changing action. The action type stays the same. The pre-submission guardrail check applies — modified parameters must pass the validation tool.
+- **Risk-reducing complementary commands.** Adding an `adjust-bracket` command to a `hold` or `reduce` recommendation to tighten a stop or pull in a time leg. Recorded as a modification with adjustment category `risk_reduction` and a rationale explaining the added protection. The strategist's original action remains primary; the complementary command layers defensive context.
 
 **Outside PM authority (use rejection instead):**
-- **Action replacement.** Changing the strategist's action type — `hold` → `close`, `reduce` → `close`, `close` → `add` — is not a parameter modification. The semantic difference between actions (bracket cancellation on full close, `close_rationale_type` requirements, thesis-resolution implications) is structural, not parametric. The PM's mechanism for disagreement with the recommended action is rejection, which carries the disagreement to the next invocation for strategist re-evaluation against fresh synthesizer data.
-- **Adding constructive commands.** `OPEN` and `ADD` commands require full thesis construction — the analyst's domain. If the PM believes a new position or add is warranted that the analyst did not propose, the correct path is to note the gap for the feedback loop, not to bolt a constructive command onto a strategist-originated envelope.
+- **Action replacement.** Changing the strategist's action type — `hold` → `close`, `reduce` → `close`, `close` → `add` — is not a parameter modification. The semantic difference between actions (bracket cancellation on full close, `close_rationale_type` requirements, thesis-resolution implications) is structural. The PM's mechanism for disagreement is rejection, which carries to the next invocation for strategist re-evaluation against fresh synthesizer data.
+- **Adding constructive commands.** `OPEN` and `ADD` commands require full thesis construction — the analyst's domain. A gap is noted for the feedback loop, not bolted onto a strategist-originated envelope.
 
-The rejection path preserves the separation between the strategist's position-level expertise and the PM's portfolio-level authority without the PM unilaterally overriding thesis classifications. The [continuous monitor's protective-close authority](../05-execution-layer/oms-commands.md#command-origins) is a separate mechanism for emergency risk management independent of PM/strategist disagreement.
+The rejection path preserves the separation between strategist position-level expertise and PM portfolio-level authority. The [continuous monitor's protective-close authority](../05-execution-layer/oms-commands.md#command-origins) is a separate emergency-risk-management mechanism.
 
 ### Aging theses
 
-A position whose `time_expectation_hours` has elapsed without the catalyst firing or the position reaching its target.
+A position whose `time_expectation_hours` has elapsed without the catalyst firing or reaching target.
 
 **Signals:**
-- Position age (entry timestamp vs. current time) exceeds `time_expectation_hours` on the thesis record
-- Strategist classifies `thesis_status` as `stale` — or continues classifying as `on-track` past the time expectation, which the evaluation framework flags as a status-warrant failure
-- `prior_status` shows consecutive invocations at `at-risk` or `stale` without transition to `on-track` or `invalidated` — the sunk-cost persistence anti-pattern lens applies
+- Position age exceeds `time_expectation_hours` on the thesis record
+- Strategist classifies `thesis_status` as `stale` — or continues `on-track` past the time expectation (evaluation framework flags as status-warrant failure)
+- `prior_status` shows consecutive invocations at `at-risk` or `stale` without transition — sunk-cost persistence anti-pattern applies
 
 **Default PM response:**
 - **Strategist recommends `close` on `stale`:** approve.
-- **Strategist recommends `hold` on `stale`:** approve only if `action_rationale` names a specific reason the horizon should be extended (typically a publicly rescheduled catalyst with a new timestamp). Otherwise reject — the burden of proof for extending time on a stale thesis sits with the strategist, and rejection carries the disagreement forward.
-- **Strategist recommends `hold` on a position past time expectation but classifies as `on-track`:** reject. The classification-warrant criterion fails regardless of the hold itself.
-- **When approving any hold on an aging thesis:** modify by adding a complementary `adjust-bracket` command to tighten the stop or pull in the time leg. Time decay (options) and drift risk (equity) accumulate as a position ages past its expected resolution; an unguarded hold is a higher-risk action than it was at entry.
+- **Strategist recommends `hold` on `stale`:** approve only if `action_rationale` names a reason the horizon should be extended (typically a publicly rescheduled catalyst with a new timestamp). Otherwise reject.
+- **Strategist recommends `hold` on a position past time expectation but classifies as `on-track`:** reject. The classification-warrant criterion fails regardless of the hold.
+- **When approving any hold on an aging thesis:** modify by adding a complementary `adjust-bracket` command to tighten the stop or pull in the time leg. Time decay and drift risk accumulate as a position ages past expected resolution; an unguarded hold is higher-risk than at entry.
 
 ### Partial invalidation
 
-The strategist's `status_rationale` identifies specific [thesis components](../05-execution-layer/thesis-model.md#thesis-structure) as invalidated while others remain intact. Because the thesis model enforces component-level structure, partial invalidation is a first-class state — not an edge case.
+The strategist's `status_rationale` identifies specific [thesis components](../05-execution-layer/thesis-model.md#thesis-structure) as invalidated while others remain intact. Partial invalidation is a first-class state — the thesis model enforces component-level structure.
 
 **Signals:**
 - Strategist classifies `thesis_status` as `partially-realized` or `at-risk` with component-level specificity
-- `status_rationale` cites a signal contradicting a specific named component while other components hold
-- A multi-leg strategy position where one leg's supporting rationale is undermined but the other leg's is not
+- `status_rationale` cites a signal contradicting a specific component while others hold
+- A multi-leg strategy position where one leg's rationale is undermined but the other's is not
 
 **Default PM response:**
-- **Strategist recommends `reduce` tied to the invalidated component:** approve. Check that the reduction quantity maps to the portion of the thesis that failed — a non-core key-assumption invalidation warrants a smaller reduction than a core-mechanism invalidation. If the quantity looks disproportionate to the invalidation described, modify the quantity rather than rejecting the action.
+- **Strategist recommends `reduce` tied to the invalidated component:** approve. Check that reduction quantity maps to the failed portion — a non-core key-assumption invalidation warrants a smaller reduction than a core-mechanism invalidation. If quantity looks disproportionate, modify rather than reject.
 - **Strategist recommends `hold` on partial invalidation:** default to reject. A position sized for the full thesis held against a partially invalidated thesis is over-sized by definition. Approve only when `status_rationale` demonstrates the invalidated component was non-core (supporting rather than driving the causal chain).
-- **Strategist recommends `close` on partial invalidation:** evaluate whether the residual intact thesis could stand on its own. If so, reject (the close discards optionality the residual preserves) and carry the disagreement forward. If the invalidated component was load-bearing, approve the close.
-- **Complementary bracket tightening.** Partial invalidation narrows the plausible path to target, which typically warrants a tightened invalidation leg even when size is reduced rather than fully closed. When approving a `reduce` without an accompanying `adjust-bracket`, consider adding bracket tightening as a risk-reducing complementary command.
+- **Strategist recommends `close` on partial invalidation:** evaluate whether the residual thesis could stand alone. If so, reject (close discards optionality the residual preserves). If the invalidated component was load-bearing, approve.
+- **Complementary bracket tightening.** Partial invalidation narrows the plausible path to target. When approving a `reduce` without an accompanying `adjust-bracket`, consider adding bracket tightening as a risk-reducing complementary command.
 
 ### Time-limit approach
 
-**The system is thesis-based, not time-based** (see [design-decisions.md](../design-decisions.md#why-thesis-based-position-management-over-time-based) for the foundational rationale). `time_expectation_hours` is a soft target — it feeds strategist classification triggers (past-expectation tends to produce `stale` classifications) but is not a mechanical close trigger. Time-based invalidation legs are hard limits mechanically enforced by the execution layer.
+**The system is thesis-based, not time-based** (see [design-decisions.md](../design-decisions.md#why-thesis-based-position-management-over-time-based)). `time_expectation_hours` is a soft target feeding strategist classification triggers (past-expectation tends to produce `stale`) but not a mechanical close trigger. Time-based invalidation legs are hard limits mechanically enforced by the execution layer.
 
 **PM stance on time:**
-- `time_expectation_hours` expiring is a signal for the strategist to re-evaluate, not for the PM to force a close. The path is: past-expectation → strategist reclassifies → PM evaluates the new classification and action. Bypassing this path by PM-initiated closure on unexpired positions conflicts with the [Scope of PM authority](#scope-of-pm-authority-for-existing-position-envelopes) above.
-- Extending a time-based invalidation leg via `adjust-bracket` is the most common manifestation of the [rationalized continuation](#anti-patterns-the-pm-is-watching-for) anti-pattern. The default read on any strategist `adjust-bracket` that pushes a time leg further out: rationalization, unless the rationale cites concrete new information.
-- **Narrow exception — rescheduled catalyst.** A publicly rescheduled catalyst (earnings delayed to a specific new date, FOMC meeting postponed, trial date moved) justifies extending the time leg to match the new timestamp. The rationale must cite the reschedule specifically — vague phrasing like "the catalyst is expected to fire soon" does not qualify.
-- **Narrow exception — post-catalyst reaction window.** A catalyst that has fired but whose market impact has not fully played out may warrant a modest extension tied to the expected reaction window. The rationale must name the reaction window concretely, not invoke "the market needs time to digest."
+- `time_expectation_hours` expiring is a signal for the strategist to re-evaluate, not for the PM to force a close. The path: past-expectation → strategist reclassifies → PM evaluates the new classification and action. Bypassing this conflicts with [Scope of PM authority](#scope-of-pm-authority-for-existing-position-envelopes).
+- Extending a time-based invalidation leg via `adjust-bracket` is the most common manifestation of [rationalized continuation](#anti-patterns-the-pm-is-watching-for). The default read on any time-leg push-out: rationalization unless concrete new information is cited.
+- **Narrow exception — rescheduled catalyst.** A publicly rescheduled catalyst (earnings delayed to a specific new date, FOMC postponed, trial date moved) justifies extending to match the new timestamp. The rationale must cite the reschedule specifically.
+- **Narrow exception — post-catalyst reaction window.** A fired catalyst whose market impact has not fully played out may warrant a modest extension tied to the expected reaction window. The rationale must name the reaction window concretely.
 
-**Interaction with regime changes:** when a regime tightens mid-position, time-based legs typically do not need modification — the regime-transition remedy process handles size and exposure breaches through the strategist's remedy proposals. Time-leg adjustments remain per-position judgment calls and should not be bundled into regime-transition responses unless the regime change specifically affects catalyst timing (e.g., a crisis regime may delay corporate actions).
+**Interaction with regime changes:** when a regime tightens mid-position, time-based legs typically need no modification — the regime-transition remedy process handles size and exposure breaches. Time-leg adjustments are per-position judgment calls, bundled into regime responses only when the regime change specifically affects catalyst timing (e.g., a crisis regime may delay corporate actions).
 
 ---
 
 ## Synchronous command feedback
 
-When the PM submits OMS commands to the engine, the engine validates each command against guardrails and returns a result **synchronously within the same invocation**. The PM receives either a success acknowledgment or a rejection payload for each command, and retains agency to respond.
+When the PM submits OMS commands, the engine validates each command and returns a result **synchronously within the same invocation**. The PM receives either a success acknowledgment or rejection payload for each command, and retains agency to respond.
 
-**Why synchronous feedback is necessary:** The analyst and strategist pre-validate proposals against guardrail state, but portfolio state can shift between their validation and the PM's command submission — due to market movement, fills resolving during the invocation's collect phase, or a regime change triggered by intra-invocation volatility. The PM's own modifications (sizing adjustments) add another source of drift, even with pre-submission validation. Synchronous feedback closes the loop: the PM knows immediately whether each command succeeded.
+**Why synchronous:** The analyst and strategist pre-validate against guardrail state, but portfolio state can shift between their validation and PM submission — market movement, fills resolving during the invocation's collect phase, or intra-invocation regime changes. PM modifications add another source of drift. Synchronous feedback closes the loop: the PM knows immediately whether each command succeeded.
 
-**On command rejection:** The rejection payload includes which guardrail(s) blocked the command, the current limit values, and a suggested modification (see [oms-commands.md](../05-execution-layer/oms-commands.md)). The PM can:
-- Reissue the command with reduced size or different parameters
-- Skip the trade entirely and move to the next command
-- Re-evaluate subsequent commands in light of the rejection (e.g., if capital is tighter than expected, a lower-priority trade may no longer be feasible)
+**On command rejection:** The rejection payload includes which guardrail(s) blocked the command, current limit values, and a suggested modification (see [oms-commands.md](../05-execution-layer/oms-commands.md)). The PM can:
+- Reissue with reduced size or different parameters
+- Skip and move to the next command
+- Re-evaluate subsequent commands in light of the rejection (e.g., tighter-than-expected capital may make a lower-priority trade infeasible)
 
-**Sequential processing with feedback:** Commands are submitted one at a time in the PM's chosen priority order. Each command's guardrail validation accounts for the cumulative impact of all prior successful commands in the same invocation. If command 2 is rejected, command 3 is still validated against the state that includes command 1's impact (but not command 2's, since it was rejected). This ensures accurate cumulative accounting even when some commands fail.
+**Sequential processing with feedback:** Commands submit one at a time in the PM's chosen priority order. Each command's guardrail validation accounts for the cumulative impact of prior successful commands in the same invocation. If command 2 is rejected, command 3 is validated against state including command 1's impact (but not command 2's, since it was rejected).
 
-**Interaction with envelope model:** The command envelope is produced during the evaluation phase (before command submission). If a command is rejected and the PM reissues with modified parameters, the envelope is updated with an additional modification record: field changed, original value, revised value, adjustment category `guardrail_rejection_response`, and the specific guardrail that triggered the revision. This maintains full traceability.
+**Interaction with envelope model:** The envelope is produced during evaluation (before submission). If a command is rejected and the PM reissues with modified parameters, the envelope is updated with an additional modification record: field changed, original value, revised value, adjustment category `guardrail_rejection_response`, and the specific guardrail that triggered the revision.
 
-**TODO — execution failure notification channel:** The detailed contract for how the engine communicates rejection payloads back to the PM (tool call response, structured return value, etc.) needs to be specified during implementation. The semantic contract is defined here; the transport mechanism is an implementation detail.
+**TODO — execution failure notification channel:** The contract for how the engine communicates rejection payloads back to the PM (tool call response, structured return value, etc.) is to be specified during implementation. The semantic contract is defined here; the transport mechanism is an implementation detail.
 
 ---
 
 ## Retrieval tools
 
-The PM has two on-demand retrieval tools for verifying narrative claims against their underlying records.
+The PM has two on-demand retrieval tools for verifying narrative claims against underlying records.
 
 ### Source-brief retrieval
 
-Same tool as the analyst and strategist — pulls a section of an analysis brief by reference ID from the synthesizer's source store. Use when:
+Same tool as the analyst and strategist — pulls a section of an analysis brief by reference ID. Use when:
 
-- Evaluating whether the analyst's thesis correctly interpreted an underlying signal
-- Evaluating whether the strategist's position assessment aligns with the actual source signal cited
-- Investigating counterarguments by checking what the source brief actually said vs. how the analyst or strategist characterized it
+- Evaluating whether the analyst's thesis correctly interpreted a signal
+- Evaluating whether the strategist's position assessment aligns with the cited source signal
+- Investigating counterarguments by checking what the source brief actually said vs. how it was characterized
 
-Reference IDs follow the synthesizer's typed format (`SA-TECH-N`, `QR-N`, `AR-N`, `CR-N` — see the [decision-layer overview](README.md) for the full prefix table). The tool returns the corresponding section of the original analysis brief.
+Reference IDs follow the synthesizer's typed format (`SA-TECH-N`, `QR-N`, `AR-N`, `CR-N` — see [decision-layer overview](README.md)).
 
 ### Thesis-component retrieval
 
-Pulls the full component-level thesis record for one held position from the [thesis registry](../01-data-layer/internal/portfolio-state.md#3-thesis-registry). Required because PM context delivers theses at the summary level by default — full component-level detail is not loaded into context up front for the PM (it is for the strategist; see [portfolio-state.md §3a](../01-data-layer/internal/portfolio-state.md)). Use when:
+Pulls the full component-level thesis record for one held position from the [thesis registry](../01-data-layer/internal/portfolio-state.md#3-thesis-registry). PM context delivers theses at summary level by default — full component-level detail is loaded for the strategist, not the PM (see [portfolio-state.md §3a](../01-data-layer/internal/portfolio-state.md)). Use when:
 
-- Verifying that the strategist's `status_rationale` cites the thesis component it claims to cite
-- Resolving a partial-invalidation evaluation where component-level reasoning matters (see [Existing position management guidance — Partial invalidation](#partial-invalidation))
-- Spot-checking a strategist `add_conviction_justification` against the original entry rationale to confirm the cited "strengthening signal" was genuinely absent at entry
+- Verifying that the strategist's `status_rationale` cites the thesis component it claims to
+- Resolving a partial-invalidation evaluation where component-level reasoning matters (see [Partial invalidation](#partial-invalidation))
+- Spot-checking a strategist `add_conviction_justification` against the original entry rationale to confirm the "strengthening signal" was genuinely absent at entry
 
-Tool signature: `get_thesis_components(position_id)` returns the full thesis record per [thesis-model.md](../05-execution-layer/thesis-model.md) — summary plus all components (entry rationale, target rationale, invalidation rationale per leg) with their key assumptions and linked orders/legs.
+Tool signature: `get_thesis_components(position_id)` returns the full thesis record per [thesis-model.md](../05-execution-layer/thesis-model.md) — summary plus all components (entry rationale, target rationale, invalidation rationale per leg) with key assumptions and linked orders/legs.
