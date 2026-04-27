@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-26
+commit_id: c26cd6f
 ---
 
 # 05i — Polymarket vendor adapter
