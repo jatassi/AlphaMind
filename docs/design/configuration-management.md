@@ -316,6 +316,9 @@ source_signal_survival_drop:
 
 validation_window_end:
   days_before_due: 7                   # fire when an active validation is within this many days of evaluation-due, or already overdue
+
+validation_superseded:
+  enabled: true                        # fire when an active validation was auto-superseded during the week (regime transition, model version change, or concurrent edit on the watched artifact)
 ```
 
 ### `assets.yaml`

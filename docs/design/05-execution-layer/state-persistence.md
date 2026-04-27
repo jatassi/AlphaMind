@@ -408,6 +408,8 @@ Validation record:
 - Edited artifact: source path of the prompt or config file that was changed (e.g., `prompts/decision/strategist.md`)
 - Pre-edit version: git SHA of the artifact prior to the edit
 - Post-edit version: git SHA of the artifact after the edit (typically HEAD at registration time)
+- Registered regime: regime label active at registration time (snapshotted from the distillation layer's regime classification on the registering invocation), used as the supersession comparison anchor
+- Registered model ID: Claude model ID active at registration time (snapshotted from `agent_calls` provenance on the registering invocation), used as the supersession comparison anchor
 - Watched metric IDs: ordered list of metric identifiers from the [feedback-loop metric inventory](../feedback-loop.md) the validation will assess
 - Window length days: how long until evaluation is meaningful
 - Expected direction: `improved`, `unchanged`, or `degraded`
@@ -415,8 +417,10 @@ Validation record:
 - Success criterion: concrete threshold the operator and Claude agreed counts as the change working
 - Failure criterion: concrete threshold that counts as the change not working or making things worse
 - Evaluation due timestamp: registered timestamp + window length
+- Superseded timestamp: when the validation was auto-superseded by a mid-window conditioning shift (null while the window is still readable); written by the supersession detector per [feedback-loop.md § Mid-window supersession](../feedback-loop.md#mid-window-supersession)
+- Superseded reason: structural reason the supersession fired (`regime_transition`, `model_version_change`, `concurrent_edit_on_watched_artifact`); null while the window is still readable
 
-Evaluation status is derived from the existence of a joining validation outcome record, not stored on the validation record itself.
+Evaluation status is derived: a validation is `superseded` when `superseded_at` is non-null, `evaluated` when a joining validation outcome record exists, `pending` otherwise. Outcome records are not written for superseded validations.
 
 ---
 

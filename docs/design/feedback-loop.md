@@ -427,6 +427,7 @@ Auto-flagged items, each row links to the relevant deeper view. Default threshol
 - **Citation chain shift** (`citation_chain_shift`) — fires when synthesizer citation rate per source changes by more than `delta_pp_threshold` percentage points from the prior `baseline_window_weeks` average
 - **Source signal survival drop** (`source_signal_survival_drop`) — fires when a per-source signal survival rate drops by more than `delta_pp_threshold` percentage points from the prior `baseline_window_weeks` average
 - **Validation reaching window end** (`validation_window_end`) — fires when an active validation is within `days_before_due` days of evaluation-due, or overdue
+- **Validation superseded** (`validation_superseded`) — fires when an active validation was auto-marked superseded during the week (regime transition, model version change, or concurrent edit on the watched artifact); row carries the supersession reason and a re-register link to `/feedback-validate` REGISTER seeded with the prior registration's fields
 
 Empty state: "Nothing crossed a notable-shift threshold this week."
 
@@ -461,6 +462,22 @@ Session-mode affordances are dimmed when no session is active so self-review sta
 
 Validation is operationalized through the [`/feedback-validate` skill](#skills): pre-registration of expected impact captured at change time as a contract, criteria frozen at registration, posterior bands rather than point estimates, confounder conditioning mandatory, "inconclusive" as a first-class verdict, one change per validation window. The skill's REGISTER and EVALUATE flows enforce these; the [validation evaluation view](command-center.md#validation-evaluation-view) is the dashboard surface EVALUATE walks through.
 
+### Mid-window supersession
+
+A registered validation is a contract over a specific conditioning context. When that context shifts materially during the post-edit window, the contract is structurally broken — the post-edit data the operator agreed to evaluate is no longer comparable to the pre-edit baseline. The system auto-marks such validations `superseded`; the operator either re-registers with a fresh post-shift window or accepts the supersession as the resolution.
+
+Triggers — any of these landing during the post-edit window:
+
+- **Regime transition.** The active regime label at any invocation during the post-edit window differs from the regime at registration, sourced from the distillation layer's per-invocation regime classification (the same field surfaced in the [conditioning surface](#conditioning-surface)).
+- **Anthropic model version change.** The active model ID on any agent call during the post-edit window differs from the model ID at registration, sourced from the `agent_calls` provenance fields per [state-persistence.md](05-execution-layer/state-persistence.md).
+- **Concurrent prompt edit on the watched artifact.** A new commit to the registered artifact's path (the validation's `edited_artifact`) lands in the artifact's git ancestry between registration and evaluation due. Detected by walking the artifact's git log over the post-edit window.
+
+When a trigger fires, the validation record's `superseded_at` and `superseded_reason` fields are written; the supersession surfaces as a [notable-shift row](#section-5--notable-shifts) in the next weekly digest so the operator sees it without polling the validation queue. Supersession is permanent for that validation; re-registration is a new validation entity.
+
+Confounders detected at evaluation time that didn't trigger automatic supersession during the window remain `inconclusive` material per the EVALUATE walk's confounder-conditioning step. Supersession handles structural breaks; `inconclusive` handles residual noise the structural test didn't catch — layered defense.
+
+The supersession detector runs against active validations on each pipeline invocation (the natural cadence at which new conditioning context lands) and on each commit to a watched artifact's path. Producer is the command-center backend, which already owns the `validations` table per [command-center.md § Persistence boundary](command-center.md#persistence-boundary).
+
 ---
 
 ## Pending
@@ -479,7 +496,7 @@ Outcome-tier surfaces need real resolved-thesis volume before the design is mean
 
 ### Waiting on operating the system
 
-- **Validation methodology edge cases.** Two procedures the existing framework points at but doesn't specify: handling interrupted windows (regime shift or model update straddling the validation window mid-run), and protocol for what evidence is sufficient to roll back a shipped change. Both surface naturally as the system runs.
+- **Validation methodology edge cases.** Rollback evidence protocol — what evidence is sufficient to roll back a previously-shipped change — is the remaining open procedure; surfaces naturally as the system runs.
 - **Skill prompt iteration.** The three skill drafts cover orchestration logic and discipline; behavioral specifics refine once the skills are evaluable against real sessions. Normal skill iteration, not a design gap.
 
 ---

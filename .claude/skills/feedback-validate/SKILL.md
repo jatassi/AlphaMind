@@ -75,17 +75,18 @@ Open a review session via `create_review_session()` (backed by `POST /review-ses
 
 In strict order, do not deviate:
 
-1. **State the registration verbatim.** Read out the pre-registered fields. The operator hears their own past words. This is the anti-rationalization anchor.
-2. **Show pre-edit window data.** Highlight the metric over the pre-edit window. State the value with a posterior band.
-3. **Show post-edit window data.** Highlight the same metric over the post-edit window. State the value with a posterior band.
-4. **Compute the comparison.** Conditioned on regime (the active regime distribution in each window must be similar enough to compare; if not, flag), conditioned on Claude model version (any model update straddling the windows breaks attribution; if so, flag), and conditioned on whether other concurrent prompt edits landed in the window (if so, flag).
-5. **Surface confounder issues.** If any confounder is materially different across the windows, the right verdict is `inconclusive`. Say so.
-6. **State the verdict.** One of:
+1. **Check for supersession.** If `get_validation` returned a non-null `superseded_at`, the EVALUATE walk does not run. The validation evaluation view shows the supersession banner (reason + triggering shift + re-register affordance) per [command-center.md § Validation evaluation view](../../../docs/design/command-center.md#validation-evaluation-view). Confirm to the operator: "This validation was superseded by {reason} on {timestamp} — its window is structurally unreadable. Want to re-register a fresh validation against the post-shift context?" If yes, hand off to REGISTER seeded with the prior registration's edited artifact, watched metrics, expected direction, expected magnitude, and success/failure criteria; the operator confirms or revises before submitting. Either way, do not submit a validation outcome — superseded validations do not produce outcome records per [state-persistence.md § Validations](../../../docs/design/05-execution-layer/state-persistence.md).
+2. **State the registration verbatim.** Read out the pre-registered fields. The operator hears their own past words. This is the anti-rationalization anchor.
+3. **Show pre-edit window data.** Highlight the metric over the pre-edit window. State the value with a posterior band.
+4. **Show post-edit window data.** Highlight the same metric over the post-edit window. State the value with a posterior band.
+5. **Compute the comparison.** Conditioned on regime (the active regime distribution in each window must be similar enough to compare; if not, flag), conditioned on Claude model version (any model update straddling the windows breaks attribution; if so, flag), and conditioned on whether other concurrent prompt edits landed in the window (if so, flag). Confounders flagged here are residual — anything structural enough to break the contract would have triggered supersession in step 1.
+6. **Surface confounder issues.** If any confounder is materially different across the windows, the right verdict is `inconclusive`. Say so.
+7. **State the verdict.** One of:
    - `improved` — post-window meets the success criterion with confidence
    - `degraded` — post-window meets the failure criterion with confidence
    - `no_change` — post-window distinguishable from neither success nor failure; falls in the middle
    - `inconclusive` — sample size insufficient or confounders prevent attribution
-7. **Capture the outcome.** Call `submit_validation_outcome(validation_id, verdict, posterior_summary, narrative)` (writes a validation outcome entity per [state-persistence.md § Validation outcomes](../../../docs/design/05-execution-layer/state-persistence.md)). The validation is now closed; the record is permanent.
+8. **Capture the outcome.** Call `submit_validation_outcome(validation_id, verdict, posterior_summary, narrative)` (writes a validation outcome entity per [state-persistence.md § Validation outcomes](../../../docs/design/05-execution-layer/state-persistence.md)). The validation is now closed; the record is permanent.
 
 ### Anti-patterns in evaluation
 
