@@ -1,8 +1,8 @@
 # LLM output validation approach
 
-Structural validation is how the pipeline process decides whether an LLM agent's response is usable. The runtime policy for what happens *when validation fails* — single corrective retry, context overflow is a hard abort, any agent failure aborts the invocation — is specified in [llm-agent-failure-handling.md](../llm-agent-failure-handling.md). This document specifies the validation mechanism itself: what the pipeline process does to each agent's raw response before handing its output to the next stage, and how that mechanism is tested.
+Structural validation decides whether an LLM agent's response is usable. The runtime policy for what happens *when validation fails* — single corrective retry, context overflow is a hard abort, any agent failure aborts the invocation — is specified in [llm-agent-failure-handling.md](../llm-agent-failure-handling.md). This document specifies the validation mechanism itself: what the pipeline does to each agent's raw response before handing output to the next stage, and how that mechanism is tested.
 
-The validator sits at a single seam — immediately after the LLM response returns, before any downstream consumer sees the output. That placement is load-bearing: it is the only point at which the contract between an LLM agent and a deterministic consumer is actually checked, and it is where the distinction between a parseable-but-semantically-wrong output and a structurally malformed one is drawn.
+The validator sits at a single seam — immediately after the LLM response returns, before any downstream consumer sees the output. The only point at which the contract between an LLM agent and a deterministic consumer is checked, and where the distinction between parseable-but-semantically-wrong and structurally malformed is drawn.
 
 ---
 
@@ -10,29 +10,29 @@ The validator sits at a single seam — immediately after the LLM response retur
 
 ### In scope
 
-- **Validation stack** — the ordered layers the pipeline process runs against every LLM output (envelope parse, schema validation, referential integrity, stop-reason check), their sequencing, and what each layer can and cannot detect.
+- **Validation stack** — the ordered layers the pipeline runs against every LLM output (envelope parse, schema validation, referential integrity, stop-reason check), their sequencing, and what each layer can and cannot detect.
 
-- **Per-agent surface mapping** — which agents are validated by a formal JSON Schema (analyst, strategist, PM envelope + embedded OMS commands), which by hand-written structural validators (domain researchers, qualitative researcher, adaptive researcher), and which by stop-reason check only (synthesizer). Rationale for the split and the conditions under which an agent migrates between mechanisms.
+- **Per-agent surface mapping** — which agents are validated by formal JSON Schema (analyst, strategist, PM envelope + embedded OMS commands), which by hand-written structural validators (domain researchers, qualitative researcher, adaptive researcher), which by stop-reason check only (synthesizer). Rationale for the split and conditions under which an agent migrates.
 
-- **Reference-ID taxonomy** — the typed prefix conventions (`SA-TECH-N`, `QR-N`, `AR-N`, `CR-N`, `REC-N`, `INV-N`, `SA-N`, `SA-ORD-N`, `BREACH-N`, `ENV-*-N`, `POS-*`, `MON.*`, composite command IDs) consolidated as the single source of truth for the reference-resolution checker. Producer-side format rules and consumer-side resolution rules are distinct concerns named separately.
+- **Reference-ID taxonomy** — typed prefix conventions (`SA-TECH-N`, `QR-N`, `AR-N`, `CR-N`, `REC-N`, `INV-N`, `SA-N`, `SA-ORD-N`, `BREACH-N`, `ENV-*-N`, `POS-*`, `MON.*`, composite command IDs) consolidated as the single source of truth for the reference-resolution checker. Producer-side format rules and consumer-side resolution rules are distinct concerns.
 
-- **Output parsing and envelope extraction** — how raw SDK response content is turned into the JSON object schema validation runs against. Strict-JSON stance, markdown fence handling, and the cases where parsing itself is the malformed-output detection.
+- **Output parsing and envelope extraction** — how raw SDK response content becomes the JSON object schema validation runs against. Strict-JSON stance, markdown fence handling, cases where parsing itself is the malformed-output detection.
 
-- **Corrective-retry message construction** — the format of the follow-up message sent back to an agent after a schema failure, what the validator surfaces into it, what it deliberately omits, and why the retry is same-context rather than fresh.
+- **Corrective-retry message construction** — format of the follow-up message after a schema failure, what the validator surfaces, what it omits, why same-context rather than fresh.
 
-- **Unit test plan for the validator** — the validator is itself a deterministic surface. This section names its test concerns, stub boundary, and preliminary unit catalog in the same shape as [unit-test-plan.md](unit-test-plan.md).
+- **Unit test plan for the validator** — boundary cases per layer, adversarial inputs, determinism. Test concerns, stub boundary, and preliminary unit catalog in the same shape as [unit-test-plan.md](unit-test-plan.md).
 
 ### Out of scope (deferred elsewhere)
 
-- **Failure response policy.** Whether a malformed output is retried, whether the retry succeeds or aborts, and what happens after an abort — all of that is [llm-agent-failure-handling.md](../llm-agent-failure-handling.md). This doc is the mechanism; that doc is the policy.
+- **Failure response policy.** Whether a malformed output is retried, whether the retry succeeds or aborts, what happens after an abort — [llm-agent-failure-handling.md](../llm-agent-failure-handling.md). This doc is the mechanism; that doc is the policy.
 
-- **Contract content.** What a valid analyst or strategist output *looks like* is in [analyst-output-schema.md](../04-decision-layer/analyst-output-schema.md) and [strategist-output-schema.md](../04-decision-layer/strategist-output-schema.md). What a valid PM envelope looks like is in [portfolio-manager.md](../04-decision-layer/portfolio-manager.md). This doc consumes those contracts; it does not define them.
+- **Contract content.** What a valid analyst or strategist output *looks like* is in [analyst-output-schema.md](../04-decision-layer/analyst-output-schema.md) and [strategist-output-schema.md](../04-decision-layer/strategist-output-schema.md). What a valid PM envelope looks like is in [portfolio-manager.md](../04-decision-layer/portfolio-manager.md). This doc consumes those contracts.
 
-- **LLM reasoning quality.** Whether the content a validator accepts represents *good* analysis is a Phase 4 feedback-loop concern. The validator enforces the contract; a contract-conformant but weak thesis is the evaluation framework's problem, not the validator's.
+- **LLM reasoning quality.** Whether accepted content represents *good* analysis is a Phase 4 feedback-loop concern. The validator enforces the contract; a contract-conformant but weak thesis is the evaluation framework's problem.
 
-- **End-to-end propagation.** Whether a malformed output actually produces an aborted invocation in the integration harness is [integration-test-plan.md](integration-test-plan.md)'s failure-mode-propagation section. That plan runs the real validator against scripted malformed fixtures; the unit test plan in this doc tests the validator in isolation against synthetic inputs.
+- **End-to-end propagation.** Whether a malformed output actually produces an aborted invocation in the integration harness is [integration-test-plan.md](integration-test-plan.md)'s failure-mode-propagation section. That plan runs the real validator against scripted malformed fixtures; the unit plan here tests the validator in isolation against synthetic inputs.
 
-- **Guardrail validation.** The [guardrail validation tool](../06-risk-guardrails/state-delivery.md#guardrail-validation-tool) is a separate mechanism exposed to agents during their own reasoning — structural-output validation and guardrail validation are not the same check. The guardrail tool's outputs *are* validated by the LLM output validator (they populate the `guardrail_validation_result` field in agent outputs), but the tool itself is not in scope here.
+- **Guardrail validation.** The [guardrail validation tool](../06-risk-guardrails/state-delivery.md#guardrail-validation-tool) is a separate mechanism exposed to agents during reasoning — structural-output validation and guardrail validation are not the same check. The guardrail tool's outputs *are* validated by the LLM output validator (they populate the `guardrail_validation_result` field), but the tool itself is not in scope here.
 
 ---
 
@@ -42,58 +42,58 @@ Five principles applied uniformly across the validator's surfaces.
 
 ### The published schema is the contract
 
-Where a formal JSON Schema exists ([analyst-output-schema.md](../04-decision-layer/analyst-output-schema.md), [strategist-output-schema.md](../04-decision-layer/strategist-output-schema.md)), the validator runs against that schema directly — no second implementation in code that could drift. Adding a required field in the schema file makes outputs without that field fail validation immediately; removing a field requires a schema revision. This rules out the failure mode where a code-level validator accepts an output the schema says is invalid (or vice versa), which is exactly the drift that erodes the contract's value over time.
+Where a formal JSON Schema exists ([analyst-output-schema.md](../04-decision-layer/analyst-output-schema.md), [strategist-output-schema.md](../04-decision-layer/strategist-output-schema.md)), the validator runs against that schema directly — no second implementation in code that could drift. Adding a required field in the schema file makes outputs without that field fail validation immediately. Rules out the failure mode where a code-level validator accepts an output the schema says is invalid (or vice versa) — the drift that erodes the contract's value over time.
 
-For agents without a formal schema, the prose contract in their respective design docs is authoritative; the hand-written structural validator is the code-level expression of that prose. Adding a formal schema for any of those agents in the future supersedes the hand-written validator — the migration direction is one-way.
+For agents without a formal schema, the prose contract in their design docs is authoritative; the hand-written structural validator is the code-level expression of that prose. Adding a formal schema supersedes the hand-written validator — the migration direction is one-way.
 
 ### Structural, not semantic
 
-The validator checks shape, not meaning. "Did the analyst produce a JSON object matching the analyst schema" is a validator question. "Did the analyst propose a good trade" is not. The boundary matters because a validator that reaches into semantics produces false positives on unfamiliar-but-valid reasoning and is impossible to maintain as prompts evolve. The runtime policy relies on the validator being deterministic and low-drift; semantic checks destroy both properties.
+The validator checks shape, not meaning. "Did the analyst produce a JSON object matching the schema" is a validator question. "Did the analyst propose a good trade" is not. A validator reaching into semantics produces false positives on unfamiliar-but-valid reasoning and is impossible to maintain as prompts evolve. The runtime policy relies on the validator being deterministic and low-drift; semantic checks destroy both properties.
 
-The lone exception is the reference-ID resolution check, which is technically a semantic concern (does this citation resolve to a real brief?) but is load-bearing enough as a malformed-output detection to sit inside the validator rather than downstream. Invented reference IDs appear as plausible-looking strings that the schema cannot distinguish from real ones, and letting them through silently is the structural failure mode the downstream retrieval tool cannot recover from.
+The lone exception is reference-ID resolution, which is technically semantic (does this citation resolve to a real brief?) but is load-bearing enough as malformed-output detection to sit inside the validator. Invented reference IDs appear as plausible-looking strings the schema cannot distinguish from real ones; letting them through silently is the structural failure mode the downstream retrieval tool cannot recover from.
 
 ### Fail-fast, fail-once
 
-The validator runs in a fixed order: parse → schema → referential → stop-reason. Each layer's failure halts the pipeline through the failure-handling path; the validator does not accumulate errors across layers. This keeps the corrective retry message focused — if schema validation failed, the retry is about the schema; if referential integrity failed *after* schema passed, the retry is about the references. Bundling errors from multiple layers into a single retry message tends to produce LLM responses that fix one layer and break another.
+The validator runs in a fixed order: parse → schema → referential → stop-reason. Each layer's failure halts the pipeline through the failure-handling path; the validator does not accumulate errors across layers. Keeps the corrective retry focused — if schema validation failed, the retry is about the schema; if referential integrity failed *after* schema passed, the retry is about the references. Bundling errors from multiple layers tends to produce LLM responses that fix one and break another.
 
-Fail-once also means: once an output fails at a given layer, the same output is not re-checked against the same layer during the retry. The retry produces a new output that runs through all layers fresh.
+Fail-once also means once an output fails at a given layer, the same output is not re-checked against the same layer during the retry. The retry produces a new output that runs through all layers fresh.
 
 ### Validation lives in the pipeline process
 
-The validator is a module inside the pipeline process — not a separate service, not a daemon, not an adjunct to the continuous monitor. The pipeline process is where the LLM call originates, where the response returns, and where the next-stage consumer runs; validation inherits from that co-location. The continuous monitor does not run LLM calls and has no validation surface. Engine-originated command envelopes do not pass through the LLM output validator because no LLM generated them — they are produced by the continuous monitor and their command IDs are assigned by the OMS command intake layer per [oms-command-ids.md](../oms-command-ids.md).
+The validator is a module inside the pipeline process — not a separate service. The pipeline is where the LLM call originates, where the response returns, and where the next-stage consumer runs; validation inherits from that co-location. The continuous monitor does not run LLM calls. Engine-originated command envelopes do not pass through the LLM output validator because no LLM generated them — produced by the continuous monitor with IDs assigned by the OMS command intake layer per [oms-command-ids.md](../oms-command-ids.md).
 
 ### Test the validator as a unit
 
-Because the validator sits at a seam every LLM output crosses, its correctness is load-bearing for the entire pipeline. The [unit test plan section](#unit-test-plan) below treats it as a first-class testable surface — boundary cases per layer, adversarial inputs, determinism on identical inputs. Integration tests exercise the validator's *propagation* behavior (does an abort actually abort?); unit tests exercise the validator's *detection* behavior (does it detect this specific malformation?).
+Because the validator sits at a seam every LLM output crosses, its correctness is load-bearing. The [unit test plan section](#unit-test-plan) treats it as a first-class testable surface. Integration tests exercise *propagation* (does an abort actually abort?); unit tests exercise *detection* (does it detect this specific malformation?).
 
 ---
 
 ## Validation stack
 
-Every LLM output passes through four layers in order. Each layer has a single mandate and produces one of three outcomes: pass (proceed to the next layer), fail (halt with a failure classification the policy doc can act on), or context-overflow (a special terminal classification that skips the corrective retry per the runtime spec).
+Every LLM output passes through four layers in order. Each layer has a single mandate and produces one of three outcomes: pass, fail (halt with a failure classification), or context-overflow (a terminal classification that skips the corrective retry).
 
 ### Layer 1 — Envelope parse
 
 **Mandate:** Turn the SDK response into a single parseable JSON object.
 
-**Inputs:** Raw text content from the agent's response, plus the response metadata (stop reason, token counts).
+**Inputs:** Raw text content from the agent's response, plus response metadata (stop reason, token counts).
 
 **Behavior:**
 
-1. Strip a single leading markdown code fence (` ```json`, ` ```, or no fence) and a single trailing fence, if present. Nested fences are a malformed-output indicator — the agent is emitting prose-wrapped JSON or a multi-block response.
-2. Attempt to parse the resulting text as a single top-level JSON value via the standard library JSON parser. Exactly one value at the top level is required; trailing tokens after a valid JSON document are a parse failure, as is a response that is entirely prose with no JSON at all.
-3. On parse success, hand the parsed object to Layer 2 and attach the raw text to the in-invocation diagnostic record.
+1. Strip a single leading markdown code fence (` ```json`, ` ```, or no fence) and a single trailing fence. Nested fences are a malformed-output indicator (prose-wrapped JSON or multi-block response).
+2. Parse the resulting text as a single top-level JSON value via the standard library parser. Exactly one value required; trailing tokens after a valid JSON document are a parse failure, as is entirely-prose response.
+3. On success, hand the parsed object to Layer 2 and attach the raw text to the diagnostic record.
 
 **Failure modes detected here:**
 
 - Response is entirely prose with no JSON.
-- Response contains prose before and/or after the JSON object ("Here's my analysis: { ... }. Let me know if you need more detail.").
-- Response contains multiple top-level JSON values (an array where the schema expects an object, or two concatenated objects).
-- Response contains truncated JSON (the stop-reason check in Layer 4 distinguishes truncation from syntactic error — a truncated JSON object here surfaces as a parse error at this layer, and the metadata check in Layer 4 re-classifies it as context-overflow if `stop_reason = max_tokens`).
+- Prose before and/or after the JSON object ("Here's my analysis: { ... }. Let me know if you need more detail.").
+- Multiple top-level JSON values (an array where the schema expects an object, or two concatenated objects).
+- Truncated JSON (Layer 4's stop-reason check re-classifies as context-overflow if `stop_reason = max_tokens`).
 
-**Stance:** strict. The validator does not attempt to recover prose-wrapped JSON via regex, does not accept arrays when objects are required, and does not concatenate multi-object responses. Lenient parsing converges on accepting outputs the schema cannot validate; the cost of one corrective retry when an agent emits prose-wrapped JSON is cheaper than the downstream cost of a lenient parser accepting something that later fails semantically.
+**Stance:** strict. The validator does not attempt to recover prose-wrapped JSON via regex, does not accept arrays when objects are required, does not concatenate multi-object responses. Lenient parsing converges on accepting outputs the schema cannot validate; one corrective retry is cheaper than a lenient parser accepting something that later fails semantically.
 
-**Agent-prompting companion:** the system prompts for agents with formal schemas ([prompts/decision/analyst.md](../../../prompts/decision/analyst.md), [prompts/decision/strategist.md](../../../prompts/decision/strategist.md), [prompts/decision/pm.md](../../../prompts/decision/pm.md)) instruct the agent to emit a single JSON object with no surrounding prose. The validator's strict stance and the prompt's instructions are paired — drift on either side is detectable through the schema-failure rate in the feedback loop.
+**Agent-prompting companion:** system prompts for agents with formal schemas ([prompts/decision/analyst.md](../../../prompts/decision/analyst.md), [prompts/decision/strategist.md](../../../prompts/decision/strategist.md), [prompts/decision/pm.md](../../../prompts/decision/pm.md)) instruct the agent to emit a single JSON object with no surrounding prose. Drift on either side is detectable through the schema-failure rate in the feedback loop.
 
 ### Layer 2 — Schema validation
 
@@ -103,10 +103,10 @@ Every LLM output passes through four layers in order. Each layer has a single ma
 
 **Behavior:**
 
-- **Formal-schema agents (analyst, strategist):** run the parsed object through a JSON Schema Draft 2020-12 validator configured against the published schema file. The validator returns a list of errors, each naming the JSONPath-style location and the violated rule. The first error produced is the validator's "primary" error and is surfaced to the corrective retry; additional errors are attached to the diagnostic record but not included in the retry message (see [corrective-retry construction](#corrective-retry-message-construction) below).
-- **Informal-schema agents (domain researchers, qualitative researcher, adaptive researcher):** run the parsed object through the hand-written structural validator for that agent. The structural validator is expressed as a small set of named checks (required sections present, required fields non-empty, enum values from a closed set, sequential integer indexes where required) that collectively encode the prose contract. Error output uses the same shape as the JSON Schema validator — JSONPath-style location, rule name, message — so downstream handling is uniform.
+- **Formal-schema agents (analyst, strategist):** parsed object runs through a JSON Schema Draft 2020-12 validator configured against the published schema. Returns a list of errors, each naming JSONPath location and violated rule. The first error is the "primary" surfaced to the corrective retry; additional errors attach to the diagnostic record but not the retry message (see [corrective-retry construction](#corrective-retry-message-construction)).
+- **Informal-schema agents (domain researchers, qualitative researcher, adaptive researcher):** parsed object runs through the hand-written structural validator. Expressed as named checks (required sections present, required fields non-empty, enum values from a closed set, sequential integer indexes) encoding the prose contract. Error output uses the same shape as JSON Schema validator output — JSONPath location, rule name, message.
 
-- **Stop-reason-only agents (synthesizer):** the synthesizer produces prose with no producer-side reference IDs of its own — it consumes upstream references but emits none. There is no structural contract to validate at this layer; the synthesizer's output passes Layer 2 unconditionally. Layer 4 (stop-reason check) still applies to detect truncated output. Invented references the synthesizer might emit in its prose are caught downstream when an analyst, strategist, or PM cites them in their own structured outputs and the consumer-side resolution check at Layer 3 fails.
+- **Stop-reason-only agents (synthesizer):** the synthesizer produces prose with no producer-side reference IDs — consumes upstream references but emits none. No structural contract at this layer; passes Layer 2 unconditionally. Layer 4 still applies for truncation. Invented references in synthesizer prose are caught downstream when an analyst, strategist, or PM cites them and Layer 3's consumer-side check fails.
 
 **Failure modes detected here:**
 
@@ -117,9 +117,9 @@ Every LLM output passes through four layers in order. Each layer has a single ma
 - Pattern-based violations (e.g., `recommendation_id` not matching `^REC-[0-9]+$`).
 - Array-length minimums (e.g., `invalidation_legs` empty).
 
-**Schemas used:** the analyst schema is authoritative in [analyst-output-schema.md](../04-decision-layer/analyst-output-schema.md); the strategist schema is authoritative in [strategist-output-schema.md](../04-decision-layer/strategist-output-schema.md). When either schema is revised, the revision is the deployment — no separate code update is required to pick up the new rules.
+**Schemas used:** analyst schema in [analyst-output-schema.md](../04-decision-layer/analyst-output-schema.md); strategist schema in [strategist-output-schema.md](../04-decision-layer/strategist-output-schema.md). When either schema is revised, the revision is the deployment — no code update required.
 
-**PM envelope and OMS command schemas:** the PM command envelope has a formal JSON Schema at [pm-envelope-schema.md](../04-decision-layer/pm-envelope-schema.md), covering the two source_provenance variants (`pm_analyst`, `pm_strategist`), the per-source evaluation criterion set (five for pm_analyst, four for pm_strategist), modifications with the `pre_submission` vs. `post_rejection` phase partition, concerns, rationale narrative, and embedded commands. Every OMS command in the envelope's `commands` array validates against [oms-command-schema.md](../05-execution-layer/oms-command-schema.md) — a discriminated union on `command_type` covering OPEN, CLOSE, ADJUST, CANCEL, and ADD with their per-type required fields, command ID format, and thesis-structure requirements. Both schemas run at the LLM output validation seam; the envelope schema's `$ref` to the OMS command schema composes the two. Engine-originated envelopes are specified at [engine-envelope-schema.md](../05-execution-layer/engine-envelope-schema.md) and validated by the OMS command intake layer.
+**PM envelope and OMS command schemas:** the PM envelope has a formal JSON Schema at [pm-envelope-schema.md](../04-decision-layer/pm-envelope-schema.md), covering the two source_provenance variants (`pm_analyst`, `pm_strategist`), per-source evaluation criteria (five for pm_analyst, four for pm_strategist), modifications with the `pre_submission` vs. `post_rejection` partition, concerns, rationale narrative, and embedded commands. Every OMS command in the envelope's `commands` array validates against [oms-command-schema.md](../05-execution-layer/oms-command-schema.md) — a discriminated union on `command_type` covering OPEN, CLOSE, ADJUST, CANCEL, ADD with per-type required fields, command ID format, thesis-structure requirements. Both run at the LLM output validation seam; the envelope schema's `$ref` to OMS command composes them. Engine-originated envelopes are specified at [engine-envelope-schema.md](../05-execution-layer/engine-envelope-schema.md) and validated by the OMS command intake layer.
 
 ### Layer 3 — Referential integrity
 
@@ -144,9 +144,9 @@ Every LLM output passes through four layers in order. Each layer has a single ma
 - PM rationale narratives cite the analyst/strategist recommendations they evaluate by `REC-N` / `SA-N` / `SA-ORD-N`. Every cited ID must exist in the corresponding source output within the same invocation; citations across invocations are a structural error (stale citation) unless the envelope explicitly references prior-invocation activity log entries, which use a distinct citation format documented in [portfolio-manager.md](../04-decision-layer/portfolio-manager.md).
 - Engine-originated envelope provenance references to breach records (`rule_breached`, `position_selection_rationale`) must resolve to real rule identifiers from [rules-and-limits.md](../06-risk-guardrails/rules-and-limits.md).
 
-**Position and thesis resolution:** Strategist `position_id` and `thesis_id` fields must match real entries in the portfolio state the pipeline process delivered as context. A `position_id` referring to a position that is not open is a structural error — the strategist cannot act on a position the portfolio state does not show it. PM envelopes referring to `POS-*` identifiers inherit the same rule.
+**Position and thesis resolution:** Strategist `position_id` and `thesis_id` must match real entries in the delivered portfolio state. A `position_id` referring to a position not open is a structural error. PM envelopes referring to `POS-*` inherit the same rule.
 
-**Scope of resolution:** the validator is not responsible for semantic consistency between a reference and the narrative that cites it (does `[SA-TECH-3]` actually support the claim the narrative attributes to it?). That is the PM's source brief retrieval responsibility, handled during evaluation rather than validation. The validator only asserts the reference resolves — the cited ID points to a real brief section, not an invented one.
+**Scope of resolution:** the validator is not responsible for semantic consistency between a reference and the narrative that cites it (does `[SA-TECH-3]` actually support the claim?). That is the PM's source brief retrieval responsibility during evaluation. The validator only asserts the reference resolves — the cited ID points to a real brief section.
 
 **Failure modes detected here:**
 
@@ -162,11 +162,11 @@ Every LLM output passes through four layers in order. Each layer has a single ma
 
 **Inputs:** SDK response metadata — specifically the stop reason.
 
-**Behavior:** if any prior layer failed AND the response metadata indicates the model stopped because it hit the output token ceiling (`max_tokens` or equivalent), the failure is re-classified from `malformed_output` to `context_overflow`. The runtime policy treats the two differently — malformed gets one corrective retry, context overflow is an immediate abort ([llm-agent-failure-handling.md](../llm-agent-failure-handling.md#recovery-semantics)). Without this re-classification, a truncated output would be retried as if the agent had made a recoverable structural mistake, and the retry would produce the same truncation.
+**Behavior:** if any prior layer failed AND response metadata indicates the model stopped because it hit the output token ceiling (`max_tokens` or equivalent), the failure is re-classified from `malformed_output` to `context_overflow`. Runtime policy treats the two differently — malformed gets one corrective retry, context overflow is immediate abort ([llm-agent-failure-handling.md](../llm-agent-failure-handling.md#recovery-semantics)). Without re-classification, a truncated output would be retried as a recoverable mistake, and the retry would produce the same truncation.
 
-**Why the check runs after the structural layers:** a syntactically valid JSON response that hit `max_tokens` is rare but possible (the schema's required fields all emitted before truncation happened, and the truncation occurred in a field the schema does not mark required). Such outputs pass Layers 1–3 and do not need re-classification — they are genuinely valid, and the max-tokens signal is informational rather than error-bearing. Running the check only when prior layers have failed keeps the common path cheap and keeps the classification logic focused on the ambiguous case.
+**Why the check runs after structural layers:** a syntactically valid JSON response that hit `max_tokens` is rare but possible (required fields all emitted; truncation in a non-required field). Such outputs pass Layers 1–3 and don't need re-classification. Running the check only on prior-layer failure keeps the common path cheap.
 
-**Out of scope for this layer:** input-side context overflow (prompt too large for the model's window) is caught before the call is made, by the pipeline process's pre-call token-counting check described in [llm-agent-failure-handling.md](../llm-agent-failure-handling.md#detection). The stop-reason check is strictly an output-side classifier.
+**Out of scope:** input-side context overflow (prompt too large for the model's window) is caught before the call by the pre-call token-counting check ([llm-agent-failure-handling.md](../llm-agent-failure-handling.md#detection)). The stop-reason check is strictly output-side.
 
 ---
 
@@ -184,17 +184,17 @@ Each LLM agent in the pipeline is validated by the mechanism appropriate to its 
 | Adaptive researcher | Hand-written structural validator | [adaptive-research.md](../03-analysis-layer/adaptive-research.md) | `AR-N` | `SA-{SECTOR}-ANOM-*`, `SA-{SECTOR}-*`, `SA-{SECTOR}-TC-*`, `QR-*`, `CR-*` |
 | Synthesizer | Stop-reason check only (Layer 4) | [synthesizer.md](../03-analysis-layer/synthesizer.md) | — (no producer-side IDs) | `SA-{SECTOR}-*`, `QR-*`, `AR-*`, `CR-*` (resolution at consumer) |
 
-**Criteria for adopting a formal JSON Schema.** An agent's output warrants a formal schema when (a) the output is consumed by deterministic downstream logic (the proposal pre-processor, the OMS, an engine component), (b) the contract is stable enough that schema revisions are rare, and (c) the validation surface is large enough that a hand-written validator would drift from the prose contract. The analyst, strategist, and PM schemas exist because all three conditions hold — the PM envelope feeds the OMS on every invocation and its evaluation / modification / embedded-command shape is large enough that a hand-written validator would drift from the prose contract over time. The OMS command schema is a shared sub-contract consumed by both the PM envelope schema and the engine envelope schema.
+**Criteria for adopting a formal JSON Schema.** An agent's output warrants a formal schema when (a) consumed by deterministic downstream logic (proposal pre-processor, OMS, engine), (b) the contract is stable enough that schema revisions are rare, and (c) the validation surface is large enough that a hand-written validator would drift. Analyst, strategist, and PM schemas satisfy all three — the PM envelope feeds the OMS on every invocation and its evaluation/modification/embedded-command shape is large enough that hand-written validation would drift over time. The OMS command schema is a shared sub-contract consumed by both the PM envelope schema and the engine envelope schema.
 
-**Criteria for staying structural.** Domain researchers, qualitative researcher, and adaptive researcher all produce narrative briefs that nonetheless carry producer-side reference IDs the synthesizer and decision-layer agents resolve against (`SA-{SECTOR}-N`, `QR-N`, `AR-N`, etc.). Their primary consumer is another LLM, not deterministic logic, but the reference-ID format checks (sequential indexing, prefix correctness, no duplicates) carry most of the structural weight and are uniform across all of them. JSON Schema's value would be weaker than a hand-written validator that focuses on those format checks.
+**Criteria for staying structural.** Domain researchers, qualitative researcher, and adaptive researcher produce narrative briefs that nonetheless carry producer-side reference IDs (`SA-{SECTOR}-N`, `QR-N`, `AR-N`, etc.). Primary consumer is another LLM, not deterministic logic; reference-ID format checks (sequential indexing, prefix correctness, no duplicates) carry most of the structural weight. JSON Schema's value would be weaker than a hand-written validator focused on format checks.
 
-**Criteria for stop-reason-only.** The synthesizer is the only narrative-brief agent that produces no reference IDs of its own — it consumes upstream references but emits none. The producer-side rationale that justifies validators on the other narrative-brief agents does not apply here. Inventing a structural contract for the synthesizer to validate against would be backsolving from the validator's existence rather than from a downstream consumer's need.
+**Criteria for stop-reason-only.** The synthesizer produces no reference IDs of its own — consumes upstream references but emits none. The producer-side rationale justifying validators on other narrative agents doesn't apply.
 
 ---
 
 ## Reference-ID taxonomy
 
-Consolidated in one place for the first time. The reference-resolution checker in Layer 3 uses this taxonomy directly; updates to any component of the taxonomy must update this section and the component's source doc simultaneously.
+The reference-resolution checker in Layer 3 uses this taxonomy directly; updates to any component must update this section and the component's source doc simultaneously.
 
 ### Producer-side format rules
 
@@ -240,7 +240,7 @@ Each agent produces a bounded set of reference-ID formats:
 
 ### Cross-section index uniqueness
 
-Sequential indexes restart per section within a document. `SA-TECH-3` is always the third finding in the tech & semis domain researcher's findings section, never an anomaly (that would be `SA-TECH-ANOM-3`) or a thesis candidate (that would be `SA-TECH-TC-3`). This is what makes the prefix variation load-bearing — the synthesizer's retrieval store indexes by the full prefixed ID, not just the integer, and a missing prefix segment (e.g., a narrative citing `SA-TECH-3` when the intent was `SA-TECH-ANOM-3`) resolves to a different brief section or fails resolution entirely.
+Sequential indexes restart per section within a document. `SA-TECH-3` is always the third finding in the tech & semis findings section, never an anomaly (`SA-TECH-ANOM-3`) or thesis candidate (`SA-TECH-TC-3`). The prefix variation is load-bearing — the synthesizer's retrieval store indexes by full prefixed ID; a missing prefix segment (citing `SA-TECH-3` when the intent was `SA-TECH-ANOM-3`) resolves to a different brief section or fails entirely.
 
 ### Resolution contexts
 
@@ -256,59 +256,59 @@ The resolution checker loads a different context per agent:
 
 ## Output parsing and envelope extraction
 
-Layer 1's envelope-parse step is where LLM output becomes structured data. Decisions locked in:
+Layer 1's envelope-parse step is where LLM output becomes structured data.
 
 ### Single JSON object per response
 
-Every agent emits exactly one JSON object as its response. Multiple objects, arrays at the top level, or prose-wrapped objects all fail parse. This holds for every agent — the output schemas are designed around a single top-level object, and the prompt-side instruction in each agent's system prompt is "emit one JSON object, no prose, no preface, no closing remark." Drift between the prompt instructions and the validator stance is detectable through the malformed-output rate: a spike in parse failures for a specific agent indicates either a prompt issue or a model-behavior regression.
+Every agent emits exactly one JSON object. Multiple objects, top-level arrays, or prose-wrapped objects all fail parse. Output schemas are designed around a single top-level object; system prompts instruct "emit one JSON object, no prose, no preface, no closing remark." Drift between prompt and validator is detectable through the malformed-output rate.
 
 ### Markdown fences
 
-A single leading ` ```json` or ` ``` ` fence and a matching trailing ` ``` ` are stripped before parse. Fences are a common mode for Claude to emit structured data, particularly during training-data-era prompts, and stripping them is low-risk. Nested or multiple code fences are treated as a parse failure — the output is emitting prose that happens to contain a JSON block among other content, which is the prose-wrapped case the strict parser is specifically rejecting.
+A single leading ` ```json` or ` ``` ` fence and a matching trailing ` ``` ` are stripped before parse. Fences are a common Claude mode for structured data; stripping is low-risk. Nested or multiple code fences are treated as parse failure — the prose-wrapped case the strict parser specifically rejects.
 
 ### Trailing whitespace and comments
 
-Whitespace before or after the JSON object is tolerated. JSON does not define comments, and agents occasionally emit JavaScript-style `//` comments inline; these are treated as parse failures because the standard-library parser rejects them. Prompt-side instructions explicitly forbid comments in the output; if the failure rate on this surface grows, the prompt should be tightened before the parser is loosened.
+Whitespace before or after the JSON object is tolerated. JSON doesn't define comments; JavaScript-style `//` comments fail parse. Prompts explicitly forbid comments; if the failure rate grows, tighten the prompt rather than loosen the parser.
 
 ### Diagnostic preservation
 
-Raw text, parsed object (if parse succeeded), and all per-layer error records are attached to the invocation's diagnostic record whether or not the validation ultimately passed. The diagnostic record is the ground truth for the feedback loop's analysis of output-quality trends and for post-hoc investigation of validation failures. It is written regardless of whether the pipeline aborts — this is load-bearing for the no-resume-but-diagnostic-persistence invariant in [mid-pipeline-failure-handling.md](../mid-pipeline-failure-handling.md).
+Raw text, parsed object (if parsed), and all per-layer error records attach to the invocation's diagnostic record whether validation passed or not. The diagnostic record is ground truth for the feedback loop and post-hoc investigation. Written regardless of whether the pipeline aborts — load-bearing for the no-resume-but-diagnostic-persistence invariant in [mid-pipeline-failure-handling.md](../mid-pipeline-failure-handling.md).
 
 ### Stop-reason extraction
 
-The SDK's response metadata is extracted at parse time and preserved on the diagnostic record. Layer 4's stop-reason check reads it from there; if the SDK did not return stop-reason metadata (model API error mid-stream, malformed response object), the classification defaults to `malformed_output` and the corrective retry proceeds — on the reasoning that a response with no metadata is structurally broken at the SDK boundary, which is not the same failure mode as context overflow.
+SDK response metadata is extracted at parse time and preserved on the diagnostic record. If the SDK did not return stop-reason metadata (mid-stream API error, malformed response), classification defaults to `malformed_output` and the corrective retry proceeds — a response with no metadata is structurally broken at the SDK boundary, not context overflow.
 
 ---
 
 ## Corrective-retry message construction
 
-When schema validation (Layer 2) or referential integrity (Layer 3) fails, the pipeline process constructs a single corrective follow-up message and re-invokes the agent within the same session. The retry is bounded — one attempt, then abort — and the message must be deliberate about what it says.
+When schema validation (Layer 2) or referential integrity (Layer 3) fails, the pipeline constructs a single corrective follow-up and re-invokes the agent within the same session. Bounded to one attempt, then abort.
 
 ### What the message contains
 
-1. **An explicit framing line** naming the validation failure type (schema validation or referential integrity) and the fact that the prior response was rejected. The agent is told its response did not meet the contract, not that its reasoning was wrong.
-2. **The primary validator error** — JSONPath-style location, the rule name, the error message. Only the first error is included, not the full error list. Multiple errors surfaced simultaneously tend to produce LLM responses that fix one and break another; a single-error framing produces tight corrections.
-3. **A reference to the contract** — the schema's name or the relevant section of the prose contract doc. The agent is not being asked to guess the contract; it is being pointed at the authoritative description.
-4. **A directive to produce a single corrected JSON object** with no accompanying prose, following the same contract. The directive repeats the output-parsing expectations from the original prompt so the retry does not introduce envelope drift.
+1. **An explicit framing line** naming the validation failure type (schema or referential) and that the prior response was rejected. The agent is told its response did not meet the contract, not that its reasoning was wrong.
+2. **The primary validator error** — JSONPath location, rule name, error message. Only the first error, not the full list. Multiple simultaneous errors produce LLM responses that fix one and break another.
+3. **A reference to the contract** — schema name or relevant prose section. The agent is pointed at the authoritative description, not asked to guess.
+4. **A directive to produce a single corrected JSON object** with no accompanying prose. Repeats the output-parsing expectations so the retry doesn't introduce envelope drift.
 
 ### What the message deliberately omits
 
-- **The full error list.** Multiple simultaneous corrections are the iterative-repair failure mode the runtime policy specifically rules out.
-- **Analytical guidance.** The validator does not suggest *what* content should be in the field — only that the field is missing, the enum value is invalid, or the reference is unresolved. Suggesting content biases the agent toward producing plausibly-shaped content that still misses the underlying reasoning; the validator's job ends at "the structural failure is X."
-- **The raw input data.** The same-context retry preserves the session's conversation history — the data is still in the agent's context from the initial call. Re-posting it would either duplicate or, if subtly edited, silently change the premise the agent reasoned against.
+- **The full error list.** Iterative-repair failure mode.
+- **Analytical guidance.** The validator does not suggest *what* content should be in the field — only that it's missing, invalid, or unresolved. Suggesting content biases toward plausibly-shaped content that misses the underlying reasoning.
+- **The raw input data.** Same-context retry preserves session conversation history. Re-posting would duplicate or silently change the premise.
 
 ### Why same-context rather than fresh
 
-Fresh-context retries lose the analytical work that went into the first response. Schema failures rarely indicate the agent's reasoning was wrong — they indicate a formatting or referencing mistake that manifests after the reasoning is complete. Starting fresh biases toward repeating the original framing of the inputs and is more likely to produce the same structural mistake. Same-context retry preserves the reasoning while making the structural failure explicit. This is also why the retry limit is one: the pattern is "give the agent one chance to read its own mistake" rather than an iterative repair loop, which tends to converge on the LLM gaming the schema rather than fixing the underlying problem.
+Fresh-context retries lose the analytical work in the first response. Schema failures rarely indicate wrong reasoning — they indicate formatting or referencing mistakes after reasoning is complete. Starting fresh biases toward repeating the original framing and is more likely to produce the same mistake. Same-context preserves the reasoning while making the structural failure explicit. This is why the retry limit is one: "give the agent one chance to read its own mistake," not an iterative loop that converges on schema-gaming.
 
 ### Why the first retry only
 
 Iterative schema repair produces two failure modes the policy avoids:
 
-- **Schema-gaming convergence.** Over several retries, the agent's output drifts toward the minimum content that passes validation rather than toward fixing the underlying issue. A `thesis_narrative` that gets rejected for missing source references might, on the third retry, acquire a single plausible-looking but invented reference — passing Layer 2 and failing Layer 3.
-- **Blocked invocations.** The pipeline is time-bounded by the cadence of scheduled invocations; an iterative repair loop that takes many retries to succeed is functionally equivalent to an abort from the next-invocation's perspective, and the abort path produces cleaner diagnostics.
+- **Schema-gaming convergence.** Output drifts toward minimum content that passes validation rather than fixing the underlying issue. A `thesis_narrative` rejected for missing references might acquire a plausible-looking but invented reference on the third retry — passing Layer 2 and failing Layer 3.
+- **Blocked invocations.** The pipeline is time-bounded by scheduled invocation cadence; an iterative loop that takes many retries is functionally equivalent to an abort from the next invocation's perspective, with cleaner diagnostics from the abort path.
 
-One retry is the policy. After it, the invocation aborts and the next scheduled trigger produces a fresh invocation against fresh data per the no-checkpoint-no-resume rule in [mid-pipeline-failure-handling.md](../mid-pipeline-failure-handling.md).
+After one retry, the invocation aborts and the next scheduled trigger produces a fresh invocation against fresh data per the no-checkpoint-no-resume rule in [mid-pipeline-failure-handling.md](../mid-pipeline-failure-handling.md).
 
 ---
 
@@ -436,21 +436,19 @@ Captured corrective-retry messages for representative failure modes. Tests asser
 
 ## Resolved design questions
 
-Design questions the scoping surfaced, now closed:
+- **PM envelope schema formality.** Formal JSON Schema at [pm-envelope-schema.md](../04-decision-layer/pm-envelope-schema.md), covering both pm_analyst and pm_strategist variants. Embedded OMS commands validate against [oms-command-schema.md](../05-execution-layer/oms-command-schema.md) via `$ref`. Engine-originated envelopes are a sibling contract at [engine-envelope-schema.md](../05-execution-layer/engine-envelope-schema.md) validated at the OMS command intake layer (no LLM produces them).
 
-- **PM envelope schema formality.** Formal JSON Schema. The PM envelope schema at [pm-envelope-schema.md](../04-decision-layer/pm-envelope-schema.md) covers both pm_analyst and pm_strategist variants; every embedded OMS command validates against [oms-command-schema.md](../05-execution-layer/oms-command-schema.md) via `$ref`. Engine-originated envelopes are a sibling contract at [engine-envelope-schema.md](../05-execution-layer/engine-envelope-schema.md) validated at the OMS command intake layer rather than at the LLM output seam (no LLM produces them).
+- **Referential integrity vs. semantic validation.** Referential integrity is in scope because invented IDs are structurally indistinguishable from real ones at the consumer and fail silently if not caught here. Semantic consistency (does the reference support the claim?) is out of scope — the PM's source brief retrieval tool handles that during evaluation.
 
-- **Referential integrity vs. semantic validation.** Referential integrity is in scope (the reference ID resolves) because invented IDs are structurally indistinguishable from real ones at the downstream consumer and fail silently if not caught at the validation seam. Semantic consistency (does the reference actually support the claim?) is out of scope — the PM's source brief retrieval tool is the mechanism for that check, applied during evaluation rather than validation.
+- **Corrective retry error granularity.** Single primary error. Full lists produce fix-one-break-another cycles.
 
-- **Corrective retry error granularity.** Single primary error. Surfacing the full error list produces iterative fix-one-break-another cycles; surfacing only the primary error produces tight corrections and a clean policy abort when the retry also fails.
+- **Fresh-context vs. same-context retry.** Same-context. Structural failure is downstream of reasoning in most cases; fresh context loses the reasoning. Cost of same-context (slightly larger session) is cheaper than cost of fresh-context (lost analytical work, repeated framing mistakes).
 
-- **Fresh-context vs. same-context retry.** Same-context. The structural failure is downstream of the reasoning in most cases, and fresh context loses the reasoning. The cost of same-context (a slightly larger session on retry) is uniformly cheaper than the cost of fresh-context (lost analytical work, repeated framing mistakes).
+- **Validator placement.** Module inside the pipeline process at the LLM invocation seam. No separate service, no monitor adjunct (the monitor runs no LLM calls). Engine-originated envelopes bypass the LLM output validator because no LLM generates them — IDs assigned by the OMS command intake layer per [oms-command-ids.md](../oms-command-ids.md).
 
-- **Validator placement.** Module inside the pipeline process at the LLM invocation seam. No separate service, no adjunct to the continuous monitor (which does not run LLM calls). Engine-originated envelopes bypass the LLM output validator because no LLM generates them — command ID assignment and format checks for those envelopes live at the OMS command intake layer per [oms-command-ids.md](../oms-command-ids.md).
+- **Lenient vs. strict parsing.** Strict. Lenient parsing (regex-extracting JSON from prose, accepting multiple top-level objects) converges on accepting outputs the schema cannot validate. The prompt and strict parser pair to produce a stable contract.
 
-- **Lenient vs. strict parsing.** Strict. Lenient parsing (regex-extracting JSON from prose, accepting multiple top-level objects) converges on accepting outputs the schema cannot validate, and a validator that disagrees with its own parser is worse than either a strict parser or a permissive schema. The prompt instructions pair with the strict parser to produce a stable contract.
-
-- **Stop-reason check ordering.** After the structural layers, not before. Running it first would misclassify valid-but-truncation-compatible outputs (rare but possible) as context overflow; running it only on prior-layer failures keeps the common path cheap and focuses reclassification on the ambiguous case.
+- **Stop-reason check ordering.** After the structural layers. Running first would misclassify valid-but-truncation-compatible outputs (rare but possible) as context overflow.
 
 ---
 

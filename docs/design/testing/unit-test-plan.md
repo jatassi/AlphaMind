@@ -1,8 +1,8 @@
 # Unit test plan
 
-Unit tests protect the deterministic surfaces of the pipeline — the math in the distillation layer, the state mutations in the OMS, the rule evaluations in the guardrails, the translation logic in the broker adapter, and the estimation logic in the paper-evaluation harness. They do not evaluate LLM reasoning quality and they do not exercise end-to-end pipeline flows; those concerns are covered by the sibling Phase 3 testing items ([`llm-output-validation.md`](llm-output-validation.md), [`integration-test-plan.md`](integration-test-plan.md)).
+Unit tests protect the deterministic surfaces of the pipeline — distillation math, OMS state mutations, guardrail rule evaluations, broker adapter translation, and paper-evaluation harness estimation. They do not evaluate LLM reasoning quality or exercise end-to-end pipeline flows; those concerns are covered by sibling Phase 3 testing items ([`llm-output-validation.md`](llm-output-validation.md), [`integration-test-plan.md`](integration-test-plan.md)).
 
-This document defines the scope, disciplines, and preliminary unit catalogs for each testable area. Individual test cases are an implementation concern and are not enumerated here.
+This document defines scope, disciplines, and preliminary unit catalogs for each testable area. Individual test cases are not enumerated here.
 
 ---
 
@@ -24,15 +24,15 @@ This document defines the scope, disciplines, and preliminary unit catalogs for 
 
 ### Out of scope (deferred elsewhere)
 
-- **LLM agent reasoning quality.** Whether the analyst proposes good trades, whether the strategist classifies thesis status correctly, whether the PM's rejections are well-calibrated — none of these are unit-test concerns. Structural validation of LLM outputs (schema conformance, reference ID typing, required field presence) is the validator's responsibility and is unit-tested in [`llm-output-validation.md §Unit test plan`](llm-output-validation.md#unit-test-plan). Calibration and quality are evaluated through the Phase 4 feedback loop.
+- **LLM agent reasoning quality.** Whether the analyst proposes good trades, the strategist classifies thesis status correctly, the PM's rejections are well-calibrated — not unit concerns. Structural validation of LLM outputs (schema conformance, reference ID typing, required field presence) is unit-tested in [`llm-output-validation.md §Unit test plan`](llm-output-validation.md#unit-test-plan). Quality is evaluated through the Phase 4 feedback loop.
 
-- **End-to-end pipeline flows.** Analyst → pre-processor → strategist → PM → engine sequencing, cumulative-impact annotation across real multi-agent outputs, cross-agent envelope ordering — deferred to the integration test plan. Individual stages are unit-tested with stubbed upstream inputs.
+- **End-to-end pipeline flows.** Analyst → pre-processor → strategist → PM → engine sequencing, cumulative-impact annotation, cross-agent envelope ordering — deferred to integration. Individual stages are unit-tested with stubbed upstream inputs.
 
-- **Broker contract compliance against the live Alpaca API.** Unit tests use a configurable Alpaca mock. Verifying that the mock's responses match the real Alpaca API's actual behavior is an integration concern handled via recorded-response fixtures in [`integration-test-plan.md`](integration-test-plan.md).
+- **Broker contract compliance against the live Alpaca API.** Unit tests use a configurable Alpaca mock. Verifying mock fidelity is an integration concern handled via recorded-response fixtures in [`integration-test-plan.md`](integration-test-plan.md).
 
-- **Thesis dependency mapping.** Distillation units that consume thesis narrative text (catalyst overlap matrix, narrative dependency clustering) shade into qualitative interpretation. These are validated through integration walkthroughs rather than unit tests; their structural outputs are schema-checked but the semantic grouping is not unit-asserted.
+- **Thesis dependency mapping.** Distillation units consuming thesis narrative text (catalyst overlap matrix, narrative dependency clustering) shade into qualitative interpretation. Validated through integration walkthroughs; structural outputs schema-checked but semantic grouping not unit-asserted.
 
-- **Guardrail scenario walkthroughs.** [scenario-tests.md](../06-risk-guardrails/scenario-tests.md) validates the *design* across multi-step portfolio-state narratives (regime transitions, cumulative proposal breaches, cascade scenarios). Those scenarios inform which unit-level cases matter but are themselves design-validation artifacts, not unit tests.
+- **Guardrail scenario walkthroughs.** [scenario-tests.md](../06-risk-guardrails/scenario-tests.md) validates the *design* across multi-step portfolio narratives. Those scenarios inform which unit-level cases matter but are design-validation artifacts.
 
 ---
 
@@ -42,51 +42,51 @@ Five principles applied uniformly across all four test areas.
 
 ### Structure, not behavior
 
-Unit tests verify deterministic computations and state transitions. "Does this function produce the right output for this input" is a unit-test question. "Does the analyst propose good trades" is a feedback-loop question. The boundary is worth defending because structural tests are stable across prompt iteration and integration tests are not.
+Unit tests verify deterministic computations and state transitions. "Does this function produce the right output for this input" is a unit question. "Does the analyst propose good trades" is a feedback-loop question. Structural tests are stable across prompt iteration; integration tests are not.
 
 ### Boundary coverage is load-bearing
 
-The system is defined by its thresholds, not its interiors. Every named limit — position size cap, sector concentration limit, drawdown tier boundary, escalation zone threshold, moneyness band, DTE band, ADV bucket, regime parameter — is exercised at the boundary value, one minimal unit under, and one minimal unit over. Interior coverage is cheap but low-value; edge coverage is where bugs live and where the design decisions show through.
+The system is defined by its thresholds, not its interiors. Every named limit — position size cap, sector concentration limit, drawdown tier boundary, escalation zone threshold, moneyness band, DTE band, ADV bucket, regime parameter — is exercised at the boundary value, one minimal unit under, and one minimal unit over.
 
-Boundary coverage applies recursively. A rule with a 25% sector limit is tested at 24.99%, 25.00%, and 25.01%, but it is also tested across regime transitions (normal 25% → elevated 20% → crisis 15%), across escalation zones (70% warning, 85% critical, 95% block), and across profile feature flags (omitted for the primary portfolio, active for full-system). The boundaries multiply; the test design names which axes matter per unit.
+Boundary coverage applies recursively. A 25% sector limit is tested at 24.99%, 25.00%, 25.01%, across regime transitions (normal 25% → elevated 20% → crisis 15%), across escalation zones (70/85/95), and across profile feature flags. The test design names which axes matter per unit.
 
 ### Deterministic replay for stochastic units
 
-Every unit that draws randomness — greek-derived price IV perturbation, any harness sub-model that uses a random component, stochastic test generators — accepts an explicit RNG source as a constructor or call parameter. Tests pass a seeded RNG; the same seed produces the same outcome. A stochastic test without a fixed seed is not a test, it is a monitor, and it belongs in the observability layer.
+Every unit that draws randomness — greek-derived price IV perturbation, harness sub-models with random components, stochastic test generators — accepts an explicit RNG source as a constructor or call parameter. Tests pass a seeded RNG. A stochastic test without a fixed seed is a monitor, not a test.
 
-The heavily stochastic units the previous simulator had (fill probability, borrow rate, locate delay, forced buy-in) do not exist in the new architecture — Alpaca produces the fills and the harness's estimation models are deterministic given their inputs. Seeded RNG remains relevant primarily for IV-perturbation sensitivity analysis and for generating test fixtures from randomized inputs.
+Heavy stochastics from the previous simulator (fill probability, borrow rate, locate delay, forced buy-in) don't exist in the new architecture — Alpaca produces fills and the harness's estimation models are deterministic given inputs. Seeded RNG remains relevant for IV-perturbation sensitivity analysis and randomized fixture generation.
 
 ### Atomicity is a named test property
 
-For state-mutation units with atomicity guarantees, the "does partial failure leave the portfolio in a valid state" question is a first-class test concern distinct from happy-path output. The specific units where this matters:
+For state-mutation units with atomicity guarantees, "does partial failure leave the portfolio in a valid state" is a first-class concern distinct from happy-path output:
 
-- **Phase 1 fill integration.** All fills committed or none; fill record processing_status marker coupled to state mutations; fill arriving mid-transaction is ignored until the next invocation's collect.
-- **Bracket lifecycle on entry fill.** Protective legs submitted together (for OMS-managed brackets) or not at all; entry cancellation cancels both protective legs; stop trigger cancels the target and vice versa.
-- **Forced-reduction cascade.** Primary breach response plus secondary-breach check; both the close command and the secondary-breach alert share a `cascade_id`; rollback of the close does not orphan the alert.
-- **Gateway submission retry with abandonment.** Within-invocation retry succeeds (command committed) or retry window exhausts (full transaction rolled back, `command_abandoned` activity log entry written, abandoned command surfaced to the originating agent at the next invocation).
-- **Capital reservation cascade across sequential commands.** Command N validates against cumulative state from commands 1..N-1; if command N fails, commands 1..N-1 remain committed and command N produces a rejection without affecting state.
+- **Phase 1 fill integration.** All fills committed or none; fill record processing_status coupled to state mutations; fills arriving mid-transaction ignored until next invocation's collect.
+- **Bracket lifecycle on entry fill.** Protective legs submitted together or not at all; entry cancellation cancels both protective legs; stop trigger cancels the target and vice versa.
+- **Forced-reduction cascade.** Primary breach response plus secondary-breach check; close command and secondary-breach alert share `cascade_id`; rollback doesn't orphan the alert.
+- **Gateway submission retry with abandonment.** Retry succeeds (command committed) or retry window exhausts (full rollback, `command_abandoned` activity log entry, surface to originating agent next invocation).
+- **Capital reservation cascade across sequential commands.** Command N validates against cumulative state from commands 1..N-1; if N fails, 1..N-1 remain committed and N produces a rejection without affecting state.
 
-Each of the above gets happy-path, partial-failure-with-rollback, and mid-transaction-fault tests.
+Each gets happy-path, partial-failure-with-rollback, and mid-transaction-fault tests.
 
 ### Shared fixtures, not per-cluster replicas
 
-Portfolio state, market data bars, regime parameters, and activity log entries are consumed by multiple test clusters. One canonical fixture catalog exists under the test tree; all test files read from it. A per-cluster fixture drift is the largest avoidable maintenance cost in a system with 140+ testable units. The inventory is named in the [Shared fixture inventory](#shared-fixture-inventory) section below.
+Portfolio state, market data bars, regime parameters, and activity log entries are consumed by multiple clusters. One canonical fixture catalog under the test tree; all files read from it. Per-cluster drift is the largest avoidable maintenance cost in a system with 140+ testable units. Inventory in [Shared fixture inventory](#shared-fixture-inventory) below.
 
 ---
 
 ## Distillation layer
 
-The distillation layer is dominated by pure computations — input vector → output scalar or structured output, no side effects. Testing pattern is parameter-space coverage with particular emphasis on degenerate inputs, startup conditions, and threshold crossings.
+Dominated by pure computations — input vector → output scalar or structured output, no side effects. Parameter-space coverage with emphasis on degenerate inputs, startup conditions, and threshold crossings.
 
 ### Test concerns
 
-**Degenerate inputs.** Zero-variance series (flat price, flat volume), zero-denominator cases (division by ATR where ATR ≈ 0, division by trailing average where volume is zero), single-element windows, missing baseline history. The distillation layer consumes data from the data layer and sometimes runs before the data layer has accumulated enough history; each rolling-window computation needs an explicit startup-period test.
+**Degenerate inputs.** Zero-variance series (flat price, flat volume), zero-denominator cases (ATR ≈ 0, volume = 0), single-element windows, missing baseline history. Each rolling-window computation needs an explicit startup-period test — distillation sometimes runs before the data layer has accumulated enough history.
 
-**Threshold crossings.** Anomaly detectors fire at specific z-scores; regime classification crosses specific VIX and term-structure thresholds; correlation breakdown detection fires at a specific rate-of-change. Each threshold is tested at value, one ε under, and one ε over. For regime classification specifically, the boundary matters because regime transitions trigger immediate tightening in the guardrails layer — a drift in regime-classification behavior cascades.
+**Threshold crossings.** Anomaly detectors fire at specific z-scores; regime classification crosses specific VIX and term-structure thresholds; correlation breakdown fires at a specific rate-of-change. Each threshold tested at value, one ε under, and one ε over. Regime classification boundary matters because transitions trigger immediate tightening in guardrails — a drift cascades.
 
-**Persistent rollup state.** A small number of units (volatility regime classification, correlation regime stability, expectations-vs-reality scorecard) carry state across invocations. Tests for these units require multi-invocation fixtures that simulate a sequence of prior states; single-invocation fixtures do not exercise the rollup logic.
+**Persistent rollup state.** A small number of units (volatility regime classification, correlation regime stability, expectations-vs-reality scorecard) carry state across invocations. Tests require multi-invocation fixtures.
 
-**Conservative-buffer and tolerance applications.** Several units apply explicit buffers: the [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md)'s +10% delta buffer, the greek-derived price calculator's 5% uncertainty buffer, the observed-options-spread 1.2× floor. Tests assert the buffer is applied in the expected direction and magnitude, not just that the output is "close."
+**Conservative-buffer and tolerance applications.** Several units apply explicit buffers: the [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md)'s +10% delta buffer, the greek-derived price calculator's 5% uncertainty buffer, the observed-options-spread 1.2× floor. Tests assert direction and magnitude, not "close."
 
 ### Stub boundary
 
@@ -130,21 +130,21 @@ Preliminary. Expect the list to move as implementation begins; the axes (categor
 
 ## OMS processing
 
-OMS processing splits into two flavors: pure transformations (ID derivation, envelope parsing, conflict detection) and state mutations (command executors, fill integrators, Phase 1 transaction). The state-mutation units are where atomicity tests concentrate.
+Two flavors: pure transformations (ID derivation, envelope parsing, conflict detection) and state mutations (command executors, fill integrators, Phase 1 transaction). State-mutation units concentrate atomicity tests.
 
 ### Test concerns
 
-**Deterministic command ID assembly.** [oms-command-ids.md](../oms-command-ids.md) defines the four-part ID derivation `{invocation_id}.{envelope_id}.{command_ordinal}.{attempt_seq}` and the parallel `MON.{session}.{trigger}.{ordinal}` scheme for engine-originated commands. Tests verify the ID is a deterministic function of its inputs (no clock, no RNG), the envelope_id prefixes are bijective with source proposals, `attempt_seq` increments on post-rejection modifications, and duplicate IDs raise a structural error rather than silently dedup.
+**Deterministic command ID assembly.** [oms-command-ids.md](../oms-command-ids.md) defines the four-part `{invocation_id}.{envelope_id}.{command_ordinal}.{attempt_seq}` and parallel `MON.{session}.{trigger}.{ordinal}` for engine-originated. Tests verify the ID is a deterministic function (no clock, no RNG), `envelope_id` prefixes are bijective with source proposals, `attempt_seq` increments on post-rejection modifications, duplicate IDs raise a structural error rather than silently dedup.
 
-**Envelope-to-command parsing.** Each of the five command types has distinct required fields and parameter shapes. Tests cover malformed envelopes (missing fields, invalid enum values, conflicting fields), cross-command conflicts within a batch (CLOSE + ADD on the same position), and the boundary between PM-originated envelopes and engine-originated envelopes (different schema variants, different ID schemes).
+**Envelope-to-command parsing.** Each of the five command types has distinct required fields. Tests cover malformed envelopes (missing fields, invalid enum values, conflicting fields), cross-command conflicts within a batch (CLOSE + ADD on the same position), and the PM-vs-engine envelope boundary (different schema variants, different ID schemes).
 
-**Sequential command execution.** Commands within an invocation are processed in envelope order; each command's guardrail validation accounts for state changes from prior commands in the same batch. Tests exercise the capital reservation cascade (N OPENs each reserving capital; command N sees cumulative state), CLOSE-then-OPEN sequencing (capital released before next reservation), and conflict detection when a later command references an earlier command's output.
+**Sequential command execution.** Commands within an invocation are processed in envelope order; each command's guardrail validation accounts for prior commands' state changes. Tests exercise the capital reservation cascade (N OPENs each reserving capital; command N sees cumulative state), CLOSE-then-OPEN sequencing (capital released before next reservation), conflict detection when a later command references an earlier output.
 
-**Phase 1 atomicity.** Fill integration into position / bracket / cash / thesis / activity log runs as a single transaction. Tests cover happy path (all fills processed), mid-loop failure (transaction rolled back, all fills remain unprocessed), concurrent fill arrival from the monitor (fills arriving after the initial query are ignored until the next invocation), and OMS restart mid-Phase 1 (state recovery on next startup).
+**Phase 1 atomicity.** Fill integration into position / bracket / cash / thesis / activity log runs as a single transaction. Tests: happy path, mid-loop failure (rollback), concurrent fill arrival from the monitor (ignored until next invocation), OMS restart mid-Phase 1 (state recovery on next startup).
 
-**Broker submission retry and abandonment.** [state-persistence.md § Phase 2 write path](../05-execution-layer/state-persistence.md) defines a within-invocation retry window followed by full rollback and `command_abandoned` activity log entry. Tests cover retry succeeding on first attempt, retry succeeding after N transient failures, retry window exhausting (rollback executes, abandoned command surfaced to the originating agent at the next invocation). The rollback is the important property: if retry exhausts, position / thesis / bracket / orders must all revert and the capital reservation must be released.
+**Broker submission retry and abandonment.** [state-persistence.md § Phase 2 write path](../05-execution-layer/state-persistence.md) defines a within-invocation retry window followed by full rollback and `command_abandoned` activity log entry. Tests: retry succeeds first attempt; retry succeeds after N transient failures; retry exhausts (rollback executes, abandoned command surfaced to originator next invocation). Rollback is the important property: if retry exhausts, position / thesis / bracket / orders all revert and capital reservation released.
 
-**Engine-originated command issuance.** Continuous-monitor-originated protective CLOSE commands use the `MON.` ID scheme, carry a guardrail trigger reference, and skip the PM evaluation path. Tests verify the monitor's session-initialization sequence, breach detection and trigger recording, secondary-breach check before issuance, and cooldown enforcement on emergency invocation triggers.
+**Engine-originated command issuance.** Continuous-monitor protective CLOSE commands use the `MON.` ID scheme, carry a guardrail trigger reference, skip PM evaluation. Tests verify session-initialization, breach detection and trigger recording, secondary-breach check before issuance, cooldown enforcement on emergency triggers.
 
 ### Stub boundary
 
@@ -172,23 +172,23 @@ Preliminary. ~30 units grouped by processing phase.
 
 ## Risk guardrails
 
-Guardrails have the largest testable surface by rule count: 17 rules × 4 regimes × 3 escalation zones × overlay flags × portfolio profiles. Exhaustive enumeration of all combinations is infeasible and would not pay for itself. The approach is per-rule evaluation tested at named boundaries, cross-rule interaction tests for the concerns that genuinely couple (secondary breach, forced reduction selection, cascade), and snapshot tests for guardrail state header projection.
+Largest testable surface by rule count: 17 rules × 4 regimes × 3 escalation zones × overlay flags × profiles. Exhaustive enumeration is infeasible. Approach: per-rule evaluation at named boundaries, cross-rule interaction tests for genuinely-coupled concerns (secondary breach, forced reduction selection, cascade), snapshot tests for header projection.
 
 ### Test concerns
 
-**Per-rule evaluation.** Each of the 17 rules is a function from (portfolio state, regime parameters) to (current value, limit, zone, headroom). Tests cover: at-limit, one ε over, one ε under; each of the four regimes; each of the three escalation zones (plus the drawdown-specific overrides 60/80/90 and 50/70/85); presence and absence of pre-event and stress overlays; feature-flag omission under the primary portfolio profile. The rules themselves don't interact at this level — the interaction tests are separate.
+**Per-rule evaluation.** Each of the 17 rules is a function from (portfolio state, regime parameters) to (current value, limit, zone, headroom). Tests cover at-limit, one ε over, one ε under; each of the four regimes; each of the three escalation zones (plus drawdown-specific 60/80/90 and 50/70/85); pre-event and stress overlays present/absent; feature-flag omission under the primary profile. Rule interactions are tested separately.
 
-**Validation tool cumulative tracking.** The validation tool is not a pure function; it carries cumulative state across calls within the same agent's turn (proposal 1 validates against live state; proposal 2 validates against live + proposal 1 projected impact; and so on). Tests cover single-call, cumulative cascade, reset at agent boundary, and feature-flag first-check rejection. The tool's cumulative-tracking wrapper is what's tested here; the underlying delta computation, conservative buffer, and per-rule projection live in the [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md) and have their own primitive-level tests.
+**Validation tool cumulative tracking.** The tool carries cumulative state across calls within an agent's turn (proposal 1 validates against live state; proposal 2 against live + proposal 1's projected impact; etc.). Tests cover single-call, cumulative cascade, reset at agent boundary, feature-flag first-check rejection. Underlying delta computation, conservative buffer, and per-rule projection live in the [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md) with primitive-level tests.
 
-**Regime transition interpolation.** Tightening is immediate on transition; loosening is linear over three invocations. Tests cover the transition-tick boundary (invocation zero vs. invocation one after transition), intermediate tightening during a loosening run (overrides, resets counter), and compounding overlays (pre-event tightening during elevated regime).
+**Regime transition interpolation.** Tightening immediate on transition; loosening linear over three invocations. Tests: transition-tick boundary (invocation zero vs. one after), intermediate tightening during loosening (overrides, resets counter), compounding overlays (pre-event during elevated).
 
-**Forced reduction position selection.** For rules classified as automatic reduction, the engine selects which position(s) to close based on deterministic criteria (unrealized loss %, ADV, sector balance). Tests cover tie-breaking, multi-rule breach on a single position (higher severity wins), and the secondary-breach check (closing short in a sector breach would create a net-long breach; the check defers or proposes alternative).
+**Forced reduction position selection.** For rules classified automatic-reduction, the engine selects positions by deterministic criteria (unrealized loss %, ADV, sector balance). Tests: tie-breaking, multi-rule breach on a single position (higher severity wins), secondary-breach check (closing short in a sector breach would create net-long breach; check defers or proposes alternative).
 
-**Cascade linking.** Margin calls and their downstream forced reductions share a `cascade_id`. Tests verify the ID is assigned once at the cascade root and propagated to all follow-on activity log entries.
+**Cascade linking.** Margin calls and downstream forced reductions share `cascade_id`. Tests verify ID is assigned once at the cascade root and propagated to all follow-on activity log entries.
 
-**Emergency invocation triggers.** Four objective conditions trigger an emergency invocation (regime jump skipping a level, 3+ deferred rules breaching simultaneously, drawdown velocity above threshold, broker margin call). Tests cover each trigger condition, cooldown enforcement, coalescing of multiple simultaneous triggers, and the case where an emergency fires shortly before a scheduled invocation.
+**Emergency invocation triggers.** Four objective conditions (regime jump, 3+ deferred rules breaching, drawdown velocity above threshold, broker margin call). Tests: each trigger, cooldown enforcement, coalescing simultaneous triggers, emergency firing shortly before a scheduled invocation.
 
-**Guardrail state header projection.** Analyst / strategist / PM guardrail state headers differ in detail level, feature-flag conditional inclusion, and halt-mode modification. Tests use snapshot assertions: given a specific portfolio state, regime, and mode flag, the serialized header matches a golden fixture. Snapshot tests specifically cover the feature-flag omission cases (options section absent when options are disabled for the primary portfolio), the halt-mode header and action-restriction language, and the cross-constraint summary in the PM header.
+**Guardrail state header projection.** Analyst / strategist / PM headers differ in detail, feature-flag inclusion, halt-mode modification. Snapshot tests: given a portfolio state, regime, and mode flag, the serialized header matches a golden fixture. Cover feature-flag omission (options section absent on primary), halt-mode header and action-restriction language, cross-constraint summary in the PM header.
 
 ### Stub boundary
 
@@ -219,19 +219,19 @@ Preliminary. ~40 units organized by concern rather than by rule (per-rule evalua
 
 ## Broker adapter
 
-The adapter's units are pure translation: OMS commands ↔ Alpaca REST bodies, Alpaca `trade_updates` events ↔ OMS fill reports. Units are deterministic given their inputs; stubs are a scripted Alpaca mock.
+Pure translation: OMS commands ↔ Alpaca REST bodies, Alpaca `trade_updates` ↔ OMS fill reports. Deterministic given inputs; stubs are a scripted Alpaca mock.
 
 ### Test concerns
 
-**Order-class construction.** Bracket orders produce well-formed `take_profit` + `stop_loss` sub-objects; `mleg` orders produce `legs` arrays with ratios in simplified form (GCD = 1); `oco` and `oto` produce the correct same-side and single-child structures. Each order class has a round-trip test: OMS command → adapter request body → parsed back → matches the OMS command semantically.
+**Order-class construction.** Bracket orders produce well-formed `take_profit` + `stop_loss` sub-objects; `mleg` orders produce `legs` arrays with ratios in simplified form (GCD = 1); `oco` and `oto` produce correct same-side and single-child structures. Each order class has a round-trip test: OMS command → adapter request body → parsed back → matches semantically.
 
-**PATCH replace race handling.** The adapter's PATCH path has three outcomes: `200` success → new Alpaca ID returned, mapping updated; `200` success → `replace_rejected` event arrives on `trade_updates` before the new ID is registered (original filled first); REST error → exception propagated to the OMS as a modification rejection. All three are exercised; the race-condition one asserts that the original fill takes precedence and the replacement is discarded.
+**PATCH replace race handling.** Three outcomes: `200` success → new Alpaca ID returned, mapping updated; `200` success → `replace_rejected` arrives on `trade_updates` before the new ID is registered (original filled first); REST error → exception propagated as modification rejection. Race-condition test asserts original fill takes precedence and replacement is discarded.
 
-**`trade_updates` event translation.** Every event type listed in [broker-adapter.md § Fill stream](../05-execution-layer/broker-adapter.md) is translated to the corresponding OMS fill-report shape. Tests parameterize over the event matrix. Timestamps are preserved from the Alpaca event; Alpaca order IDs are mapped to OMS `client_order_id` via the adapter's mapping table.
+**`trade_updates` event translation.** Every event type in [broker-adapter.md § Fill stream](../05-execution-layer/broker-adapter.md) translates to the corresponding OMS fill-report shape. Tests parameterize over the event matrix. Alpaca timestamps preserved; Alpaca order IDs mapped to OMS `client_order_id` via the adapter's mapping table.
 
-**Disconnect recovery.** On websocket disconnect, the adapter re-queries `GET /v2/orders` with a `since` parameter and reconciles against the local fill-record table. Tests cover the three cases: no events missed (idempotent no-op), N events missed during the gap (recovered and written with `processing_status = unprocessed`), stateful divergence where local believes an order is still pending but Alpaca reports it terminal (log delta, trust Alpaca).
+**Disconnect recovery.** On websocket disconnect, the adapter re-queries `GET /v2/orders` with `since` and reconciles against the local fill-record table. Three cases: no events missed (idempotent no-op), N events missed during gap (recovered with `processing_status = unprocessed`), stateful divergence (local pending, Alpaca terminal — log delta, trust Alpaca).
 
-**Account-state query wrappers.** Thin wrappers over `GET /v2/account`, `GET /v2/positions`, `GET /v2/orders`, `GET /v2/account/activities`, `GET /v2/assets/{symbol}`, `GET /v2/calendar`, `GET /v2/clock`. Each has a happy-path test plus transient-error retry plus malformed-response rejection.
+**Account-state query wrappers.** Thin wrappers over `GET /v2/account`, `GET /v2/positions`, `GET /v2/orders`, `GET /v2/account/activities`, `GET /v2/assets/{symbol}`, `GET /v2/calendar`, `GET /v2/clock`. Each has happy-path + transient-error retry + malformed-response rejection.
 
 ### Stub boundary
 
@@ -255,17 +255,17 @@ Preliminary. ~15 units.
 
 ## Paper-evaluation harness
 
-The harness is pure estimation: given a paper fill and context (order size, ADV, spread, regime), produce a `live_execution_estimate` structure. Deterministic given inputs.
+Pure estimation: given a paper fill and context (order size, ADV, spread, regime), produce a `live_execution_estimate`. Deterministic given inputs.
 
 ### Test concerns
 
-**Spread + impact estimation.** The slippage formula `(spread/2) + impact_coefficient * spread * sqrt(fill_shares / ADV)` is verified at multiple boundaries (zero-size-fraction, participation caps). Impact coefficients differ per order type (market 0.5, limit 0.25, stop 0.75); each is tested.
+**Spread + impact estimation.** Slippage formula `(spread/2) + impact_coefficient * spread * sqrt(fill_shares / ADV)` verified at multiple boundaries (zero-size-fraction, participation caps). Impact coefficients differ per order type (market 0.5, limit 0.25, stop 0.75); each tested.
 
-**Fee rate-table lookup.** Per-instrument-class, per-side (buy/sell) fee computation. Equity sells attract TAF + CAT + SEC; equity buys attract CAT only; options attract CAT + OCC + ORF plus SEC on sells; crypto has no regulatory fees. Tests parameterize over the matrix.
+**Fee rate-table lookup.** Per-instrument-class, per-side fees. Equity sells attract TAF + CAT + SEC; equity buys attract CAT only; options attract CAT + OCC + ORF plus SEC on sells; crypto has no regulatory fees. Tests parameterize over the matrix.
 
-**Confidence tagging.** Limit touches with bar-extreme = limit and low bar volume tag `confidence: low`; instruments where the fill size would exceed a realistic volume-participation share tag `confidence: medium`. Tests cover the boundaries of each tag's triggering condition.
+**Confidence tagging.** Limit touches with bar-extreme = limit and low bar volume tag `confidence: low`; fill sizes exceeding realistic volume-participation share tag `confidence: medium`. Tests cover boundaries of each tag's triggering condition.
 
-**Calibration delta computation.** Given a paired (paper-fill, live-fill) pair, the harness computes the delta between estimated live-adjusted fill and actual live fill. Tests verify the sign conventions (paper overestimating vs. underestimating) and the aggregation across multiple pairs feeding into coefficient adjustment.
+**Calibration delta computation.** Given a paired (paper-fill, live-fill), the harness computes the delta between estimated live-adjusted fill and actual live fill. Tests verify sign conventions and aggregation across multiple pairs feeding coefficient adjustment.
 
 ### Stub boundary
 
@@ -288,19 +288,19 @@ Preliminary. ~10 units.
 
 ## Continuous monitor
 
-The monitor runs five responsibilities. Each has testable surface; together they form a stateful event loop that is tested both per-responsibility and in short-sequence scenarios.
+Five responsibilities, each with testable surface. Together they form a stateful event loop tested per-responsibility and in short-sequence scenarios.
 
 ### Test concerns
 
-**Fill-stream consumption path.** Event arrives on websocket → durable write to fill buffer → dedup on retry (same composite key). Tests cover the happy path, retry-arrives-before-original-persists (both dedupe to one record), and reconnect-replay (same events delivered twice, idempotent).
+**Fill-stream consumption path.** Event arrives on websocket → durable write to fill buffer → dedup on retry (same composite key). Tests: happy path, retry-arrives-before-original-persists (both dedupe to one record), reconnect-replay (same events delivered twice, idempotent).
 
-**Options bracket-stop evaluation.** Underlying-price tick arrives → stop condition evaluated against each open options position → on trigger, closing order submitted via the broker adapter. Tests cover the trigger firing at-level, one tick under, one tick over; the strategy-position case (multi-leg close); and the race where the PM closes the position via a normal command in the same invocation window.
+**Options bracket-stop evaluation.** Underlying-price tick arrives → stop condition evaluated against each open options position → on trigger, closing order submitted. Tests: trigger firing at-level, one tick under, one tick over; strategy-position case (multi-leg close); race where the PM closes via a normal command in the same invocation window.
 
-**Greeks refresh orchestration.** Two trigger paths — 15-minute scheduled timer and 2% cumulative underlying move — tested independently and together. IV fetch failure path: brief retry, then `greeks_refresh_failed` logged + uncertainty buffer widened; if that leaves a breach determination ambiguous, escalate to emergency invocation.
+**Greeks refresh orchestration.** Two trigger paths — 15-minute scheduled timer and 2% cumulative underlying move — tested independently and together. IV fetch failure: brief retry, then `greeks_refresh_failed` logged + uncertainty buffer widened; if breach determination ambiguous, escalate to emergency invocation.
 
-**Guardrail breach detection on live prices.** Periodic portfolio revaluation against live prices; on breach, the per-rule classification in [breach-behavior.md](../06-risk-guardrails/breach-behavior.md) determines whether to issue an engine-originated CLOSE. Tests cover the three-way split (no breach, breach with immediate action, breach with deferral), the secondary-breach pre-check, and the `cascade_id` propagation on margin-cascade scenarios.
+**Guardrail breach detection on live prices.** Periodic portfolio revaluation; on breach, per-rule classification in [breach-behavior.md](../06-risk-guardrails/breach-behavior.md) determines whether to issue an engine-originated CLOSE. Tests: three-way split (no breach, immediate action, deferral), secondary-breach pre-check, `cascade_id` propagation on margin-cascade.
 
-**Emergency invocation trigger.** Trigger condition evaluator for the four trigger types (regime jump, multi-rule simultaneous breach, drawdown velocity, margin call), cooldown enforcement, trigger coalescing. Tests cover each trigger independently and the coalescing behavior when two triggers fire within the cooldown window.
+**Emergency invocation trigger.** Trigger condition evaluator for four types (regime jump, multi-rule simultaneous breach, drawdown velocity, margin call), cooldown enforcement, trigger coalescing. Tests cover each trigger and coalescing when two fire within the cooldown window.
 
 ### Stub boundary
 
@@ -326,57 +326,55 @@ Preliminary. ~15 units.
 
 ## Shared fixture inventory
 
-Fixtures that multiple clusters consume. One catalog, one source of truth. Fixtures are constructed by builders with sensible defaults and overridable fields — tests declare only the fields they care about.
+Fixtures consumed by multiple clusters. One catalog, one source of truth. Builders with sensible defaults and overridable fields — tests declare only what they care about.
 
 ### Portfolio state builder
 
 Consumed by: guardrails (every rule), OMS command executors, guardrail state header projection, P/L computation, exposure aggregation.
 
-Builder API accepts positions (with direction, size, cost basis, current greeks for options), sector classifications, cash balance, pending orders, active theses with components, activity log entries, drawdown state (daily + cumulative + HWM), regime state. Defaults produce a portfolio at "normal regime, healthy state, no breaches."
+Builder API accepts positions (with direction, size, cost basis, current greeks for options), sector classifications, cash balance, pending orders, active theses with components, activity log entries, drawdown state (daily + cumulative + HWM), regime state. Default: "normal regime, healthy state, no breaches."
 
-Named presets exist for recurring scenarios: "primary $1,500 at 60% deployed," "full-system $100K with 8 positions," "tech sector at WARNING zone," "drawdown tier 1 active," "post-margin-call in-progress cascade."
+Named presets for recurring scenarios: "primary $1,500 at 60% deployed," "full-system $100K with 8 positions," "tech sector at WARNING zone," "drawdown tier 1 active," "post-margin-call in-progress cascade."
 
 ### Market data fixture
 
-Consumed by: fill modeling (every unit), distillation anomaly detectors, guardrail rules that depend on current price (position max loss, sector concentration at current market value).
+Consumed by: fill modeling, distillation anomaly detectors, guardrail rules depending on current price (position max loss, sector concentration at current market value).
 
-Fixture provides bar OHLCV per ticker per timeframe per date range, trading calendar, DST-aware timestamps, spread data. Defaults to a quiet market with predictable ATR; named overlays exist for "earnings-day gap," "intraday halt and resume," "flash-crash tick sequence."
+Provides bar OHLCV per ticker per timeframe per date range, trading calendar, DST-aware timestamps, spread data. Default: quiet market with predictable ATR. Named overlays: "earnings-day gap," "intraday halt and resume," "flash-crash tick sequence."
 
 ### Regime state fixture
 
-Consumed by: guardrails (parameter lookup and transition interpolation), distillation (regime classification's own input baseline), guardrail state header projection (regime label in every header).
+Consumed by: guardrails (parameter lookup and transition interpolation), distillation (regime classification's own input baseline), guardrail state header projection.
 
-Fixture provides current regime, invocations since last transition, active overlays (pre-event flags, stress flags), historical regime sequence for loosening-interpolation tests.
+Provides current regime, invocations since last transition, active overlays (pre-event flags, stress flags), historical regime sequence for loosening-interpolation tests.
 
 ### Activity log fixture
 
-Consumed by: OMS fill integration (writes entries), guardrails state header (reads recent engine-originated actions), fill-modeling continuous monitor (writes monitor session events).
+Consumed by: OMS fill integration (writes entries), guardrails state header (reads recent engine-originated actions), continuous monitor (writes session events).
 
-Fixture is an append-only in-memory log with filtering by invocation ID, cascade ID, event type. Assertion helpers exist for "exactly N entries of type X in invocation Y," "cascade_id C has entries in this sequence," "no entries of type Z were written."
+Append-only in-memory log with filtering by invocation ID, cascade ID, event type. Assertion helpers: "exactly N entries of type X in invocation Y," "cascade_id C has entries in this sequence," "no entries of type Z were written."
 
 ### RNG sources
 
-Consumed by: fill modeling (every stochastic unit), distillation rollup units with sampling.
+Consumed by: fill modeling, distillation rollup units with sampling.
 
-Convention: each stochastic unit receives its own seeded RNG at construction; tests assert on exact outputs given exact seeds. A utility produces deterministic seeds from test names for reproducibility without per-test seed bookkeeping.
+Each stochastic unit receives its own seeded RNG at construction; tests assert on exact outputs given exact seeds. A utility produces deterministic seeds from test names.
 
 ### Alpaca mock
 
-Consumed by: OMS processing (every command submission path), broker adapter (every REST/websocket unit), paper-evaluation harness tests that need paper-mode fills, continuous monitor tests that need `trade_updates` sequences.
+Consumed by: OMS processing, broker adapter, paper-evaluation harness tests needing paper-mode fills, continuous monitor tests needing `trade_updates` sequences.
 
-Mock exposes the Alpaca REST endpoints and the `trade_updates` websocket with scripted responses per submitted order (acknowledge, transient failure with N retry attempts before success, persistent failure triggering abandonment, out-of-order fill report delivery, PATCH race conditions). State inspection API returns the sequence of submitted orders and emitted events for assertion.
+Exposes Alpaca REST endpoints and `trade_updates` websocket with scripted responses per submitted order (acknowledge, transient failure with N retries before success, persistent failure triggering abandonment, out-of-order fill report delivery, PATCH race conditions). State inspection API returns submitted orders and emitted events for assertion.
 
 ---
 
 ## Resolved design questions
 
-Design questions the test catalog surfaced during scoping, now closed:
+- Greeks refresh ownership — the continuous monitor owns refresh orchestration (scheduled 15-min per underlying + 2%-underlying-move triggered). See [architecture.md §4d](../05-execution-layer/architecture.md). Testable units in the continuous monitor section.
 
-- Greeks refresh ownership — the continuous monitor owns refresh orchestration (scheduled 15-min per underlying + 2%-underlying-move triggered). See [architecture.md §4d](../05-execution-layer/architecture.md). Testable units are in the continuous monitor section above.
+- Multi-position forced-closure handling — AlphaMind's ETB-only universe and Alpaca's no-HTB-shorting mean lender-recall forced buy-ins don't occur. The closest analogue is Alpaca's ETB→HTB overnight auto-closure on a previously-ETB name. Synchronized multi-position closures are validated through [scenario-tests.md A11](../06-risk-guardrails/scenario-tests.md) rather than stochastic unit tests.
 
-- Multi-position forced-closure handling — AlphaMind's ETB-only universe and Alpaca's no-HTB-shorting constraint mean lender-recall forced buy-ins don't occur in practice; the closest analogue is Alpaca's ETB→HTB overnight auto-closure on a previously-ETB name. Synchronized multi-position closures are validated through scripted scenarios in [scenario-tests.md A11](../06-risk-guardrails/scenario-tests.md) rather than stochastic unit tests.
-
-- Corporate action handling of active bracket parameters — any corporate action (split, reverse split, stock or cash dividend, merger, acquisition, spin-off) cancels the bracket and flags the position; the strategist produces a fresh `adjust-bracket` or `close` via the normal command path. See [orders-and-brackets.md § Corporate action handling](../05-execution-layer/orders-and-brackets.md#corporate-action-handling) and [strategist.md § Corporate-action-pending positions](../04-decision-layer/strategist.md#corporate-action-pending-positions). The position-level integration mechanics — per-action quantity, cost basis, ticker, status mutations, cash ledger movements, spin-off child creation, Phase 1 chronological merge with fills, idempotency on retry, and the activity log catalog additions — are specified in [corporate-actions.md](../05-execution-layer/corporate-actions.md). Unit tests cover: the bracket cancellation + flagging path against each per-action-type fixture, the spin-off child position creation path (orphan thesis_id/bracket_id with origin reference), the chronological merge of unprocessed fills and unprocessed CA activities in Phase 1, the `processed_corporate_actions` ledger dedup behavior on retry, and the reconciliation-against-Alpaca step at end of Phase 1.
+- Corporate action handling — any corporate action (split, reverse split, stock or cash dividend, merger, acquisition, spin-off) cancels the bracket and flags the position; the strategist produces a fresh `adjust-bracket` or `close` via the normal command path. See [orders-and-brackets.md § Corporate action handling](../05-execution-layer/orders-and-brackets.md#corporate-action-handling), [strategist.md § Corporate-action-pending positions](../04-decision-layer/strategist.md#corporate-action-pending-positions), [corporate-actions.md](../05-execution-layer/corporate-actions.md). Unit tests cover: bracket cancellation + flagging against each per-action-type fixture, spin-off child position creation (orphan thesis_id/bracket_id with origin reference), chronological merge of unprocessed fills and CA activities in Phase 1, `processed_corporate_actions` ledger dedup on retry, reconciliation-against-Alpaca at Phase 1 end.
 
 ---
 
