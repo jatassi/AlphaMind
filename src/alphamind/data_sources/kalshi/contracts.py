@@ -126,14 +126,18 @@ def collect_snapshots(
 
         rows_written = 0
 
-        with session_factory() as session:
-            for event in events:
-                series_ticker: str = event.get("series_ticker", "")
-                category = _derive_category(series_ticker)
+        # Commit per event so the SQLite writer lock is held only during the
+        # brief INSERTs, not across the slow rate-limited HTTP cycle (Kalshi is
+        # capped at 30 req/min, so a full sweep can take ~5 min). Without this,
+        # other vendor collectors firing concurrently exhausted busy_timeout.
+        for event in events:
+            series_ticker: str = event.get("series_ticker", "")
+            category = _derive_category(series_ticker)
 
-                markets_payload = client.get("/markets", series_ticker=series_ticker)
-                markets: list[dict] = markets_payload.get("markets", [])
+            markets_payload = client.get("/markets", series_ticker=series_ticker)
+            markets: list[dict] = markets_payload.get("markets", [])
 
+            with session_factory() as session:
                 for market in markets:
                     contract_id: str = market["ticker"]
                     description: str = market.get("title", "")
@@ -194,5 +198,6 @@ def collect_snapshots(
                     if result_proxy.rowcount > 0:
                         rows_written += 1
 
-            session.commit()
+                session.commit()
+
         run.rows_written = rows_written

@@ -9,7 +9,7 @@ Database path resolution order:
 
 Pragmas applied on every new connection (from data-and-state.md):
   - ``journal_mode = WAL``
-  - ``busy_timeout = 5000``
+  - ``busy_timeout = 60000``
   - ``foreign_keys = ON``
   - ``synchronous = NORMAL``
 """
@@ -57,7 +57,7 @@ def _apply_pragmas(dbapi_connection: Any, _connection_record: Any) -> None:
     """Fire all four required pragmas on every fresh DBAPI connection."""
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA busy_timeout=5000")
+    cursor.execute("PRAGMA busy_timeout=60000")
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.close()
