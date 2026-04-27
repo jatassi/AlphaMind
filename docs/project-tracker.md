@@ -140,140 +140,162 @@ With the constraint surface fully defined, these become "given X inputs and Y ac
 
 ## Backlog
 
-Outstanding work surfaced by the design audit on 2026-04-26. Each section is a self-contained feature; some have a single bullet, others list multiple sub-items. Items here defer from Phase 0–4 either because they require empirical data to specify (paper-trading calibration), depend on infrastructure not yet built (dashboard, backtest harness), or were intentionally scoped out of v1.
+Outstanding work surfaced by the design audit on 2026-04-26. Grouped by area; within each area, features are alphabetical. Items defer from Phase 0–4 either because they require empirical data to specify (paper-trading calibration), depend on infrastructure not yet built (dashboard, backtest harness), or were intentionally scoped out of v1.
 
-### Alerting infrastructure
+Areas with no entries (Phase 0–4 fully landed, no outstanding work): risk-guardrails rule values themselves (regime adaptation, breach behavior, state delivery, guardrail evaluation, scenario tests), the OMS command vocabulary and execution-layer core (commands, command IDs, position model, thesis model, orders & brackets, state persistence, corporate actions, paper-evaluation harness, continuous monitor, guardrail enforcement layer), the testing plans, the synthesizer and domain-researcher contracts, and the cross-cutting failure-handling and cost-modeling docs.
+
+### Architecture
+
+#### Qualitative vendor selection
+
+- [ ] Pick concrete vendors for the qualitative data sources still labeled TBD (news APIs beyond Marketaux, social sentiment beyond StockTwits placeholder, prediction markets beyond Kalshi/Polymarket if expansion is needed). _Source: [architecture/technology-selection.md](architecture/technology-selection.md)._
+
+### Data layer
+
+#### Alerting infrastructure
 
 - [ ] Specify alert routing, severity thresholds, and operator notification channels for collector failures and pipeline aborts. May be subsumed by the [command center alert registry](design/command-center.md). _Source: [api-failure-handling.md](design/01-data-layer/api-failure-handling.md)._
 
-### API retry parameter tuning
+#### API retry parameter tuning
 
 - [ ] Concrete retry counts, backoff intervals, and provider-failover configuration values per criticality tier — to be tuned against observed provider reliability during paper trading. _Source: [api-failure-handling.md](design/01-data-layer/api-failure-handling.md)._
 
-### Backtest-for-deterministic-layer infrastructure
-
-- [ ] Stand up the backtest harness needed for regime-sensitive prompt validation (deterministic-layer replay, not full-pipeline backtest). _Source: [feedback-loop.md](design/feedback-loop.md)._
-
-### Command center: pipeline/monitor wire format
-
-- [ ] Specify the `/control/*` HTTP surface and `/events` SSE stream wire format the pipeline and monitor processes expose to the command center backend. _Source: [command-center.md](design/command-center.md)._
-
-### Command center: skill prompts
-
-- [ ] Draft the orchestration prompts for `/feedback-review`, `/feedback-validate`, and `/feedback-retrospective` against the command center's review-session surface. _Source: [command-center.md](design/command-center.md)._
-
-### Command center: tech stack & framework selection
-
-- [ ] Lock the proposed frontend (React + Vite + shadcn/ui + TanStack) and backend (FastAPI + SQLAlchemy + aiosqlite + py_webauthn) stacks; finalize package versions and cross-platform integration. _Source: [command-center.md](design/command-center.md)._
-
-### Data layer mapping coverage
+#### Mapping coverage
 
 - [ ] Resolve TBD `primary_source`, `cadence`, and `feasibility` fields across 14 source-to-target mapping YAMLs (~361 unmapped fields). The bulk are derived/computed entities (cross-asset signals, earnings tone analysis, derived macro entities, sector catalysts); raw series are mostly mapped. _Source: [01-data-layer/mappings/](design/01-data-layer/mappings/)._
 - [ ] Land per-category storage schemas for the seven categories deferred in v1 — Q2 microstructure (depends on Polygon tick-data subscription), Q4 short selling, Q5 fundamentals (partial), Q8 commodities (partial), Qual2 social sentiment, Qual4 earnings transcripts, Qual6 regulatory. _Source: [storage.md](design/01-data-layer/collector/storage.md)._
 
-### Earnings transcript NLP pipeline
+#### Marketaux per-ticker sentiment variants
+
+- [ ] Implement enrichment for the per-ticker sentiment score variants from Marketaux (currently a single composite score per article). _Source: [05g-marketaux-vendor-adapter.md](implementation/01-data-layer/collector/05g-marketaux-vendor-adapter.md)._
+
+#### Multi-source failover (collector)
+
+- [ ] Implement failover dispatch in per-vendor `client.py` modules — fall through to the configured fallback when the primary's exhausted retries fire. Deferred for v1 until a provider's reliability proves it necessary. _Source: [data-sources.md](design/01-data-layer/collector/data-sources.md)._
+
+#### News retention review trigger
+
+- [ ] Define a concrete growth threshold (or storage-pressure trigger) for revisiting the "retain indefinitely" policy on news articles. _Source: [storage.md](design/01-data-layer/collector/storage.md)._
+
+#### Prediction market retention review trigger
+
+- [ ] Define a concrete growth threshold for revisiting the "retain indefinitely for v1" policy on prediction market snapshots, paired with `prediction_market_history_days` calibration window growth. _Source: [storage.md](design/01-data-layer/collector/storage.md)._
+
+### Distillation layer
+
+#### Thesis-dependency risk flag threshold
+
+- [ ] Define the concrete threshold for the thesis-dependency risk flag (effective independent thesis count). Cross-cuts distillation, threshold-calibration, and risk guardrails; gates the corresponding distillation unit. _Source: [02-distillation-layer/internal.md](design/02-distillation-layer/internal.md), [threshold-calibration.md](design/02-distillation-layer/threshold-calibration.md), [unit-test-plan.md](design/testing/unit-test-plan.md)._
+
+### Analysis layer
+
+#### Earnings transcript NLP pipeline
 
 - [ ] Specify the transcript ingestion pipeline (Motley Fool scraping or Quartr API) and the NLP extraction pipeline (tone classification, Q&A clustering, non-answer detection, forward-looking statement extraction). _Source: [qualitative-research.md](design/03-analysis-layer/qualitative-research.md)._
 
-### Feedback dashboard: ad-hoc query surface
-
-- [ ] Design filter dimensions, query input shape, result rendering, and export flow for the operator's ad-hoc query surface in the feedback view group. Drafted alongside the dashboard frontend. _Source: [feedback-loop.md](design/feedback-loop.md)._
-
-### Feedback dashboard: digest config schema
-
-- [ ] Define `config/digest.yaml` schema for operator-tunable notable-shift thresholds. Drafted as part of dashboard config wiring. _Source: [feedback-loop.md](design/feedback-loop.md)._
-
-### Feedback dashboard: monthly outcome view
-
-- [ ] Specify the metric subset, slice-comparison UI, and layout for the monthly outcome view; ships once resolved-thesis count crosses the threshold. _Source: [feedback-loop.md](design/feedback-loop.md)._
-
-### Feedback dashboard: retrospective view
-
-- [ ] Design the dashboard view that renders a `retrospective_reports` record. Drafted alongside the first quarterly retrospective. _Source: [feedback-loop.md](design/feedback-loop.md)._
-
-### Headline tagging + clustering
+#### Headline tagging + clustering
 
 - [ ] Add the headline-type tagging taxonomy to the data-layer spec (currently defined only in the analysis-layer doc). _Source: [qualitative-research.md](design/03-analysis-layer/qualitative-research.md)._
 - [ ] Specify the headline clustering / deduplication algorithm and cluster metadata fields (currently described conceptually but not algorithmically). _Source: [qualitative-research.md](design/03-analysis-layer/qualitative-research.md)._
 
-### Marketaux per-ticker sentiment variants
+#### Unified event calendar
 
-- [ ] Implement enrichment for the per-ticker sentiment score variants from Marketaux (currently a single composite score per article). _Source: [05g-marketaux-vendor-adapter.md](implementation/01-data-layer/collector/05g-marketaux-vendor-adapter.md)._
+- [ ] Specify the merge of qualitative-5e (catalyst calendar) + quantitative-6g (economic calendar) into a single sector-tagged feed in the data layer. _Source: [qualitative-research.md](design/03-analysis-layer/qualitative-research.md)._
 
-### Minimum cash floor
+### Decision layer
 
-- [ ] Specify the minimum cash floor a guardrail value the PM must keep above. Deferred to risk-guardrail rule values. _Source: [portfolio-state.md](design/01-data-layer/internal/portfolio-state.md), [rules-and-limits.md](design/06-risk-guardrails/rules-and-limits.md)._
+#### PM envelope: rejection-array minItems validator
 
-### Multi-source failover (collector)
+- [ ] Add `minItems: 1` validation on rejection envelopes' `concerns` array, after fully characterizing the edge case. _Source: [pm-envelope-schema.md](design/04-decision-layer/pm-envelope-schema.md)._
 
-- [ ] Implement failover dispatch in per-vendor `client.py` modules — fall through to the configured fallback when the primary's exhausted retries fire. Deferred for v1 until a provider's reliability proves it necessary. _Source: [data-sources.md](design/01-data-layer/collector/data-sources.md)._
+#### PM execution failure notification channel
 
-### News retention review trigger
+- [ ] Specify the transport contract for how the engine communicates guardrail rejection payloads back to the PM (tool call response, structured return value, etc.) at implementation time. _Source: [portfolio-manager.md](design/04-decision-layer/portfolio-manager.md)._
 
-- [ ] Define a concrete growth threshold (or storage-pressure trigger) for revisiting the "retain indefinitely" policy on news articles. _Source: [storage.md](design/01-data-layer/collector/storage.md)._
+#### Strategist defensive_posture schema enforcement
 
-### Options support
+- [ ] Add the mode-level `allOf` conditional that enforces `defensive_posture` mode restricting `recommended_action` to `hold | reduce | close | adjust-bracket` and prohibiting `add` actions. Behavioral spec is authoritative until the validator lands. _Source: [strategist-output-schema.md](design/04-decision-layer/strategist-output-schema.md)._
+
+### Execution layer
+
+#### Options support
 
 - [ ] Broker adapter: design the Alpaca options surface (order types, modification semantics, fill-stream nuances). _Source: [broker-adapter.md](design/05-execution-layer/broker-adapter.md)._
 - [ ] Counterfactual replay engine v2: Black-Scholes-derived option pricing from underlying + IV surface. _Source: [counterfactual-replay-engine.md](design/05-execution-layer/counterfactual-replay-engine.md)._
 - [ ] Set the portfolio-value threshold at which `options_enabled` flips to `true` — calibrated during paper trading. _Source: [rules-and-limits.md](design/06-risk-guardrails/rules-and-limits.md)._
 
-### Per-run-type pipeline scoping
-
-- [ ] Define tailored pipeline configurations per invocation type (pre-open, intraday, pre-close, after-hours): agent depth, adaptive-research budget, qualitative sweep breadth. Cross-cuts the run_types/ overlay shape in configuration-management. _Source: [design/README.md](design/README.md), [configuration-management.md](design/configuration-management.md), [adaptive-research.md](design/03-analysis-layer/adaptive-research.md)._
-
-### PM envelope: rejection-array minItems validator
-
-- [ ] Add `minItems: 1` validation on rejection envelopes' `concerns` array, after fully characterizing the edge case. _Source: [pm-envelope-schema.md](design/04-decision-layer/pm-envelope-schema.md)._
-
-### PM execution failure notification channel
-
-- [ ] Specify the transport contract for how the engine communicates guardrail rejection payloads back to the PM (tool call response, structured return value, etc.) at implementation time. _Source: [portfolio-manager.md](design/04-decision-layer/portfolio-manager.md)._
-
-### Prediction market retention review trigger
-
-- [ ] Define a concrete growth threshold for revisiting the "retain indefinitely for v1" policy on prediction market snapshots, paired with `prediction_market_history_days` calibration window growth. _Source: [storage.md](design/01-data-layer/collector/storage.md)._
-
-### Profile-boundary detector
-
-- [ ] Emit an advisory when portfolio equity crosses a tier boundary (between deployment-validation, primary, full-system profiles). _Source: [configuration-management.md](design/configuration-management.md)._
-
-### Qualitative vendor selection
-
-- [ ] Pick concrete vendors for the qualitative data sources still labeled TBD (news APIs beyond Marketaux, social sentiment beyond StockTwits placeholder, prediction markets beyond Kalshi/Polymarket if expansion is needed). _Source: [architecture/technology-selection.md](architecture/technology-selection.md)._
-
-### Reg T per-leg margin monitoring
+#### Reg T per-leg margin monitoring
 
 - [ ] Track scale at which per-leg margining becomes the capital bottleneck; revisit broker choice if/when the bottleneck binds. _Source: [venue-configuration.md](design/05-execution-layer/venue-configuration.md)._
 
-### Small-tier thesis review trigger
+### Risk guardrails
+
+#### Minimum cash floor
+
+- [ ] Specify the minimum cash floor a guardrail value the PM must keep above. Deferred to risk-guardrail rule values. _Source: [portfolio-state.md](design/01-data-layer/internal/portfolio-state.md), [rules-and-limits.md](design/06-risk-guardrails/rules-and-limits.md)._
+
+#### Small-tier thesis review trigger
 
 - [ ] Specify the thesis-review trigger cadence for the small-tier ($1,500 primary) profile; the corresponding cell in the rules-and-limits matrix is currently bare TBD. _Source: [rules-and-limits.md](design/06-risk-guardrails/rules-and-limits.md)._
 
-### Strategist defensive_posture schema enforcement
-
-- [ ] Add the mode-level `allOf` conditional that enforces `defensive_posture` mode restricting `recommended_action` to `hold | reduce | close | adjust-bracket` and prohibiting `add` actions. Behavioral spec is authoritative until the validator lands. _Source: [strategist-output-schema.md](design/04-decision-layer/strategist-output-schema.md)._
-
-### Thesis-dependency risk flag threshold
-
-- [ ] Define the concrete threshold for the thesis-dependency risk flag (effective independent thesis count). Cross-cuts distillation, threshold-calibration, and risk guardrails; gates the corresponding distillation unit. _Source: [02-distillation-layer/internal.md](design/02-distillation-layer/internal.md), [threshold-calibration.md](design/02-distillation-layer/threshold-calibration.md), [unit-test-plan.md](design/testing/unit-test-plan.md)._
-
-### Tier graduation profitability criteria
+#### Tier graduation profitability criteria
 
 - [ ] Specify the demonstrated-profitability criteria gating graduation between deployment tiers (deployment-validation → primary → full-system). _Source: [rules-and-limits.md](design/06-risk-guardrails/rules-and-limits.md)._
 
-### Unified event calendar
+### Pipeline orchestration
 
-- [ ] Specify the merge of qualitative-5e (catalyst calendar) + quantitative-6g (economic calendar) into a single sector-tagged feed in the data layer. _Source: [qualitative-research.md](design/03-analysis-layer/qualitative-research.md)._
+#### Per-run-type pipeline scoping
 
-### Validation methodology: interrupted-window handling
+- [ ] Define tailored pipeline configurations per invocation type (pre-open, intraday, pre-close, after-hours): agent depth, adaptive-research budget, qualitative sweep breadth. Cross-cuts the run_types/ overlay shape in configuration-management. _Source: [design/README.md](design/README.md), [configuration-management.md](design/configuration-management.md), [adaptive-research.md](design/03-analysis-layer/adaptive-research.md)._
+
+#### Profile-boundary detector
+
+- [ ] Emit an advisory when portfolio equity crosses a tier boundary (between deployment-validation, primary, full-system profiles). _Source: [configuration-management.md](design/configuration-management.md)._
+
+#### Weekend invocation cadence
+
+- [ ] Decide the weekend invocation schedule (currently flagged as likely 6–8 hours since only futures and prediction markets provide signal). _Source: [design/README.md](design/README.md)._
+
+### Command center
+
+#### Ad-hoc query surface
+
+- [ ] Design filter dimensions, query input shape, result rendering, and export flow for the operator's ad-hoc query surface in the feedback view group. Drafted alongside the dashboard frontend. _Source: [feedback-loop.md](design/feedback-loop.md)._
+
+#### Digest config schema
+
+- [ ] Define `config/digest.yaml` schema for operator-tunable notable-shift thresholds. Drafted as part of dashboard config wiring. _Source: [feedback-loop.md](design/feedback-loop.md)._
+
+#### Monthly outcome view
+
+- [ ] Specify the metric subset, slice-comparison UI, and layout for the monthly outcome view; ships once resolved-thesis count crosses the threshold. _Source: [feedback-loop.md](design/feedback-loop.md)._
+
+#### Pipeline/monitor wire format
+
+- [ ] Specify the `/control/*` HTTP surface and `/events` SSE stream wire format the pipeline and monitor processes expose to the command center backend. _Source: [command-center.md](design/command-center.md)._
+
+#### Retrospective view
+
+- [ ] Design the dashboard view that renders a `retrospective_reports` record. Drafted alongside the first quarterly retrospective. _Source: [feedback-loop.md](design/feedback-loop.md)._
+
+#### Skill prompts
+
+- [ ] Draft the orchestration prompts for `/feedback-review`, `/feedback-validate`, and `/feedback-retrospective` against the command center's review-session surface. _Source: [command-center.md](design/command-center.md)._
+
+#### Tech stack & framework selection
+
+- [ ] Lock the proposed frontend (React + Vite + shadcn/ui + TanStack) and backend (FastAPI + SQLAlchemy + aiosqlite + py_webauthn) stacks; finalize package versions and cross-platform integration. _Source: [command-center.md](design/command-center.md)._
+
+### Feedback loop
+
+#### Backtest-for-deterministic-layer infrastructure
+
+- [ ] Stand up the backtest harness needed for regime-sensitive prompt validation (deterministic-layer replay, not full-pipeline backtest). _Source: [feedback-loop.md](design/feedback-loop.md)._
+
+#### Validation methodology: interrupted-window handling
 
 - [ ] Specify how the validation skill handles a window interrupted partway through (e.g., a regime shift mid-validation). _Source: [feedback-loop.md](design/feedback-loop.md)._
 
-### Validation methodology: rollback evidence protocol
+#### Validation methodology: rollback evidence protocol
 
 - [ ] Specify what evidence is sufficient to roll back a previously-shipped change (validation evaluation outcome). _Source: [feedback-loop.md](design/feedback-loop.md)._
-
-### Weekend invocation cadence
-
-- [ ] Decide the weekend invocation schedule (currently flagged as likely 6–8 hours since only futures and prediction markets provide signal). _Source: [design/README.md](design/README.md)._
