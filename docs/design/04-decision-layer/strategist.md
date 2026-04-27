@@ -109,38 +109,36 @@ Every per-position assessment sets `thesis_status` to one of five values, define
 
 ### Borderline cases
 
-When the evidence lies between two categories, resolve as follows:
-
-- **on-track vs. at-risk.** Default to `at-risk` when a plausible reading of a current signal weakens a cited entry component. The rationale should name the signal and the component. Under-classifying to `on-track` when a supporting signal has faded is the most corrosive failure mode because it suppresses the information the PM needs to manage the position.
-- **at-risk vs. invalidated.** Require a named falsifier for `invalidated` — a specific event leg condition met, a specific key assumption contradicted by a specific cited signal. Generic readings ("the tape looks wrong," "momentum has stalled") stay at `at-risk`. Invalidation is a commitment to close; its signal bar is correspondingly higher.
-- **at-risk vs. partially-realized.** `partially-realized` requires affirmative evidence that part of the catalyst has fired and part of the thesis has been confirmed. A position that is up in P/L but whose catalyst has not fired is still `on-track` or `at-risk`, not `partially-realized` — P/L is not a classification input.
-- **stale vs. at-risk.** If the position has aged past its time expectation and a current signal weakens the thesis, classify `at-risk` (the stronger signal dominates). `stale` is reserved for the no-news case — the catalyst simply didn't fire and nothing else has happened.
-- **stale vs. invalidated.** Age alone does not invalidate. An overdue catalyst that could still fire stays `stale`; an overdue catalyst publicly confirmed not to fire (e.g., an earnings release that contradicted the thesis, a regulatory event that resolved against the thesis) becomes `invalidated`.
+- **on-track vs. at-risk.** Default to `at-risk` when a plausible reading of a current signal weakens a cited entry component. The rationale should name the signal and component. Under-classifying to `on-track` when a supporting signal has faded is the most corrosive failure mode — it suppresses information the PM needs to manage the position.
+- **at-risk vs. invalidated.** `invalidated` requires a named falsifier — a specific event leg condition met, a specific key assumption contradicted by a specific cited signal. Generic readings ("the tape looks wrong," "momentum has stalled") stay at `at-risk`. Invalidation commits to close; its signal bar is correspondingly higher.
+- **at-risk vs. partially-realized.** `partially-realized` requires affirmative evidence that part of the catalyst has fired and part of the thesis has been confirmed. A position that is up in P/L but whose catalyst has not fired is still `on-track` or `at-risk` — P/L is not a classification input.
+- **stale vs. at-risk.** If the position has aged past time expectation and a current signal weakens the thesis, classify `at-risk` (the stronger signal dominates). `stale` is reserved for the no-news case.
+- **stale vs. invalidated.** Age alone does not invalidate. An overdue catalyst that could still fire stays `stale`; one publicly confirmed not to fire (an earnings release that contradicted the thesis, a regulatory event resolved against it) becomes `invalidated`.
 
 ### Prior status and cross-invocation continuity
 
-Each thesis record carries a `prior_status` field — the classification from the immediately preceding strategist invocation. The strategist reads it and, in `status_rationale`, must explain any transition by naming what changed.
+Each thesis record carries a `prior_status` field — the classification from the immediately preceding invocation. The `status_rationale` must explain any transition by naming what changed.
 
-- **Transition requires a cited signal.** `on-track → at-risk` requires a specific finding that weakened the thesis in this invocation. `at-risk → on-track` requires a specific finding that restored it — either the weakening signal was resolved (e.g., the contradicting data was revised), or a new supporting signal has appeared. Silent transitions (different classification with no cited cause) are a status-warrant failure the PM will reject.
-- **Repeated classifications should still cite fresh signals.** Three consecutive `on-track` classifications on the same position is legitimate only if each is anchored to current-invocation evidence, not to the entry thesis. Rehashing the entry rationale under a repeated `on-track` classification is the single-invocation symptom of the `sunk_cost_persistence` anti-pattern the PM watches for.
-- **Repeated `at-risk` or `stale` without transition is itself a signal.** Across multiple invocations without either escalation to `invalidated` or de-escalation to `on-track`, the position is drifting — the strategist should note the aggregation in `cross_position_observations` or `portfolio_level_observations` and consider whether an action other than continued hold is warranted.
+- **Transition requires a cited signal.** `on-track → at-risk` requires a specific finding that weakened the thesis this invocation. `at-risk → on-track` requires a specific finding that restored it — either the weakening signal was resolved (e.g., contradicting data was revised) or a new supporting signal appeared. Silent transitions are a status-warrant failure the PM will reject.
+- **Repeated classifications still cite fresh signals.** Three consecutive `on-track` classifications are legitimate only if each is anchored to current-invocation evidence, not the entry thesis. Rehashing entry rationale under a repeated `on-track` is the single-invocation symptom of the `sunk_cost_persistence` anti-pattern.
+- **Repeated `at-risk` or `stale` without transition is itself a signal.** Across multiple invocations without escalation to `invalidated` or de-escalation to `on-track`, the position is drifting — note the aggregation in `cross_position_observations` or `portfolio_level_observations` and consider whether continued hold remains warranted.
 
 ### Calibration target
 
-Analogous to the [analyst's conviction scale calibration](analyst.md#conviction-scale): a well-calibrated strategist should exhibit distinct forward-outcome distributions across the five statuses when its classifications are tracked over time.
+Analogous to the [analyst's conviction scale calibration](analyst.md#conviction-scale): a well-calibrated strategist should exhibit distinct forward-outcome distributions across the five statuses tracked over time.
 
-- Positions classified `invalidated` should close into realized losses (the close follows the classification). A high share of `invalidated` theses that subsequently recover in price suggests the classification is being applied too loosely — the signal bar needs raising.
-- Positions classified `at-risk` should exhibit higher forward adverse-outcome rates than `on-track` positions over the thesis's remaining time horizon. If `at-risk` and `on-track` positions have indistinguishable forward outcomes, the classifications are not tracking signal and one of them is being applied reflexively.
-- Positions classified `on-track` should correlate with continued thesis validation — the catalyst firing, the target being approached. A high share of `on-track` classifications followed by P/L decline without a preceding `at-risk` transition indicates under-classification: signals that should have moved the thesis to `at-risk` were suppressed.
-- `stale` classifications should be followed either by the catalyst firing (transitioning to `partially-realized` or `on-track`), by invalidation, or by a PM-approved close. A long dwell time in `stale` without transition is the strategist failing to re-examine whether the thesis has quietly moved into `at-risk` or `invalidated`.
+- `invalidated` positions should close into realized losses. A high share that subsequently recover suggests the classification is being applied too loosely.
+- `at-risk` positions should exhibit higher forward adverse-outcome rates than `on-track` positions over remaining horizon. Indistinguishable outcomes mean one of the two is being applied reflexively.
+- `on-track` should correlate with continued thesis validation. A high share of `on-track` classifications followed by P/L decline without a preceding `at-risk` transition indicates under-classification.
+- `stale` should be followed by the catalyst firing (transition to `partially-realized` or `on-track`), invalidation, or a PM-approved close. Long dwell in `stale` without transition means the strategist failed to re-examine whether the thesis has quietly moved into `at-risk` or `invalidated`.
 
-These distributions are tracked across invocations by the feedback loop (see [thesis quality trends](../01-data-layer/internal/portfolio-state.md) category 6). The strategist is not expected to enforce them per-invocation — that would reintroduce the numeric-anchor failure mode the analyst's scale avoids — but the feedback loop surfaces drift as a prompt-iteration signal.
+These distributions are tracked across invocations by the feedback loop (see [thesis quality trends](../01-data-layer/internal/portfolio-state.md) category 6); the strategist does not enforce them per-invocation.
 
 ---
 
 ## Action decision logic
 
-For each position, the strategist chooses one `recommended_action` from `hold`, `reduce`, `close`, `adjust-bracket`, or `add`. The status classification constrains the action space; the action then maps to specific structured parameters and a narrative rationale.
+For each position, choose one `recommended_action` from `hold`, `reduce`, `close`, `adjust-bracket`, or `add`. The status classification constrains the action space; the action maps to structured parameters and narrative rationale.
 
 ### Per-action signal criteria
 
@@ -154,157 +152,157 @@ For each position, the strategist chooses one `recommended_action` from `hold`, 
 
 ### Full-vs.-partial reasoning for close and reduce
 
-The strategist must justify the quantity chosen, not just the action type.
+Justify the quantity, not just the action type.
 
-- **Full close.** Required when `invalidated` is assigned, because a position sized for the original thesis has no residual case. Also the default when the target is reached, because partial target-taking is a discretionary risk-management choice; if the strategist recommends a partial close on `target_reached`, the reduce rationale must name a specific reason residual exposure is warranted (e.g., the target level may extend, the remaining position has an independent secondary thesis).
-- **Partial close or reduce.** Required when a specific thesis component has weakened but others remain intact. The reduction quantity should map to the portion of the thesis that failed — a non-core key-assumption failure warrants a smaller reduction than a core-mechanism failure. A reduce whose quantity does not map to an identifiable portion of the thesis is a generic "take some off the table" and will fail the PM's action-specific justification criterion.
-- **Full close on `at-risk`.** Permitted when the weakening is severe enough that the residual case does not justify any remaining exposure even though no specific falsifier has fired. The rationale must explain why partial is not sufficient — usually because the weakening bears on the core mechanism, not a supporting leg.
+- **Full close.** Required for `invalidated` — a position sized for the original thesis has no residual case. Also the default when the target is reached; partial target-taking is discretionary, and a partial close on `target_reached` requires a specific reason residual exposure is warranted (the target level may extend, the remainder has an independent secondary thesis).
+- **Partial close or reduce.** When a specific thesis component has weakened but others remain intact. Reduction quantity should map to the failed portion — a non-core key-assumption failure warrants a smaller reduction than a core-mechanism failure. A reduce whose quantity does not map to an identifiable portion is a generic "take some off the table" and will fail the PM's action-specific justification criterion.
+- **Full close on `at-risk`.** Permitted when weakening is severe enough that the residual case does not justify any remaining exposure even without a specific falsifier. The rationale must explain why partial is insufficient — usually because the weakening bears on the core mechanism, not a supporting leg.
 
 ### Add burden of proof
 
-Adds are the highest-bar action because they increase exposure on an existing thesis, and the failure mode is to treat continued validation as a reason to double down.
+Adds increase exposure on an existing thesis; the failure mode is treating continued validation as a reason to double down.
 
-- **Strengthening signal required.** The add rationale must name a current-invocation signal that was not part of the entry thesis — a new convergent piece of evidence, a fresh catalyst that aligns with the thesis, an institutional flow signal that was absent at entry.
-- **Validating signals are not strengthening signals.** "The catalyst is firing as expected," "price is approaching the target," "prediction markets have moved in our favor" are validations of the original thesis, not new information. A thesis validating itself is a hold reason. If the original thesis is playing out as expected, the original sizing was correct — adding implies the original sizing was wrong, which requires a reason the entry underestimated the signal.
-- **Adds on non-`on-track` status.** Adds on `partially-realized` require an explicit argument for why the remaining catalyst warrants more exposure even though the original case has already partly resolved; this will usually fail the PM's action-status alignment criterion. Adds on `at-risk`, `stale`, or `invalidated` are not valid action pairings — the status itself rules out increasing exposure.
+- **Strengthening signal required.** The add rationale must name a current-invocation signal that was not part of the entry thesis — new convergent evidence, a fresh aligning catalyst, an institutional flow signal absent at entry.
+- **Validating signals are not strengthening signals.** "The catalyst is firing as expected," "price is approaching the target," "prediction markets have moved in our favor" are validations, not new information. If the original thesis is playing out as expected, the original sizing was correct — adding implies the original sizing was wrong, which requires a reason the entry underestimated the signal.
+- **Adds on non-`on-track` status.** `partially-realized` adds require an explicit argument for why the remaining catalyst warrants more exposure when the original case has already partly resolved; usually fails the PM's action-status alignment. Adds on `at-risk`, `stale`, or `invalidated` are not valid pairings — the status itself rules out increasing exposure.
 
 ### Default stance on bracket-widening and time-leg extension
 
-Both are mechanically identical to `adjust-bracket` but represent the two specific movements most associated with the rationalized-continuation failure pattern: loosening the stop so the position has more room to move against the thesis, and extending the time horizon so the position can stay open past its original resolution window.
+Both are mechanically `adjust-bracket` but represent the two movements most associated with the rationalized-continuation failure pattern: loosening the stop, extending the horizon.
 
-- **Default read: rationalization.** The strategist should treat both moves as rationalization unless the rationale names a concretely new signal that makes the original level wrong. The burden of proof sits with the strategist — absent a named new signal, the original invalidation level was the right one.
-- **Narrow exception for time-leg extension.** A publicly rescheduled catalyst (earnings delayed to a specific new date, trial date moved) justifies extending to the new timestamp. A vaguely-timed catalyst that "might fire soon" does not qualify. A post-catalyst reaction window — a catalyst has fired but market impact is still unfolding — justifies a modest extension tied concretely to the reaction window, not to "the market needs time to digest."
-- **Narrow exception for stop-widening.** A revised technical level supported by a current cited signal (volatility expanded beyond the original stop's rationale, a specific support/resistance revision) may justify widening. A generic "the stop was too tight given how the market is moving" does not qualify.
+- **Default read: rationalization.** Treat both as rationalization unless the rationale names a concretely new signal that makes the original level wrong. Absent a named new signal, the original invalidation level was the right one.
+- **Narrow exception — time-leg extension.** A publicly rescheduled catalyst (earnings delayed to a specific new date, trial date moved) justifies extending to the new timestamp. "Might fire soon" does not qualify. A post-catalyst reaction window justifies a modest extension tied concretely to the reaction window, not to "the market needs time to digest."
+- **Narrow exception — stop-widening.** A revised technical level supported by a current cited signal (volatility expanded beyond the original stop's rationale, a specific support/resistance revision) may justify widening. "The stop was too tight given how the market is moving" does not qualify.
 
-In all cases, the adjustment rationale must explicitly pair the old level with the new level and cite the signal. Terse or generic adjustment rationales fail the PM's action-specific justification criterion and are the primary engine for the rationalized-continuation anti-pattern.
+The adjustment rationale must pair the old level with the new and cite the signal. Terse or generic rationales fail the PM's action-specific justification criterion.
 
 ### Hold rationale requirements by status
 
-A `hold` is the most frequently chosen action; it is also the action most susceptible to the sunk-cost persistence failure mode. Hold rationale requirements scale with status:
+`hold` is the most-chosen and most sunk-cost-prone action; rationale requirements scale with status.
 
-- **`on-track` hold.** Default action. Rationale cites current signals that confirm the thesis is playing out as predicted. A hold with no cited current signal — rehashing the entry rationale — will fail the PM's status classification warrant.
-- **`partially-realized` hold.** Requires a reason the residual case still justifies full-size exposure. If the residual case is smaller than the original, a `reduce` is usually the more honest action.
-- **`at-risk` hold.** Requires a reason the weakening signal does not warrant position-size reduction, or why the position's asymmetry still favors the residual case. When approved, `at-risk` holds should typically be paired with a complementary bracket tightening (see [portfolio-manager.md existing-position guidance](portfolio-manager.md#aging-theses)). Un-guarded holds on `at-risk` positions fail the PM's action-status alignment.
-- **`stale` hold.** Requires a specific reason the horizon should be extended — usually a publicly rescheduled catalyst or a post-catalyst reaction window. "Catalyst expected soon" is not a rationale. The PM default-rejects `stale` holds without a rescheduled-catalyst rationale.
-- **`invalidated` hold.** Not permitted. If the strategist wants to argue the thesis is not actually invalidated, the status should be `at-risk`, not `invalidated`. A `hold` paired with `invalidated` is self-contradictory and will fail PM action-status alignment.
+- **`on-track` hold.** Default. Rationale cites current signals confirming the thesis. A hold with no cited current signal — rehashing entry rationale — fails the PM's status classification warrant.
+- **`partially-realized` hold.** Requires a reason the residual case still justifies full-size exposure. If smaller than the original case, a `reduce` is usually more honest.
+- **`at-risk` hold.** Requires a reason the weakening signal does not warrant size reduction, or why asymmetry still favors the residual case. Approved `at-risk` holds should typically pair with complementary bracket tightening (see [portfolio-manager.md existing-position guidance](portfolio-manager.md#aging-theses)). Unguarded holds fail action-status alignment.
+- **`stale` hold.** Requires a specific reason the horizon should be extended — usually a publicly rescheduled catalyst or post-catalyst reaction window. "Catalyst expected soon" is not a rationale. The PM default-rejects without a rescheduled-catalyst rationale.
+- **`invalidated` hold.** Not permitted. If the thesis is not actually invalidated, the status should be `at-risk`. `hold` + `invalidated` is self-contradictory.
 
 ---
 
 ## LLM failure mode avoidance
 
-The [portfolio manager](portfolio-manager.md#anti-patterns-the-pm-is-watching-for) polices a set of anti-patterns that appear across proposals from both agents. The strategist is the agent whose output surfaces these patterns most frequently because it reviews every open position on every invocation — the sheer cadence of hold/add/adjust decisions is where drift accumulates. The strategist's job is to catch the single-invocation manifestation of each pattern before the PM has to reject it.
+The [portfolio manager](portfolio-manager.md#anti-patterns-the-pm-is-watching-for) polices anti-patterns appearing across proposals from both agents. The strategist surfaces these most frequently because it reviews every open position on every invocation — the sheer cadence of hold/add/adjust decisions is where drift accumulates. The strategist's job is to catch the single-invocation manifestation before the PM has to reject it.
 
-The patterns below are the mirror image of the PM's rejection criteria. Each is named in the canonical form the PM rationale narratives use, so the feedback loop can aggregate on the same strings whether the pattern was caught at the strategist or rejected at the PM.
+Patterns below are mirror images of the PM's rejection criteria, named in the canonical form the PM rationale narratives use so the feedback loop aggregates on the same strings whether caught at the strategist or rejected at the PM.
 
 ### Sunk-cost persistence
 
-*Pattern:* continuing to hold a position whose status has been `at-risk` or `stale` across multiple prior invocations, without any new supporting signal in the current-invocation rationale. The classification drifts because the strategist keeps extending the benefit of the doubt rather than escalating to `invalidated` or recommending a close.
+*Pattern:* continuing to hold a position whose status has been `at-risk` or `stale` across multiple prior invocations without a new supporting signal. The classification drifts because the strategist keeps extending benefit of the doubt rather than escalating to `invalidated` or recommending close.
 
-*Mirror-image discipline.* When `prior_status` shows two or more consecutive non-`on-track` classifications without transition to `on-track` or `invalidated`, the strategist should treat the continued hold as the action that requires justification, not the close. The status rationale should explicitly account for the aggregation — either cite a new supporting signal that explains continued patience, or escalate the classification and recommend the corresponding action. A silent third `at-risk` in a row is the pattern.
+*Mirror-image discipline.* When `prior_status` shows two or more consecutive non-`on-track` classifications without transition to `on-track` or `invalidated`, the continued hold requires justification, not the close. Either cite a new supporting signal that explains continued patience, or escalate. A silent third `at-risk` in a row is the pattern.
 
 ### Rationalized continuation
 
-*Pattern:* an `adjust-bracket` that widens a stop or extends a time horizon, or an `add` to a losing position, framed as responding to new information but whose rationale restates the entry thesis. The structural shape is an action that loosens the invalidation envelope or increases exposure without citing a current-invocation signal that was not in the original thesis.
+*Pattern:* an `adjust-bracket` widening a stop or extending a time horizon, or an `add` to a losing position, framed as responding to new information but whose rationale restates the entry thesis. The structural shape is an action that loosens the invalidation envelope or increases exposure without citing a current-invocation signal that was not in the original thesis.
 
-*Mirror-image discipline.* The strategist should treat bracket-widening, time-leg extension, and adds with a default-reject stance on itself — before proposing one, require a named current-invocation signal that is genuinely new. If the rationale reduces to "the thesis still applies, the position just needs more room / more time / more size," the correct action is `hold` (no change) or `reduce` (the position was wrongly sized), not the loosening or addition. See [Action decision logic — Default stance on bracket-widening and time-leg extension](#default-stance-on-bracket-widening-and-time-leg-extension) and [Add burden of proof](#add-burden-of-proof).
+*Mirror-image discipline.* Treat bracket-widening, time-leg extension, and adds with a default-reject stance on yourself — require a named current-invocation signal that is genuinely new. If the rationale reduces to "the thesis still applies, the position just needs more room / more time / more size," the correct action is `hold` (no change) or `reduce` (the position was wrongly sized). See [Default stance on bracket-widening and time-leg extension](#default-stance-on-bracket-widening-and-time-leg-extension) and [Add burden of proof](#add-burden-of-proof).
 
 ### Thesis-contradiction suppression
 
-*Pattern:* a status rationale that omits a contradiction or uncertainty the synthesizer flagged bearing on the position's thesis. The strategist reads past the contradiction and produces a status classification that would be different if the contradiction had been addressed.
+*Pattern:* a status rationale omitting a contradiction or uncertainty the synthesizer flagged bearing on the position's thesis. The strategist reads past the contradiction and produces a classification that would be different if it had been addressed.
 
-*Mirror-image discipline.* When the synthesizer flags a contradiction or uncertainty bearing on a cited entry signal for the position, the status rationale must address it — either explain why the contradiction does not overturn the thesis (and downgrade status to reflect the residual uncertainty), or acknowledge the contradiction as moving the thesis to `at-risk` or `invalidated`. Silent omission is the pattern. The source brief retrieval tool is available to verify that the characterization matches the underlying brief; the strategist should use it when the contradiction's impact on the thesis is not clear from the synthesizer's surface-level language.
+*Mirror-image discipline.* When the synthesizer flags a contradiction bearing on a cited entry signal, the status rationale must address it — either explain why it does not overturn the thesis (and downgrade status to reflect the residual uncertainty) or acknowledge it as moving the thesis to `at-risk` or `invalidated`. Use source-brief retrieval to verify characterization when the contradiction's impact is not clear from the synthesizer's surface-level language.
 
 ### Engine-originated closure as a signal
 
-*Pattern:* an engine-originated envelope appears in the activity log (e.g., a position-level max-loss force-close on a semis position, or a sector-trim for concentration breach), and the strategist treats adjacent positions in the same sector or sharing the same catalyst as if nothing had happened. The engine action is a real-time signal about the market regime that the strategist's per-position assessments should reflect.
+*Pattern:* an engine-originated envelope appears in the activity log (a position-level max-loss force-close, a sector-trim for concentration breach), and the strategist treats adjacent positions in the same sector or sharing the same catalyst as if nothing happened. The engine action is a real-time regime signal that per-position assessments should reflect.
 
-*Mirror-image discipline.* When the activity log surfaces a recent engine-originated envelope, the strategist should explicitly assess whether the closed position's thesis shared components with any currently-held position. The `cross_position_observations` field is the place to name the connection — e.g., "POS-AMD-002's thesis shares the hyperscaler-capex leg that drove POS-AVGO-001's engine-forced close at 10:47; downgrading POS-AMD-002 from `on-track` to `at-risk` to reflect the shared exposure." Silent omission — producing `on-track` on all adjacent positions — is the pattern and will fail the PM's portfolio-coherence criterion.
+*Mirror-image discipline.* When the activity log surfaces a recent engine-originated envelope, explicitly assess whether the closed position's thesis shared components with any currently-held position. Use `cross_position_observations` to name the connection — e.g., "POS-AMD-002's thesis shares the hyperscaler-capex leg that drove POS-AVGO-001's engine-forced close at 10:47; downgrading POS-AMD-002 from `on-track` to `at-risk` to reflect the shared exposure." Silent omission fails the PM's portfolio-coherence criterion.
 
 ### Generic-rationale avoidance
 
-*Pattern:* status or action rationales that could be cut-and-pasted across any position — "thesis continues to play out," "still watching the catalyst," "maintaining position for now," "conditions remain favorable." These are not rationales; they are the absence of one. The failure mode is particularly acute for repeated `hold` recommendations on long-held positions, where the strategist's cognitive load incentivizes boilerplate.
+*Pattern:* rationales that could be cut-and-pasted across any position — "thesis continues to play out," "still watching the catalyst," "maintaining position for now," "conditions remain favorable." These are the absence of a rationale. Particularly acute for repeated `hold` on long-held positions where cognitive load incentivizes boilerplate.
 
-*Mirror-image discipline.* Every status rationale must cite at least one current-invocation source reference (`[SA-TECH-N]`, `[QR-N]`, `[AR-N]`, `[CR-N]`) bearing on the thesis or a specific component of the current portfolio state (position age, P/L trajectory, distance to stop). Every action rationale must either cite a new signal driving the action (for non-`hold` actions) or, for `hold`, cite the absence of any status-changing signal — named specifically, not implied. If a rationale could be written without having read this invocation's synthesizer brief, it is a generic rationale.
+*Mirror-image discipline.* Every status rationale cites at least one current-invocation source reference (`[SA-TECH-N]`, `[QR-N]`, `[AR-N]`, `[CR-N]`) or a specific portfolio-state component (position age, P/L trajectory, distance to stop). Every action rationale either cites a new signal (non-`hold`) or names the absence of any status-changing signal (`hold`). If a rationale could be written without having read this invocation's synthesizer brief, it is generic.
 
 ---
 
 ## Pending order review
 
-The strategist evaluates every unfilled order (entry limits, take-profit legs, stop-limit legs) carried over from prior invocations. Each pending order gets a structured assessment in the strategist's output — the pre-processor passes these through to the PM, which makes the final maintain/modify/cancel decision.
+The strategist evaluates every unfilled order (entry limits, take-profit legs, stop-limit legs) carried from prior invocations. Each gets a structured assessment; the pre-processor passes them to the PM, which makes the final maintain/modify/cancel decision.
 
 ### Structured fields
 
-- **Pending order assessment ID:** unique within the invocation (e.g., `SA-ORD-1`)
-- **Order ID:** the specific order being assessed
-- **Position ID:** the position this order belongs to (entry orders reference a pending position; bracket legs reference an active position)
-- **Order type:** one of `entry_limit`, `entry_stop_limit`, `bracket_target`, `bracket_price_stop`, `bracket_time_stop`, `bracket_event_stop`
-- **Order age hours:** hours elapsed since the order was placed
-- **Current distance:** for price-anchored orders, distance between current underlying price and the trigger/limit level, expressed as a percentage
-- **Fill probability assessment:** one of `likely_soon`, `plausible`, `unlikely`, reflecting the strategist's qualitative read of how the underlying is moving relative to the order level given current signals
+- **Pending order assessment ID:** unique within invocation (e.g., `SA-ORD-1`)
+- **Order ID:** the specific order
+- **Position ID:** entry orders reference a pending position; bracket legs reference an active position
+- **Order type:** `entry_limit`, `entry_stop_limit`, `bracket_target`, `bracket_price_stop`, `bracket_time_stop`, or `bracket_event_stop`
+- **Order age hours:** hours elapsed since placement
+- **Current distance:** for price-anchored orders, distance from underlying to trigger/limit as a percentage
+- **Fill probability assessment:** `likely_soon`, `plausible`, or `unlikely` — qualitative read on underlying movement relative to the order level
 - **Recommended action:** `maintain`, `modify`, or `cancel`
-- **Modification parameters** (required for `modify`): which fields change and to what — new limit price, new trigger price, new deadline, new order type
-- **Linked position assessment** (optional): the `SA-N` assessment ID for the parent position, when the order's disposition should be read alongside the position's status
+- **Modification parameters** (when `modify`): new limit price, trigger price, deadline, or order type
+- **Linked position assessment** (optional): the parent position's `SA-N` assessment ID
 
 ### Narrative fields
 
-- **Drift rationale:** how conditions have shifted between when the order was placed and the current invocation — what signals have appeared that bear on the order's fill probability or its thesis-justification
-- **Action rationale:** why maintain / modify / cancel given the drift. For `cancel`: whether the parent thesis is intact with a different execution path, or whether the order's cancellation reflects a thesis status change that is also captured in the per-position assessment
+- **Drift rationale:** how conditions have shifted since placement — signals bearing on fill probability or thesis-justification
+- **Action rationale:** why maintain / modify / cancel given drift. For `cancel`: whether the parent thesis is intact with a different execution path, or whether the cancellation reflects a thesis status change captured in the per-position assessment
 
 ### Treatment of aged orders and fill-probability drift
 
-The principal failure mode with pending orders is neglect — an order placed a day ago on conditions that no longer apply gets passively extended because no one explicitly re-examined it. The strategist's review is the defense.
+The principal failure mode is neglect — an order placed a day ago on conditions that no longer apply gets passively extended.
 
-- **Aged orders without a current fill-probability assessment are the pattern to avoid.** Every pending order in the strategist's context carries `order_age_hours`. When the age meaningfully exceeds the parent thesis's time-scale (entry orders aged beyond the entry window's implied decay, bracket legs where the underlying has drifted well away from the trigger level without triggering), the default read is `cancel` unless the current invocation's signals specifically support maintaining.
-- **Fill-probability drift.** A `likely_soon` at placement becomes `unlikely` when the underlying has moved — the order is now either stale at its original price (the thesis's entry was priced for a different level) or the thesis's urgency has changed. The strategist should re-assess fill probability against current conditions, not against conditions at placement.
-- **Bracket legs on positions whose status has changed.** If the parent position's status has moved to `at-risk` or `invalidated`, the bracket legs' rationale at the time of entry may no longer apply. The strategist's assessment of bracket legs should be consistent with the per-position assessment — a bracket target on an `invalidated` position should be `cancel` (as part of the full close), not `maintain`.
+- **Aged orders without a current fill-probability assessment are the pattern to avoid.** When age meaningfully exceeds the parent thesis's time-scale (entries past the entry window's implied decay, bracket legs where the underlying has drifted well away without triggering), the default is `cancel` unless current signals specifically support maintaining.
+- **Fill-probability drift.** A `likely_soon` at placement becomes `unlikely` when the underlying has moved — the order is now stale at its original price or the thesis's urgency has changed. Re-assess against current conditions, not conditions at placement.
+- **Bracket legs on positions whose status has changed.** If the parent's status moved to `at-risk` or `invalidated`, the bracket leg's entry-time rationale may no longer apply. A bracket target on an `invalidated` position should be `cancel` (as part of full close), not `maintain`.
 
 ### Maintain / modify / cancel criteria
 
-- **maintain.** Conditions have not materially changed since placement; fill probability remains appropriate; parent thesis is intact at the order's implied level. The rationale must cite what has not changed — silent maintains on aged orders are the pattern to avoid.
-- **modify.** The thesis is intact but the order's parameters no longer reflect current conditions — the entry limit needs to move with the underlying, the time leg needs to extend for a publicly rescheduled catalyst, the target needs to pull in because partial realization has changed the remaining upside. Modifications have the same rationale burden as `adjust-bracket`: the new parameter must be paired with the old parameter and a cited signal (see [Default stance on bracket-widening and time-leg extension](#default-stance-on-bracket-widening-and-time-leg-extension)).
-- **cancel.** The order is no longer thesis-justified: the entry opportunity has passed (the entry-window decay has fully played out at an unfilled level), the parent thesis has invalidated, the parent position's classification has moved to a state where the order's rationale no longer applies, or fill probability has decayed to the point where capital reservation is not warranted. Cancellations are first-class actions, not defaults — the rationale should name the specific reason, not "the order is no longer relevant."
+- **maintain.** Conditions unchanged since placement; fill probability still appropriate; parent thesis intact at the order's implied level. Rationale must cite what has not changed — silent maintains on aged orders are the pattern to avoid.
+- **modify.** Thesis intact but parameters no longer reflect conditions — entry limit needs to move with the underlying, time leg extends for a publicly rescheduled catalyst, target pulls in because partial realization narrowed remaining upside. Same rationale burden as `adjust-bracket`: new parameter paired with old and cited signal (see [Default stance on bracket-widening and time-leg extension](#default-stance-on-bracket-widening-and-time-leg-extension)).
+- **cancel.** Order no longer thesis-justified: entry opportunity passed, parent thesis invalidated, parent classification moved beyond the order's rationale, or fill probability decayed to where capital reservation is not warranted. Cancellations are first-class actions — rationale names the specific reason, not "the order is no longer relevant."
 
-The PM applies its existing-position modification authority to the strategist's pending-order assessments (see [portfolio-manager.md scope](portfolio-manager.md#scope-of-pm-authority-for-existing-position-envelopes)): within-action parameter modifications and risk-reducing complementary commands (e.g., adding a cancel for a pending entry whose parent position has been recommended for close) are permitted; action replacement (maintain → cancel, cancel → modify) requires rejection, which carries the disagreement to the next invocation.
+The PM applies its existing-position modification authority to pending-order assessments (see [portfolio-manager.md scope](portfolio-manager.md#scope-of-pm-authority-for-existing-position-envelopes)): within-action parameter modifications and risk-reducing complementary commands are permitted; action replacement (maintain → cancel, cancel → modify) requires rejection, which carries the disagreement to the next invocation.
 
 ---
 
 ## Abandoned position actions from prior invocation
 
-ADD, ADJUST, CLOSE, and CANCEL commands approved by the PM in the prior invocation but abandoned at broker submission (per the Phase 2 write-path policy in [state-persistence.md](../05-execution-layer/state-persistence.md) and [broker-adapter.md](../05-execution-layer/broker-adapter.md)) are surfaced in the strategist's guardrail state header's `Abandoned position actions` block — see [state-delivery.md](../06-risk-guardrails/state-delivery.md#strategist-guardrail-state-header) for format and purpose.
+ADD, ADJUST, CLOSE, and CANCEL commands approved by the PM but abandoned at broker submission (per the Phase 2 write-path policy in [state-persistence.md](../05-execution-layer/state-persistence.md) and [broker-adapter.md](../05-execution-layer/broker-adapter.md)) are surfaced in the strategist's guardrail state header's `Abandoned position actions` block — see [state-delivery.md](../06-risk-guardrails/state-delivery.md#strategist-guardrail-state-header).
 
-Each entry is a prompt to re-evaluate the original intent on current position state and current market signals, not a retry obligation. If the intent is re-expressed, it flows through the normal assessment pipeline: a revived ADD/ADJUST/CLOSE produces a new per-position assessment (new `SA-n`) and a revived CANCEL produces a new pending-order assessment (new `SA-ORD-n`). The [Action decision logic](#action-decision-logic), [Add burden of proof](#add-burden-of-proof), and [Maintain / modify / cancel criteria](#maintain--modify--cancel-criteria) apply unchanged — prior PM approval does not reduce the rationale burden, and the new rationale must be grounded in current signals, not the prior invocation's.
+Each entry is a prompt to re-evaluate the original intent on current state and signals, not a retry obligation. A revived intent flows through the normal pipeline: a revived ADD/ADJUST/CLOSE produces a new per-position assessment (new `SA-n`); a revived CANCEL produces a new pending-order assessment (new `SA-ORD-n`). [Action decision logic](#action-decision-logic), [Add burden of proof](#add-burden-of-proof), and [Maintain / modify / cancel criteria](#maintain--modify--cancel-criteria) apply unchanged — prior PM approval does not reduce the rationale burden, and the new rationale must ground in current signals.
 
-**CLOSE abandonments warrant priority attention.** An intended risk-reducing exit that did not execute is the most operationally consequential abandonment — the position is still open, still exposed, and the reasons for wanting to close may have intensified. The strategist should prioritize re-evaluating abandoned CLOSEs and, when the thesis remains invalidated or risk-reducing urgency persists, produce a fresh assessment with `close` as the recommended action.
+**CLOSE abandonments warrant priority attention.** An intended risk-reducing exit that did not execute is the most operationally consequential abandonment — the position is still exposed, and the reasons for closing may have intensified. Prioritize re-evaluating abandoned CLOSEs and, when the thesis remains invalidated or risk-reducing urgency persists, produce a fresh `close` assessment.
 
-If current signals no longer support the original intent (e.g., the thesis has evolved, the breach cured on its own, a better alternative has emerged), the entry lapses; no "decline" artifact is required. The activity log already captures the abandonment.
+If current signals no longer support the original intent (thesis evolved, breach cured, better alternative emerged), the entry lapses; no "decline" artifact is required. The activity log captures the abandonment.
 
 ---
 
 ## Corporate-action-pending positions
 
-Positions flagged `corporate_action_adjustment_needed` had their bracket cancelled when a corporate action fired on the underlying — stock split, reverse split, stock dividend, cash dividend, merger, acquisition, or spin-off (see [orders-and-brackets.md § Corporate action handling](../05-execution-layer/orders-and-brackets.md#corporate-action-handling)). Every flagged position is a first-class assessment item and must receive an `adjust-bracket` or `close` recommendation. Hold without a fresh bracket is not permitted — every AlphaMind position requires a complete bracket, so a flagged position either gets one produced this invocation or is closed.
+Positions flagged `corporate_action_adjustment_needed` had their bracket cancelled when a corporate action fired on the underlying — split, reverse split, stock dividend, cash dividend, merger, acquisition, or spin-off (see [orders-and-brackets.md § Corporate action handling](../05-execution-layer/orders-and-brackets.md#corporate-action-handling)). Every flagged position must receive an `adjust-bracket` or `close` recommendation; hold without a fresh bracket is not permitted because every AlphaMind position requires a complete bracket.
 
 **Default actions by corporate action type:**
 
-- **Splits, reverse splits, stock dividends.** The thesis is economically unchanged; the position's share count and cost basis have been re-scaled by the OMS. Default to `adjust-bracket` with the prior bracket's parameters re-scaled to the new price basis. Reverse splits warrant additional scrutiny — they often signal distress — and the strategist should assess whether the thesis survives that signal before re-bracketing; if not, `close`.
-- **Cash dividends.** The thesis is unchanged. Default to `adjust-bracket` with the prior bracket parameters unchanged — absolute-price stops remain correct because the underlying's price moved by the dividend amount, not by the thesis level. Unusually large special distributions that function as recapitalizations warrant a fresh thesis review; default to `close` when the distribution materially changes the company's capital structure.
-- **Cash mergers and acquisitions.** The position has effectively liquidated at the deal price. Default to `close`.
-- **Stock mergers.** The position has converted to the acquirer's shares. The pre-merger thesis on the target does not apply to the acquirer. Default to `close` unless the strategist can articulate a fresh thesis on the acquirer grounded in current signals (in which case propose `adjust-bracket` with new parameters appropriate to the acquirer).
-- **Spin-offs.** The parent position's thesis may survive. Default to `adjust-bracket` at the parent's post-spin price basis. The spun-off child is a new position without a thesis; default to `close` unless the strategist proposes a fresh thesis on the child with appropriate bracket parameters.
+- **Splits, reverse splits, stock dividends.** Thesis economically unchanged; share count and cost basis re-scaled by the OMS. Default to `adjust-bracket` with prior parameters re-scaled to the new price basis. Reverse splits warrant additional scrutiny — they often signal distress — assess thesis survival before re-bracketing; if not, `close`.
+- **Cash dividends.** Thesis unchanged. Default to `adjust-bracket` with prior parameters unchanged — absolute-price stops remain correct because the underlying moved by the dividend amount, not by the thesis level. Unusually large special distributions that function as recapitalizations warrant a fresh thesis review; default to `close` when the distribution materially changes capital structure.
+- **Cash mergers and acquisitions.** Position has effectively liquidated at the deal price. Default to `close`.
+- **Stock mergers.** Position has converted to the acquirer's shares. The pre-merger thesis on the target does not apply to the acquirer. Default to `close` unless a fresh thesis on the acquirer is articulated (in which case `adjust-bracket` with new parameters).
+- **Spin-offs.** The parent's thesis may survive. Default to `adjust-bracket` at the parent's post-spin price basis. The spun-off child is a new position without a thesis; default to `close` unless a fresh thesis on the child is proposed with appropriate brackets.
 
-**Rationale requirements:** the rationale names the corporate action type and its ratio or amount, states the thesis disposition (unchanged / needs re-evaluation / invalidated), and for `adjust-bracket` provides the updated bracket parameters tied to current signals. Standard action rationale burden applies (see [Action decision logic](#action-decision-logic)) — corporate-action-triggered re-bracketing is not a reduced-ceremony path. The reverse-split and large-special-distribution cases especially require explicit thesis survival reasoning rather than mechanical re-bracketing.
+**Rationale requirements:** name the corporate action type and ratio/amount, state thesis disposition (unchanged / needs re-evaluation / invalidated), and for `adjust-bracket` provide updated parameters tied to current signals. Standard action rationale burden applies — corporate-action-triggered re-bracketing is not a reduced-ceremony path. Reverse-split and large-special-distribution cases especially require explicit thesis survival reasoning.
 
 ---
 
 ## Regime-transition remedy proposals
 
-When the strategist's guardrail state header flags [regime-transition breaches](../06-risk-guardrails/regime-adaptation.md#position-handling-when-tightening-creates-breaches) or market-movement breaches on existing positions, the strategist is the agent responsible for proposing specific remedies. The strategist's position-level thesis context — target proximity, conviction, catalyst timing — makes it the right agent to decide *which* positions to reduce; the PM handles the cross-constraint validation and final execution decisions.
+When the guardrail state header flags [regime-transition breaches](../06-risk-guardrails/regime-adaptation.md#position-handling-when-tightening-creates-breaches) or market-movement breaches on existing positions, the strategist proposes specific remedies. Position-level thesis context — target proximity, conviction, catalyst timing — makes the strategist the right agent to decide *which* positions to reduce; the PM handles cross-constraint validation and final execution.
 
 ### Format: integrated into per-position assessments
 
-Remedies are not a separate output section. Each flagged breaching position receives a normal per-position assessment whose `recommended_action` is the remedy (`reduce`, `close`, or `hold`), with the `remedy_flag` field set to the breach identifier from the guardrail state header (e.g., `BREACH-1`) and `remedy_rationale` explaining why this action is the right response given the thesis state.
+Remedies are not a separate section. Each flagged position receives a normal per-position assessment whose `recommended_action` is the remedy (`reduce`, `close`, or `hold`), with `remedy_flag` set to the breach identifier (e.g., `BREACH-1`) and `remedy_rationale` explaining why this action is the right response given the thesis state.
 
-This keeps the output model uniform — the PM evaluates every assessment through the same action-warrant / action-status / action-specific / portfolio-coherence rubric — while making remedies traceable to the breaches they address. The [portfolio-level observations](#per-position-assessment--structured-fields) section carries a `regime_transition_summary` listing which flagged breaches are addressed and which remain uncured with rationale.
+This keeps the output uniform — the PM evaluates every assessment through the same action-warrant / action-status / action-specific / portfolio-coherence rubric — while making remedies traceable to breaches. The [portfolio-level observations](#per-position-assessment--structured-fields) section carries a `regime_transition_summary` listing addressed and uncured breaches with rationale.
 
 ### Remedy action selection
 
@@ -316,69 +314,69 @@ This keeps the output model uniform — the PM evaluates every assessment throug
 | `on-track` with meaningful remaining horizon | `reduce` to compliance — trim the minimum quantity required to cure the breach while preserving the strongest-thesis positions. A full close on `on-track` to cure a sector breach is over-response |
 | `stale` | `close` or `reduce` (the thesis has not confirmed within its window; the breach is a forcing function to act on the staleness) |
 
-These are defaults, not mechanical rules. The strategist's per-position context may support a different choice — e.g., an `on-track` position with an unusually strong thesis and an imminent catalyst may warrant a `hold-with-rationale` remedy even when a sibling position with a weaker thesis could be trimmed. The choice is explicit in the remedy rationale.
+These are defaults, not mechanical rules. Per-position context may support a different choice — e.g., an `on-track` position with an unusually strong thesis and imminent catalyst may warrant `hold-with-rationale` even when a weaker-thesis sibling could be trimmed. The choice is explicit in the remedy rationale.
 
 ### Remedy reduction quantity
 
 When the remedy is `reduce`, the quantity must be:
 
-- **Sufficient to cure the breach when combined with other per-position remedies addressing the same breach.** The aggregate of all remedies addressing a single breach should bring the breaching rule back into compliance — ideally to the 85% zone (below the critical threshold), not the 95% zone (one tick from re-breach).
-- **Validated via the guardrail validation tool.** The strategist calls `validate_guardrail` with `action: "CLOSE"` (or partial close) and the proposed quantity to confirm the cumulative effect of the remedy set curing the breach. Cumulative-impact tracking across the tool's calls within the invocation makes multi-position remedy validation deterministic.
+- **Sufficient to cure the breach** when combined with other remedies addressing the same breach. The aggregate should bring the breaching rule back to the 85% zone (below the critical threshold), not the 95% zone (one tick from re-breach).
+- **Validated via the guardrail validation tool.** Call `validate_guardrail` with `action: "CLOSE"` (or partial close) and the proposed quantity to confirm cumulative effect. Cumulative-impact tracking makes multi-position remedy validation deterministic.
 
 ### Interaction with per-position thesis status
 
-A remedy trim is an action, not a status classification. The thesis status for a remedy-flagged position is assigned on the same signal criteria as every other position — the breach is a reason to act, not a reason to reclassify. A `reduce` remedy on an `on-track` position is legitimate: the thesis is intact, the action is breach-driven not thesis-driven, and the action rationale should name the breach explicitly.
+A remedy trim is an action, not a status. Thesis status for a remedy-flagged position is assigned on the same signal criteria as every other position — the breach is a reason to act, not to reclassify. A `reduce` remedy on an `on-track` position is legitimate: the thesis is intact, the action is breach-driven, and the action rationale names the breach explicitly.
 
-Conversely, if the breach coincides with independent signals weakening the thesis, the status should move independently and the remedy should follow the new status's default. A breach on a position that was already moving to `at-risk` produces an `at-risk` assessment with a `reduce` or `close` remedy whose rationale spans both the thesis weakening and the breach overage.
+When a breach coincides with independent signals weakening the thesis, status moves independently and the remedy follows the new status's default. A breach on a position already moving to `at-risk` produces an `at-risk` assessment with a `reduce` or `close` remedy whose rationale spans both the thesis weakening and the breach overage.
 
 ### Guardrail validation requirements
 
-Remedy `reduce` and `close` actions on breaching positions require validation via the guardrail validation tool, for two reasons:
+Remedy `reduce` and `close` actions on breaching positions require validation, for two reasons:
 
-1. **Confirm the remedy cures the breach.** The tool's cumulative-impact tracking confirms the aggregate effect of the full remedy set on the breaching rule.
-2. **Detect secondary breaches.** A close on a short position that was providing directional balance could push net long exposure into its own breach; the tool surfaces this before the remedy reaches the PM. When a secondary breach is detected, the strategist's remedy rationale should name it explicitly so the PM's cross-constraint review doesn't discover it fresh.
+1. **Confirm the remedy cures the breach** — cumulative-impact tracking confirms the aggregate effect on the breaching rule.
+2. **Detect secondary breaches.** A close on a short providing directional balance could push net long exposure into its own breach; the tool surfaces this before reaching the PM. Name detected secondary breaches in the remedy rationale.
 
-`hold-with-rationale` remedies do not require validation (they don't change exposure). The PM's cross-constraint impact summary (see [state-delivery.md](../06-risk-guardrails/state-delivery.md#portfolio-manager-guardrail-state-header)) is how the PM sees the aggregate effect of the strategist's remedy set across the full rule surface.
+`hold-with-rationale` remedies do not require validation (no exposure change). The PM's cross-constraint impact summary (see [state-delivery.md](../06-risk-guardrails/state-delivery.md#portfolio-manager-guardrail-state-header)) shows the aggregate effect across the full rule surface.
 
 ---
 
 ## Halt mode and defensive-posture behavior
 
-The strategist operates in two modes, set by the guardrail state header: `normal` and `defensive_posture`. Mode switches are driven upstream by the execution layer's halt-mode logic and the continuous monitor's emergency-invocation trigger (see [state-delivery.md — halt-mode header modifications](../06-risk-guardrails/state-delivery.md#halt-mode-header-modifications) and [breach-behavior.md — drawdown halt mode](../06-risk-guardrails/breach-behavior.md#drawdown-halt-mode)). The strategist reads the mode from the header; it does not decide when to switch.
+The strategist operates in two modes set by the guardrail state header: `normal` and `defensive_posture`. Mode switches are driven upstream by the execution layer's halt-mode logic and the continuous monitor's emergency-invocation trigger (see [state-delivery.md](../06-risk-guardrails/state-delivery.md#halt-mode-header-modifications) and [breach-behavior.md](../06-risk-guardrails/breach-behavior.md#drawdown-halt-mode)). The strategist reads the mode; it does not decide when to switch.
 
 ### Defensive-posture mode
 
-Triggered when daily drawdown halt or cumulative drawdown tier 3 is active. The upstream pipeline continues running — distillation, research, synthesizer — so the strategist still receives a full synthesizer brief. The change is behavioral, not informational.
+Triggered when daily drawdown halt or cumulative drawdown tier 3 is active. The upstream pipeline continues running, so the strategist still receives a full synthesizer brief. The change is behavioral, not informational.
 
 **Behavioral shift:**
 
-- **Emphasis pivots from balanced position management to risk reduction.** Under `normal`, the output mix across `hold`, `reduce`, `close`, `adjust-bracket`, and `add` reflects the current state of the book. Under `defensive_posture`, the emphasis pivots: the strategist actively looks for deterioration signals, stop-tightening candidates, and positions whose risk/reward has weakened even modestly, and recommends correspondingly defensive actions.
-- **`add` is not permitted.** The action enum is restricted to `hold`, `reduce`, `close`, and `adjust-bracket`. The schema enforces this via a conditional on the mode field; the strategist should not produce an `add` action under defensive posture, and if a proposal that would be an `add` under `normal` is warranted on signal grounds, the strategist records it in the portfolio-level observations with a note that it is deferred until defensive posture lifts.
-- **Hold thresholds raise.** Under `normal`, a `hold` on `on-track` with stable signals is the default; under `defensive_posture`, the same position may warrant a complementary bracket tightening (adjust-bracket to pull the stop in) even on `on-track`, because the environment that triggered the halt is itself a signal that existing asymmetries have weakened. The adjustment rationale should name the halt as the specific new signal.
-- **Pending order review emphasis.** Under `defensive_posture`, pending entry orders are default-cancel candidates — they represent pre-halt commitments that the new market context may have rendered obsolete. The strategist should re-assess every pending entry and justify any `maintain` recommendation against the halt condition.
-- **Portfolio-level observations emphasize capital preservation.** Aggregate thesis-health commentary shifts from "what does the book look like" to "where is the book most exposed to further drawdown, and what is the orderly-reduction priority if the PM needs to cut further." This output is the primary input for the PM's defensive-posture decision-making.
+- **Emphasis pivots to risk reduction.** Actively look for deterioration signals, stop-tightening candidates, and positions whose risk/reward has weakened even modestly; recommend correspondingly defensive actions.
+- **`add` is not permitted.** Action enum restricted to `hold`, `reduce`, `close`, and `adjust-bracket` (schema-enforced via conditional on the mode field). If a signal-grounded add would be warranted under `normal`, record it in portfolio-level observations as deferred until defensive posture lifts.
+- **Hold thresholds raise.** A `hold` on `on-track` with stable signals may warrant complementary bracket tightening even on `on-track`, because the environment triggering the halt itself signals weakened asymmetries. The adjustment rationale names the halt as the new signal.
+- **Pending order review emphasis.** Pending entry orders are default-cancel candidates — they represent pre-halt commitments the new market context may have rendered obsolete. Re-assess every pending entry and justify any `maintain` against the halt condition.
+- **Portfolio-level observations emphasize capital preservation.** Commentary shifts from "what does the book look like" to "where is the book most exposed to further drawdown, and what is the orderly-reduction priority if the PM needs to cut further."
 
 ### Output mode flag and schema variant
 
-The output document's top-level `mode` field is set to `defensive_posture` in this mode (analogous to the analyst's `watchlist` mode). The schema enforces:
+The output document's top-level `mode` field is set to `defensive_posture` (analogous to the analyst's `watchlist` mode). The schema enforces:
 
-- `recommended_action` on per-position assessments restricted to `hold | reduce | close | adjust-bracket`
-- Pending order assessments permitted with the same structure as `normal` mode
-- Portfolio-level observations include a required `defensive_posture_summary` section — an explicit orderly-reduction priority list the PM can act on if further risk reduction is needed
+- `recommended_action` restricted to `hold | reduce | close | adjust-bracket`
+- Pending order assessments use the same structure as `normal`
+- Portfolio-level observations include a required `defensive_posture_summary` — an explicit orderly-reduction priority list
 
-Under `normal` mode these restrictions lift and the `add` action is available. The schema is a strict superset across modes — the mode controls which subset of the action enum and which required fields apply.
+The schema is a strict superset across modes — `mode` controls which subset of the action enum and which required fields apply.
 
 ### Emergency invocation handling
 
-Emergency invocations (continuous-monitor-triggered, see [breach-behavior.md](../06-risk-guardrails/breach-behavior.md#emergency-invocation-trigger)) are independent of halt mode — they indicate a sudden regime shift, multi-rule breach, drawdown velocity, or margin-call event that warrants immediate agent reasoning rather than waiting for the next scheduled invocation. Emergency invocations can co-occur with halt mode or with `normal` mode.
+Emergency invocations (continuous-monitor-triggered; see [breach-behavior.md](../06-risk-guardrails/breach-behavior.md#emergency-invocation-trigger)) are independent of halt mode — they indicate a sudden regime shift, multi-rule breach, drawdown velocity, or margin-call event warranting immediate reasoning rather than waiting for the next scheduled invocation. Emergency invocations can co-occur with halt mode or `normal` mode.
 
 When the guardrail header includes the `** EMERGENCY INVOCATION **` flag, the strategist:
 
-- **Prioritizes breach resolution.** Any regime-transition or market-movement breach flagged in the guardrail state header is addressed first — remedies for these breaches are the strategist's primary deliverable for the invocation, and the output should place the corresponding per-position assessments first.
-- **Re-examines adjacent positions.** The triggering event (regime jump, multi-rule breach, margin call) typically bears on more than the breaching position itself. The strategist should assess whether adjacent positions — same sector, same catalyst, same directional exposure — warrant status changes and defensive adjustments, even if they are not themselves in breach.
-- **Raises the bar for `hold` and defers discretionary recommendations.** New-information-driven adjustments to non-breaching positions that could wait for the next scheduled invocation should wait — the strategist's token budget is better spent on the urgent work.
+- **Prioritizes breach resolution.** Address flagged regime-transition or market-movement breaches first; place the corresponding per-position assessments first in the output.
+- **Re-examines adjacent positions.** The triggering event (regime jump, multi-rule breach, margin call) typically bears on more than the breaching position. Assess whether adjacent positions — same sector, catalyst, or directional exposure — warrant status changes and defensive adjustments.
+- **Raises the bar for `hold` and defers discretionary recommendations.** Non-urgent adjustments wait for the next scheduled invocation.
 
-If an emergency invocation fires while halt mode is active, both behaviors apply: the strategist operates under defensive-posture restrictions and prioritizes emergency breach resolution.
+If an emergency invocation fires while halt mode is active, both behaviors apply.
 
 ---
 

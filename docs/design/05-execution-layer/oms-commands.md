@@ -1,14 +1,14 @@
 # OMS commands
 
-The write API to the engine. Five commands: four core commands for position lifecycle and one sizing command for conviction-driven adjustments. Commands are issued primarily by the portfolio manager, and in limited cases by the engine itself (protective CLOSE commands triggered by guardrail breaches between invocations — see [command origins](#command-origins) below). All commands are wrapped in command envelopes that provide full traceability regardless of origin — PM-originated envelopes per [pm-envelope-schema.md](../04-decision-layer/pm-envelope-schema.md), engine-originated envelopes per [engine-envelope-schema.md](engine-envelope-schema.md). The formal JSON Schema for the command vocabulary itself is in [oms-command-schema.md](oms-command-schema.md).
+The write API to the engine. Five commands: four core commands for position lifecycle and one sizing command. Commands are issued primarily by the portfolio manager, and in limited cases by the engine itself (protective CLOSE commands triggered by guardrail breaches between invocations — see [command origins](#command-origins)). All commands are wrapped in envelopes for full traceability — PM-originated per [pm-envelope-schema.md](../04-decision-layer/pm-envelope-schema.md), engine-originated per [engine-envelope-schema.md](engine-envelope-schema.md). The formal JSON Schema is in [oms-command-schema.md](oms-command-schema.md).
 
-*Design principle — minimal effective vocabulary:* The command set must be expressive enough to handle every scenario the thesis-bracket architecture creates, but small enough that the portfolio manager (operating as an LLM in a fresh context window) can reliably select the right command and fill in the right parameters. Every parameter must be either directly available in the portfolio manager's context (portfolio state, synthesizer output, analyst recommendations) or derivable from it. If a command requires information the portfolio manager doesn't have, it will hallucinate values — that's a design failure, not an LLM failure.
+*Design principle — minimal effective vocabulary:* The command set must be expressive enough for every scenario the thesis-bracket architecture creates, but small enough that the PM (an LLM in a fresh context) can reliably select the right command and fill its parameters. Every parameter must be available in the PM's context or derivable from it. Information the PM doesn't have, it will hallucinate.
 
-*Design principle — intent-explicit commands:* Each command encodes a distinct intent — not just a mechanical action. CLOSE and ADD could theoretically be a single "resize" command with positive/negative quantities, but keeping them separate makes the activity log semantically rich: "portfolio manager closed 500 shares of NVDA because the thesis was invalidated" is a different decision than "portfolio manager added 200 shares of NVDA because conviction increased," even though both are position size changes. The thesis feedback loop benefits from this intent clarity.
+*Design principle — intent-explicit commands:* Each command encodes a distinct intent. CLOSE and ADD could be a single "resize" with signed quantities, but separating them makes the activity log semantically rich: "PM closed 500 NVDA because the thesis was invalidated" is a different decision than "PM added 200 NVDA because conviction increased." The feedback loop benefits from intent clarity.
 
-*Design principle—no accountability shortcuts:* Compound commands (ROLL, HEDGE) were considered and deliberately excluded. See [../design-decisions.md](../design-decisions.md) for the full rationale. The core concern: compound commands create cognitive shortcuts that allow LLM agents to avoid honest thesis evaluation. A ROLL command makes it easy to frame a thesis failure as a "continuation." A HEDGE command makes it easy to delay closing a losing position by "managing risk." Both patterns are common human trader failure modes, and LLM agents are at least as susceptible. The five-command vocabulary forces the portfolio manager to confront every exit as a CLOSE (with an explicit invalidation reason) and every entry as an OPEN (with a full independent thesis). Hedging and position replacement are fully expressible through CLOSE + OPEN sequences within a single invocation—the sequential processing model ensures capital accounting is correct.
+*Design principle — no accountability shortcuts:* Compound commands (ROLL, HEDGE) are deliberately excluded — see [../design-decisions.md](../design-decisions.md). Compound commands create cognitive shortcuts that let LLM agents avoid honest thesis evaluation: ROLL makes it easy to frame a thesis failure as a "continuation"; HEDGE makes it easy to delay closing a losing position by "managing risk." The five-command vocabulary forces the PM to confront every exit as a CLOSE (with an explicit invalidation reason) and every entry as an OPEN (with a full independent thesis). Hedging and position replacement are expressible through CLOSE + OPEN sequences within a single invocation; sequential processing keeps capital accounting correct.
 
-*Design principle — commands carry execution intent, not decision context:* OMS commands contain only the parameters the engine needs to execute. Decision context — which agent proposed the trade, what the PM's evaluation was, what parameters were modified and why — lives on the **command envelope** that wraps each command. The portfolio manager produces PM-originated envelopes; the continuous monitor produces engine-originated envelopes for guardrail breach responses (see [portfolio-manager.md](../04-decision-layer/portfolio-manager.md) for the full envelope specification). The activity log stores both the envelope (for the feedback loop) and the command execution results (for position state). This separation keeps the command contract lean and execution-focused while providing full traceability through the envelope.
+*Design principle — commands carry execution intent, not decision context:* Commands contain only the parameters the engine needs to execute. Decision context — which agent proposed the trade, the PM's evaluation, what was modified and why — lives on the **command envelope** wrapping each command (see [portfolio-manager.md](../04-decision-layer/portfolio-manager.md)). The activity log stores both the envelope (for the feedback loop) and the execution results (for position state).
 
 ---
 
@@ -28,38 +28,38 @@ The write API to the engine. Five commands: four core commands for position life
 
 ### OPEN
 
-Enter a new position. The most parameter-heavy command — creates a position, a thesis, a bracket, and submits the entry order. Every new position flows through OPEN, including hedges and position replacements — there is no special command for these patterns.
+Enter a new position. The most parameter-heavy command — creates a position, thesis, and bracket, and submits the entry order. Every new position flows through OPEN, including hedges and position replacements.
 
 **Required parameters:**
 
 - **Instrument:** ticker and direction (long/short) for equity; underlying, strike, expiration, type for options; full leg specification for strategies
-- **Entry order:** order type (market, limit, stop-limit) and price parameters. This becomes the entry leg of the bracket
-- **Position size:** quantity (shares or contracts) and equivalent dollar value — must be specified in both forms so the guardrail layer can validate against both quantity-based and dollar-based limits
-- **Target:** target price or P/L level and order type for the take-profit leg. Required
-- **Invalidation legs:** at least one hard invalidation (price-based stop or time-based expiration) plus any event-based invalidation conditions. Each leg specifies the condition and the order type for mechanical enforcement
+- **Entry order:** order type (market, limit, stop-limit) and price parameters — becomes the bracket's entry leg
+- **Position size:** quantity (shares or contracts) and equivalent dollar value — both forms required for guardrail validation against quantity-based and dollar-based limits
+- **Target:** target price or P/L level and order type for the take-profit leg
+- **Invalidation legs:** at least one hard invalidation (price-based stop or time-based expiration) plus any event-based conditions. Each leg specifies condition and order type for mechanical enforcement
 - **Thesis:** complete structured thesis with summary and mandatory components covering every bracket leg (see [thesis-model.md](thesis-model.md))
 
 **Guardrail validation:**
 
 - Position size within per-position limits
-- Sector concentration within limits after this addition
-- Gross and net exposure within limits after this addition
-- Sufficient capital (cash minus reserved capital for pending orders) to fund the position plus margin requirements
-- Thesis completeness: every bracket leg has a corresponding thesis component
-- For options and strategies: delta-adjusted exposure used for concentration and directional exposure checks, not notional. The guardrail layer computes delta (and full greeks) internally at validation time — the OPEN command does not include greeks as parameters. See "Greek computation at validation time" below
+- Sector concentration within limits after the addition
+- Gross and net exposure within limits after the addition
+- Sufficient capital (cash minus reserved for pending orders) to fund the position plus margin
+- Thesis completeness: every bracket leg has a corresponding component
+- For options and strategies: delta-adjusted exposure for concentration and directional exposure checks. Greeks are computed internally by the guardrail layer — not passed as parameters
 
 **Greek computation at validation time (options and strategies):**
 
-The guardrail layer computes greeks internally rather than accepting LLM-provided values, via the [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md). The OPEN command's instrument parameters (underlying, strike, expiration, contract type) are sufficient: the library sources underlying price from the real-time stream, IV from the data pipeline's surface, and time to expiration from the command, then applies the conservative delta buffer and per-leg aggregation per the library's contract.
+The guardrail layer computes greeks internally via the [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md) — the OPEN command's instrument parameters (underlying, strike, expiration, contract type) are sufficient. The library sources underlying price from the real-time stream, IV from the data pipeline's surface, and time to expiration from the command, then applies the conservative delta buffer and per-leg aggregation.
 
-The validation-time greeks serve double duty: they're used for the guardrail check, and they're persisted as the position's initial greeks (used until the first scheduled greek refresh from the continuous monitor after the entry fills).
+Validation-time greeks serve double duty: used for the guardrail check, and persisted as the position's initial greeks until the first scheduled refresh after the entry fills.
 
-**On success:** returns an order acknowledgment containing:
+**On success:** returns an order acknowledgment with:
 - New position ID and order ID
-- Position enters "pending" state — the bracket's protective legs are held in OTO (one-triggers-other) status, activating only when the entry fills
-- **Validation metadata** (for options and strategies): the computed greeks (delta, gamma, theta, vega) used in the guardrail check, the IV value used, the resulting delta-adjusted exposure, and the headroom remaining against each applicable limit. This metadata is logged in the activity log alongside the command, creating an audit trail of what the guardrail layer assumed at entry time
+- Position enters "pending" state — bracket's protective legs in OTO status, activating when the entry fills
+- **Validation metadata** (options/strategies): computed greeks (delta, gamma, theta, vega), IV used, resulting delta-adjusted exposure, headroom against each applicable limit. Logged in the activity log
 
-**On rejection:** returns a rejection payload synchronously to the portfolio manager within the same invocation, specifying which guardrail(s) blocked the command, the current limit values, the headroom available, and — for options — the computed greeks and delta-adjusted exposure that caused the rejection. The PM can immediately adjust (e.g., reduce contract count, choose a different strike with lower delta) and resubmit. See "Rejection handling" in the command processing model below. Logged in the activity log ([raw state 5b](../01-data-layer/internal/portfolio-state.md)).
+**On rejection:** returns synchronously to the PM within the same invocation: which guardrail(s) blocked, current limit values, headroom, and — for options — the computed greeks and delta-adjusted exposure that caused the rejection. The PM can adjust (reduce contracts, choose a strike with lower delta) and resubmit. See "Rejection handling" below. Logged in the activity log ([raw state 5b](../01-data-layer/internal/portfolio-state.md)).
 
 ---
 

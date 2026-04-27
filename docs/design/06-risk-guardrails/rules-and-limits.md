@@ -1,27 +1,27 @@
 # Rules & limits
 
-Concrete risk constraints enforced by the guardrail system. Each rule has a default value, a rationale grounded in the portfolio assumptions, and a specification of which enforcement layers check it.
+Concrete risk constraints. Each rule has a default value, a portfolio-grounded rationale, and an enforcement-layer specification.
 
-**Dual portfolio approach:** The system runs two parallel portfolios during paper trading to validate at both the deployment scale and the full-capability scale. All guardrail percentages apply identically to both; the differences are in which features are available and how many concurrent positions are practical. See [dual portfolio profiles](#dual-portfolio-profiles) for the full specification.
+**Dual portfolio approach:** Two parallel portfolios validate the system at deployment scale and full-capability scale. Guardrail percentages apply identically; differences are in available features and practical position counts. See [dual portfolio profiles](#dual-portfolio-profiles).
 
-- **Primary portfolio ($1,500):** Validates the strategy at real deployment capital. This is the confidence-building portfolio — if it's profitable here, you're ready to deploy real money.
-- **Full-system portfolio ($100,000):** Validates the complete system including options, multi-sector diversification, and full position counts. Proves the architecture works at scale.
+- **Primary portfolio ($1,500):** Validates strategy at real deployment capital — the confidence-building portfolio.
+- **Full-system portfolio ($100,000):** Validates complete system — options, multi-sector diversification, full position counts.
 
-**Risk philosophy:** Moderate — balance return capture with capital preservation. The system should be able to survive a bad week without existential damage, while still having enough freedom to act on high-conviction opportunities.
+**Risk philosophy:** Moderate — balance return capture with capital preservation. Survive a bad week without existential damage while retaining freedom for high-conviction opportunities.
 
 ---
 
 ## Enforcement tier model
 
-Every rule is checked at one or more of three enforcement tiers, each with a distinct enforcement style. The tiers are additive — a rule checked at the engine layer is also surfaced at higher layers as context. Between T1 and T2, the [proposal pre-processor](../04-decision-layer/proposal-pre-processor.md) adds deterministic cross-agent annotations (cumulative exposure impact, capital requirements) that catch breaches arising from the combined proposal set — see the [guardrails README](README.md) for the full multi-layer enforcement model.
+Every rule is checked at one or more of three additive tiers — a T3 rule is also surfaced at higher layers as context. Between T1 and T2, the [proposal pre-processor](../04-decision-layer/proposal-pre-processor.md) adds cross-agent annotations (cumulative exposure, capital requirements) catching breaches in the combined proposal set — see the [guardrails README](README.md).
 
 | Tier | Layer | Style | Meaning |
 |------|-------|-------|---------|
-| T1 | Analyst / Strategist | **Advisory** | Rule headroom is loaded into the agent's guardrail state header. The agent is expected to self-constrain and validate proposals against the [guardrail validation tool](state-delivery.md#guardrail-validation-tool). Not mechanically enforced at this layer — violations are caught downstream. |
-| T2 | Portfolio Manager | **Judgment-informed** | Rule headroom is surfaced alongside the pre-processor's cross-agent annotations. The PM validates its own modifications via the same guardrail validation tool. The PM can make sizing tradeoffs informed by headroom (e.g., approve a slightly larger position in a sector with room by sizing down elsewhere), but cannot override engine-authoritative limits. |
-| T3 | Engine | **Authoritative** | Deterministic check on every OMS command. Hard rejection — no override, no exception. This is the safety net that makes the system safe even if T1 and T2 both fail. Rejections are returned synchronously to the PM with per-rule detail and a suggested modification. |
+| T1 | Analyst / Strategist | **Advisory** | Headroom in state header. Agent self-constrains and validates against the [guardrail validation tool](state-delivery.md#guardrail-validation-tool). Violations caught downstream. |
+| T2 | Portfolio Manager | **Judgment-informed** | Headroom surfaced alongside pre-processor annotations. PM validates its own modifications via the same tool. Makes sizing tradeoffs but cannot override engine limits. |
+| T3 | Engine | **Authoritative** | Deterministic check on every OMS command. Hard rejection — no override. Safety net even if T1 and T2 fail. Rejections return synchronously with per-rule detail and suggested modification. |
 
-A rule's "enforcement tier" below means which tiers check it. All rules with a T3 designation are mechanically enforced; rules with only T1/T2 rely on agent judgment with validation tool support.
+A rule's "enforcement tier" below means which tiers check it. T3 rules are mechanically enforced; T1/T2-only rules rely on agent judgment with tool support.
 
 ---
 
@@ -37,9 +37,9 @@ A rule's "enforcement tier" below means which tiers check it. All rules with a T
 
 **Enforcement:** T1 + T2 + T3
 
-**Rationale:** Aligns with the top of the conviction scale's advisory sizing band (level 5: 3–5%). Even a total loss on a maximum-sized equity position costs 5% of portfolio — painful but not catastrophic. At 5%, the system can hold up to 20 positions at maximum size, though in practice most positions will be 1–3% (conviction levels 2–4). For options, "premium at risk" is the relevant measure for defined-risk instruments since the entire premium can be lost; this cap ensures no single options trade risks more than 5% of portfolio.
+**Rationale:** Aligns with the conviction scale's top sizing band (level 5: 3–5%). A total loss on a max-sized equity position costs 5% — painful but not catastrophic. At 5%, the system can hold up to 20 max-sized positions, though most will be 1–3% (conviction 2–4). "Premium at risk" applies to options since the entire premium can be lost.
 
-**What this means concretely:** At $100K, a max-size equity position is $5,000 (e.g., ~6 shares of NVDA at $850, ~13 shares of AVGO at $380). A max-size options position is $5,000 in premium (e.g., 5 contracts of a $10 option). Most positions at conviction levels 2–3 will be $1,000–3,000.
+**Concretely:** At $100K, max-size equity = $5,000 (~6 shares of NVDA at $850, ~13 of AVGO at $380). Max-size options = $5,000 premium (5 contracts of a $10 option). Conviction 2–3 positions land at $1,000–3,000.
 
 ### Position-level maximum loss
 
@@ -51,9 +51,9 @@ A rule's "enforcement tier" below means which tiers check it. All rules with a T
 
 **Enforcement:** T3 only (engine backstop)
 
-**Rationale:** This is the capital protection layer that complements thesis-based bracket stops. Bracket stops trigger on the underlying's price — they own thesis invalidation. This guardrail triggers on the position's P/L — it owns mechanical loss control. The separation matters most for options, where IV crush, theta decay, or gamma effects can erode value even when the underlying hasn't moved enough to trigger an underlying-price-based bracket stop.
+**Rationale:** Capital protection complementing thesis-based bracket stops. Bracket stops trigger on underlying price (thesis invalidation); this guardrail triggers on position P/L (mechanical loss control). Separation matters most for options, where IV crush, theta decay, or gamma effects erode value without an underlying move sufficient to trigger price-based stops.
 
-The 30% equity threshold is intentionally wider than most bracket stops (which are typically 5–15% of the underlying's price). This rule exists as a backstop for scenarios where bracket stops fail or gap through — not as the primary risk management mechanism. The 80% options threshold acknowledges that options are inherently higher-variance; an 80% loss on a $2,000 position is $1,600, which is survivable.
+The 30% equity threshold is wider than typical bracket stops (5–15% of underlying price) — this is a backstop for cases where bracket stops fail or gap through, not the primary mechanism. The 80% options threshold acknowledges higher options variance; an 80% loss on a $2,000 position is $1,600, survivable.
 
 ---
 
@@ -66,9 +66,9 @@ The 30% equity threshold is intentionally wider than most bracket stops (which a
 
 **Enforcement:** T1 + T2 + T3
 
-**Rationale:** Four sectors × 25% = 100% theoretical maximum, but the gross exposure limit (below) and practical position sizing keep actual utilization well below this. At 25%, a single sector can hold 5+ positions at typical sizing (3–5% each), providing room for the analyst to build a multi-thesis view within a sector while preventing the portfolio from becoming a single-sector bet. The semiconductor sector in particular generates clusters of correlated setups (supply chain linkages), making a meaningful cap important.
+**Rationale:** 4 sectors × 25% = 100% theoretical max, but the gross exposure limit and practical sizing keep actual utilization lower. At 25%, a sector holds 5+ positions at typical sizing (3–5% each), allowing multi-thesis sector views while preventing single-sector bets. Semiconductors in particular generate clusters of correlated setups (supply chain linkages).
 
-Delta-adjusted exposure is used rather than notional for sectors with heavy options usage. An OTM call with 0.3 delta contributes 30% of its notional value to sector concentration, not 100%. This prevents options positions from consuming disproportionate sector headroom while accurately reflecting actual directional risk.
+Delta-adjusted exposure is used rather than notional. An OTM call at 0.3 delta contributes 30% of notional, not 100% — preventing options from consuming disproportionate sector headroom while reflecting actual directional risk.
 
 ---
 

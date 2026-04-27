@@ -334,7 +334,11 @@ def collect_ipo_calendar(
 
 @with_retries(RetryShape.important, _sleep=lambda _: None)
 def _fetch_fda_calendar(sdk: finnhub.Client) -> list[dict]:
-    result = sdk.fda_calendar() or {}
+    # FDA endpoint returns a JSON array directly, unlike earnings/economic
+    # which wrap their list in a {"<name>Calendar": [...]} envelope.
+    result = sdk.fda_calendar() or []
+    if isinstance(result, list):
+        return result
     return result.get("fdaCalendar") or []
 
 

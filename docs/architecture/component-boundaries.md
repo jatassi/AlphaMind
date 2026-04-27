@@ -22,14 +22,7 @@ The **scheduler** is embedded in the pipeline process (in-process timer) or an O
 
 ### Why not a monolith (single process)?
 
-The pipeline and the continuous monitor have different runtime characteristics:
-
-- The pipeline is **episodic** — runs for 3-10 minutes, 8-10 times per day, then idles.
-- The monitor is **always-on** — must maintain websocket connections and evaluate triggers continuously.
-
-In a single process the pipeline's lifecycle is constrained by the monitor's need to stay alive (or vice versa). Separate processes let each run with the lifecycle that fits: the monitor starts at boot and runs indefinitely; the pipeline is invoked on schedule and exits cleanly.
-
-Separate processes also give independent failure modes: if the pipeline crashes mid-invocation, the monitor continues resolving orders. If the monitor restarts, the pipeline's next invocation still runs on schedule.
+Different runtime characteristics: the pipeline is **episodic** (3-10 minutes, 8-10x/day, then idles); the monitor is **always-on** (must maintain websocket connections and evaluate triggers continuously). In a single process each lifecycle constrains the other. Separate processes also give independent failure modes — if the pipeline crashes mid-invocation, the monitor continues resolving orders; if the monitor restarts, the pipeline's next invocation still runs on schedule.
 
 ### Why not more than two processes?
 
@@ -44,12 +37,7 @@ The entire system runs comfortably on one modest machine (4 cores, 8 GB RAM). Sp
 
 ### Why a shared database instead of IPC?
 
-The pipeline and monitor interact at well-defined, low-frequency boundaries:
-
-- Pipeline → monitor: new orders to watch (end of Phase 2, 8-10x/day)
-- Monitor → pipeline: fills since last time (start of Phase 1, 8-10x/day)
-
-A natural database pattern: write rows, read rows. No message queues, RPC, or shared memory. The database also provides durability — if either process restarts, the other's state is safe.
+The processes interact at well-defined, low-frequency boundaries: pipeline → monitor sends new orders to watch (end of Phase 2, 8-10x/day); monitor → pipeline sends fills since last time (start of Phase 1, 8-10x/day). A natural write-rows / read-rows database pattern — no message queues, RPC, or shared memory. The database also provides durability: if either process restarts, the other's state is safe.
 
 ---
 

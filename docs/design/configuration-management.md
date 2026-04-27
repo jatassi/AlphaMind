@@ -1,27 +1,27 @@
 # Configuration management
 
-All operator-tunable values live in YAML files under a single `config/` tree, with secrets in `.env`. The config surface is organized around four named bundles that already appear in existing design docs — **profile**, **regime**, **mode**, **overlay** — with a flat tail of independent knobs (scheduler, data sources, agents, venue, execution, guardrail metadata, LLM failure policy) that don't belong to any natural bundle. A resolver runs at invocation start, composes the active bundles, and produces a single resolved-config snapshot that agents and the engine consume for that invocation.
+All operator-tunable values live in YAML files under a single `config/` tree; secrets in `.env`. The surface organizes around four named bundles — **profile**, **regime**, **mode**, **overlay** — with a flat tail of independent knobs (scheduler, data sources, agents, venue, execution, guardrail metadata, LLM failure policy) that don't fit a natural bundle. A resolver runs at invocation start, composes the active bundles, and produces a resolved-config snapshot agents and the engine consume.
 
 ## Principles
 
-**YAML is the operator interface.** The only file format an operator edits is YAML. Pydantic models inside the loader provide typed access and parse-time validation.
+**YAML is the operator interface.** Operators edit YAML only. Pydantic models in the loader provide typed access and parse-time validation.
 
-**Cascade the named bundles, keep the tail flat.** Profile, regime, mode, and overlay are already named concepts in [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md), [regime-adaptation.md](06-risk-guardrails/regime-adaptation.md), and [state-delivery.md](06-risk-guardrails/state-delivery.md). Bundling correlated knobs under these names gives typo-proof composition and review surface.
+**Cascade the named bundles, keep the tail flat.** Profile, regime, mode, and overlay are named concepts in [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md), [regime-adaptation.md](06-risk-guardrails/regime-adaptation.md), and [state-delivery.md](06-risk-guardrails/state-delivery.md). Bundling correlated knobs under these names gives typo-proof composition and review surface.
 
-**Reload at invocation boundary.** Per [mid-pipeline-failure-handling.md](mid-pipeline-failure-handling.md)'s fresh-context principle, each invocation re-reads config at its start. Operator edits between invocations take effect at the next scheduled trigger.
+**Reload at invocation boundary.** Per [mid-pipeline-failure-handling.md](mid-pipeline-failure-handling.md)'s fresh-context principle, each invocation re-reads config at start. Operator edits land at the next trigger.
 
-**Secrets never live in YAML.** All API keys, OAuth tokens, and credentials resolve through `.env` at process start. Config files reference secrets by environment-variable name only.
+**Secrets never live in YAML.** API keys, OAuth tokens, and credentials resolve through `.env` at process start. YAML references secrets by environment-variable name only.
 
 ## Scope
 
 ### In config
-Values an operator adjusts between deployments or invocations: scheduler cron expressions, data-source registry entries (provider, tier, freshness SLA, rate limits, retry shape), agent model assignments, agent token budgets, agent latency budgets, prompt file paths, venue parameters (Alpaca URLs, session hours), execution behavior (greeks refresh cadence, delta buffer, paper-harness coefficients, submission retry window), the 17 guardrail rule definitions with per-profile base values and per-regime multipliers, feature flags per profile, mode behavioral contracts, overlay parameters, LLM failure retry policy.
+Values an operator adjusts between deployments or invocations: scheduler cron expressions, data-source registry (provider, tier, freshness SLA, rate limits, retry shape), agent model assignments, token and latency budgets, prompt file paths, venue parameters (Alpaca URLs, session hours), execution behavior (greeks refresh cadence, delta buffer, paper-harness coefficients, submission retry window), the 17 guardrail rule definitions with per-profile base values and per-regime multipliers, per-profile feature flags, mode behavioral contracts, overlay parameters, LLM failure retry policy.
 
 ### In code
-Contracts and decision trees that are authoritatively specified elsewhere and read from multiple callers: JSON Schema files for analyst, strategist, PM, OMS command, engine envelope, and the reference-ID taxonomy they define; the OMS command ID template `{invocation_id}.{envelope_id}.{command_ordinal}.{attempt_seq}` from [oms-command-ids.md](oms-command-ids.md); the breach-response decision tree (immediate-engine vs. deferred-to-PM) per rule from [breach-behavior.md](06-risk-guardrails/breach-behavior.md); composition-resolver logic; schema validation procedures; cascade-closure semantics.
+Contracts and decision trees specified authoritatively elsewhere and read from multiple callers: JSON Schemas for analyst, strategist, PM, OMS command, engine envelope, and the reference-ID taxonomy they define; the OMS command ID template `{invocation_id}.{envelope_id}.{command_ordinal}.{attempt_seq}` from [oms-command-ids.md](oms-command-ids.md); the per-rule breach-response decision tree (immediate-engine vs. deferred-to-PM) from [breach-behavior.md](06-risk-guardrails/breach-behavior.md); composition-resolver logic; schema validation; cascade-closure semantics.
 
-### Runtime state (not config, stored in the database or computed per invocation)
-Portfolio positions, open orders, activity log entries, thesis registry, per-ticker sentiment baselines, lead-lag timing estimates, rolling P/L windows, current volatility regime classification, halt/emergency state, calibration histories. These are data the system maintains, not knobs an operator sets.
+### Runtime state (database or per-invocation, not config)
+Portfolio positions, open orders, activity log, thesis registry, per-ticker sentiment baselines, lead-lag estimates, rolling P/L windows, current regime classification, halt/emergency state, calibration histories.
 
 ## File layout
 
@@ -211,7 +211,7 @@ emergency_invocation:
 ```
 
 ### `distillation.yaml`
-Distillation-layer thresholds and persistence windows. Universe-wide — does not compose with profile, regime, mode, or overlay. The resolver passes the section through to the distillation layer at invocation start. Full rationale per threshold and the cold-start bootstrap policy are in [02-distillation-layer/threshold-calibration.md](02-distillation-layer/threshold-calibration.md).
+Distillation-layer thresholds and persistence windows. Universe-wide — does not compose with profile, regime, mode, or overlay. Resolver passes the section through to the distillation layer at invocation start. Per-threshold rationale and cold-start bootstrap policy in [02-distillation-layer/threshold-calibration.md](02-distillation-layer/threshold-calibration.md).
 
 ```yaml
 anomaly_detection:
@@ -279,7 +279,7 @@ prediction_market:
 ```
 
 ### `assets.yaml`
-Per-sector ticker list and benchmark instruments scoping all external data collection. Universe-wide — does not compose with profile, regime, mode, or overlay. The validation procedure that gates ticker inclusion, the per-criterion data sources and thresholds, and the operator-driven re-evaluation cadence are in [asset-universe-validation.md](asset-universe-validation.md).
+Per-sector ticker list and benchmark instruments scoping all external data collection. Universe-wide — does not compose with profile, regime, mode, or overlay. Validation procedure, per-criterion data sources and thresholds, and re-evaluation cadence in [asset-universe-validation.md](asset-universe-validation.md).
 
 ```yaml
 last_full_validation: 2026-04-25
@@ -304,7 +304,7 @@ benchmarks:
 ```
 
 ### `profiles/medium.yaml`
-Per-profile file. Carries feature flags, active sectors, min position size, rule subset with base values, and token-budget ranges for the decision agents. Micro, small, large follow the same shape with their own values. The full set of per-profile rule values is authoritatively specified in [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md) and mirrored here.
+Per-profile file: feature flags, active sectors, min position size, rule subset with base values, decision-agent token-budget ranges. Micro, small, large follow the same shape. Full per-profile rule values are authoritative in [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md) and mirrored here.
 
 ```yaml
 capital_range_usd: [25000, 50000]
@@ -340,7 +340,7 @@ agent_token_budgets:
 ```
 
 ### `regimes/elevated.yaml`
-Per-regime multiplier table. Covers every rule present in every profile; rules absent from a profile (e.g., options rules at micro) are ignored at composition time.
+Per-regime multipliers. Covers every rule across all profiles; rules absent from a profile (e.g., options rules at micro) are ignored at composition.
 
 ```yaml
 vix_range: [22, 35]
@@ -368,7 +368,7 @@ transition:
 ```
 
 ### `modes/halt.yaml`
-Per-mode behavioral contract. Restricts action vocabulary, narrows guardrail state headers, raises hold thresholds. Not numeric multipliers — behavioral transforms.
+Per-mode behavioral contract — restricts action vocabulary, narrows guardrail state headers, raises hold thresholds. Behavioral transforms, not numeric multipliers.
 
 ```yaml
 analyst:

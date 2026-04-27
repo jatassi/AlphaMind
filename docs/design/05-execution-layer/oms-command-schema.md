@@ -1,13 +1,13 @@
 # OMS command schema
 
-Formal JSON Schema (Draft 2020-12) for the five OMS command types that make up the engine's write API. This is the machine-readable contract that corresponds to the prose field lists in [oms-commands.md](oms-commands.md). Every command submitted to the OMS — regardless of origin — must validate against this schema before it is processed.
+Formal JSON Schema (Draft 2020-12) for the five OMS command types that make up the engine's write API. Machine-readable counterpart to the prose field lists in [oms-commands.md](oms-commands.md). Every command submitted to the OMS — regardless of origin — must validate against this schema before processing.
 
 ## Scope
 
-- **Contract surface:** one OMS command record at a time. Commands compose into the `commands` array of an envelope. Two envelope schemas consume this one: [pm-envelope-schema.md](../04-decision-layer/pm-envelope-schema.md) for PM-originated envelopes (validated by the LLM output validator) and [engine-envelope-schema.md](engine-envelope-schema.md) for continuous-monitor-originated envelopes (validated by the OMS command intake layer). Each envelope schema references this schema for every entry in its `commands` array.
-- **LLM vs. infrastructure populated:** `command_id` is assigned by the OMS command intake layer at envelope receipt time from the envelope's structural position (see [oms-command-ids.md](../oms-command-ids.md)). The LLM never generates, reads, or reasons about command IDs — it produces envelopes with `command_id` absent, and infrastructure fills the field. The persisted command record always carries `command_id`; the LLM output validator checks PM envelopes with `command_id` omitted per the [PM envelope schema](../04-decision-layer/pm-envelope-schema.md). All other fields are produced by the command's originator (PM for PM-originated commands, continuous monitor for engine-originated).
-- **Command origins:** both PM-originated and engine-originated commands validate against this schema. Per-origin restrictions on the `risk_management_subtype` value for CLOSE commands live in the envelope schemas — [pm-envelope-schema.md](../04-decision-layer/pm-envelope-schema.md) and [engine-envelope-schema.md](engine-envelope-schema.md).
-- **Feature-flag interaction:** the schema is superset — it permits OPEN and ADD commands for options and strategies. The guardrail validation layer rejects commands whose instrument class is disabled by the active [portfolio profile](../06-risk-guardrails/rules-and-limits.md#dual-portfolio-profiles), with rejection reason `feature_disabled`.
+- **Contract surface:** one OMS command record. Commands compose into the `commands` array of an envelope. Two envelope schemas consume this one: [pm-envelope-schema.md](../04-decision-layer/pm-envelope-schema.md) (PM-originated, validated by the LLM output validator) and [engine-envelope-schema.md](engine-envelope-schema.md) (continuous-monitor-originated, validated by the OMS command intake layer).
+- **LLM vs. infrastructure populated:** `command_id` is assigned by the OMS command intake layer at envelope receipt from the envelope's structural position (see [oms-command-ids.md](../oms-command-ids.md)). The LLM produces envelopes with `command_id` absent; infrastructure fills the field. The persisted record always carries `command_id`; the LLM output validator checks PM envelopes with `command_id` omitted per the [PM envelope schema](../04-decision-layer/pm-envelope-schema.md). All other fields are produced by the command's originator.
+- **Command origins:** both PM-originated and engine-originated commands validate against this schema. Per-origin restrictions on the `risk_management_subtype` value for CLOSE commands live in the envelope schemas.
+- **Feature-flag interaction:** the schema is a superset — it permits OPEN and ADD for options and strategies. The guardrail validation layer rejects commands whose instrument class is disabled by the active [portfolio profile](../06-risk-guardrails/rules-and-limits.md#dual-portfolio-profiles), with rejection reason `feature_disabled`.
 
 ## Cross-references
 
@@ -584,31 +584,29 @@ Enum values and structural constraints trace back to these authoritative sources
 
 ## Notes on cross-field invariants
 
-Some invariants cannot be expressed cleanly in JSON Schema and must be enforced by the validation pipeline, the OMS command intake layer, or the guardrail layer:
+Invariants enforced by the validation pipeline, OMS command intake layer, or guardrail layer (not expressible in JSON Schema):
 
-- **Every bracket leg must have a corresponding thesis component** (mandatory coverage per [thesis-model.md](thesis-model.md#mandatory-coverage)). For OPEN: each `invalidation_legs[]` entry must have a matching `invalidation_rationale` component with a `linked_leg` value pointing to it, plus at least one `entry_rationale` component, plus one `target_rationale` component. For ADJUST: after the adjustment, every remaining bracket leg must still have a thesis component — either unchanged from the prior thesis or updated via `thesis_component_updates`. This is enforced by the OMS command intake layer at command receipt time.
+- **Every bracket leg must have a corresponding thesis component** (mandatory coverage per [thesis-model.md](thesis-model.md#mandatory-coverage)). For OPEN: each `invalidation_legs[]` entry must have a matching `invalidation_rationale` component with a `linked_leg` pointing to it, plus at least one `entry_rationale` component and one `target_rationale` component. For ADJUST: after adjustment, every remaining bracket leg must still have a thesis component — unchanged from prior or updated via `thesis_component_updates`. Enforced at command receipt.
 
-- **`position_id` must reference an open position** in the portfolio state at command submission time. Applies to `close_command`, `adjust_command`, and `add_command`. Enforced by the OMS command intake layer.
+- **`position_id` must reference an open position** in the portfolio state at submission time. Applies to `close_command`, `adjust_command`, `add_command`.
 
-- **`order_id` must reference an order in a cancellable state** (pending, not filled or expired). Applies to `cancel_command`. Enforced by the OMS command intake layer.
+- **`order_id` must reference an order in a cancellable state** (pending, not filled or expired). Applies to `cancel_command`.
 
-- **Per-origin `risk_management_subtype` on CLOSE commands.** Engine-originated CLOSE commands use `risk_management_subtype: engine_guardrail` per [engine-envelope-schema.md](engine-envelope-schema.md); PM-originated CLOSE commands with `close_rationale_type: risk_management` use `risk_management_subtype: pm_directed` per [pm-envelope-schema.md](../04-decision-layer/pm-envelope-schema.md).
+- **Per-origin `risk_management_subtype` on CLOSE commands.** Engine-originated uses `engine_guardrail` per [engine-envelope-schema.md](engine-envelope-schema.md); PM-originated uses `pm_directed` per [pm-envelope-schema.md](../04-decision-layer/pm-envelope-schema.md).
 
-- **`instrument.asset_type` must be permitted by the active portfolio profile.** Enforced by the guardrail validation layer (returns rejection with reason `feature_disabled` for options or shorts on the primary portfolio).
+- **`instrument.asset_type` must be permitted by the active portfolio profile.** Guardrail validation returns `feature_disabled` for options or shorts on the primary portfolio.
 
-- **`command_id` format depends on origin.** PM-originated and engine-originated command IDs use distinct patterns ([oms-command-ids.md](../oms-command-ids.md)). The schema's `oneOf` on `command_id` captures both patterns; the envelope's source_provenance determines which pattern applies to its commands.
+- **`command_id` format depends on origin.** PM-originated and engine-originated use distinct patterns ([oms-command-ids.md](../oms-command-ids.md)); the envelope's source_provenance determines which applies.
 
-- **`attempt_seq` in PM-originated command IDs corresponds to post-rejection modification count.** Enforced at ID derivation time by the OMS command intake layer per [oms-command-ids.md §attempt_seq computation](../oms-command-ids.md#attempt_seq-computation). A mismatch between the envelope's post-rejection modification count and the command_id's `attempt_seq` segment is a structural error.
+- **`attempt_seq` in PM-originated command IDs corresponds to post-rejection modification count.** Enforced at ID derivation per [oms-command-ids.md §attempt_seq computation](../oms-command-ids.md#attempt_seq-computation).
 
-- **Thesis component `linked_leg` values must reference actual legs that exist in the command's bracket.** For OPEN: `linked_leg: price_stop` requires a price-type `invalidation_legs[]` entry to exist in the same command; `linked_leg: time_expiration` requires a time-type entry; `linked_leg: event_invalidation` requires an event-type entry; `linked_leg: strategy_leg_<n>` requires the `n`-th leg to exist on a strategy instrument. Enforced by the OMS command intake layer.
+- **Thesis component `linked_leg` values must reference actual legs in the command's bracket.** `linked_leg: price_stop` requires a price-type `invalidation_legs[]` entry; `time_expiration` a time-type entry; `event_invalidation` an event-type entry; `strategy_leg_<n>` requires the `n`-th leg to exist on a strategy instrument.
 
 ---
 
 ## Evolution
 
-When OMS command semantics change — a new command type, a new required parameter, a new close rationale category — they are added here first. This schema is the authoritative contract; prose updates in [oms-commands.md](oms-commands.md) follow.
-
-The discriminated-union shape (one `command_type` per variant with a `oneOf` over variants) is load-bearing for the validator: downstream consumers branch on `command_type` and every variant must carry its full set of required fields. Adding a new command type requires adding a new `$defs` entry and extending the top-level `oneOf`.
+New command types, required parameters, or close rationale categories land here first; prose in [oms-commands.md](oms-commands.md) follows. The discriminated-union shape (one `command_type` per variant with a `oneOf` over variants) is load-bearing — downstream consumers branch on `command_type` and every variant carries its full required set. Adding a command type requires a new `$defs` entry and extending the top-level `oneOf`.
 
 ---
 

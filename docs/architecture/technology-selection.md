@@ -8,8 +8,8 @@ Consolidated dependency list and version constraints. Each choice traces to a de
 
 | Item | Selection | Notes |
 |------|-----------|-------|
-| Python version | 3.13+ | Free-threaded build option, PEP 695 generic syntax, improved error messages, task groups in asyncio |
-| Package manager | uv | Fast, modern, replaces pip + pip-tools + virtualenv |
+| Python version | 3.13+ | Free-threaded build option, PEP 695 generics, improved error messages, asyncio task groups |
+| Package manager | uv | Replaces pip + pip-tools + virtualenv |
 
 ---
 
@@ -21,7 +21,7 @@ Consolidated dependency list and version constraints. Each choice traces to a de
 |---------|---------|----------------------|
 | `claude-agent-sdk` | Agent orchestration, tool-use loops, MCP tool registration | [LLM integration](llm-integration.md) |
 
-Authentication via `CLAUDE_CODE_OAUTH_TOKEN` (Claude Max subscription). No `anthropic` SDK needed directly — the Agent SDK wraps it.
+Authentication via `CLAUDE_CODE_OAUTH_TOKEN` (Claude Max subscription). The Agent SDK wraps `anthropic`; no direct dependency needed.
 
 ### Database
 
@@ -30,7 +30,7 @@ Authentication via `CLAUDE_CODE_OAUTH_TOKEN` (Claude Max subscription). No `anth
 | `sqlalchemy` (2.0+) | ORM for portfolio state, Core for bulk data I/O | [Data and state](data-and-state.md) |
 | `alembic` | Schema migrations | [Data and state](data-and-state.md) |
 
-SQLite is the database engine (Python stdlib `sqlite3`). No additional DB driver needed.
+SQLite is the database engine (Python stdlib `sqlite3`); no additional driver needed.
 
 ### Configuration
 
@@ -61,7 +61,7 @@ SQLite is the database engine (Python stdlib `sqlite3`). No additional DB driver
 | `pandas` | Time-series manipulation, trailing window operations | [System characterization](system-characterization.md) |
 | `ta-lib` (via `TA-Lib` Python wrapper) | Technical indicators (RSI, MACD, Bollinger, etc.) | [System characterization](system-characterization.md) |
 
-**Note on TA-Lib:** Requires the C library `ta-lib` to be installed on the system (`brew install ta-lib` on macOS). The Python package `TA-Lib` is a thin wrapper. If TA-Lib installation proves problematic, `pandas-ta` is a pure-Python fallback with the same indicators — slower but no C dependency.
+**Note on TA-Lib:** Requires the C library `ta-lib` (`brew install ta-lib` on macOS); the Python package is a thin wrapper. If installation proves problematic, `pandas-ta` is a pure-Python fallback with the same indicators — slower but no C dependency.
 
 ### Market calendar
 
@@ -69,7 +69,7 @@ SQLite is the database engine (Python stdlib `sqlite3`). No additional DB driver
 |---------|---------|----------------------|
 | `exchange-calendars` | NYSE trading day detection, holiday schedules | [Infrastructure](infrastructure.md) |
 
-Used by the scheduler to skip market holidays and adjust cadence for weekends.
+Used by the scheduler to skip market holidays and adjust weekend cadence.
 
 ---
 
@@ -83,7 +83,7 @@ Used by the scheduler to skip market holidays and adjust cadence for weekends.
 | Finnhub | Free | $0 | Analyst recommendations, earnings calendar, company news |
 | FINRA | Free | $0 | Short volume, ATS (dark pool) weekly data |
 
-Additional qualitative data sources (news APIs, sentiment, prediction markets) are TBD — dependent on specific vendor selection during implementation. The data layer's adapter pattern means each source is an independent integration.
+Additional qualitative data sources (news APIs, sentiment, prediction markets) are TBD pending vendor selection. The data layer's adapter pattern keeps each source an independent integration.
 
 ---
 

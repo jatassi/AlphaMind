@@ -14,8 +14,6 @@ It is **not** a low-latency trading system, a streaming data pipeline, or a micr
 
 ## Four runtime profiles
 
-Four distinct runtime profiles coexist, each with different computational characteristics:
-
 ### 1. The pipeline (batch, scheduled, 8-10x/day)
 
 The core loop. Triggered on schedule, runs sequentially through 5 layers. Each invocation is a single pass — no long-lived state within a run, no loops spanning invocations.
@@ -56,7 +54,7 @@ External data collection across 12+ quantitative and 6+ qualitative data categor
 
 ## Six architectural concerns
 
-These cut across the runtime profiles:
+These cut across the runtime profiles.
 
 ### A. Pipeline orchestration
 

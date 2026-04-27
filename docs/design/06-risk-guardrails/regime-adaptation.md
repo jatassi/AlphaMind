@@ -86,62 +86,60 @@ Every transition is logged as a risk/guardrail activity log event with previous 
 
 ## Position handling when tightening creates breaches
 
-The critical interaction: a position opened at 5% of portfolio (normal regime, within limits) is immediately in breach when the regime shifts to elevated (3.5% limit). This is an expected scenario, not an edge case — every tightening transition potentially creates breaches in existing positions.
+A position opened at 5% (normal regime, compliant) is immediately in breach when the regime shifts to elevated (3.5% limit). Every tightening transition potentially creates breaches in existing positions.
 
 ### Classification: deferred, not immediate
 
-Regime-transition breaches on existing positions are **deferred to the strategist and PM** at the next invocation, not immediately actioned by the engine. The **strategist proposes remedies** (which positions to trim, close, or hold) based on thesis strength and constraint proximity; the **PM reviews, adjusts if necessary, and executes** via command envelopes. The reasoning:
+Regime-transition breaches on existing positions are **deferred to the strategist and PM** at the next invocation. The **strategist proposes remedies** (trim, close, or hold) based on thesis strength and constraint proximity; the **PM reviews, adjusts, and executes** via command envelopes. Reasoning:
 
-1. **The positions are pre-existing and were compliant when opened.** The breach is caused by the regime change, not by a new action. Mechanical forced reduction on a position that was legally sized at entry is disorienting and potentially value-destroying.
-2. **The strategist has thesis-level context the engine doesn't.** A position at 4.5% of portfolio that's 90% of the way to its target is a different situation than one at 4.5% that's moving against the thesis. The strategist — which maintains ongoing position assessments — is best placed to propose which positions to trim and which to hold through the tighter regime.
-3. **Multiple positions may breach simultaneously.** A regime shift from normal to elevated could put 3–4 positions into breach. The strategist should propose a coordinated resolution as a package — trimming some, closing others, recommending holds on the highest-conviction positions — rather than the PM reasoning through each breach independently.
-4. **The PM provides the execution judgment layer.** The PM may accept the strategist's recommendations as-is, adjust sizing, reorder priority, or override a recommendation based on cross-constraint interactions the strategist doesn't fully see (e.g., trimming position A to cure a sector breach would create a directional exposure breach).
+1. **Positions were compliant when opened.** The breach is caused by regime change, not a new action. Mechanical forced reduction on an entry-time-compliant position is disorienting and potentially value-destroying.
+2. **The strategist has thesis-level context the engine doesn't.** A position 90% of the way to its target is different from one moving against thesis; the strategist's ongoing position assessments are best placed to propose which to trim.
+3. **Multiple simultaneous breaches.** A normal → elevated shift could put 3–4 positions in breach. The strategist proposes a coordinated package rather than the PM reasoning through each breach independently.
+4. **PM execution judgment.** The PM may accept, adjust, reorder, or override based on cross-constraint interactions the strategist doesn't fully see (e.g., trimming A to cure a sector breach would create a directional breach).
 
 ### Exception: drawdown-related tightening
 
-If a regime transition coincides with a drawdown limit breach (which it often will — volatility spikes cause drawdowns), the drawdown breach response takes precedence. The engine handles the drawdown breach per its classification (immediate action), and the strategist and PM handle the regime-transition exposure breaches at the next invocation (strategist proposes remedies, PM reviews and executes).
+If a regime transition coincides with a drawdown breach (often the case — vol spikes cause drawdowns), the drawdown response takes precedence. Engine handles drawdown immediately; strategist and PM handle regime-transition exposure breaches at the next invocation.
 
 ### Strategist and PM context for regime-transition breaches
 
-When guardrail state headers are generated after a regime tightening, any positions that now breach the tighter limits are flagged with:
+After tightening, breaching positions are flagged in state headers with:
 
 - **Breach type:** `regime_transition`
 - **Rule breached and overage:** e.g., "position NVDA at 4.5% of portfolio, elevated regime limit 3.5%, overage 1.0%"
 - **Aggregate impact:** total portfolio overage across all regime-transition breaches
 
-**Strategist responsibility:** The strategist sees these breaches in its guardrail state header alongside its ongoing position assessments. For each breaching position, the strategist proposes a remedy action — trim to compliance (with specific quantity), close entirely, or hold with documented thesis rationale. The strategist's recommendations are informed by thesis strength, target proximity, and position-level risk/reward — context the PM doesn't have at the same depth.
+**Strategist responsibility:** For each breaching position, propose a remedy — trim to compliance (with quantity), close, or hold with documented thesis rationale. Recommendations are informed by thesis strength, target proximity, and position-level risk/reward.
 
-**PM responsibility:** The PM receives the strategist's remedy proposals alongside the breach data. The PM reviews each proposal, validates it against cross-constraint interactions (e.g., would trimming this position create a secondary breach?), adjusts sizing or priority as needed, and executes via command envelopes. The PM may also override a strategist recommendation — for example, closing a position the strategist recommended holding if the cross-constraint picture demands it.
-
-The PM is expected to address these breaches within the invocation — either executing the strategist's recommended trims/closes, or documenting a specific rationale for holding (e.g., "position is within 2% of target price, will resolve within 4 hours, holding through the regime transition"). Documented hold rationale is logged in the command envelope for the feedback loop.
+**PM responsibility:** Reviews each proposal, validates cross-constraint interactions, adjusts sizing or priority, and executes via command envelopes. May override (e.g., close a position the strategist recommended holding if cross-constraint picture demands it). The PM addresses breaches within the invocation — executing trims/closes, or documenting hold rationale (e.g., "within 2% of target, holding through the transition") in the command envelope for the feedback loop.
 
 ### No forced curing deadline
 
-There is no mechanical deadline by which regime-transition breaches must be cured. The PM is expected to address them promptly, but the engine does not escalate to forced reduction if the PM holds a breaching position for an additional invocation. The rationale: the PM's judgment about whether to trim a winning position in a volatile market is exactly the kind of decision the system is designed to support, not override.
+No mechanical deadline for cure. The PM is expected to address breaches promptly, but the engine doesn't escalate to forced reduction if the PM holds for another invocation. The PM's judgment on trimming a winning position in volatile markets is the kind of decision the system supports, not overrides.
 
-However: if a regime-transition breach position subsequently triggers a different immediate-action rule (e.g., position-level max loss), the engine acts on that rule as normal. The regime-transition deferral applies only to the regime-specific exposure breach, not to other rules.
+If a regime-transition-breach position triggers a different immediate-action rule (e.g., position-level max loss), the engine acts on that rule normally. The deferral applies only to the regime-specific exposure breach.
 
 ---
 
 ## Override conditions
 
-Two categories of market events can temporarily modify the active parameter set beyond what regime classification dictates:
+Two categories temporarily modify the active parameter set beyond regime classification:
 
 ### Scheduled high-impact events
 
-On days with known high-impact catalysts — FOMC rate decisions, CPI/PPI releases, major earnings clusters — the system applies a **pre-event tightening overlay** regardless of the current volatility regime:
+On days with known catalysts (FOMC, CPI/PPI, major earnings clusters), a **pre-event tightening overlay** applies regardless of current regime:
 
-- Max position size: reduced by 20% from active regime value for the 2 invocations preceding the event
-- Pending order review: the PM receives a prompt to review all pending orders for sensitivity to the upcoming event
+- Max position size: reduced 20% from active regime value for the 2 invocations preceding the event
+- Pending order review: PM prompted to review all pending orders for event sensitivity
 - No new positions in the final invocation before the event (PM may override with documented rationale)
 
-The overlay lifts at the first invocation after the event, unless the event triggered a regime transition (in which case the regime-adaptive values apply).
+Overlay lifts at the first invocation after the event, unless the event triggered a regime transition (regime-adaptive values then apply).
 
-**Implementation:** The pipeline schedule includes a catalog of known event dates (FOMC schedule, economic calendar). The catalog is updated quarterly. The overlay is applied mechanically based on the calendar, not based on market conditions.
+**Implementation:** Pipeline schedule includes a catalog of known event dates (FOMC, economic calendar), updated quarterly. Overlay applies mechanically by calendar, not by market conditions.
 
 ### Distillation layer anomaly alerts
 
-If the distillation layer's funding stress composite or market-wide liquidity score breach their alert thresholds (defined in [external.md](../02-distillation-layer/external.md)), the system applies a **stress overlay** that tightens the active parameter set by an additional 15% on exposure-related limits (sector concentration, directional exposure, gross exposure) for the duration of the alert condition. This catches stress conditions that haven't yet manifested as VIX-level regime changes but are visible in credit spreads, funding markets, or liquidity drying up.
+If funding stress composite or market-wide liquidity score breach alert thresholds (defined in [external.md](../02-distillation-layer/external.md)), a **stress overlay** tightens exposure-related limits (sector concentration, directional exposure, gross exposure) by an additional 15% for the alert duration. Catches stress visible in credit spreads, funding, or liquidity before it manifests as a VIX-level regime change.
 
 ---
 

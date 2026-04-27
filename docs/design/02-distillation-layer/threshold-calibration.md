@@ -142,56 +142,54 @@ These are the lookback windows that drive Class B rolling state.
 
 ## Bootstrap policy
 
-The distillation layer must produce outputs from day one, before per-ticker rolling state has accumulated. Two facts force the policy:
+The layer must produce outputs from day one, before per-ticker rolling state has accumulated. Two facts force the policy:
 
-1. The per-ticker baseline windows above are 20–252 days. Waiting for full calibration before producing distillation output would block paper trading for a year on the gap-fill baseline alone.
-2. Decisions built on stale or missing data are worse than decisions skipped — the same fail-closed principle from [api-failure-handling.md § Design principle](../01-data-layer/api-failure-handling.md#design-principle--no-degraded-decisions).
+1. Baseline windows above are 20–252 days. Waiting for full calibration would block paper trading for a year on the gap-fill baseline alone.
+2. Decisions built on stale or missing data are worse than decisions skipped — fail-closed per [api-failure-handling.md § Design principle](../01-data-layer/api-failure-handling.md#design-principle--no-degraded-decisions).
 
-These pull in opposite directions. The resolution: produce outputs with **explicit confidence tagging**, fall back to **cross-sectional priors** when per-ticker data is insufficient, and let downstream consumers weight accordingly. This mirrors the existing convention — domain researcher briefs already carry a `Signal quality: HIGH | MODERATE | LOW | DEGRADED` flag with a reason, and adaptive-research tool outputs carry `quality: complete | partial | stale | unavailable`.
+Resolution: produce outputs with **explicit confidence tagging**, fall back to **cross-sectional priors** when per-ticker data is insufficient, let downstream consumers weight accordingly. Mirrors the `Signal quality: HIGH | MODERATE | LOW | DEGRADED` flag on domain-researcher briefs and the `quality: complete | partial | stale | unavailable` flag on adaptive-research tool outputs.
 
 ### Per-output tagging
 
-Each distillation output block includes a `calibration_state` field with one of three values:
+Each distillation output block carries a `calibration_state` field:
 
 | Value | Meaning |
 |---|---|
-| `calibrated` | All inputs to this output have reached their `_min_observations` thresholds. The output is produced from per-ticker / per-pair / per-contract rolling state. |
-| `bootstrap` | At least one input is below its observation minimum. The output is produced using a cross-sectional pooled fallback. Specific missing inputs are listed in the block's `bootstrap_reason` field. |
-| `unavailable` | The fallback itself cannot be computed (e.g., no universe-wide gap-fill events yet). The output is omitted; downstream consumers see no signal rather than a misleading one. |
+| `calibrated` | All inputs reached their `_min_observations` thresholds. Output is produced from per-ticker / per-pair / per-contract rolling state. |
+| `bootstrap` | At least one input is below its observation minimum. Output uses a cross-sectional pooled fallback; missing inputs listed in the block's `bootstrap_reason` field. |
+| `unavailable` | The fallback itself cannot be computed (e.g., no universe-wide gap-fill events yet). Output is omitted; downstream consumers see no signal rather than a misleading one. |
 
-Anomaly detections, regime classifications, and lead-lag flags carry the tag. Per-ticker sentiment percentiles, gap-fill rates, and extended-hours confirmation rates are the most likely to surface in `bootstrap` state during the first months of operation.
+Anomaly detections, regime classifications, and lead-lag flags carry the tag. Per-ticker sentiment percentiles, gap-fill rates, and extended-hours confirmation rates are most likely to surface in `bootstrap` state during the first months.
 
 ### Cross-sectional priors
 
-When per-ticker rolling state is insufficient, the distillation layer substitutes a universe-wide prior:
+When per-ticker state is insufficient, the layer substitutes a universe-wide prior:
 
 | Computation | Bootstrap fallback |
 |---|---|
-| Per-ticker volume baseline | Sector-pooled mean/stdev across the ticker's sector. Tech/semis (~35 names), financials (~15), energy (~15) are large enough to provide stable priors. |
-| Per-ticker ATR baseline | Sector-pooled mean/stdev. Same pooling. |
-| Per-ticker sentiment percentile | Universe-pooled distribution. The rationale for per-ticker calibration is that names like TSLA have a wider sentiment range than JPM (per [qualitative.md § 2a](../01-data-layer/external/qualitative.md)); the pooled prior loses that nuance, which is why the bootstrap tag matters downstream. |
+| Per-ticker volume baseline | Sector-pooled mean/stdev. Tech/semis (~35), financials (~15), energy (~15) provide stable priors. |
+| Per-ticker ATR baseline | Sector-pooled mean/stdev. |
+| Per-ticker sentiment percentile | Universe-pooled distribution. Per-ticker calibration captures that TSLA's sentiment range is wider than JPM's (per [qualitative.md § 2a](../01-data-layer/external/qualitative.md)); the pooled prior loses that nuance, which is why the bootstrap tag matters downstream. |
 | Per-ticker gap-fill rate | Sector-pooled rate from the prior trading year, refreshed monthly. |
-| Per-ticker extended-hours confirmation rate | Universe-pooled rate, refreshed monthly. Default cold-start value is 50% (no information). |
-| Per-pair lead-lag timing | The Class A `_max_days` bounds above act as the prior. Trailing estimates begin updating after the first 10 observed pair events. |
+| Per-ticker extended-hours confirmation rate | Universe-pooled rate, refreshed monthly. Cold-start default 50% (no information). |
+| Per-pair lead-lag timing | Class A `_max_days` bounds act as the prior. Trailing estimates begin updating after the first 10 observed pair events. |
 | Per-contract prediction-market delta | The 5pp threshold is universe-wide — no per-contract bootstrap needed. |
 
 ### Downstream propagation
 
-The `calibration_state` tag flows from distillation into the analysis layer the same way `signal_quality` already flows. Domain researchers consuming bootstrap-tagged anomalies surface that condition in their `Signal quality` line. The synthesizer carries it into the unified market snapshot. The analyst and strategist see it in the synthesizer brief portion of their input bundles and weight conviction accordingly — a 2.5σ volume anomaly on a `bootstrap` baseline is a weaker signal than the same anomaly on a `calibrated` baseline.
-
-This is why the bootstrap policy is "produce with tag" rather than "abort": the LLM agents' own conviction calibration is the natural recipient of a graded confidence input.
+The `calibration_state` tag flows from distillation into the analysis layer the same way `signal_quality` does. Domain researchers consuming bootstrap-tagged anomalies surface that in their `Signal quality` line; the synthesizer carries it into the unified snapshot; analyst and strategist see it in their input bundles and weight conviction accordingly — a 2.5σ volume anomaly on a `bootstrap` baseline is weaker than the same anomaly on a `calibrated` baseline. The LLM agents' own conviction calibration is the natural recipient of graded confidence; "produce with tag" rather than "abort" is the right contract.
 
 ### Warm-up duration estimate
 
-Concrete expectations for a paper-trading deployment starting from cold state:
+For a paper-trading deployment starting from cold state:
 
 - Volume / ATR / spread baselines per ticker: `calibrated` after 20 trading days (~1 month).
-- Sentiment baseline per ticker: `calibrated` after the sentiment vendor's data backfills 30 days plus 30 trading days of in-system observation. Most vendors backfill at API connection, so this is typically `calibrated` within 1–2 invocations.
-- Gap-fill rate per ticker: depends on event arrival; major-cap tickers often reach 30 events within 6 months, smaller names may take a year. Sector-pooled fallback is the long-running steady state for the long tail.
-- Extended-hours confirmation rate per ticker: similar to gap-fill — event-driven.
+- Sentiment baseline per ticker: `calibrated` after the vendor's 30-day backfill plus 30 trading days of in-system observation. Most vendors backfill at API connection, so typically `calibrated` within 1–2 invocations.
+- Gap-fill rate per ticker: event-driven. Major caps often reach 30 events within 6 months; smaller names may take a year. Sector-pooled fallback is steady state for the long tail.
+- Extended-hours confirmation rate per ticker: event-driven, similar to gap-fill.
 - Lead-lag pair estimates: meaningful after ~10 cycles per pair, typically 1–2 months.
 
-The expected steady state is that the high-frequency baselines (volume, ATR, spread, sentiment) are universally `calibrated` after one month, while the event-driven baselines (gap-fill, extended-hours) coexist with sector-pooled fallbacks indefinitely for less-active names.
+Expected steady state: high-frequency baselines (volume, ATR, spread, sentiment) universally `calibrated` after one month; event-driven baselines (gap-fill, extended-hours) coexist with sector-pooled fallbacks indefinitely for less-active names.
 
 ---
 
@@ -199,38 +197,38 @@ The expected steady state is that the high-frequency baselines (volume, ATR, spr
 
 ### Class B refresh (automated, every invocation)
 
-Computed rolling state refreshes at the start of each invocation's distillation phase, before any anomaly detection runs. Refresh is incremental — yesterday's data point is appended, the oldest in the window drops off — so the cost is bounded regardless of how long the system has been running.
+Refresh at the start of each invocation's distillation phase, before anomaly detection runs. Incremental — yesterday's point appended, oldest drops off — so cost is bounded regardless of run history.
 
-The refresh is part of the distillation layer's invocation flow; failures are surfaced through the same fail-closed path as other distillation errors per [api-failure-handling.md](../01-data-layer/api-failure-handling.md). A refresh that cannot complete (e.g., DB unavailable) aborts the invocation rather than running anomaly detection on a stale baseline.
+Failures surface through the fail-closed path per [api-failure-handling.md](../01-data-layer/api-failure-handling.md). A refresh that cannot complete (e.g., DB unavailable) aborts the invocation rather than running anomaly detection on a stale baseline.
 
 ### Class A review (operator-driven, periodic)
 
-Static thresholds are reviewed on a regular cadence with a structured trigger list. The default cadence is **monthly** during paper trading and **quarterly** once live, plus on-demand whenever a structured trigger fires.
+Default cadence: **monthly** during paper trading, **quarterly** once live, plus on-demand whenever a structured trigger fires.
 
-**Structured triggers — review immediately when any of these are observed:**
+**Structured triggers — review immediately when:**
 
-- The adaptive research layer's per-cycle thread budget is consistently saturated by anomaly flags from a single class (e.g., volume anomalies dominating triage). Indicates the relevant `_sigma` or `_multiple` is too loose.
-- Multiple invocations with zero anomalies of a given class across the universe over a window where market activity would be expected to produce some. Indicates the threshold is too tight.
-- The continuous monitor's emergency invocation trigger fires repeatedly within a short window without the underlying market state warranting it (false positive on `regime_skip_emergency_trigger`).
-- A regime transition that should clearly have been `confirmed` based on observed market behavior is consistently labeled `early` (or vice versa). Indicates `regime_transition_confirmed_invocations` is mistuned.
-- Feedback-loop output (Phase 4, [project-tracker.md](../../project-tracker.md)) shows that a class of anomaly flags has poor predictive value for thesis outcomes.
+- Adaptive research's per-cycle thread budget is consistently saturated by anomaly flags from a single class (e.g., volume anomalies dominating triage). The relevant `_sigma` or `_multiple` is too loose.
+- Multiple invocations with zero anomalies of a class across the universe over a window where market activity should produce some. Threshold is too tight.
+- Continuous-monitor emergency invocations fire repeatedly without underlying market state warranting it (false positive on `regime_skip_emergency_trigger`).
+- A regime transition that should have been `confirmed` is consistently `early`, or vice versa. `regime_transition_confirmed_invocations` is mistuned.
+- Feedback-loop output (Phase 4, [project-tracker.md](../../project-tracker.md)) shows a class of anomaly flags has poor predictive value for thesis outcomes.
 
 **Review procedure** (each is a YAML edit landing at the next invocation's reload, per [configuration-management.md § Reload model](../configuration-management.md#reload-model)):
 
-1. Operator examines the activity log and adaptive-research outputs over a recent window — typically 2–4 weeks of paper-trading data.
-2. Operator computes the empirical flagging rate for the threshold class under review (flags per ticker per day, or flags per cycle for global thresholds).
-3. Operator compares the empirical rate to the expected rate at the configured threshold value.
-4. Operator adjusts the value, reload validation runs at the next invocation, and the change takes effect.
+1. Examine the activity log and adaptive-research outputs over 2–4 weeks of paper-trading data.
+2. Compute the empirical flagging rate for the threshold class (flags per ticker per day, or flags per cycle for global thresholds).
+3. Compare the empirical rate to the expected rate at the configured value.
+4. Adjust; reload validation runs at the next invocation; change takes effect.
 
-There is no automated tuning. The Phase 4 feedback loop, when it ships, is the natural source of the empirical inputs to step 2 — but the threshold edit itself remains an operator action because the trade-off (flag rate vs. signal quality) is a judgment call that depends on the system's current capacity to investigate flags.
+No automated tuning. The Phase 4 feedback loop is the natural source of empirical inputs at step 2 once it ships, but the edit itself remains an operator action — the trade-off (flag rate vs. signal quality) depends on the system's current capacity to investigate.
 
-**No silent threshold mutation.** A threshold change is a config change with a config-change activity log entry. The motivating observation, the old value, and the new value are recorded in the operator's calibration log. This is not a separate system — it's notes paired with the YAML diff in version control.
+**No silent threshold mutation.** A threshold change is a config change with a config-change activity log entry. Motivating observation, old value, and new value live in the operator's calibration log — notes paired with the YAML diff in version control.
 
 ---
 
 ## Validation invariants
 
-These run as part of the configuration-management semantic self-test ([configuration-management.md § Validation](../configuration-management.md#validation)) when `config/distillation.yaml` is loaded. Failure aborts the invocation and alerts the operator.
+Run as part of the configuration-management semantic self-test ([configuration-management.md § Validation](../configuration-management.md#validation)) when `config/distillation.yaml` is loaded. Failure aborts the invocation and alerts the operator.
 
 | Invariant | Reason |
 |---|---|
@@ -254,7 +252,7 @@ These run as part of the configuration-management semantic self-test ([configura
 
 Mirrors the [configuration-management.md § Runtime vs. deploy-time classification](../configuration-management.md#runtime-vs-deploy-time-classification) split.
 
-**`config/distillation.yaml`** — every Class A threshold above. Reloaded at the start of every invocation. Operator edits take effect on the next scheduled trigger; no restart required.
+**`config/distillation.yaml`** — every Class A threshold above. Reloaded at the start of every invocation. Operator edits take effect at the next scheduled trigger; no restart required.
 
 **Distillation-state DB tables** — every Class B rolling baseline:
 
@@ -265,18 +263,18 @@ Mirrors the [configuration-management.md § Runtime vs. deploy-time classificati
 - `distillation_regime_state` — current regime label, indicator-agreement count, invocations-held counter
 - `distillation_composite_state` — funding-stress and market-liquidity composite trailing distributions
 
-The DB schema definitions belong with the rest of the persistence schema in the execution layer's state-persistence work; they are listed here only to make the storage destination explicit.
+DB schema definitions belong with the persistence schema in the execution layer's state-persistence work; listed here only to make the storage destination explicit.
 
-**Code constants** — none. There are no thresholds in this layer that an operator should not be able to change without a code edit. Anything that genuinely should never change (sign conventions, percentile bounds at 0/100) is enforced by the validation invariants above rather than hidden in code.
+**Code constants** — none. Sign conventions and percentile bounds at 0/100 are enforced by the validation invariants above, not hidden in code.
 
 ---
 
 ## Cross-references
 
 - Computations these thresholds gate: [external.md](external.md) (anomaly detection §3, persistent state §4), [internal.md](internal.md)
-- Where Class A values are stored and reloaded: [configuration-management.md](../configuration-management.md)
-- Downstream consumers of the regime label: [regime-adaptation.md](../06-risk-guardrails/regime-adaptation.md), every analysis-layer agent (universal context broadcast per [external.md § 4](external.md#4-persistent-state-and-composites))
-- Emergency invocation trigger consuming `regime_skip_emergency_trigger`: [breach-behavior.md § Emergency invocation trigger](../06-risk-guardrails/breach-behavior.md#emergency-invocation-trigger)
-- Signal quality conventions the bootstrap tag aligns with: [domain-researchers/tech-semis.md](../03-analysis-layer/domain-researchers/tech-semis.md), [qualitative-research.md](../03-analysis-layer/qualitative-research.md), [adaptive-research.md](../03-analysis-layer/adaptive-research.md)
-- Fail-closed principle the bootstrap policy is calibrated against: [api-failure-handling.md § Design principle](../01-data-layer/api-failure-handling.md#design-principle--no-degraded-decisions)
+- Class A storage and reload: [configuration-management.md](../configuration-management.md)
+- Regime label downstream consumers: [regime-adaptation.md](../06-risk-guardrails/regime-adaptation.md), every analysis-layer agent (universal context broadcast per [external.md § 4](external.md#4-persistent-state-and-composites))
+- `regime_skip_emergency_trigger` consumer: [breach-behavior.md § Emergency invocation trigger](../06-risk-guardrails/breach-behavior.md#emergency-invocation-trigger)
+- Signal-quality conventions the bootstrap tag aligns with: [domain-researchers/tech-semis.md](../03-analysis-layer/domain-researchers/tech-semis.md), [qualitative-research.md](../03-analysis-layer/qualitative-research.md), [adaptive-research.md](../03-analysis-layer/adaptive-research.md)
+- Fail-closed principle: [api-failure-handling.md § Design principle](../01-data-layer/api-failure-handling.md#design-principle--no-degraded-decisions)
 - Operator review feedback source (when shipped): [project-tracker.md § Phase 4](../../project-tracker.md)

@@ -1,54 +1,52 @@
 # Adaptive research (anomaly-driven)
 
-An LLM reads the quant anomaly flags (from the [programmatic distillation layer](../02-distillation-layer/external.md)) and the sector researcher flagged anomalies, then *decides what to investigate further*. This is the system's "curiosity" layer — where it asks different questions each cycle based on what the numbers are doing.
+An LLM reads quant anomaly flags from the [programmatic distillation layer](../02-distillation-layer/external.md) and sector-researcher flagged anomalies, then *decides what to investigate*. The system's "curiosity" layer — different questions each cycle based on what the data is doing.
 
-This is where the LLM's reasoning capability is most defensible as an edge. No traditional systematic strategy can dynamically generate research questions based on what the data is doing right now. See [design-decisions.md](../design-decisions.md) for the rationale on adaptive vs. fixed research.
+This is where the LLM's reasoning capability is most defensible as an edge. No traditional systematic strategy can dynamically generate research questions based on what the data is doing right now. See [design-decisions.md](../design-decisions.md).
 
 ---
 
 ## Inputs
 
-The adaptive research agent receives two streams of anomaly signals plus the universal volatility regime label:
+Two anomaly streams plus the universal volatility regime label:
 
-**Distillation layer anomaly flags** (from [external.md](../02-distillation-layer/external.md), section 3):
-Purely quantitative detections — volume spikes, price-flow divergences, correlation breakdowns, lead-lag gaps, short interest anomalies, earnings revision clusters, macro surprises, funding stress alerts. These are binary flags with magnitude, not interpretations.
+**Distillation layer anomaly flags** (from [external.md](../02-distillation-layer/external.md) §3):
+Purely quantitative detections — volume spikes, price-flow divergences, correlation breakdowns, lead-lag gaps, short-interest anomalies, earnings revision clusters, macro surprises, funding-stress alerts. Binary flags with magnitude, not interpretations.
 
-**Sector researcher flagged anomalies** (from [domain-researchers](domain-researchers/)):
-Items the sector researchers marked as warranting further investigation during their analysis pass. These may overlap with the distillation flags but can also surface patterns the distillation layer's quantitative detection missed — a sector researcher might flag "the energy sector is responding to the EIA report differently than the last three weeks" based on contextual pattern recognition that isn't captured by a statistical anomaly threshold.
+**Sector-researcher flagged anomalies** (from [domain-researchers](domain-researchers/)):
+Items sector researchers marked for further investigation. May overlap with distillation flags but can also surface patterns distillation's statistical detection missed — e.g., "energy is responding to the EIA report differently than the last three weeks," contextual pattern recognition not captured by a z-score threshold.
 
-**Volatility regime label** (from [distillation external.md](../02-distillation-layer/external.md), section 4):
-Universal context broadcast — current regime classification (low-vol compression, vol expansion, crisis/spike, vol normalization) plus the regime-transition flag. Used to weight triage decisions: anomalies that warrant immediate investigation differ across regimes (a funding-stress flag is far more actionable in vol-expansion or crisis than in low-vol compression).
+**Volatility regime label** (from [distillation external.md §4](../02-distillation-layer/external.md)):
+Universal context — current regime (low-vol compression, vol expansion, crisis/spike, vol normalization) plus transition flag. Weights triage: a funding-stress flag is far more actionable in vol-expansion or crisis than in low-vol compression.
 
 ---
 
 ## Query generation
 
-The LLM generating research questions needs good triage instincts — distinguishing interesting anomalies from noise. Not every flagged anomaly warrants an investigation thread. The triage decision is itself a high-value LLM judgment call.
+Good triage instincts — signal vs. noise — are the agent's primary value-add. Not every flag warrants a thread.
 
 **Triage criteria:**
-- **Actionability:** Would the answer change a trading decision in the next 4–72 hours? An anomaly that's interesting but wouldn't inform a thesis isn't worth investigating.
-- **Resolvability:** Can the question be answered with available research tools (news searches, API pulls, prediction market data)? "Why is the market irrational?" isn't resolvable; "What news drove NVDA's volume spike?" is.
-- **Signal density:** Anomalies that combine multiple flags are more likely to be signal than noise. A volume spike alone is weakly interesting; a volume spike with no price movement, divergent options flow, and a sector researcher flag is strongly interesting.
-- **Portfolio relevance:** Anomalies affecting names the system currently holds or is considering for theses get priority.
+- **Actionability:** Would the answer change a trading decision in the next 4–72 hours? Interesting but inert anomalies aren't worth investigating.
+- **Resolvability:** Can it be answered with available research tools (news searches, API pulls, prediction-market data)? "Why is the market irrational?" isn't resolvable; "What news drove NVDA's volume spike?" is.
+- **Signal density:** Multi-flag anomalies are more likely signal than noise. A volume spike alone is weakly interesting; a volume spike with no price movement, divergent options flow, and a sector-researcher flag is strongly interesting.
+- **Portfolio relevance:** Anomalies affecting held names or thesis candidates get priority.
 
-**Few-shot examples** of signal vs. noise anomalies should be included in the prompt to calibrate the triage instinct. These examples should be updated as the system accumulates a track record of which investigation threads produced actionable findings and which were dead ends.
+**Few-shot examples** of signal vs. noise calibrate triage instinct in the prompt. Updated as the system accumulates a track record of which threads produced actionable findings.
 
 **Example research threads:**
-- "NVDA volume is 4x average with no price movement — is there news or is this institutional repositioning?"
+- "NVDA volume is 4x average with no price movement — news or institutional repositioning?"
 - "XOM and CVX diverging despite both being integrated majors — what's driving the split?"
-- "Gold and 10Y yields moving in the same direction — what macro narrative explains this, and how does it affect our financials exposure?"
+- "Gold and 10Y yields moving the same direction — what macro narrative, and how does it affect financials exposure?"
 - "Prediction market odds on next FOMC hold shifted 15% overnight — what drove this and has the market priced it in?"
-- "Lead-lag model flags credit spread widening without equity response — is this the start of a repricing or noise from a single issuer?"
+- "Lead-lag model flags credit spread widening without equity response — start of a repricing or noise from a single issuer?"
 
 ---
 
 ## Research execution
 
-Once questions are generated, an agentic tool-use loop searches for answers. The qualitative ingestion sources (qualitative 1–6 from [qualitative.md](../01-data-layer/external/qualitative.md)) are the research infrastructure — the [baseline sweep](qualitative-research.md) covers the surface, and adaptive research makes targeted pulls when something specific needs investigation.
+An agentic tool-use loop searches for answers to generated questions. Qualitative ingestion sources (qualitative 1–6 in [qualitative.md](../01-data-layer/external/qualitative.md)) are the research infrastructure — the [baseline sweep](qualitative-research.md) covers the surface; adaptive research makes targeted pulls.
 
-**Available research tools:**
-
-The following tools are registered with the agent SDK and available to the adaptive research agent during its agentic loop. Each tool has a defined input/output contract so the agent can compose multi-step investigations.
+Tools below are registered with the agent SDK with defined input/output contracts so the agent can compose multi-step investigations.
 
 ### Tool inventory
 
@@ -66,37 +64,37 @@ The following tools are registered with the agent SDK and available to the adapt
 
 ### Tool usage contracts
 
-**Input validation:** Each tool validates its inputs before making API calls. Invalid inputs (unknown ticker, unsupported category) return an error immediately rather than consuming a rate limit slot.
+**Input validation:** Inputs validated before API calls. Invalid inputs (unknown ticker, unsupported category) return an error immediately without consuming a rate-limit slot.
 
-**Output format:** All tools return structured data that the LLM can reason about directly. Outputs include a `data_freshness` timestamp and a `quality` flag (`complete`, `partial`, `stale`, `unavailable`) so the agent can assess reliability.
+**Output format:** Structured data with `data_freshness` timestamp and `quality` flag (`complete`, `partial`, `stale`, `unavailable`).
 
-**Rate limits per invocation:** The per-tool call limits ensure bounded cost and latency. Across all tools combined, the adaptive research agent is limited to **25 total tool calls per invocation** (configurable). This prevents runaway investigation loops while allowing meaningful multi-step research (e.g., news_search → ticker_deep_pull → options_flow for a single investigation thread).
+**Rate limits per invocation:** Per-tool limits above plus an aggregate cap of **25 total tool calls per invocation** (configurable). Allows meaningful multi-step research (news_search → ticker_deep_pull → options_flow) without runaway loops.
 
-**Cumulative token budget:** All tool outputs across all investigation threads must fit within a **4,000 token budget** (configurable). If a tool returns a large result set, it's truncated to the most relevant items by relevance score. This keeps the adaptive research output compact enough for the synthesizer's context.
+**Cumulative token budget:** All tool outputs across all threads must fit a **4,000 token budget** (configurable). Large result sets are truncated by relevance score.
 
 ### On-demand vs. routine data
 
-Several tools provide data that is not routinely ingested for the full universe but is available on-demand for specific names. The `sec_lending` and `short_interest` tools are the primary examples — the data is available via API but not worth the cost/rate-limit budget to pull for 65+ tickers every invocation. The adaptive research agent pulls this data selectively when a squeeze or short-selling anomaly warrants investigation.
+Some tools provide data not routinely ingested for the full universe but available on-demand. `sec_lending` and `short_interest` are the primary examples — available via API but not worth the cost/rate-limit budget across 65+ tickers every invocation. Pulled selectively when a squeeze or short-selling anomaly warrants investigation.
 
-**Per-thread execution model:** Each investigation thread operates as an independent agentic loop with its own tool-use context. The thread starts with a question, makes targeted data pulls, and synthesizes an answer. If the initial pull is inconclusive, the agent can make follow-up queries — but within bounded limits.
+**Per-thread execution model:** Each thread is an independent agentic loop with its own tool-use context — question, targeted pulls, synthesized answer. Inconclusive initial pulls allow bounded follow-ups.
 
 ---
 
 ## Bounded search
 
-**Max 3–5 investigation threads per cycle,** each with a capped number of tool calls. This constraint is critical — the adaptive research layer could easily consume unbounded time and tokens chasing interesting anomalies while the market moves and the pipeline stalls.
+**Max 3–5 investigation threads per cycle,** each with capped tool calls. Without the bound, adaptive research consumes unbounded time and tokens while the market moves and the pipeline stalls.
 
-The bound creates a natural prioritization pressure: the triage step must select the highest-value questions, knowing that most anomalies will go uninvestigated this cycle. Uninvestigated anomalies that persist will be flagged again next cycle, naturally creating a persistence-weighted priority queue where sustained anomalies eventually get investigated even if they're not the most urgent in any single cycle.
+The bound creates prioritization pressure: triage selects the highest-value questions, knowing most anomalies go uninvestigated this cycle. Uninvestigated persistent anomalies re-flag next cycle, producing a natural persistence-weighted queue — sustained anomalies eventually get investigated.
 
-**Cost implications:** Adaptive research is the most variable-cost component of the pipeline. The always-on baseline research has a predictable token budget; adaptive research can range from near-zero (a quiet cycle with few anomalies) to the full 3–5 thread budget (a volatile cycle with multiple simultaneous signals). The per-run scoping TODO in the [README](README.md) should address how the adaptive research budget varies across run types — pre-open runs likely warrant more adaptive budget (overnight developments to investigate), while after-hours runs may warrant less.
+**Cost implications:** Most variable-cost component of the pipeline. Range: near-zero on quiet cycles to the full 3–5 thread budget on volatile ones. The per-run scoping TODO in the [README](README.md) addresses how the adaptive budget varies — pre-open runs likely warrant more (overnight developments); after-hours runs less.
 
 ---
 
 ## Output
 
-Adaptive research findings delivered to the [synthesizer](synthesizer.md) alongside the [baseline qualitative brief](qualitative-research.md) and sector researcher briefs. Uses reference prefix `AR` for the synthesizer's typed reference system. Individual threads are referenced as `AR-1`, `AR-2`, etc.
+Findings delivered to the [synthesizer](synthesizer.md) alongside the [baseline qualitative brief](qualitative-research.md) and sector-researcher briefs. Reference prefix `AR`; individual threads `AR-1`, `AR-2`, etc.
 
-The output is structured around **investigation threads** — each a self-contained question → evidence → verdict for a single anomaly. This is fundamentally different from the [qualitative brief](qualitative-research.md) (narrative threads spanning multiple sources) and the [domain researcher briefs](domain-researchers/tech-semis.md) (ticker-level findings with signal types). The synthesizer uses AR findings to **add or remove certainty** from domain researcher observations and qualitative narrative threads.
+Structured around **investigation threads** — each self-contained question → evidence → verdict for a single anomaly. Differs from the [qualitative brief](qualitative-research.md) (narrative threads spanning multiple sources) and [domain researcher briefs](domain-researchers/tech-semis.md) (ticker-level findings with signal types). The synthesizer uses AR findings to **add or remove certainty** from domain-researcher observations and qualitative narrative threads.
 
 ### Output schema
 
@@ -138,27 +136,27 @@ Anomalies deferred: {anomaly refs not investigated this cycle, or "none"}
 
 ### Schema design rationale
 
-**`Trigger` with explicit reference — the cross-referencing key.** Each investigation links back to the anomaly that spawned it. When the trigger is a sector researcher anomaly, it carries the exact reference ID (e.g., `[SA-TECH-ANOM-1]`). When it's a distillation layer anomaly flag, it carries the spec ID and detection details (e.g., `Distillation: Q2 volume spike, NVDA, 3.2σ`). The synthesizer can mechanically link AR findings back to the domain researcher briefs that flagged the anomaly — this is critical for consolidation. Without it, the synthesizer would have to infer which AR thread relates to which domain finding by reading and matching on content.
+**`Trigger` with explicit reference — the cross-referencing key.** Each investigation links back to its spawning anomaly. Sector-researcher anomalies carry the exact reference ID (e.g., `[SA-TECH-ANOM-1]`); distillation flags carry spec ID and detection details (e.g., `Distillation: Q2 volume spike, NVDA, 3.2σ`). The synthesizer can mechanically link AR findings back to the domain-researcher briefs that flagged the anomaly — without this it would have to infer relationships by content matching.
 
-**`Strengthens` / `Weakens` cross-references.** The AR agent's findings often have implications beyond the triggering anomaly. "I investigated the NVDA volume spike and found pre-earnings institutional positioning — this strengthens `[SA-TECH-3]` (unusual call buying) and weakens `[SA-TECH-TC-2]` (the short thesis candidate)." These explicit directional links give the synthesizer pre-computed cross-references rather than forcing it to reason about how each AR finding affects every other brief. References can point to any ID in the invocation's briefs: domain researcher findings (`SA-*`), anomalies (`SA-*-ANOM-*`), thesis candidates (`SA-*-TC-*`), qualitative threads (`QR-*`), or correlation/regime findings (`CR-*`).
+**`Strengthens` / `Weakens` cross-references.** AR findings often have implications beyond the triggering anomaly. "I investigated the NVDA volume spike and found pre-earnings institutional positioning — strengthens `[SA-TECH-3]` (unusual call buying) and weakens `[SA-TECH-TC-2]` (short thesis candidate)." Explicit directional links pre-compute the cross-references for the synthesizer rather than forcing it to reason about every pairwise interaction. References can point to any ID: domain findings (`SA-*`), anomalies (`SA-*-ANOM-*`), thesis candidates (`SA-*-TC-*`), qualitative threads (`QR-*`), or correlation/regime findings (`CR-*`).
 
-**Three-way assessment (signal / noise / inconclusive).** Binary signal/noise loses information. "Inconclusive" with a `Missing` field feeds the next invocation's triage — the anomaly persists in the pipeline's awareness, and the adaptive research agent can see "this anomaly was investigated last cycle but couldn't be resolved because X." Over multiple invocations, persistent inconclusive anomalies accumulate triage priority, creating the natural persistence-weighted queue described in the [bounded search](#bounded-search) section.
+**Three-way assessment (signal / noise / inconclusive).** Binary loses information. "Inconclusive" with a `Missing` field feeds next invocation's triage — the anomaly stays in the pipeline's awareness, and the agent sees "investigated last cycle but couldn't resolve because X." Over multiple invocations, persistent inconclusive anomalies accumulate triage priority — the persistence-weighted queue described in [bounded search](#bounded-search).
 
-**`Anomalies deferred` header.** Transparency about what was NOT investigated. The synthesizer (and downstream agents) see that `[SA-ENERGY-ANOM-1]` was flagged but uninvestigated — it should be treated with the original severity from the domain researcher brief, not assumed resolved. On quiet days this field is "none"; on busy days it shows which anomalies lost the triage prioritization.
+**`Anomalies deferred` header.** Transparency about what was NOT investigated. Downstream agents see that `[SA-ENERGY-ANOM-1]` was flagged but uninvestigated and treat it at the original domain-researcher severity rather than assuming resolved. Quiet days: "none"; busy days: shows which anomalies lost triage.
 
-**Per-investigation structure, not narrative threading.** Each thread is self-contained: one trigger → one question → evidence → one verdict. The AR agent doesn't synthesize across its own threads — that's the synthesizer's job. If two AR threads produce findings that interact ("AR-1 found institutional repositioning in NVDA" + "AR-2 found the same pattern in AMD"), the synthesizer connects them using the sector and ticker fields.
+**Per-investigation structure, not narrative threading.** Each thread is self-contained — one trigger, one question, evidence, one verdict. AR doesn't synthesize across its own threads; that's the synthesizer's job. If AR-1 finds NVDA institutional repositioning and AR-2 finds the same pattern in AMD, the synthesizer connects them via sector and ticker fields.
 
-**What's deliberately absent:**
-- **Narrative threads** — the qualitative brief handles narrative context; AR handles anomaly resolution
-- **Thesis candidates** — AR assesses anomalies, it doesn't propose trades. Thesis generation is the domain researchers' and [analyst's](../04-decision-layer/analyst.md) job
-- **Signal type taxonomy** — the domain researcher signal types (`price_action`, `flow`, `options`, etc.) don't apply here. AR threads are classified by their trigger and assessment, not by signal category
+**Deliberately absent:**
+- **Narrative threads** — qualitative brief's territory
+- **Thesis candidates** — AR assesses anomalies; thesis generation is the domain researchers' and [analyst's](../04-decision-layer/analyst.md) job
+- **Signal type taxonomy** — the domain researcher signal types (`price_action`, `flow`, `options`, etc.) don't apply; AR threads are classified by trigger and assessment
 
 ### Token budget
 
-**400–800 tokens**, bounded by the existing constraints:
+**400–800 tokens**, bounded by:
 
-- 0–5 investigation threads × ~100–150 tokens each = ~0–750 tokens
+- 0–5 threads × ~100–150 tokens each = ~0–750 tokens
 - Header (threads investigated, anomalies deferred) = ~30–50 tokens
-- The 4,000 token cumulative tool output budget (defined in [research execution](#research-execution)) bounds the evidence the agent can gather; the output schema bounds the synthesis of that evidence into findings
+- The 4,000-token cumulative tool-output budget ([research execution](#research-execution)) bounds evidence; the output schema bounds synthesis
 
-On quiet cycles with no anomalies worth investigating, the output is minimal (~50 tokens: header with "0 of 0" and empty thread section). On volatile cycles, 5 threads at the upper end of the range approaches the budget cap, which enforces triage quality — the agent must be concise in its findings and precise in its assessments.
+Quiet cycles: ~50 tokens (header "0 of 0", empty thread section). Volatile cycles: 5 threads near the upper range approach the cap, enforcing concise findings and precise assessments.

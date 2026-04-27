@@ -1,48 +1,48 @@
 # Qualitative research — baseline (always-on)
 
-Every invocation, regardless of quant findings, this component provides floor-level awareness of what's happening in the world. The scope is fixed and predictable, making it relatively cheap per invocation.
+Floor-level awareness of what's happening in the world, every invocation regardless of quant findings. Fixed predictable scope keeps per-invocation cost low.
 
-The qualitative research layer is where the ingestion layer's qualitative data ([qualitative.md](../01-data-layer/external/qualitative.md)) gets interpreted. The ingestion layer collects and structures the raw payloads; this layer applies LLM judgment to extract signal.
+LLM judgment applied to qualitative data the ingestion layer ([qualitative.md](../01-data-layer/external/qualitative.md)) collects and structures.
 
 ---
 
 ## Inputs
 
-The qualitative research agent receives two categories of input: **bounded in-context data** pushed into its context window at invocation start, and **on-demand data** available via tools during its reasoning.
+Two categories: **bounded in-context data** loaded at invocation start, and **on-demand data** available via tools during reasoning.
 
 ### In-context data (~6,500–8,000 tokens)
 
-The following are loaded into the agent's context window before reasoning begins. All are bounded and predictable in size regardless of market conditions.
+Loaded before reasoning begins. All bounded and predictable regardless of market conditions.
 
 **1. News digest (~1,000–1,200 tokens)**
-A deterministic, ranked summary of headlines collected since the last invocation. See [news digest specification](#news-digest) below.
+Deterministic, ranked summary of headlines since the last invocation. See [news digest specification](#news-digest) below.
 
 **2. Sentiment aggregates (~3,000 tokens)**
-Pre-computed per-ticker sentiment from [qualitative 2a](../01-data-layer/external/qualitative.md) — directional score, magnitude, rate of change, volume, and sentiment-price divergence flag. Expressed as percentiles against each ticker's own trailing distribution (not a universal scale) per the distillation layer's per-ticker sentiment calibration ([external.md](../02-distillation-layer/external.md), section 3).
+Pre-computed per-ticker sentiment from [qualitative 2a](../01-data-layer/external/qualitative.md) — directional score, magnitude, rate of change, volume, sentiment-price divergence flag. Percentiles against each ticker's own trailing distribution per [distillation external.md §3](../02-distillation-layer/external.md), not a universal scale.
 
-> **Data layer dependency:** The distillation layer must maintain trailing sentiment distributions per ticker and deliver current readings as percentiles. See [external.md](../02-distillation-layer/external.md), sentiment calibration state.
+> **Data layer dependency:** Distillation maintains trailing per-ticker sentiment distributions and delivers current readings as percentiles. See [external.md](../02-distillation-layer/external.md), sentiment calibration state.
 
 **3. Prediction market snapshot (~800–1,200 tokens)**
-All tracked contracts from [qualitative 3a–3c](../01-data-layer/external/qualitative.md) — current probability, delta since last invocation, delta since last 24h, volume, and expiration. Contracts with deltas exceeding the distillation layer's threshold (>5 percentage points) are flagged.
+All tracked contracts from [qualitative 3a–3c](../01-data-layer/external/qualitative.md) — current probability, delta since last invocation, delta since last 24h, volume, expiration. Contracts with delta >5pp are flagged per the distillation threshold.
 
-> **Data layer dependency:** The distillation layer must compute and persist inter-invocation deltas and flag threshold-exceeding moves. See [external.md](../02-distillation-layer/external.md), prediction market state.
+> **Data layer dependency:** Distillation computes and persists inter-invocation deltas and flags threshold breaches. See [external.md](../02-distillation-layer/external.md), prediction market state.
 
 **4. Event calendar — next 72 hours (~500–1,000 tokens)**
-Upcoming scheduled events from [qualitative 5e](../01-data-layer/external/qualitative.md) and [quantitative 6g](../01-data-layer/external/quantitative.md) — FOMC meetings, CPI/PPI releases, earnings dates for universe names, OPEC meetings, congressional hearings, court dates, Treasury auctions. Each entry includes: event name, timestamp, sector relevance tags, and consensus/expected outcome where applicable.
+Scheduled events from [qualitative 5e](../01-data-layer/external/qualitative.md) and [quantitative 6g](../01-data-layer/external/quantitative.md) — FOMC, CPI/PPI, universe earnings, OPEC, congressional hearings, court dates, Treasury auctions. Each entry: event name, timestamp, sector relevance tags, consensus/expected outcome where applicable.
 
-> **Data layer dependency:** The data layer must merge the regulatory/policy event calendar (qualitative 5e) with the macro data release calendar (quantitative 6g) into a unified upcoming-events feed, tagged by sector relevance.
+> **Data layer dependency:** Data layer merges regulatory/policy events (qualitative 5e) with macro data releases (quantitative 6g) into a unified feed tagged by sector relevance.
 
 **5. Active thesis summaries (~500–1,000 tokens)**
-Per-thesis: ticker, thesis one-liner (summary field from [thesis model](../05-execution-layer/thesis-model.md)), key catalyst, and time expectation. Loaded every invocation so the agent can cross-reference the event calendar against active thesis catalysts — "FOMC tomorrow and we hold three rate-sensitive positions" — without needing a tool call. The same data the [synthesizer](synthesizer.md) accesses via `get_active_theses_summary`, but loaded in context here because the agent can't assess catalyst proximity without first seeing the theses, making a tool pull pointless (it would call it every invocation anyway).
+Per-thesis: ticker, summary one-liner (from [thesis model](../05-execution-layer/thesis-model.md)), key catalyst, time expectation. Loaded in-context so the agent can cross-reference the event calendar against thesis catalysts — "FOMC tomorrow and we hold three rate-sensitive positions" — without a tool call. Same data the [synthesizer](synthesizer.md) accesses via `get_active_theses_summary`; loaded here because catalyst-proximity assessment requires the theses always-visible.
 
-Scales with portfolio size: ~50 tokens per active thesis × 10–20 concurrent positions = ~500–1,000 tokens. With the system's target of 10–20 concurrent positions, this stays bounded.
+Scales ~50 tokens × 10–20 concurrent positions = ~500–1,000 tokens. Bounded at the system's target portfolio size.
 
 **6. Volatility regime label**
-Broadcast to all agents from the distillation layer ([external.md](../02-distillation-layer/external.md), section 4).
+Broadcast to all agents from [distillation external.md §4](../02-distillation-layer/external.md).
 
 ### On-demand tools
 
-Four tools for pulling additional qualitative data during reasoning. Three are shared with the [adaptive research agent](adaptive-research.md) (same underlying data infrastructure, same input/output contracts); one (`earnings_commentary`) is new. The qualitative research agent uses these for baseline investigation (following up on digest items, pulling context for narrative threading) rather than anomaly-driven research.
+Four tools. Three shared with [adaptive research](adaptive-research.md) (same data infrastructure, same input/output contracts); `earnings_commentary` is new. Used for baseline investigation — following up digest items, pulling context for narrative threads — rather than anomaly-driven research.
 
 | Tool ID | Description | Contract source | Use case for this agent |
 |---------|-------------|----------------|------------------------|
@@ -57,7 +57,7 @@ Four tools for pulling additional qualitative data during reasoning. Three are s
 
 ### `earnings_commentary` tool contract
 
-Returns earnings results and — when available — transcript-derived commentary for a specific ticker. The tool has two data tiers reflecting the reality that numeric results are available immediately after a report, while transcript analysis depends on transcript ingestion (Motley Fool scraping with <24hr latency, or Quartr API if available).
+Returns earnings results and, when available, transcript-derived commentary for a specific ticker. Two data tiers — numeric results available immediately after a report; transcript analysis depends on transcript ingestion (Motley Fool scraping <24hr latency, or Quartr API if available).
 
 **Input:**
 
@@ -153,24 +153,24 @@ Set `include_transcript_analysis: false` to skip the transcript pull when only n
 | `forward_looking_statements` | ManagementToneAnalysis.forward_looking_statements | MEDIUM | NLP extraction from transcript |
 | `guidance_vs_consensus` | EarningsEstimates entity (quant 5e) + transcript | HIGH (numeric) / MEDIUM (narrative) | Numeric guidance vs. consensus is straightforward; narrative guidance tone requires transcript |
 
-**Implementation phasing:** During initial implementation, `transcript_available` will be `false` for most calls until the transcript ingestion pipeline (Motley Fool scraping or Quartr API) and NLP extraction pipeline are built. Tier 1 data is available from day one. The tool should degrade gracefully — returning Tier 1 data with `quality: "partial_no_transcript"` — rather than failing when transcripts are unavailable.
+**Implementation phasing:** Initially `transcript_available` is `false` for most calls until transcript ingestion (Motley Fool scraping or Quartr API) and NLP extraction are built. Tier 1 is available day one. The tool degrades gracefully — Tier 1 with `quality: "partial_no_transcript"` — rather than failing when transcripts are unavailable.
 
 > **Data layer dependencies:**
 > - Earnings result data: yfinance + Finnhub (confirmed available, API keys configured)
 > - Price reaction data: Polygon quote data (confirmed available, API key configured)
 > - Transcript ingestion: Motley Fool scraping (free, <24hr latency) or Quartr API (status TBD per [earnings_commentary.yaml](../01-data-layer/mappings/earnings_commentary.yaml))
 > - Transcript NLP pipeline: not yet specified — tone classification, Q&A clustering, non-answer detection, forward-looking statement extraction all marked "derived from TBD" in mappings
-> - ManagementToneAnalysis and AnalystQADynamics schemas: defined in [schema/earnings_commentary.py](../01-data-layer/schema/earnings_commentary.py) with full field definitions, but the computation pipeline to populate them is not yet built
+> - ManagementToneAnalysis and AnalystQADynamics schemas: defined in [schema/earnings_commentary.py](../01-data-layer/schema/earnings_commentary.py); computation pipeline not yet built
 
-**Tool call budget:** No hard cap. The agent's closed-scope mandate (assess the five sweep categories) naturally bounds its tool usage — it's doing a single pass across known input categories, not an open-ended investigation loop. The system prompt should include soft advisory guidance: "typically 5–15 tool calls per invocation; fewer on quiet days, more on busy days when multiple digest items warrant follow-up." If testing reveals runaway behavior, a hard cap can be added as a configuration parameter.
+**Tool call budget:** No hard cap. The agent's closed-scope mandate (assess the five sweep categories) bounds usage — single pass across known categories, not an open-ended loop. System prompt includes soft advisory guidance: "typically 5–15 tool calls per invocation; fewer on quiet days, more on busy days." A hard cap can be added if testing reveals runaway behavior.
 
-This differs from the [adaptive research agent's](adaptive-research.md) hard 25-call limit, which exists because that agent runs an open-ended agentic investigation loop where curiosity can spiral without a bound. The baseline qualitative agent's usage pattern is inherently self-limiting.
+Differs from [adaptive research](adaptive-research.md)'s hard 25-call limit, which exists because that agent's open-ended investigation loop can spiral. The baseline qualitative agent is inherently self-limiting.
 
 ---
 
 ## News digest
 
-A deterministic, pre-computed summary of news activity since the last invocation. This is the agent's primary awareness of "what happened" — it guides which tools to call and which narrative threads to develop. The digest is produced by the data layer's news ingestion pipeline with no LLM involvement.
+Deterministic, pre-computed summary of news activity since the last invocation. The agent's primary awareness of "what happened" — guides tool calls and narrative threads. Produced by the data layer's news ingestion pipeline with no LLM involvement.
 
 ### Format
 
@@ -211,21 +211,21 @@ Headlines: {total_available} collected, {shown} shown below
 
 ### Sections
 
-**Sector buckets (MACRO, TECH/SEMIS, FINANCIALS, ENERGY):** Top 5 headlines per bucket. A headline's sector assignment is determined by the primary ticker or topic mentioned — cross-sector headlines (e.g., a Fed decision affecting all sectors) go in MACRO. Headlines mentioning tickers from multiple sectors go in the sector of the first-mentioned universe ticker, with cross-sector relevance noted in the tags.
+**Sector buckets (MACRO, TECH/SEMIS, FINANCIALS, ENERGY):** Top 5 per bucket. Sector is determined by primary ticker or topic; cross-sector headlines (e.g., Fed decision) go in MACRO; headlines mentioning multiple sectors go in the sector of the first-mentioned universe ticker with cross-sector relevance in the tags.
 
-**Earnings calls:** A separate section because earnings are structurally different from headlines — they're per-ticker event results, not news items. Only present when universe names reported since the last invocation. Each entry contains only the numeric result vs. consensus (EPS and revenue) — no tone classification or topic extraction. Tone and narrative assessment is the qualitative research agent's job, performed by pulling full earnings commentary via the `earnings_commentary` tool when it decides the earnings event warrants investigation.
+**Earnings calls:** Per-ticker event results, structurally different from headlines. Present only when universe names reported since last invocation. Numeric result vs. consensus only (EPS and revenue) — tone classification and topic extraction are the qualitative research agent's job via `earnings_commentary` when warranted.
 
-> **Data layer dependency:** The earnings call section requires only numeric data: actual EPS/revenue vs. consensus estimates. These fields are already available from quantitative category 5a–5b ([quantitative.md](../01-data-layer/external/quantitative.md)). The data layer must flag when a universe name has reported since the last invocation (using the earnings calendar from quant 5a) and deliver the actual-vs-estimate comparison. No LLM or classifier is needed for this section.
+> **Data layer dependency:** Numeric data only — actual EPS/revenue vs. consensus from quantitative category 5a–5b ([quantitative.md](../01-data-layer/external/quantitative.md)). Data layer flags universe names that reported since last invocation (from quant 5a's earnings calendar) and delivers actual-vs-estimate. No LLM needed for this section.
 
-**High-priority flags:** Items that should be visible regardless of how many slots their sector bucket consumed. Capped at 3. These are items the data layer already designates as high-priority triggers: M&A rumors, activist short reports, surprise regulatory actions, activist involvement, and geopolitical escalation events (per [qualitative.md](../01-data-layer/external/qualitative.md) categories 1b and 5). A high-priority item also appears in its sector bucket if it ranks in the top 5 — the flag section duplicates it intentionally so the agent sees it prominently even if it skims the sector sections.
+**High-priority flags:** Items visible regardless of sector-bucket slots. Capped at 3. Data layer designates these at ingestion: M&A rumors, activist short reports, surprise regulatory actions, activist involvement, geopolitical escalation (per [qualitative.md](../01-data-layer/external/qualitative.md) categories 1b and 5). A high-priority item also appears in its sector bucket if top-5 — duplication is intentional so the agent sees it even when skimming sectors.
 
-> **Data layer dependency:** The data layer must tag high-priority items at ingestion time. The qualitative data spec already defines these triggers: M&A-related headlines ([qualitative.md](../01-data-layer/external/qualitative.md), 1b — "flag any M&A-related headlines mentioning universe names as high-priority events"), short report publications (1b — "flag short report publications for universe names... as high-priority adaptive research triggers"), and surprise regulatory/geopolitical events (5e — unscheduled event monitoring). The tagging must be implemented as a first-class field on ingested news items, not inferred downstream.
+> **Data layer dependency:** High-priority tagging at ingestion. The qualitative data spec defines triggers in prose: M&A headlines mentioning universe names ([qualitative.md](../01-data-layer/external/qualitative.md), 1b), short-report publications (1b), surprise regulatory/geopolitical events (5e). Must be a first-class field on ingested items, not inferred downstream.
 
 ### Reference IDs
 
-Each digest item carries a reference ID (`ND-M1`, `ND-T3`, `ND-HP2`, etc.) that the qualitative research agent can cite when deciding to investigate further or when producing its output brief. These IDs create an audit trail: the agent's output can reference "investigated [ND-T3] via news_search" and the synthesizer can trace the chain back to the original headline.
+Each digest item carries a reference ID (`ND-M1`, `ND-T3`, `ND-HP2`, etc.) the agent cites when investigating or producing output. The agent's brief can reference "investigated [ND-T3] via news_search" and the synthesizer traces the chain to the original headline.
 
-Reference ID scheme:
+Reference scheme:
 - `ND-M{N}` — macro/cross-sector headlines
 - `ND-T{N}` — tech/semis headlines
 - `ND-F{N}` — financials headlines
@@ -235,11 +235,11 @@ Reference ID scheme:
 
 ### Ranking algorithm
 
-Headlines within each sector bucket are ranked by a composite score. The ranking is deterministic — no LLM involvement.
+Deterministic composite-score ranking per sector bucket — no LLM involvement.
 
-**Step 1 — Deduplication:** Cluster headlines about the same event (using headline similarity and co-occurring ticker mentions within a short time window). Keep the highest-credibility source per cluster. Record cluster size — a cluster of 10 articles about the same event signals higher market attention than a single article.
+**Step 1 — Deduplication:** Cluster same-event headlines (headline similarity + co-occurring ticker mentions within a short window). Keep the highest-credibility source per cluster. Record cluster size — 10 articles on one event signals higher attention than one article.
 
-> **Data layer dependency:** The data layer must implement headline clustering at ingestion time. The qualitative data spec describes "cross-ticker news clustering" ([qualitative.md](../01-data-layer/external/qualitative.md), 1a) as a concept but does not specify a clustering algorithm. Implementation needs: similarity metric (headline text overlap, shared tickers, time proximity), cluster representative selection (highest credibility tier, then most recent), and cluster size as a metadata field on the representative.
+> **Data layer dependency:** Headline clustering at ingestion. The qualitative data spec describes "cross-ticker news clustering" ([qualitative.md](../01-data-layer/external/qualitative.md), 1a) as a concept; algorithm is not specified. Needs: similarity metric (text overlap, shared tickers, time proximity), representative selection (highest credibility tier, then most recent), cluster size as metadata.
 
 **Step 2 — Scoring:** Each deduplicated headline is scored:
 
