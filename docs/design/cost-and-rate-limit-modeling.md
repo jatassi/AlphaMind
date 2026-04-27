@@ -1,22 +1,22 @@
 # Cost and rate-limit modeling
 
-How AlphaMind's LLM workload fits inside a single $100/month Claude Max 5x subscription consumed via the Claude Agent SDK on the operator's own trading machine. This doc establishes the per-invocation token budget, the weekly throughput envelope, the latency budget per invocation, and the operating posture when usage approaches the subscription's caps.
+How AlphaMind's LLM workload fits inside a single $100/month Claude Max 5x subscription consumed via the Claude Agent SDK on the operator's trading machine. Establishes per-invocation token budget, weekly throughput envelope, per-invocation latency budget, and operating posture when usage approaches caps.
 
-This is a pre-paper-trading exercise: the numbers are best estimates from the agent specs and Anthropic's published behavior; the [Calibration discipline](#calibration-discipline) section names the instrumentation that refines them once the system is running.
+Pre-paper-trading: numbers are best estimates from agent specs and Anthropic's published behavior; [Calibration discipline](#calibration-discipline) names the instrumentation that refines them once the system runs.
 
 ---
 
 ## Scope
 
 **In scope.**
-- The subscription envelope (Max 5x plan parameters, usage windows, at-cap behavior, authentication posture).
-- The per-invocation LLM workload (agents involved, token volume, tool-use loop overhead, failure-path retry overhead).
-- The headroom analysis converting workload into utilization against the subscription envelope, surfacing the binding constraint.
-- The latency budget per invocation against the scheduler cadence and the emergency-invocation latency target.
-- The operating posture when the workload approaches or hits a cap, including the manual operator levers exposed via the command center.
-- The monitoring surface that tracks utilization and surfaces approach-to-cap.
+- Subscription envelope (Max 5x plan parameters, usage windows, at-cap behavior, authentication posture).
+- Per-invocation LLM workload (agents involved, token volume, tool-use loop overhead, failure-path retry overhead).
+- Headroom analysis converting workload into utilization against the subscription envelope, surfacing the binding constraint.
+- Latency budget per invocation against scheduler cadence and emergency-invocation latency target.
+- Operating posture when workload approaches or hits a cap, including manual operator levers via the command center.
+- Monitoring surface tracking utilization and approach-to-cap.
 
-**Out of scope** (owned elsewhere, not re-derived here):
+**Out of scope** (owned elsewhere):
 
 | Concern | Authoritative spec |
 |---|---|
@@ -34,21 +34,21 @@ This is a pre-paper-trading exercise: the numbers are best estimates from the ag
 
 ### Plan
 
-A single **Claude Max 5x** subscription, $100/month, billed monthly. The subscription is owned by and used exclusively by the operator on hardware the operator owns. There is no rerouting of traffic from any other user, no product offered to other users, no claude.ai login surfaced to anyone else.
+A single **Claude Max 5x** subscription, $100/month. Owned and used exclusively by the operator on hardware the operator owns. No rerouting, no product offered to other users, no claude.ai login surfaced to anyone else.
 
-This is the personal-use posture that [Anthropic's Claude Code legal page](https://code.claude.com/docs/en/legal-and-compliance) accommodates with the line *"Advertised usage limits for Pro and Max plans assume ordinary, individual usage of Claude Code and the Agent SDK"*. The third-party-developer prohibitions on the same page (*"to route requests through Free, Pro, or Max plan credentials on behalf of their users"*) do not apply to a single-operator setup.
+This is the personal-use posture [Anthropic's Claude Code legal page](https://code.claude.com/docs/en/legal-and-compliance) accommodates with *"Advertised usage limits for Pro and Max plans assume ordinary, individual usage of Claude Code and the Agent SDK"*. The third-party-developer prohibitions on the same page (*"to route requests through Free, Pro, or Max plan credentials on behalf of their users"*) do not apply to a single-operator setup.
 
 ### Authentication
 
-OAuth token generated via `claude setup-token`, set in the pipeline process environment as `CLAUDE_CODE_OAUTH_TOKEN`. The Claude Agent SDK for Python picks this up automatically; no API key is configured. The subscription does not silently fall back to pay-per-token API billing when caps are reached — at-cap behavior is a hard block until the window rolls.
+OAuth token generated via `claude setup-token`, set in the pipeline process environment as `CLAUDE_CODE_OAUTH_TOKEN`. The Claude Agent SDK for Python picks this up automatically; no API key configured. The subscription does not fall back to pay-per-token API billing when caps are reached — at-cap behavior is a hard block until the window rolls.
 
 ### Models available
 
-The Max 5x tier provides full access to the current Claude lineup. The agent specs assign:
+Max 5x provides full access to the current Claude lineup. The agent specs assign:
 
 - **Opus** to the three decision-layer agents (analyst, strategist, portfolio manager), where high-stakes judgment justifies the slower, more capable model.
-- **Sonnet** to the six analysis-layer agents (three sector analysts, portfolio analyst, qualitative researcher, adaptive researcher) and to the synthesizer.
-- **Haiku** is unused. The model assignments are configurable per-agent in `config/agents.yaml`; switching the analysis layer to Haiku is a manual lever available under sustained cap pressure (see [Cap-approach response](#cap-approach-response)).
+- **Sonnet** to the six analysis-layer agents (three sector analysts, portfolio analyst, qualitative researcher, adaptive researcher) and the synthesizer.
+- **Haiku** is unused. Model assignments are configurable per-agent in `config/agents.yaml`; switching the analysis layer to Haiku is a manual lever under sustained cap pressure (see [Cap-approach response](#cap-approach-response)).
 
 ### Usage caps
 
@@ -61,22 +61,22 @@ Anthropic publishes the *structure* of Max plan caps but not the numeric thresho
 | Weekly Sonnet | Sonnet-only sub-cap | ~140–280 Sonnet-hours |
 | Weekly Opus | Opus-only sub-cap | ~15–35 Opus-hours |
 
-The "Opus-hours" / "Sonnet-hours" measurement is calibrated by Anthropic against an "ordinary" user issuing roughly one message every five minutes (≈12 messages per hour of plan-time). A token-heavier or tool-heavier message consumes the cap faster than a token-light interactive message. The numeric ranges in the table are community measurements; treat them as order-of-magnitude reference, not contract.
+"Opus-hours" / "Sonnet-hours" is calibrated by Anthropic against an "ordinary" user issuing roughly one message every five minutes (≈12 messages per hour of plan-time). A token-heavier or tool-heavier message consumes cap faster. The numeric ranges in the table are community measurements; treat them as order-of-magnitude, not contract.
 
 Two consequences for AlphaMind:
 
 1. **The weekly Opus cap is the binding constraint.** The decision-layer trio runs every invocation; the analysis layer runs on Sonnet which has roughly 10× the weekly headroom.
-2. **Token-heavy calls (PM, synthesizer) consume cap faster than the 12-msg/hour calibration would suggest.** Headroom estimates need to be deflated by an empirical factor measured during paper trading.
+2. **Token-heavy calls (PM, synthesizer) consume cap faster than the 12-msg/hour calibration suggests.** Headroom estimates need an empirical deflation factor measured during paper trading.
 
 ### At-cap behavior
 
-When any cap is exceeded, the SDK receives an HTTP error from the model endpoint. The pipeline process treats this exactly as the [llm-agent-failure-handling.md § Model API error](llm-agent-failure-handling.md) specifies: three exponential-backoff retries, then abort the invocation. The continuous monitor is unaffected (it does not invoke LLMs) and retains its protective authority over open positions.
+When any cap is exceeded, the SDK receives an HTTP error. The pipeline process treats this as the [llm-agent-failure-handling.md § Model API error](llm-agent-failure-handling.md) specifies: three exponential-backoff retries, then abort. The continuous monitor is unaffected (it does not invoke LLMs) and retains its protective authority over open positions.
 
-There is no automatic downgrade to a different model and no automatic fallback to API billing. Operator awareness is delivered via the command-center alert surface; the operator's manual response options are described under [Cap-hit response](#cap-hit-response).
+No automatic model downgrade and no fallback to API billing. Operator awareness via the command-center alert surface; manual response options under [Cap-hit response](#cap-hit-response).
 
 ### Residual technical-enforcement risk
 
-Anthropic deployed a server-side classifier in early 2026 that rejects OAuth tokens used in patterns associated with reseller or aggregator workloads. Personal-use SDK consumption from a single machine is not the target, but heuristics are not perfect. If the classifier rejects an AlphaMind request, it surfaces as a credential error, which the pipeline treats as a model-API-error abort under existing semantics. The operator-side mitigation is the API-key escape hatch (see [API-key escape hatch](#api-key-escape-hatch)).
+Anthropic deployed a server-side classifier in early 2026 rejecting OAuth tokens used in patterns associated with reseller or aggregator workloads. Personal-use SDK consumption from a single machine is not the target, but heuristics aren't perfect. If the classifier rejects an AlphaMind request, it surfaces as a credential error, which the pipeline treats as a model-API-error abort. Mitigation: the API-key escape hatch (see [API-key escape hatch](#api-key-escape-hatch)).
 
 ---
 
@@ -94,9 +94,9 @@ Per [architecture/infrastructure.md § Scheduling](../architecture/infrastructur
 | Off-hours rolling | 20:00, 00:00, 04:00, 08:00 | 20 |
 | Weekend reduced | every 6–8h Sat/Sun | 6 |
 
-Net scheduled invocations per week: **~32 normal market week**, with the dedup logic and skip-on-recent-completion rule trimming the raw cron count.
+Net scheduled invocations per week: **~32 normal market week**, with dedup and skip-on-recent-completion trimming the raw cron count.
 
-Emergency invocations triggered by the continuous monitor add a variable tail: **0–2 in a quiet week, 4–8 in a stress week, occasionally more in a crisis week**. Each emergency invocation runs the same agent surface as a scheduled invocation, with the analyst in `watchlist` mode and the strategist in `defensive_posture` mode, both of which produce smaller outputs than the normal mode.
+Emergency invocations triggered by the continuous monitor add a variable tail: **0–2 in a quiet week, 4–8 in a stress week, occasionally more in a crisis week**. Each runs the same agent surface as a scheduled invocation, with the analyst in `watchlist` mode and the strategist in `defensive_posture` mode, both producing smaller outputs than normal mode.
 
 ### Per-invocation agent surface
 
@@ -115,11 +115,11 @@ Per [architecture/llm-integration.md § Agent inventory](../architecture/llm-int
 | Strategist | Decision | Opus | Parallel pair |
 | Portfolio manager | Decision | Opus | Sequential after parallel pair |
 
-The proposal pre-processor is deterministic, not an LLM call. The continuous monitor process does not invoke LLMs.
+The proposal pre-processor is deterministic. The continuous monitor process does not invoke LLMs.
 
 ### Per-invocation token aggregate
 
-Token volumes per agent are documented at the agent-spec level (see [Out of scope](#scope) for the source-of-truth pointers). Aggregated for the cost model, using the midpoints of declared ranges:
+Token volumes per agent are documented at the agent-spec level. Aggregated for the cost model, using midpoints of declared ranges:
 
 **Sonnet calls per invocation, primary profile ($1,500), normal day:**
 
@@ -159,7 +159,7 @@ Per [llm-agent-failure-handling.md](llm-agent-failure-handling.md):
 | Timeout | One retry with doubled budget | Up to 2× original |
 | Context overflow | No retry, immediate abort | Zero retry overhead; entire invocation aborts |
 
-Empirically, malformed-output retries are the dominant overhead in steady state (estimated 1–5% of calls during prompt iteration, dropping toward <1% as prompts stabilize). Model-API-error retries spike during Anthropic incidents and during cap approach. The cost model adds a flat **+10% to weekly token volume** as an envelope for failure-path overhead in normal operation, raising to **+20%** in stress weeks.
+Malformed-output retries are the dominant overhead in steady state (estimated 1–5% of calls during prompt iteration, dropping toward <1% as prompts stabilize). Model-API-error retries spike during Anthropic incidents and cap approach. The cost model adds **+10% to weekly token volume** as an envelope for failure-path overhead in normal operation, **+20%** in stress weeks.
 
 ---
 
@@ -176,9 +176,9 @@ Per scheduled invocation: 3 Opus calls (analyst, strategist, PM).
 | Stress week, full-system | 32 × 3 = 96 | 8 × 3 = 24 | +20% = +24 | ~144 | 80% | 34% |
 | Crisis week, full-system | 32 × 3 = 96 | 16 × 3 = 48 | +20% = +29 | ~173 | 96% | 41% |
 
-The cap-numerator uses the 12-message-per-Opus-hour calibration baseline. AlphaMind's PM call (~9K tokens combined) is meaningfully heavier than that baseline; the effective cap may be tighter than the message count suggests. Treat the percentages as "best-case headroom from the published structure"; expect actual paper-trading measurements to land at the higher end of utilization.
+The cap-numerator uses the 12-message-per-Opus-hour calibration baseline. AlphaMind's PM call (~9K tokens combined) is meaningfully heavier than that baseline; effective cap may be tighter than message count suggests. Treat percentages as "best-case headroom from published structure"; expect actual paper-trading measurements to land at the higher end of utilization.
 
-**Read of the table:** Normal weeks consume 28–66% of the weekly Opus cap depending on which end of the published range Anthropic actually enforces. Stress weeks push 34–80%. A crisis week — large and sustained guardrail breaches triggering emergency invocations — could exhaust the cap entirely in the worst case. The operating posture (next section) is built around this risk.
+**Read:** Normal weeks consume 28–66% of the weekly Opus cap depending on which end of the published range Anthropic enforces. Stress weeks push 34–80%. A crisis week with large sustained breaches could exhaust the cap. The operating posture is built around this risk.
 
 ### Weekly Sonnet utilization
 
@@ -193,21 +193,21 @@ Sonnet has comfortable headroom in every realistic scenario.
 
 ### 5-hour rolling window utilization
 
-The peak 5-hour window is morning trading: the 09:00 pre-open invocation, the 09:30 and 11:30 rolling invocations, plus a possible emergency invocation in response to the open. Worst case ~4 invocations × ~10 LLM calls = ~40 calls in the window.
+Peak 5-hour window is morning trading: the 09:00 pre-open invocation, 09:30 and 11:30 rolling invocations, plus a possible emergency invocation. Worst case ~4 invocations × ~10 LLM calls = ~40 calls.
 
 Against a community-measured ~225-message Max 5x window allowance: **~18% utilization at peak.** No real risk of hitting the 5-hour cap from scheduled cadence alone.
 
 ### Combined all-models weekly cap
 
-Anthropic enforces an umbrella all-models weekly cap in addition to the per-model sub-caps. The numeric value is not published, but the structural rule is that the per-model caps are roughly half the umbrella cap. The Opus + Sonnet combined call count above (normal week ~258 + ~119 = ~377 calls) sits well below either per-model cap and should clear the umbrella by a wider margin.
+Anthropic enforces an umbrella all-models weekly cap in addition to per-model sub-caps. The numeric value is not published, but per-model caps are roughly half the umbrella cap. Opus + Sonnet combined (normal week ~258 + ~119 = ~377 calls) sits well below either per-model cap and clears the umbrella by a wider margin.
 
 ### What happens if the cap estimates are wrong
 
-The community measurements above are wide and Anthropic does not commit to them. The realistic scenarios that would push the system into cap exhaustion:
+Community measurements are wide and Anthropic does not commit to them. Realistic cap-exhaustion scenarios:
 
-- **Anthropic tightens caps without notice.** Has happened before (e.g., the off-peak bonus removed in March 2026). Mitigation: monitor Anthropic announcements; the operator can react via [Manual operator levers](#manual-operator-levers).
-- **The Opus token-weight discount is harsher than the message-count baseline.** The cost model assumes ~12 Opus messages = 1 Opus-hour. If AlphaMind's heavier messages count for, say, 2× a baseline message, the effective Opus cap shrinks by half. Mitigation: instrument actual usage in paper trading, refine the model.
-- **Sustained crisis triggers many emergency invocations.** A volatile market week could put real pressure on the cap. Mitigation: profile downgrade to model-light agent assignments, pause scheduler temporarily, accept reduced trading frequency.
+- **Anthropic tightens caps without notice** (e.g., the off-peak bonus removed in March 2026). Mitigation: monitor Anthropic announcements; operator reacts via [Manual operator levers](#manual-operator-levers).
+- **The Opus token-weight discount is harsher than the message-count baseline.** If AlphaMind's heavier messages count for, say, 2× a baseline message, the effective Opus cap shrinks by half. Mitigation: instrument actual usage in paper trading, refine the model.
+- **Sustained crisis triggers many emergency invocations.** Mitigation: profile downgrade to model-light agent assignments, pause scheduler temporarily, accept reduced trading frequency.
 
 ---
 
@@ -215,7 +215,7 @@ The community measurements above are wide and Anthropic does not commit to them.
 
 ### Per-invocation wall-clock budget
 
-The pipeline runs sequentially across data → distillation → analysis → decision → execution. Latency is dominated by the analysis layer's sequential synthesizer and the decision layer's sequential PM. Best estimate of normal wall-clock per invocation:
+The pipeline runs sequentially across data → distillation → analysis → decision → execution. Latency is dominated by the analysis layer's sequential synthesizer and the decision layer's sequential PM. Best estimate per invocation:
 
 | Phase | Approximate duration |
 |---|---|
@@ -232,21 +232,21 @@ The pipeline runs sequentially across data → distillation → analysis → dec
 
 ### Catch-up budget
 
-The tightest scheduler spacing is the 2-hour market-hours rolling cadence. Even a worst-case 3-minute invocation consumes ~2.5% of the inter-trigger budget. A pile-up across consecutive triggers is structurally prevented by APScheduler's `max_instances=1`, which queues at most one rolling trigger if the current invocation is still running. The 30-minute deduplication window further suppresses redundant rolling fires after an emergency or a slow run.
+The tightest scheduler spacing is the 2-hour market-hours rolling cadence. Even a worst-case 3-minute invocation consumes ~2.5% of the inter-trigger budget. APScheduler's `max_instances=1` prevents pile-up by queuing at most one rolling trigger. The 30-minute deduplication window suppresses redundant rolling fires after an emergency or slow run.
 
 ### Emergency invocation latency target
 
-Per [breach-behavior.md § Emergency invocation trigger](06-risk-guardrails/breach-behavior.md#emergency-invocation-trigger), the emergency-invocation latency target is **command submission within ~30 seconds of the trigger**. The decision-layer Opus trio is the bottleneck:
+Per [breach-behavior.md § Emergency invocation trigger](06-risk-guardrails/breach-behavior.md#emergency-invocation-trigger), the target is **command submission within ~30 seconds of the trigger**. The decision-layer Opus trio is the bottleneck:
 
-- Analyst in `watchlist` mode: ~10s (lighter output than normal mode)
+- Analyst in `watchlist` mode: ~10s (lighter output than normal)
 - Strategist in `defensive_posture` mode: ~15s (restricted action enum, smaller output)
 - PM evaluating defensive-posture envelopes: ~10s (smaller envelope set)
 
-Emergency-mode latency should land at **~25–35 seconds** for the decision layer, plus the analysis layer running upstream in parallel/sequential. End-to-end emergency-invocation latency is dominated by the analysis layer (~30s) when triggers fire mid-day, since the analysis layer has to run from scratch for fresh input. The operator may accept some emergency-trigger latency overshoot in exchange for the fail-closed guarantee that the continuous monitor's protective authority covers the pre-decision window.
+Emergency-mode latency lands at **~25–35 seconds** for the decision layer, plus the analysis layer upstream. End-to-end emergency latency is dominated by the analysis layer (~30s) when triggers fire mid-day. The continuous monitor's protective authority covers the pre-decision window.
 
 ### Tool-use loop latency
 
-The adaptive researcher's 25-call / 4,000-token budget is the longest-running tool loop in the system. Each external tool call (news search, options flow, etc.) is in the 1–3 second range; 25 calls in series saturates at ~60 seconds wall-time. The Sonnet model turns between tool calls add another 5–10 seconds total. The qualitative researcher's bounded soft-count of tool calls (~5–15) consumes 10–30 seconds end-to-end. Both fit inside the per-invocation latency budget.
+The adaptive researcher's 25-call / 4,000-token budget is the longest-running tool loop. Each external tool call is in the 1–3 second range; 25 calls in series saturates at ~60s wall-time. Sonnet model turns between tool calls add 5–10s total. The qualitative researcher's bounded ~5–15 tool calls consume 10–30s end-to-end. Both fit inside the per-invocation latency budget.
 
 ---
 
@@ -254,7 +254,7 @@ The adaptive researcher's 25-call / 4,000-token budget is the longest-running to
 
 ### Normal-day operation
 
-The system runs unattended. The pipeline process consumes ~30–50% of the weekly Opus cap (best estimate, normal week, primary profile) and ~10% of the weekly Sonnet cap. The operator interacts via the command center for routine review, not because anything requires intervention.
+The system runs unattended. The pipeline consumes ~30–50% of the weekly Opus cap (best estimate, normal week, primary profile) and ~10% of the weekly Sonnet cap. The operator interacts via the command center for routine review, not intervention.
 
 ### Cap-approach response
 
@@ -267,22 +267,22 @@ The command center's monitoring surface tracks running utilization across the th
 | Weekly Sonnet > 70% sustained | Warning | Investigate adaptive-researcher activity; check for runaway tool loops |
 | 5-hour window > 90% in any single window | Critical | Pause scheduler until window rolls |
 
-Thresholds are operator-tunable in the command center alert registry. The thresholds above are starting values; refinement happens during paper trading once actual utilization is measured.
+Thresholds are operator-tunable in the command center alert registry. Starting values; refinement happens during paper trading once actual utilization is measured.
 
 ### Cap-hit response
 
-When the cap is exceeded mid-invocation, the pipeline aborts the in-flight invocation per the standard fail-closed semantics. Subsequent scheduled triggers also abort on retry exhaustion. The continuous monitor remains active and continues protecting open positions via engine-originated CLOSE commands.
+When the cap is exceeded mid-invocation, the pipeline aborts per the standard fail-closed semantics. Subsequent scheduled triggers abort on retry exhaustion. The continuous monitor remains active, protecting open positions via engine-originated CLOSE commands.
 
 The operator's options:
 
-1. **Wait for the window to roll.** For a 5-hour window hit, this is at most 5 hours from the first message of the session. For a weekly cap hit, this is up to 7 days from the first message of the week.
-2. **Pause the scheduler.** The command-center "Pause scheduler" action stops new triggers from firing, conserving cap during the wait. Per [command-center.md § Operator actions](command-center.md#operator-actions), this is a single-click action with audit-log capture.
-3. **Switch to a lighter profile.** The primary profile uses fewer tokens than full-system. The "Switch profile" action in the command center triggers a configuration reload at the next invocation.
-4. **Reassign the decision layer to Sonnet.** Edit `config/agents.yaml` to switch analyst/strategist/PM model assignment from Opus to Sonnet. This is a degraded-quality fallback that the operator may accept temporarily; it is not a default operating mode.
+1. **Wait for the window to roll.** 5-hour window hit: at most 5 hours from the first message of the session. Weekly cap hit: up to 7 days.
+2. **Pause the scheduler.** "Pause scheduler" stops new triggers from firing, conserving cap during the wait. Per [command-center.md § Operator actions](command-center.md#operator-actions), single-click with audit-log capture.
+3. **Switch to a lighter profile.** The primary profile uses fewer tokens than full-system. "Switch profile" triggers a configuration reload at the next invocation.
+4. **Reassign the decision layer to Sonnet.** Edit `config/agents.yaml` to switch analyst/strategist/PM model from Opus to Sonnet. A degraded-quality fallback the operator may accept temporarily.
 
 ### Manual operator levers
 
-The cap-related operator actions composable from the command center:
+Cap-related operator actions from the command center:
 
 | Action | Effect | Reversibility |
 |---|---|---|
@@ -291,15 +291,15 @@ The cap-related operator actions composable from the command center:
 | Edit `config/agents.yaml` model assignments | Next invocation uses the new models | Edit back; takes effect at next invocation |
 | Toggle halt mode | Per [breach-behavior.md § Halt mode](06-risk-guardrails/breach-behavior.md), engages the defensive_posture operating mode and disables `add` actions | Exit halt mode via the same action |
 
-None of these levers consume cap themselves. All are safe to invoke during a cap-exhausted period.
+None of these levers consume cap. All are safe to invoke during a cap-exhausted period.
 
 ### API-key escape hatch
 
-If Anthropic tightens caps materially, or if the technical-enforcement classifier rejects the OAuth token persistently, the escape hatch is to switch the SDK to API-key authentication: provision an API key from Anthropic Console, set `ANTHROPIC_API_KEY` in the pipeline process environment, unset `CLAUDE_CODE_OAUTH_TOKEN`. No code change is required — the SDK picks the appropriate credential automatically.
+If Anthropic tightens caps materially, or the technical-enforcement classifier rejects the OAuth token persistently: switch the SDK to API-key authentication. Provision an API key from Anthropic Console, set `ANTHROPIC_API_KEY` in the pipeline process environment, unset `CLAUDE_CODE_OAUTH_TOKEN`. No code change required — the SDK picks the appropriate credential automatically.
 
-API-key billing consumes the same model endpoints under per-token pricing (Opus ~$5/$25 per million input/output tokens, Sonnet ~$3/$15, current as of 2026-04). With prompt caching enabled (the synthesizer brief and stable system prompts cache well), the modeled workload's pay-per-token cost lands at roughly **$150–$450/month** depending on profile and volatility — comparable to or modestly above the $100/month Max subscription, in exchange for removing the cap entirely.
+API-key billing consumes the same model endpoints under per-token pricing (Opus ~$5/$25 per million input/output tokens, Sonnet ~$3/$15, current as of 2026-04). With prompt caching (synthesizer brief and stable system prompts cache well), the modeled workload's pay-per-token cost lands at roughly **$150–$450/month** depending on profile and volatility — comparable to or modestly above the $100/month Max subscription, in exchange for removing the cap entirely.
 
-The escape hatch is documented but not provisioned by default; the personal-use Max posture is the primary operating model.
+The escape hatch is documented but not provisioned by default.
 
 ---
 
@@ -307,7 +307,7 @@ The escape hatch is documented but not provisioned by default; the personal-use 
 
 ### What is tracked
 
-The pipeline process records per-invocation usage metrics into the `invocations` table (per [infrastructure.md § Layer 1: Structured metrics](../architecture/infrastructure.md#layer-1-structured-metrics-sqlite)):
+The pipeline records per-invocation usage metrics into the `invocations` table (per [infrastructure.md § Layer 1: Structured metrics](../architecture/infrastructure.md#layer-1-structured-metrics-sqlite)):
 
 | Field | Granularity | Source |
 |---|---|---|
@@ -318,7 +318,7 @@ The pipeline process records per-invocation usage metrics into the `invocations`
 | Retry count | Per agent per invocation | Failure-handling layer |
 | Estimated cap consumption | Rolling per window (5h, weekly Opus, weekly Sonnet) | Computed from per-call counts using the calibration baseline |
 
-The cap-consumption estimates use the 12-message-per-hour Anthropic baseline initially, refined to a token-weight-adjusted multiplier once paper-trading data accumulates.
+Cap-consumption estimates initially use the 12-message-per-hour Anthropic baseline, refined to a token-weight-adjusted multiplier once paper-trading data accumulates.
 
 ### Where surfaced
 
@@ -344,7 +344,7 @@ Alerts route to the command center's standard notification channels (in-app bann
 | `throughput.cap_hit` | Pipeline invocation aborted with rate-limit error class | Critical |
 | `throughput.retry_rate_warning` | Retry rate > 10% over rolling 24h | Warning |
 
-The thresholds above are starting values; refinement happens via the same operator-driven Class A review pattern used for distillation thresholds.
+Starting values; refinement via the operator-driven Class A review pattern used for distillation thresholds.
 
 ---
 
@@ -352,36 +352,36 @@ The thresholds above are starting values; refinement happens via the same operat
 
 ### Numeric values are estimates
 
-Three classes of number appear in this doc:
+Three classes of number:
 
-1. **Anthropic-published structure** — three windows (5-hour, weekly Sonnet, weekly Opus), authentication mechanism, at-cap behavior. These are stable.
-2. **Anthropic-unpublished cap thresholds** — the actual numeric values of the windows. These are community-measured and approximate; ranges given here are best estimates as of late 2026.
-3. **AlphaMind-side estimates** — per-invocation token volumes, latency budgets, retry rates. These are derived from the agent specs and best engineering judgment, not measured.
+1. **Anthropic-published structure** — three windows (5-hour, weekly Sonnet, weekly Opus), authentication mechanism, at-cap behavior. Stable.
+2. **Anthropic-unpublished cap thresholds** — actual numeric values of the windows. Community-measured and approximate; ranges given here are best estimates as of late 2026.
+3. **AlphaMind-side estimates** — per-invocation token volumes, latency budgets, retry rates. Derived from agent specs and engineering judgment, not measured.
 
-The cost model's conclusions (binding constraint is weekly Opus; normal-week utilization sits 28–66% of cap; latency budget is comfortable against scheduler cadence) are robust to wide uncertainty in the numeric values. The threshold values used in the alert registry are not robust — they are starting points that need calibration.
+The cost model's conclusions (binding constraint is weekly Opus; normal-week utilization sits 28–66% of cap; latency budget is comfortable against scheduler cadence) are robust to wide uncertainty in numeric values. The alert-registry threshold values are starting points that need calibration.
 
 ### Re-evaluation triggers
 
-Per the operator-driven Class A review pattern from [02-distillation-layer/threshold-calibration.md](02-distillation-layer/threshold-calibration.md), the cost model is reviewed under the following structured triggers:
+Per the operator-driven Class A review pattern from [02-distillation-layer/threshold-calibration.md](02-distillation-layer/threshold-calibration.md), the cost model is reviewed under the following triggers:
 
 - Anthropic announces a Max plan pricing or limit change
-- Anthropic deploys new models that the agents may switch to (e.g., a future Sonnet that closes the quality gap with Opus)
+- Anthropic deploys new models the agents may switch to
 - Sustained alert firing on `throughput.opus_weekly_warning` or `throughput.retry_rate_warning`
 - Any single instance of `throughput.cap_hit`
-- Profile change or addition (new third profile, e.g., $10K mid-tier)
+- Profile change or addition
 - Major workload change (new agent, agent budget revision, scheduler cadence change)
 
-Default review cadence in the absence of triggers: **monthly during paper trading, quarterly once live.**
+Default review cadence in absence of triggers: **monthly during paper trading, quarterly once live.**
 
 ### Refinement during paper trading
 
-Three measurements collected during paper trading drive the refinement:
+Three measurements drive refinement:
 
-1. **Actual per-invocation token volume by agent and profile.** Compared against the estimates in [Per-invocation token aggregate](#per-invocation-token-aggregate). Gap between estimate and measurement informs the headroom analysis recalibration.
-2. **Actual cap consumption rate.** Tracked across the first ~3 weeks of operation, compared against the community-measured ranges. The ratio of estimated-to-actual utilization gives the empirical token-weight multiplier.
-3. **Actual retry-rate.** Tracked per agent per failure mode, compared against the +10% / +20% envelopes used in the headroom analysis.
+1. **Actual per-invocation token volume by agent and profile.** Compared against estimates in [Per-invocation token aggregate](#per-invocation-token-aggregate). Gap informs headroom recalibration.
+2. **Actual cap consumption rate.** Tracked across the first ~3 weeks, compared against community-measured ranges. Ratio of estimated-to-actual utilization gives the empirical token-weight multiplier.
+3. **Actual retry-rate.** Per agent per failure mode, compared against the +10% / +20% envelopes.
 
-The first month of paper trading gathers enough data to refine the alert thresholds and update this doc with measured values. The cost model graduates from "engineering estimate" to "calibrated against actual" at that point.
+The first month of paper trading gathers enough data to refine alert thresholds and update this doc with measured values.
 
 ---
 
@@ -389,11 +389,11 @@ The first month of paper trading gathers enough data to refine the alert thresho
 
 Changes landed alongside this doc:
 
-- [architecture/llm-integration.md](../architecture/llm-integration.md) — subscription tier corrected from $200/month Max to $100/month Max 5x; pay-per-token comparison updated to reflect prompt-caching savings; cross-reference to this doc added.
-- [command-center.md § Operator actions](command-center.md#operator-actions) — no change to the operator-action surface; this doc references the existing actions (pause scheduler, switch profile, toggle halt mode) without requiring new ones.
-- [command-center.md § Alerting](command-center.md) — no change to the alert framework; this doc adds the throughput rule names to the default rule set.
+- [architecture/llm-integration.md](../architecture/llm-integration.md) — subscription tier corrected to $100/month Max 5x; pay-per-token comparison updated for prompt-caching savings; cross-reference added.
+- [command-center.md § Operator actions](command-center.md#operator-actions) — references existing actions (pause scheduler, switch profile, toggle halt mode) without adding new ones.
+- [command-center.md § Alerting](command-center.md) — adds throughput rule names to the default rule set.
 
-Open follow-ups not blocking on this doc:
+Open follow-ups:
 
-- The [Feedback loop design](../project-tracker.md#phase-4--maturation-before-live-transition) item, when it lands, will likely add a per-agent cost-per-quality-unit metric that depends on the per-call token tracking specified here.
-- Once paper-trading measurements are available, this doc is updated with measured values and the alert thresholds are revised. That is the first re-evaluation trigger above, not a separate work item.
+- The [Feedback loop design](../project-tracker.md#phase-4--maturation-before-live-transition), when it lands, will likely add a per-agent cost-per-quality-unit metric depending on the per-call token tracking specified here.
+- Once paper-trading measurements are available, this doc is updated with measured values and alert thresholds are revised.

@@ -1,12 +1,12 @@
 # Configuration management
 
-All operator-tunable values live in YAML files under a single `config/` tree; secrets in `.env`. The surface organizes around four named bundles — **profile**, **regime**, **mode**, **overlay** — with a flat tail of independent knobs (scheduler, data sources, agents, venue, execution, guardrail metadata, LLM failure policy) that don't fit a natural bundle. A resolver runs at invocation start, composes the active bundles, and produces a resolved-config snapshot agents and the engine consume.
+All operator-tunable values live in YAML files under a single `config/` tree; secrets in `.env`. The surface organizes around four named bundles — **profile**, **regime**, **mode**, **overlay** — with a flat tail of independent knobs (scheduler, data sources, agents, venue, execution, guardrail metadata, LLM failure policy). A resolver runs at invocation start, composes active bundles, and produces a resolved-config snapshot agents and the engine consume.
 
 ## Principles
 
 **YAML is the operator interface.** Operators edit YAML only. Pydantic models in the loader provide typed access and parse-time validation.
 
-**Cascade the named bundles, keep the tail flat.** Profile, regime, mode, and overlay are named concepts in [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md), [regime-adaptation.md](06-risk-guardrails/regime-adaptation.md), and [state-delivery.md](06-risk-guardrails/state-delivery.md). Bundling correlated knobs under these names gives typo-proof composition and review surface.
+**Cascade the named bundles, keep the tail flat.** Profile, regime, mode, and overlay are named concepts in [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md), [regime-adaptation.md](06-risk-guardrails/regime-adaptation.md), and [state-delivery.md](06-risk-guardrails/state-delivery.md). Bundling correlated knobs under these names gives typo-proof composition and a review surface.
 
 **Reload at invocation boundary.** Per [mid-pipeline-failure-handling.md](mid-pipeline-failure-handling.md)'s fresh-context principle, each invocation re-reads config at start. Operator edits land at the next trigger.
 
@@ -15,10 +15,10 @@ All operator-tunable values live in YAML files under a single `config/` tree; se
 ## Scope
 
 ### In config
-Values an operator adjusts between deployments or invocations: scheduler cron expressions, data-source registry (provider, tier, freshness SLA, rate limits, retry shape), agent model assignments, token and latency budgets, prompt file paths, venue parameters (Alpaca URLs, session hours), execution behavior (greeks refresh cadence, delta buffer, paper-harness coefficients, submission retry window), the 17 guardrail rule definitions with per-profile base values and per-regime multipliers, per-profile feature flags, mode behavioral contracts, overlay parameters, LLM failure retry policy.
+Values the operator adjusts between deployments or invocations: scheduler cron expressions, data-source registry (provider, tier, freshness SLA, rate limits, retry shape), agent model assignments, token and latency budgets, prompt file paths, venue parameters (Alpaca URLs, session hours), execution behavior (greeks refresh cadence, delta buffer, paper-harness coefficients, submission retry window), the 17 guardrail rule definitions with per-profile base values and per-regime multipliers, per-profile feature flags, mode behavioral contracts, overlay parameters, LLM failure retry policy.
 
 ### In code
-Contracts and decision trees specified authoritatively elsewhere and read from multiple callers: JSON Schemas for analyst, strategist, PM, OMS command, engine envelope, and the reference-ID taxonomy they define; the OMS command ID template `{invocation_id}.{envelope_id}.{command_ordinal}.{attempt_seq}` from [oms-command-ids.md](oms-command-ids.md); the per-rule breach-response decision tree (immediate-engine vs. deferred-to-PM) from [breach-behavior.md](06-risk-guardrails/breach-behavior.md); composition-resolver logic; schema validation; cascade-closure semantics.
+Contracts and decision trees specified authoritatively elsewhere: JSON Schemas for analyst, strategist, PM, OMS command, engine envelope, and the reference-ID taxonomy they define; the OMS command ID template `{invocation_id}.{envelope_id}.{command_ordinal}.{attempt_seq}` from [oms-command-ids.md](oms-command-ids.md); the per-rule breach-response decision tree (immediate-engine vs. deferred-to-PM) from [breach-behavior.md](06-risk-guardrails/breach-behavior.md); composition-resolver logic; schema validation; cascade-closure semantics.
 
 ### Runtime state (database or per-invocation, not config)
 Portfolio positions, open orders, activity log, thesis registry, per-ticker sentiment baselines, lead-lag estimates, rolling P/L windows, current regime classification, halt/emergency state, calibration histories.
@@ -211,7 +211,7 @@ emergency_invocation:
 ```
 
 ### `distillation.yaml`
-Distillation-layer thresholds and persistence windows. Universe-wide — does not compose with profile, regime, mode, or overlay. Resolver passes the section through to the distillation layer at invocation start. Per-threshold rationale and cold-start bootstrap policy in [02-distillation-layer/threshold-calibration.md](02-distillation-layer/threshold-calibration.md).
+Distillation-layer thresholds and persistence windows. Universe-wide — does not compose with profile, regime, mode, or overlay. Per-threshold rationale and cold-start bootstrap policy in [02-distillation-layer/threshold-calibration.md](02-distillation-layer/threshold-calibration.md).
 
 ```yaml
 anomaly_detection:
@@ -279,7 +279,7 @@ prediction_market:
 ```
 
 ### `assets.yaml`
-Per-sector ticker list and benchmark instruments scoping all external data collection. Universe-wide — does not compose with profile, regime, mode, or overlay. Validation procedure, per-criterion data sources and thresholds, and re-evaluation cadence in [asset-universe-validation.md](asset-universe-validation.md).
+Per-sector ticker list and benchmark instruments scoping all external data collection. Universe-wide. Validation procedure, per-criterion data sources and thresholds, and re-evaluation cadence in [asset-universe-validation.md](asset-universe-validation.md).
 
 ```yaml
 last_full_validation: 2026-04-25
@@ -304,7 +304,7 @@ benchmarks:
 ```
 
 ### `profiles/medium.yaml`
-Per-profile file: feature flags, active sectors, min position size, rule subset with base values, decision-agent token-budget ranges. Micro, small, large follow the same shape. Full per-profile rule values are authoritative in [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md) and mirrored here.
+Per-profile file: feature flags, active sectors, min position size, rule subset with base values, decision-agent token-budget ranges. Micro, small, large follow the same shape. Per-profile rule values are authoritative in [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md).
 
 ```yaml
 capital_range_usd: [25000, 50000]
@@ -340,7 +340,7 @@ agent_token_budgets:
 ```
 
 ### `regimes/elevated.yaml`
-Per-regime multipliers. Covers every rule across all profiles; rules absent from a profile (e.g., options rules at micro) are ignored at composition.
+Per-regime multipliers covering every rule across all profiles; rules absent from a profile (e.g., options rules at micro) are ignored at composition.
 
 ```yaml
 vix_range: [22, 35]
@@ -408,7 +408,7 @@ retries:
 ```
 
 ### `.env`
-One value per line, `KEY=value`. Loaded at process start via `python-dotenv`. Every `*_env` reference in YAML must resolve to a key present here at load time.
+One value per line, `KEY=value`. Loaded at process start via `python-dotenv`. Every `*_env` reference in YAML must resolve to a key present here.
 
 ```
 CLAUDE_CODE_OAUTH_TOKEN=...
@@ -421,7 +421,7 @@ FRED_API_KEY=...
 
 ## Composition model
 
-The resolver runs once at invocation start and produces a resolved-config snapshot. Agents and the engine consume the snapshot; they never read the YAML tree directly mid-invocation. The snapshot is also persisted to the filesystem with its SHA-256 hash and path recorded in the invocation record's provenance fields per [state-persistence.md § Invocation records](05-execution-layer/state-persistence.md), so the feedback loop can join past invocations to the exact composition that produced their behavior.
+The resolver runs once at invocation start and produces a resolved-config snapshot. Agents and the engine consume the snapshot; they never read the YAML tree directly mid-invocation. The snapshot is persisted to the filesystem with its SHA-256 hash and path recorded in the invocation record's provenance fields per [state-persistence.md § Invocation records](05-execution-layer/state-persistence.md), so the feedback loop can join past invocations to the exact composition that produced their behavior.
 
 | Dimension | Selected by | Source files |
 |---|---|---|
@@ -430,17 +430,17 @@ The resolver runs once at invocation start and produces a resolved-config snapsh
 | Mode | Pipeline state (halt or normal) | `modes/{current_mode}.yaml` |
 | Overlays | Event calendar, stress detector | `overlays/*.yaml` (zero or more active) |
 
-Composition order for numeric rule limits: profile base → regime multiplier → active overlay multipliers (multiplicative). Composition for behavioral shape: mode transform applied last, restricting action vocabulary and guardrail state header sections.
+Composition order for numeric rule limits: profile base → regime multiplier → active overlay multipliers (multiplicative). Mode transform applied last, restricting action vocabulary and guardrail state header sections.
 
-The profile boundaries in [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md#transitioning-between-profiles) are not monitored here: profile transitions are manual per that doc. A profile-boundary detector that emits an advisory when portfolio equity crosses a tier boundary is a candidate follow-up; it does not change the active profile.
+Profile transitions are manual per [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md#transitioning-between-profiles). A profile-boundary advisory when portfolio equity crosses a tier boundary is a candidate follow-up.
 
 ## Runtime vs. deploy-time classification
 
-**Deploy-time only (require process restart):** paths in `main.yaml`, SQLite pragmas set at connection open, Python/package versions, NSSM service definition, the `.env` file location. These are set once per deployment.
+**Deploy-time only (require process restart):** paths in `main.yaml`, SQLite pragmas set at connection open, Python/package versions, NSSM service definition, `.env` file location.
 
-**Invocation-time reload (picked up at next scheduled trigger):** everything in the YAML tree. Rule values, regime multipliers, agent budgets, feature flags per profile, data-source registry entries, venue parameters, execution knobs, mode behavioral contracts, overlay parameters. Operator edits a file, the next invocation picks it up — no restart.
+**Invocation-time reload (picked up at next scheduled trigger):** everything else in the YAML tree. Rule values, regime multipliers, agent budgets, feature flags per profile, data-source registry entries, venue parameters, execution knobs, mode behavioral contracts, overlay parameters.
 
-**Never config (in code):** schema files and the reference-ID taxonomy they define, the OMS command ID template, the breach-response decision tree per rule, the composition-resolver logic, schema validation procedures.
+**Never config (in code):** schema files and the reference-ID taxonomy they define, the OMS command ID template, the breach-response decision tree per rule, composition-resolver logic, schema validation procedures.
 
 ## Validation
 
@@ -450,7 +450,7 @@ Three layers, run in order at each invocation's config load:
 
 **Cross-reference.** Checks relationships between files: `active_profile` in `main.yaml` names a file that exists in `profiles/`; `active_sectors` in every profile is a subset of the sector keys in `assets.yaml`'s `sectors:` map; every rule ID referenced by a profile's `rule_values` exists in `guardrails.yaml`'s registry; every regime's `multipliers` covers every rule present in every profile; `api_key_env` and `api_secret_env` references resolve to keys present in `.env`; agent `model` values are in the allowed-models list; every tool name in an agent's `tools` list is a registered tool.
 
-**Semantic self-test.** Invariants that require computation: cumulative-drawdown `progressive_tiers` are monotonically increasing in trigger percentage; no regime multiplier drives a rule limit to zero or negative for any profile; escalation zones are ordered `warning < critical < hard_block`; each profile's `capital_range_usd` does not overlap another profile's; every ticker symbol in `assets.yaml` is unique across all sectors and benchmarks and matches `^[A-Z][A-Z0-9.]*$`; each sector listed in any profile's `active_sectors` has at least one ticker in `assets.yaml`; `last_full_validation` in `assets.yaml` is no later than today; feature-flag closure — for each profile with `options_enabled: false`, no options rule appears in `rule_values`, no options-specific agent appears in `agents.yaml`'s active set, and no options-dependent field appears in guardrail state header configuration.
+**Semantic self-test.** Invariants requiring computation: cumulative-drawdown `progressive_tiers` are monotonically increasing in trigger percentage; no regime multiplier drives a rule limit to zero or negative for any profile; escalation zones are ordered `warning < critical < hard_block`; each profile's `capital_range_usd` does not overlap another profile's; every ticker symbol in `assets.yaml` is unique across all sectors and benchmarks and matches `^[A-Z][A-Z0-9.]*$`; each sector listed in any profile's `active_sectors` has at least one ticker in `assets.yaml`; `last_full_validation` in `assets.yaml` is no later than today; feature-flag closure — for each profile with `options_enabled: false`, no options rule appears in `rule_values`, no options-specific agent appears in `agents.yaml`'s active set, and no options-dependent field appears in guardrail state header configuration.
 
 A failure at any layer aborts the invocation and alerts the operator.
 
@@ -458,17 +458,17 @@ A failure at any layer aborts the invocation and alerts the operator.
 
 Flags are declared in profile files and cascade through the resolved snapshot. The cascade is **closed**, not **masked**: when `options_enabled: false` at micro, the resolved config contains no options rules, no options greeks in guardrail state headers, and no options commands in the PM's action vocabulary.
 
-The semantic self-test validates closure per flag per profile. A failure there indicates a drift between a profile's flag value and its `rule_values` or `agents.yaml` entries — a structural error the operator fixes before the invocation runs.
+The semantic self-test validates closure per flag per profile. A failure indicates drift between a profile's flag value and its `rule_values` or `agents.yaml` entries — a structural error the operator fixes before the invocation runs.
 
 ## Reload model
 
-The scheduler re-reads the entire YAML tree before each invocation begins. Validation runs to completion before any agent is invoked or any engine action taken. Successful validation produces the resolved-config snapshot that persists for the duration of the invocation.
+The scheduler re-reads the entire YAML tree before each invocation begins. Validation runs to completion before any agent is invoked or engine action taken. Successful validation produces the resolved-config snapshot that persists for the invocation duration.
 
-This aligns with the fresh-context principle from [mid-pipeline-failure-handling.md](mid-pipeline-failure-handling.md) and with APScheduler's `max_instances=1` guarantee that two invocations are never in flight simultaneously.
+Aligns with the fresh-context principle from [mid-pipeline-failure-handling.md](mid-pipeline-failure-handling.md) and APScheduler's `max_instances=1` guarantee.
 
 ## Deferred items
 
-**Per-run-type pipeline overlays** — the README TODO about tailored configs per invocation trigger (pre-open, intraday, pre-close, after-hours) — are deferred until after the base config is in place. The likely shape is a `run_types/` directory parallel to `modes/`, composed at resolution time based on the firing trigger, but the content and scoping rules are not designed here.
+**Per-run-type pipeline overlays** — the README TODO about tailored configs per invocation trigger (pre-open, intraday, pre-close, after-hours) — are deferred until after the base config is in place. Likely shape: a `run_types/` directory parallel to `modes/`, composed at resolution time based on the firing trigger.
 
 ---
 
