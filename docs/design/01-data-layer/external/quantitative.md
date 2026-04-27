@@ -1,63 +1,63 @@
 # Quantitative / market data — 12 categories
 
-Data sources are organized into categories by signal type, each with a different refresh cadence and relevance profile. The first seven are core (ingested every invocation); the remaining five are supplementary (high value when active, but not always changing).
+Data sources organized by signal type, each with a different refresh cadence and relevance profile. The first seven are core (ingested every invocation); the remaining five are supplementary.
 
 *Core categories (every invocation):*
 
 **1. Price and volume**
-What prices are doing and how much is trading. The baseline everything else contextualizes. Deceptively deep — for the 4–72 hour horizon, the *structure* of price and volume matters more than the raw numbers. The sector researchers aren't reading candles, they're reading context: where is price relative to meaningful levels, is volume confirming the move, how does current action compare to the recent regime. Almost everything in this category is computed from raw OHLCV feeds, making it the heaviest user of the programmatic distillation layer.
+What prices are doing and how much is trading. For the 4–72h horizon, the *structure* of price and volume matters more than raw numbers. Sector researchers read context: where is price relative to meaningful levels, is volume confirming the move, how does current action compare to the recent regime. Computed from raw OHLCV feeds — the heaviest user of programmatic distillation.
 
   *1a. Multi-timeframe price structure*
   Price at different granularities, assessed simultaneously. The 15-minute chart might look bearish inside a bullish daily trend inside a neutral weekly structure — that layering determines whether a dip is a buying opportunity or the start of a breakdown.
   - OHLCV candles at multiple intervals: 15min, 1hr, 4hr, daily, weekly
   - Key reference levels: prior day high/low/close, weekly open, monthly open — institutional algos cluster orders here, making them self-fulfilling support/resistance
-  - Swing structure: recent swing highs and swing lows at each timeframe, defining the trend structure
-  - Trend state classification: per-timeframe assessment (trending up, trending down, range-bound) with a composite multi-timeframe trend score
+  - Swing structure: recent swing highs and swing lows at each timeframe
+  - Trend state classification: per-timeframe assessment (trending up, trending down, range-bound) plus a composite multi-timeframe score
 
   *1b. Volume profile and distribution*
-  Not just how much traded but *where* it traded. One of the most useful inputs for the analyst's entry/exit targeting.
+  Not just how much traded but *where* it traded. One of the most useful inputs for analyst entry/exit targeting.
   - Value area: the price range where ~70% of volume transacted over a given period (session, multi-day, weekly)
   - Point of control (POC): single most-traded price level — acts as a magnet
   - High-volume nodes: prices where the market spent the most time, likely to slow price movement
   - Low-volume nodes: prices the market moved through quickly — air pockets where price tends to accelerate
-  - Developing vs. settled profile: is the current session's volume profile building in the same area as prior sessions or shifting?
+  - Developing vs. settled profile: is the current session building in the same area as prior sessions or shifting?
 
   *1c. Technical indicators*
-  Fully programmatic derived layer. For the 4–72 hour horizon, a focused set matters more than throwing everything at the wall. Computed at multiple timeframes — the distillation layer should flag *divergences* between timeframes, not just report values.
-  - Momentum oscillators: RSI (14-period, at multiple timeframes), MACD (signal line crossovers and histogram momentum), stochastic
+  A focused set computed at multiple timeframes. The distillation layer flags *divergences* between timeframes, not just values.
+  - Momentum oscillators: RSI (14-period, multi-timeframe), MACD (signal line crossovers and histogram momentum), stochastic
   - Mean-reversion bands: Bollinger bands (position within bands, band width as vol proxy), Keltner channels
   - Trend-following: moving average slopes and crossovers (20/50/200 EMA), ADX (trend strength regardless of direction)
   - Volatility: ATR (14-period, absolute and as a normalizer), Bollinger bandwidth, ATR expansion/compression regime
-  - Multi-timeframe divergence flags: e.g., RSI bearish divergence on 4hr while daily RSI is still healthy — distillation layer should surface these explicitly
+  - Multi-timeframe divergence flags: e.g., RSI bearish divergence on 4hr while daily RSI is still healthy
 
   *1d. Gap analysis*
   Overnight gaps between sessions and intraday gaps on news. Gaps represent information being priced discontinuously. Especially important for the pre-open anchored run.
-  - Overnight gap: open vs. prior close, expressed in both absolute and ATR-relative terms
+  - Overnight gap: open vs. prior close, in absolute and ATR-relative terms
   - Gap classification: full gap (above/below entire prior range) vs. partial gap, with-trend vs. counter-trend
   - Gap fill probability: historical gap-fill rate for this ticker and gap type
   - Intraday gaps: sudden price dislocations on news or large orders, timestamped for correlation with flow data (category 2)
 
   *1e. Relative performance*
-  How a name performs relative to its sector peers, sector ETF, and the broad market. A stock flat on a day when its sector is up 3% is effectively down 3% in relative terms. Relative strength divergences often precede absolute moves.
-  - Relative strength vs. sector ETF: rolling ratio of ticker price vs. XLK/XLF/XLE/SMH — trending, diverging, or converging
-  - Relative strength vs. SPY: same as above but against the broad market
-  - Intra-sector ranking: where the name sits in its sector's daily performance distribution — top/bottom quartile flags
+  How a name performs vs. its sector peers, sector ETF, and the broad market. A stock flat on a day when its sector is up 3% is effectively down 3% in relative terms. Relative strength divergences often precede absolute moves.
+  - Relative strength vs. sector ETF: rolling ratio vs. XLK/XLF/XLE/SMH — trending, diverging, or converging
+  - Relative strength vs. SPY: same against the broad market
+  - Intra-sector ranking: where the name sits in its sector's daily performance distribution
   - Relative strength regime change: detection of a name shifting from sector leader to laggard (or vice versa) over a multi-day window
 
   *1f. Historical context and regime*
-  Where current price action sits relative to recent history. Is this move normal or exceptional? All moves should be expressed in ATR-relative terms so analyst agents can compare across tickers without adjusting for each name's volatility personality.
-  - ATR-normalized move magnitude: today's range and directional move expressed as multiples of ATR — a 2% move on TSLA is normal, a 2% move on JPM is a big deal
+  Where current price action sits relative to recent history. Moves expressed in ATR-relative terms so analyst agents compare across tickers without adjusting for each name's volatility personality.
+  - ATR-normalized move magnitude: today's range and directional move as multiples of ATR — a 2% move on TSLA is normal, a 2% move on JPM is a big deal
   - Position in 52-week range: percentile location, proximity to 52-week high/low
-  - Distance from key moving averages: how far price has stretched from 20/50/200 EMA, in ATR terms — mean-reversion signal when extreme
-  - Volatility regime: is the name currently in a low-vol compression phase (Bollinger squeeze) or a high-vol expansion phase? Regime transitions are more tradeable than steady-state
+  - Distance from key moving averages: how far price has stretched from 20/50/200 EMA, in ATR terms — mean-reversion signal at extremes
+  - Volatility regime: low-vol compression (Bollinger squeeze) vs. high-vol expansion. Regime transitions are more tradeable than steady-state
 
   *1g. Extended hours price action*
-  Pre-market and after-hours trading data. Thinner markets with wider spreads but critically important for the system's off-hours and pre-open runs. Earnings reactions, overnight news, and overseas developments get priced here first.
+  Pre-market and after-hours data. Thinner markets with wider spreads but critically important for off-hours and pre-open runs. Earnings reactions, overnight news, and overseas developments get priced here first.
   - Pre-market OHLCV: aggregated candles for the pre-market session (4:00–9:30 AM ET)
   - After-hours OHLCV: aggregated candles for the after-hours session (4:00–8:00 PM ET)
   - Extended-hours volume relative to regular session: low relative volume means the price signal is less reliable
-  - Gap from regular close to extended-hours last trade: the "live" overnight gap before the regular session opens
-  - Confidence discount flag: the distillation layer should tag all extended-hours metrics with a reliability weight — moves in thin liquidity often overstate the regular session open
+  - Gap from regular close to extended-hours last trade: the "live" overnight gap before the regular open
+  - Confidence discount flag: the distillation layer tags all extended-hours metrics with a reliability weight — moves in thin liquidity often overstate the regular open
 
 **2. Order flow and microstructure**
 What's happening beneath the price — who's buying, who's selling, how liquidity is structured. Reveals institutional footprints before they show up in price. For this system's time horizon, raw tick-level microstructure isn't useful in its native form (that's HFT territory). What matters is *aggregated* flow analysis that reveals institutional intent and liquidity regime over hours, not milliseconds.

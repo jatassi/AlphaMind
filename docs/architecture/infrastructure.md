@@ -8,7 +8,7 @@ Scheduling, deployment, observability, and process supervision.
 
 ### Decision
 
-**APScheduler v3** (`AsyncIOScheduler`) as an in-process scheduler within the pipeline process, running in the same event loop and firing triggers that invoke the pipeline's entry point.
+**APScheduler v3** (`AsyncIOScheduler`) as an in-process scheduler in the pipeline process, sharing the asyncio event loop and firing triggers that invoke the pipeline's entry point.
 
 ### Schedule definition
 
@@ -22,21 +22,21 @@ Five trigger types, all in US Eastern time:
 | Pre-close (anchored) | 3:30 PM ET | `CronTrigger` (hour=15, minute=30) |
 | Weekend (reduced) | Every 6-8h Sat/Sun | `CronTrigger` with day_of_week filter |
 
-**Overlap deduplication:** When an anchored run coincides with a rolling run (e.g., pre-close at 3:30 overlaps the 2h rolling cadence), the anchored run takes precedence. Each trigger is tagged with a run type; before firing a rolling trigger, the scheduler checks whether a run of any type completed within the last 30 minutes. APScheduler's `max_instances=1` prevents concurrent pipeline executions as a safety net.
+**Overlap deduplication:** When an anchored run coincides with a rolling run (e.g., pre-close at 3:30 overlaps the 2h cadence), the anchored run takes precedence. Each trigger is tagged with a run type; before firing a rolling trigger, the scheduler checks whether a run of any type completed within the last 30 minutes. APScheduler's `max_instances=1` is a safety net against concurrent pipeline executions.
 
-**Market calendar:** Trading day detection (skip market holidays) via `exchange-calendars` or `pandas_market_calendars` for NYSE schedules, checked before each trigger fires.
+**Market calendar:** Trading day detection via `exchange-calendars` or `pandas_market_calendars` for NYSE schedules, checked before each trigger fires.
 
 ### Why APScheduler v3
 
 - Stable, actively maintained (v3.11.2, Dec 2025)
-- `AsyncIOScheduler` integrates with the pipeline's asyncio event loop
-- `CronTrigger` with timezone support handles the ET-anchored schedule natively
-- Missed-fire handling and coalescing: a process down during a scheduled run fires once on restart rather than queuing N missed runs
-- Battle-tested DST transition handling
+- `AsyncIOScheduler` integrates with the pipeline's asyncio loop
+- `CronTrigger` with timezone support handles ET-anchored schedules natively
+- Missed-fire coalescing: a process down during a scheduled run fires once on restart, not N times
+- Battle-tested DST handling
 
 ### Why not APScheduler v4
 
-v4 has been in alpha for 3.5 years (4.0.0a1 Aug 2022 → 4.0.0a6 Apr 2025). The maintainer warns against production use; known issues include schedule disappearance (data integrity) and a shutdown bug with orphaned jobs. No beta, RC, or stable timeline.
+v4 has been in alpha 3.5 years (4.0.0a1 Aug 2022 → 4.0.0a6 Apr 2025). The maintainer warns against production use; known issues include schedule disappearance (data integrity) and a shutdown bug with orphaned jobs. No beta, RC, or stable timeline.
 
 ---
 
@@ -44,7 +44,7 @@ v4 has been in alpha for 3.5 years (4.0.0a1 Aug 2022 → 4.0.0a6 Apr 2025). The 
 
 ### Decision
 
-**Local Windows trading machine.** Both processes run directly on the operator's machine — no remote server, cloud VM, or containers. The command center ([command-center.md](../design/command-center.md)) joins as a third long-running process on the same machine.
+**Local Windows trading machine.** Both processes run on the operator's machine — no remote server, cloud VM, or containers. The command center ([command-center.md](../design/command-center.md)) joins as a third long-running process.
 
 ### Process layout
 
@@ -62,7 +62,7 @@ Trading machine (Windows)
     └── alphamind.db        (SQLite, shared)
 ```
 
-During development, both processes start manually from a PowerShell session. For unattended operation (paper trading evaluation), each process registers as an NSSM-managed Windows Service that starts on boot and restarts on failure.
+During development, both processes start manually from PowerShell. For unattended operation (paper trading evaluation), each process registers as an NSSM-managed Windows Service that starts on boot and restarts on failure.
 
 ### Why a local trading machine
 
@@ -133,11 +133,11 @@ Each pipeline invocation writes its full agent output chain to disk as readable 
         └── ...
 ```
 
-**This is the primary debugging and development tool.** During prompt iteration, open the archive directory and read through the chain: what did distillation produce → what did the analyst make of it → what did the synthesizer highlight → what did the trader propose → what did the PM decide. Markdown files are readable, diffable, greppable.
+**The primary debugging and development tool.** During prompt iteration, walk the archive top-to-bottom: distillation produced → analyst interpreted → synthesizer highlighted → trader proposed → PM decided. Markdown is readable, diffable, greppable.
 
-**Retention:** Archive indefinitely during paper trading evaluation (a few MB of text per invocation, ~80 MB/day). Prune when disk space becomes a concern.
+**Retention:** Archive indefinitely during paper trading evaluation (a few MB per invocation, ~80 MB/day). Prune when disk space becomes a concern.
 
-**Relationship to the brief store:** The SQLite brief store is the *live* store used by the retrieval tool during an invocation; the archive is a *post-hoc* copy written at end of invocation. Same content, different optimization — archive for human browsing, DB store for programmatic retrieval.
+**Relationship to the brief store:** The SQLite brief store is the *live* store used by the retrieval tool during an invocation; the archive is a *post-hoc* copy written at end of invocation. Same content — DB for programmatic retrieval, archive for human browsing.
 
 ### Process logging
 
@@ -150,9 +150,9 @@ Python's `logging` module with `TimedRotatingFileHandler` (daily rotation), 30-d
 
 ### Alerting
 
-Not built initially. The pipeline logs errors and continues. If it crashes, NSSM restarts it and the next invocation catches up; missed invocations are logged but not critical.
+Not built initially. The pipeline logs errors and continues; if it crashes, NSSM restarts it and the next invocation catches up.
 
-**Future:** Simple alerting (email or webhook) on pipeline failure, monitor websocket disconnect >15 minutes, guardrail breach, or daily P/L exceeding a threshold.
+**Future:** Email or webhook alerts on pipeline failure, monitor websocket disconnect >15 minutes, guardrail breach, or daily P/L exceeding a threshold.
 
 ---
 

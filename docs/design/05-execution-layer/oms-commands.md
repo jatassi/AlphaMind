@@ -1,12 +1,12 @@
 # OMS commands
 
-The write API to the engine. Five commands: four core commands for position lifecycle and one sizing command. Commands are issued primarily by the portfolio manager, and in limited cases by the engine itself (protective CLOSE commands triggered by guardrail breaches between invocations — see [command origins](#command-origins)). All commands are wrapped in envelopes for full traceability — PM-originated per [pm-envelope-schema.md](../04-decision-layer/pm-envelope-schema.md), engine-originated per [engine-envelope-schema.md](engine-envelope-schema.md). The formal JSON Schema is in [oms-command-schema.md](oms-command-schema.md).
+The write API to the engine. Five commands — four core commands for position lifecycle and one sizing command — issued primarily by the portfolio manager and in limited cases by the engine itself (protective CLOSE commands triggered by guardrail breaches between invocations — see [command origins](#command-origins)). All commands wrap in envelopes for traceability: PM-originated per [pm-envelope-schema.md](../04-decision-layer/pm-envelope-schema.md), engine-originated per [engine-envelope-schema.md](engine-envelope-schema.md). The formal JSON Schema is in [oms-command-schema.md](oms-command-schema.md).
 
-*Design principle — minimal effective vocabulary:* The command set must be expressive enough for every scenario the thesis-bracket architecture creates, but small enough that the PM (an LLM in a fresh context) can reliably select the right command and fill its parameters. Every parameter must be available in the PM's context or derivable from it. Information the PM doesn't have, it will hallucinate.
+*Design principle — minimal effective vocabulary:* expressive enough for every scenario the thesis-bracket architecture creates, but small enough that the PM (an LLM in a fresh context) can reliably select the right command and fill its parameters. Every parameter must be available in the PM's context or derivable from it. Information the PM doesn't have, it will hallucinate.
 
 *Design principle — intent-explicit commands:* Each command encodes a distinct intent. CLOSE and ADD could be a single "resize" with signed quantities, but separating them makes the activity log semantically rich: "PM closed 500 NVDA because the thesis was invalidated" is a different decision than "PM added 200 NVDA because conviction increased." The feedback loop benefits from intent clarity.
 
-*Design principle — no accountability shortcuts:* Compound commands (ROLL, HEDGE) are deliberately excluded — see [../design-decisions.md](../design-decisions.md). Compound commands create cognitive shortcuts that let LLM agents avoid honest thesis evaluation: ROLL makes it easy to frame a thesis failure as a "continuation"; HEDGE makes it easy to delay closing a losing position by "managing risk." The five-command vocabulary forces the PM to confront every exit as a CLOSE (with an explicit invalidation reason) and every entry as an OPEN (with a full independent thesis). Hedging and position replacement are expressible through CLOSE + OPEN sequences within a single invocation; sequential processing keeps capital accounting correct.
+*Design principle — no accountability shortcuts:* Compound commands (ROLL, HEDGE) are deliberately excluded — see [../design-decisions.md](../design-decisions.md). They create cognitive shortcuts that let LLM agents avoid honest thesis evaluation: ROLL makes it easy to frame a thesis failure as a "continuation"; HEDGE makes it easy to delay closing a losing position by "managing risk." The five-command vocabulary forces the PM to confront every exit as a CLOSE (with an explicit invalidation reason) and every entry as an OPEN (with a full independent thesis). Hedging and position replacement are expressible through CLOSE + OPEN sequences within a single invocation; sequential processing keeps capital accounting correct.
 
 *Design principle — commands carry execution intent, not decision context:* Commands contain only the parameters the engine needs to execute. Decision context — which agent proposed the trade, the PM's evaluation, what was modified and why — lives on the **command envelope** wrapping each command (see [portfolio-manager.md](../04-decision-layer/portfolio-manager.md)). The activity log stores both the envelope (for the feedback loop) and the execution results (for position state).
 
@@ -34,7 +34,7 @@ Enter a new position. The most parameter-heavy command — creates a position, t
 
 - **Instrument:** ticker and direction (long/short) for equity; underlying, strike, expiration, type for options; full leg specification for strategies
 - **Entry order:** order type (market, limit, stop-limit) and price parameters — becomes the bracket's entry leg
-- **Position size:** quantity (shares or contracts) and equivalent dollar value — both forms required for guardrail validation against quantity-based and dollar-based limits
+- **Position size:** quantity (shares or contracts) and equivalent dollar value — both required for guardrail validation against quantity- and dollar-based limits
 - **Target:** target price or P/L level and order type for the take-profit leg
 - **Invalidation legs:** at least one hard invalidation (price-based stop or time-based expiration) plus any event-based conditions. Each leg specifies condition and order type for mechanical enforcement
 - **Thesis:** complete structured thesis with summary and mandatory components covering every bracket leg (see [thesis-model.md](thesis-model.md))
@@ -46,7 +46,7 @@ Enter a new position. The most parameter-heavy command — creates a position, t
 - Gross and net exposure within limits after the addition
 - Sufficient capital (cash minus reserved for pending orders) to fund the position plus margin
 - Thesis completeness: every bracket leg has a corresponding component
-- For options and strategies: delta-adjusted exposure for concentration and directional exposure checks. Greeks are computed internally by the guardrail layer — not passed as parameters
+- For options and strategies: delta-adjusted exposure for concentration and directional exposure checks. Greeks computed internally by the guardrail layer — not passed as parameters
 
 **Greek computation at validation time (options and strategies):**
 
@@ -65,7 +65,7 @@ Validation-time greeks serve double duty: used for the guardrail check, and pers
 
 ### CLOSE
 
-Exit an existing position, fully or partially. Used when the PM determines a thesis is no longer valid (based on analysis pipeline input, not price hitting a stop — the bracket handles that mechanically), when a target has been reached, when conviction has weakened, or when portfolio-level risk requires position reduction.
+Exit an existing position, fully or partially. Used when the PM determines a thesis is no longer valid (based on analysis pipeline input, not price hitting a stop — the bracket handles that mechanically), a target has been reached, conviction has weakened, or portfolio-level risk requires position reduction.
 
 **Required parameters:**
 
@@ -73,23 +73,23 @@ Exit an existing position, fully or partially. Used when the PM determines a the
 - **Quantity:** shares/contracts to exit, or "all" for full close. Partial closes must specify the exact amount
 - **Execution method:** order type (market for urgency, limit for price protection) and price parameters if limit
 - **Close rationale:** a structured explanation that feeds directly into thesis resolution. Must classify the reason and provide a specific invalidation reason:
-  - *Thesis invalidated:* the analysis pipeline flagged an event-based invalidation condition as met, or the PM's own assessment is that the thesis is no longer valid. Maps to "invalidated" resolution categories. **Invalidation reason required** — the specific condition or evidence that proves the thesis wrong (e.g., "MSFT guided AI capex lower than consensus," "catalyst fired but price didn't respond as expected — causal chain was incorrect," "catalyst rescheduled, instrument cannot capture the move")
-  - *Target reached:* the position has hit or approached the target and the PM is taking profits. Maps to "validated" resolution
-  - *Conviction reduced:* the thesis isn't invalidated but conviction has weakened — partial close to reduce exposure while maintaining some position. Partial close only; requires updated thesis assessment
-  - *Risk management:* closing for portfolio-level reasons (drawdown, concentration, regime change) independent of the individual thesis. Important to distinguish from thesis-level invalidation in the feedback loop
+  - *Thesis invalidated:* analysis pipeline flagged an event-based invalidation condition as met, or PM judges the thesis no longer valid. Maps to "invalidated" resolution categories. **Invalidation reason required** — the specific condition or evidence proving the thesis wrong (e.g., "MSFT guided AI capex lower than consensus," "catalyst fired but price didn't respond — causal chain was incorrect," "catalyst rescheduled, instrument cannot capture the move")
+  - *Target reached:* position hit or approached the target; PM takes profits. Maps to "validated" resolution
+  - *Conviction reduced:* thesis isn't invalidated but conviction has weakened — partial close to reduce exposure while maintaining some position. Partial close only; requires updated thesis assessment
+  - *Risk management:* closing for portfolio-level reasons (drawdown, concentration, regime change) independent of the individual thesis. Distinguished from thesis-level invalidation in the feedback loop
 
 **Guardrail validation:**
 
 - Position ID exists and has the specified quantity available
-- For partial closes: remaining position still has a valid bracket (stops may need to be adjusted for the reduced size)
+- For partial closes: remaining position still has a valid bracket (stops may need adjusting for the reduced size)
 
-**On success:** if market order, routes immediately to the broker adapter. If limit, creates a pending close order. For full closes, the bracket's protective legs (open stops, take-profits) are cancelled automatically — they're no longer needed. For partial closes, the bracket remains active on the remaining quantity.
+**On success:** market orders route immediately to the broker adapter; limits create a pending close order. Full closes cancel the bracket's protective legs (no longer needed). Partial closes leave the bracket active on the remaining quantity.
 
 ---
 
 ### ADJUST
 
-Modify an existing position's bracket parameters or thesis components without changing position size. This is how the PM tightens stops on a winner, extends a time horizon, updates a target, or revises thesis components as conditions evolve.
+Modify an existing position's bracket parameters or thesis components without changing position size. How the PM tightens stops on a winner, extends a time horizon, updates a target, or revises thesis components as conditions evolve.
 
 **Required parameters:**
 
@@ -107,11 +107,11 @@ Modify an existing position's bracket parameters or thesis components without ch
 - Position ID exists
 - New stop level doesn't create a loss exceeding the max per-position loss limit
 - Time extension doesn't exceed any maximum position duration limit (if one exists)
-- Thesis coverage remains complete after the adjustment: every bracket leg still has a corresponding thesis component
+- Thesis coverage remains complete after the adjustment
 
-**On success:** existing protective orders at the broker are cancelled and replaced with new orders reflecting the adjusted parameters. The thesis record is updated with the new components. The activity log records the adjustment with before/after values and the PM's rationale.
+**On success:** existing protective orders at the broker are cancelled and replaced reflecting the adjusted parameters. The thesis record is updated. The activity log records the adjustment with before/after values and PM rationale.
 
-**Design note—bracket modifications and the feedback loop:** Every ADJUST is logged as a deviation. The diagnostics layer tracks whether bracket modifications correlate with better or worse outcomes. A system that frequently widens stops and extends time horizons is exhibiting a common failure mode—reluctance to accept losses. This signal should be surfaced in thesis quality trends ([raw state category 6](../01-data-layer/internal/portfolio-state.md)).
+**Design note—bracket modifications and the feedback loop:** Every ADJUST is logged as a deviation. The diagnostics layer tracks whether bracket modifications correlate with better or worse outcomes. A system that frequently widens stops and extends time horizons exhibits a common failure mode—reluctance to accept losses. This signal surfaces in thesis quality trends ([raw state category 6](../01-data-layer/internal/portfolio-state.md)).
 
 ---
 
@@ -128,9 +128,9 @@ Withdraw a pending order that hasn't filled. Used when conditions have changed a
 
 - Order ID exists and is in a cancellable state (pending, not already filled or expired)
 
-**On success:** the order is cancelled at the broker. If the cancelled order was the entry leg of a bracket, the entire bracket is cancelled (protective legs that were in OTO status are withdrawn, the associated thesis is resolved as "cancelled — never entered"). If the cancelled order was a protective leg (which would be unusual — the PM would normally use ADJUST to change protective orders rather than cancelling them outright), the system warns that the remaining bracket is incomplete and requires immediate ADJUST to restore coverage.
+**On success:** order cancelled at the broker. If the cancelled order was a bracket entry leg, the entire bracket is cancelled (OTO protective legs withdrawn, thesis resolved as "cancelled — never entered"). If the cancelled order was a protective leg (unusual — PM normally uses ADJUST), the system warns the bracket is incomplete and requires immediate ADJUST to restore coverage.
 
-**Capital release:** any capital reserved for the cancelled order is returned to available buying power.
+**Capital release:** capital reserved for the cancelled order returns to available buying power.
 
 ---
 

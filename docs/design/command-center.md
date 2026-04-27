@@ -2,22 +2,20 @@
 
 How the operator monitors active runs, reviews past runs, edits configuration, manages portfolio and theses, and is alerted to conditions requiring attention. Implemented as a web application running on the same machine as the pipeline and continuous monitor, accessible locally and remotely via the operator's `atassi.org` domain with passkey authentication.
 
-This spec covers the *features* of the command center — what it surfaces, what it lets the operator do, how it alerts, how access is controlled. The tech stack, framework choices, and interaction protocol with the pipeline and monitor processes are designed in a follow-on conversation; this doc establishes the requirements that conversation has to satisfy.
-
-The command center is the implementation of the Phase 4 monitoring & alerting design item from [project-tracker.md](../project-tracker.md#phase-4--maturation-before-live-transition). Its scope grew during alignment to include configuration editing and operator-initiated control actions, because both are natural neighbors of the monitoring surface and use the same authentication, audit, and access model.
+This spec covers *features* — what the command center surfaces, what it lets the operator do, how it alerts, how access is controlled. The command center implements the Phase 4 monitoring & alerting design item from [project-tracker.md](../project-tracker.md#phase-4--maturation-before-live-transition); scope includes configuration editing and operator-initiated control actions, which share authentication, audit, and access model with the monitoring surface.
 
 ---
 
 ## Scope
 
 **In scope.**
-- Views that surface pipeline state, portfolio state, theses, run history, agent outputs, activity log, guardrail headroom, regime and overlay state, and continuous-monitor health.
-- A graphical configuration editor that exposes every knob in `config/` as a structured form, never as raw YAML text.
-- Operator actions that mutate system state (cancel orders, force closes, toggle halt mode, trigger emergency invocations, switch profile, run universe validation).
-- An alert rule registry, alert conditions, severity model, and notification channel definitions.
-- Authentication, session management, and the local-plus-remote access model.
+- Views surfacing pipeline state, portfolio state, theses, run history, agent outputs, activity log, guardrail headroom, regime and overlay state, continuous-monitor health.
+- A graphical configuration editor exposing every knob in `config/` as a structured form, never raw YAML text.
+- Operator actions mutating system state (cancel orders, force closes, toggle halt mode, trigger emergency invocations, switch profile, run universe validation).
+- Alert rule registry, alert conditions, severity model, notification channel definitions.
+- Authentication, session management, local-plus-remote access model.
 
-**Out of scope** (owned by other docs, not duplicated here):
+**Out of scope** (owned by other docs):
 
 | Concern | Authoritative spec |
 |---|---|
@@ -29,13 +27,13 @@ The command center is the implementation of the Phase 4 monitoring & alerting de
 | Feedback-loop analytics (thesis outcomes, calibration, prompt iteration) | Phase 4 [Feedback loop design](../project-tracker.md#phase-4--maturation-before-live-transition) — not yet landed |
 | Tech stack, framework selection, interaction protocol with the pipeline/monitor | Follow-on conversation; this spec defers it explicitly |
 
-The command center is an additive read-and-control surface over data that already lives in the system of record. It does not own positions, orders, theses, fills, configuration, or any other primary state. Every datum it shows traces back to an existing table or file.
+The command center is an additive read-and-control surface over data that already lives in the system of record. Every datum traces back to an existing table or file.
 
 ---
 
 ## Architecture context
 
-The command center is a third long-running process on the trading machine, alongside the pipeline and the continuous monitor. It serves a web UI to a single operator. The pipeline and monitor remain authoritative for all state mutation; the command center either reads from shared state or invokes a narrow control surface those processes expose.
+The command center is a third long-running process on the trading machine, alongside the pipeline and the continuous monitor. It serves a web UI to a single operator. The pipeline and monitor remain authoritative for all state mutation; the command center reads from shared state or invokes a narrow control surface those processes expose.
 
 ```
 Trading machine (Windows)
@@ -48,13 +46,13 @@ Trading machine (Windows)
 └── %USERPROFILE%\AlphaMind\archive\     (per-invocation file archive)
 ```
 
-Three properties are load-bearing for this design and constrain all later choices:
+Three load-bearing properties:
 
-1. **Live updates are push-based.** When a pipeline invocation transitions phases, the live run watcher reflects it within a second. When the monitor logs a fill or a breach, the dashboard updates without requiring a refresh. Polling is permitted only as a fallback for connection recovery.
+1. **Live updates are push-based.** When a pipeline invocation transitions phases, the live run watcher reflects it within a second. When the monitor logs a fill or breach, the dashboard updates without refresh. Polling is permitted only as connection-recovery fallback.
 
-2. **Read-only by default.** Every view is a read against existing state. State mutation happens only through explicit operator-action endpoints (see [Operator actions](#operator-actions)), each of which emits an activity-log entry with `source: operator_console`.
+2. **Read-only by default.** Every view is a read against existing state. State mutation happens only through explicit operator-action endpoints (see [Operator actions](#operator-actions)), each emitting an activity-log entry with `source: operator_console`.
 
-3. **Single source of truth for everything that already has one.** The command center never duplicates the entity tables, the activity log, the file archive, or the config files. Edits to config files write through to disk and are picked up by the standard invocation-time reload path; operator actions write through to the activity log via the same OMS / monitor write paths an internal command would use.
+3. **Single source of truth.** The command center never duplicates entity tables, activity log, file archive, or config files. Edits to config files write through to disk and are picked up by the standard invocation-time reload path; operator actions write through to the activity log via the same OMS / monitor write paths an internal command would use.
 
 ---
 
@@ -76,7 +74,7 @@ Three properties are load-bearing for this design and constrain all later choice
 | Charts | Recharts |
 | Type sharing with backend | `openapi-typescript` against the FastAPI-generated OpenAPI schema |
 
-The Pydantic entity, config, and event models defined for the pipeline are reused as FastAPI request/response models; the OpenAPI schema FastAPI emits is the single source of truth for frontend types. No hand-maintained TypeScript interfaces for entities the backend already defines.
+The Pydantic entity, config, and event models defined for the pipeline are reused as FastAPI request/response models; the FastAPI-emitted OpenAPI schema is the single source of truth for frontend types. No hand-maintained TypeScript interfaces for backend-defined entities.
 
 ### Backend
 
@@ -90,25 +88,25 @@ The Pydantic entity, config, and event models defined for the pipeline are reuse
 | Sessions | Signed cookies (HttpOnly, SameSite=Strict, Secure), CSRF protection on state-mutating endpoints |
 | Static asset serving | FastAPI `StaticFiles` mount over the Vite-built frontend |
 
-The command center backend is a third member of the existing Python project (same `pyproject.toml`, same dev tooling, same lint/type configuration). It does not maintain its own duplicate ORM layer.
+The command center backend is a third member of the existing Python project (same `pyproject.toml`, same dev tooling, same lint/type configuration). No duplicate ORM layer.
 
 ### Build and serving
 
-A single port serves the entire surface in production: FastAPI mounts the Vite-built `dist/` at `/`, exposes the API at `/api/*`, the SSE channel at `/api/events`, and the WebAuthn ceremony endpoints at `/auth/*`. Development uses the Vite dev server on a separate port with a proxy to the FastAPI backend.
+A single port serves the entire surface in production: FastAPI mounts the Vite-built `dist/` at `/`, exposes the API at `/api/*`, the SSE channel at `/api/events`, and WebAuthn endpoints at `/auth/*`. Development uses the Vite dev server on a separate port with a proxy to the FastAPI backend.
 
 ### Process supervision
 
-NSSM wraps each of the three Windows-side processes (pipeline, monitor, command center) as a Windows Service with restart-on-failure and stdout/stderr capture, per [infrastructure.md § Process supervision](../architecture/infrastructure.md#process-supervision-when-running-unattended). Log files and the SQLite database live under `%USERPROFILE%\AlphaMind\` as defined by that doc.
+NSSM wraps each of the three Windows-side processes (pipeline, monitor, command center) as a Windows Service with restart-on-failure and stdout/stderr capture, per [infrastructure.md § Process supervision](../architecture/infrastructure.md#process-supervision-when-running-unattended). Log files and the SQLite database live under `%USERPROFILE%\AlphaMind\`.
 
 ---
 
 ## Interaction model
 
-The command center never holds write locks on the SQLite database and never invents new authoritative state for anything that already has a system of record. State mutation flows through the pipeline's and monitor's existing write paths via a narrow control surface; live updates are transient screen state pushed over SSE, not persisted history.
+The command center never holds write locks on the SQLite database and never invents authoritative state. State mutation flows through the pipeline's and monitor's write paths via a narrow control surface; live updates are transient screen state pushed over SSE, not persisted history.
 
 ### Control surface
 
-The pipeline and the monitor each bind a localhost-only HTTP server (FastAPI + Uvicorn within the same process). These servers are loopback-bound, not reachable on any non-loopback interface, and rely on the operating system's loopback isolation rather than an authentication layer of their own — the command center backend is the only client that ever connects to them.
+The pipeline and the monitor each bind a localhost-only HTTP server (FastAPI + Uvicorn within the same process), loopback-bound and reliant on the OS's loopback isolation — the command center backend is the only client.
 
 **Pipeline endpoints** (operator actions whose effect is scoped to scheduling, configuration, or invocation triggering):
 
@@ -130,11 +128,11 @@ The pipeline and the monitor each bind a localhost-only HTTP server (FastAPI + U
 | `POST /control/set_halt_mode` | `{enabled, reason}` | Toggles the halt-mode flag |
 | `GET /events` | — | SSE stream of monitor state |
 
-The command center backend exposes a public-facing `/api/control/*` surface that the browser talks to. Each browser-facing endpoint is authenticated, audited (writes an `activity_log` entry with `source: operator_console`), and proxies to the appropriate localhost endpoint on either the pipeline or the monitor. Browsers never reach the pipeline or monitor directly.
+The command center backend exposes a public-facing `/api/control/*` surface that the browser talks to. Each browser-facing endpoint is authenticated, audited (writes an `activity_log` entry with `source: operator_console`), and proxies to the appropriate localhost endpoint on the pipeline or monitor. Browsers never reach the pipeline or monitor directly.
 
 ### Live event stream
 
-Pipeline and monitor each push a transient event stream over SSE. The command center backend subscribes to both upstream streams as a long-lived client and re-emits a multiplexed downstream SSE stream to the browser at `/api/events`. The browser maintains a single `EventSource` connection and relies on the native `EventSource` reconnect behavior; the backend manages the upstream connections and reconnects to pipeline or monitor independently if either drops.
+Pipeline and monitor each push a transient event stream over SSE. The command center backend subscribes to both as a long-lived client and re-emits a multiplexed downstream SSE stream to the browser at `/api/events`. The browser maintains a single `EventSource` connection with native reconnect; the backend manages upstream connections and reconnects to pipeline or monitor independently if either drops.
 
 **Pipeline events:**
 
@@ -162,7 +160,7 @@ Pipeline and monitor each push a transient event stream over SSE. The command ce
 | `greeks_refreshed` | `underlying`, `refreshed_at` |
 | `heartbeat` | `timestamp` (sent every 15 s when no other event has been sent) |
 
-These events carry no historical guarantee. If the SSE connection drops mid-invocation, the browser reconnects fresh; the live run watcher repopulates static state from the most recent `invocations` row plus current entity reads, then begins receiving live events from the next push. There is no `Last-Event-ID` resume — live state is screen state, not history.
+These events carry no historical guarantee. If the SSE connection drops mid-invocation, the browser reconnects fresh; the live run watcher repopulates static state from the most recent `invocations` row plus current entity reads, then receives live events from the next push. No `Last-Event-ID` resume — live state is screen state, not history.
 
 ### Persistence boundary
 
@@ -179,13 +177,13 @@ These events carry no historical guarantee. If the SSE connection drops mid-invo
 | Weekly digest snapshots (serialized digest contents at the weekly snapshot boundary) | New `weekly_digest_snapshots` table | Command center — see [feedback-loop.md § Dashboard and digest curation](feedback-loop.md#dashboard-and-digest-curation) |
 | Feedback-loop artifacts (validations, validation outcomes, retrospective reports + saved markdown, retrospective decisions) | New `validations`, `validation_outcomes`, `retrospective_reports`, `retrospective_decisions` tables plus filesystem-stored report markdown | Command center backend, populated via the `/feedback-validate` and `/feedback-retrospective` skills — see [state-persistence.md](05-execution-layer/state-persistence.md) |
 
-The only authoritative state the command center owns is the alerts table and the credential store. Everything else it surfaces traces back to a system of record owned by another component.
+The command center owns the alerts table and the credential store; everything else traces to a system of record owned by another component.
 
 ---
 
 ## Information sources
 
-The command center reads exclusively from sources already specified by other docs. This table is the contract between this spec and the rest of the system: any new view must source from one of these or motivate the addition of a new source.
+The command center reads exclusively from sources specified by other docs. Any new view must source from one of these or motivate adding a new source.
 
 | Source | Owner | What the command center reads |
 |---|---|---|
@@ -201,21 +199,21 @@ The command center reads exclusively from sources already specified by other doc
 | Live status push from pipeline | Pipeline | Phase transitions, agent state changes, current `invocation_id` |
 | Live status push from monitor | Monitor | Websocket connection state, fill events, breach detections, greeks refreshes, emergency invocation triggers |
 
-The push channels in the last two rows are the only new producer obligations this spec adds to the pipeline and monitor. Their wire format is part of the deferred interaction-model design.
+The push channels in the last two rows are the only new producer obligations this spec adds to the pipeline and monitor.
 
 ---
 
 ## Views
 
-Organized as five top-level sections in the UI, each with one or more views.
+Organized as five top-level UI sections, each with one or more views.
 
 ### A. Live operations
 
-The landing surface. Always reflects the current state of the pipeline and the monitor.
+The landing surface. Always reflects current pipeline and monitor state.
 
 #### Live run watcher
 
-The headline view. When a pipeline invocation is running, shows phase-by-phase progress; when no invocation is running, shows the most recent completion plus a countdown to the next scheduled trigger.
+Headline view. When a pipeline invocation is running, shows phase-by-phase progress; otherwise shows the most recent completion plus a countdown to the next scheduled trigger.
 
 | Pane | Content | Source |
 |---|---|---|
@@ -227,11 +225,11 @@ Long-running phases (analysis 1–4 min, decision 1–4 min) show a progress ind
 
 #### Schedule preview
 
-A separate small view showing the next several scheduled triggers and any pause / overlap-deduplication state. Sourced from APScheduler via the pipeline's status push.
+Small view showing the next several scheduled triggers and any pause / overlap-deduplication state. Sourced from APScheduler via the pipeline's status push.
 
 ### B. History and diagnostics
 
-The diagnostic substrate. The single most-used set of views during prompt iteration and incident review.
+The diagnostic substrate — most-used during prompt iteration and incident review.
 
 #### Run history
 
@@ -239,7 +237,7 @@ Paginated, filterable list of past invocations. Filters: date range, run type, s
 
 #### Per-invocation detail
 
-The full graph for one `invocation_id`, rendered as a single navigable page:
+Full graph for one `invocation_id`, rendered as a single navigable page:
 
 | Section | Content | Source |
 |---|---|---|
@@ -252,23 +250,23 @@ The full graph for one `invocation_id`, rendered as a single navigable page:
 | PM envelopes | One per evaluated proposal — verdict, evaluation criteria pass/fail with notes, modifications, concerns, anti-patterns, rationale narrative, resulting commands | `pm_decision` activity log entries plus archived envelope |
 | Commands and fills | OMS commands submitted, fills collected (this invocation's Phase 1), guardrail rejections | activity log filtered by `invocation_id` |
 
-Every reference ID is a hyperlink to its source. Every position ID, thesis ID, order ID, command ID is a hyperlink to its respective detail view.
+Every reference ID, position ID, thesis ID, order ID, command ID is a hyperlink to its detail view.
 
-A rejected proposal is rendered with the same prominence as an approved one — the verdict pill, the failed criterion list, the anti-pattern tags, and the rationale narrative are all primary content, not collapsed below the fold.
+A rejected proposal renders with the same prominence as an approved one — the verdict pill, failed criterion list, anti-pattern tags, and rationale narrative are all primary content, not collapsed below the fold.
 
 #### Activity log explorer
 
-Filterable view over the full activity log. Filter dimensions: event type (the [taxonomy](05-execution-layer/state-persistence.md) of ~26 types), `invocation_id`, position/thesis/order ID, source subsystem, time range. Result table shows event type, timestamp, primary entity link, one-line summary; row expands to the full event detail JSON.
+Filterable view over the full activity log. Filter dimensions: event type (the [taxonomy](05-execution-layer/state-persistence.md) of ~26 types), `invocation_id`, position/thesis/order ID, source subsystem, time range. Result table shows event type, timestamp, primary entity link, one-line summary; row expands to full event detail JSON.
 
-This is the workhorse view for "what happened and why." Most other views link into it with a pre-applied filter (e.g., the position detail view's "history" tab is the activity log filtered by `position_id`).
+The workhorse view for "what happened and why." Most other views link into it with a pre-applied filter (the position detail view's "history" tab is the activity log filtered by `position_id`).
 
 #### Source-brief retrieval store viewer
 
-A reader for the indexed brief content. Pick an `invocation_id` and a reference ID prefix; see the brief sections keyed by that prefix in the form the decision-layer agents see them via `retrieve_brief`. Used for verifying claims in agent narrative against underlying source.
+Reader for indexed brief content. Pick an `invocation_id` and a reference ID prefix; see the brief sections keyed by that prefix as the decision-layer agents see them via `retrieve_brief`. Used to verify claims in agent narrative against underlying source.
 
 #### Failure and abort log
 
-Filtered view over invocations with `status` ∈ {failed, partial}. Shows the failure mode (timeout / malformed / context-overflow / model-API / tool-use / data-layer-abort), retry counts, the offending output if applicable. Click-through to the invocation detail.
+Filtered view over invocations with `status` ∈ {failed, partial}. Shows failure mode (timeout / malformed / context-overflow / model-API / tool-use / data-layer-abort), retry counts, offending output if applicable. Click-through to invocation detail.
 
 ### C. Portfolio and theses
 
@@ -286,25 +284,25 @@ Single page showing current portfolio state in aggregate.
 
 #### Position detail
 
-One page per position. Three tabs: state (current fields, bracket legs, fill history), thesis (component-level structure with linked legs, current and prior status, status transitions over the position's life), history (the activity log filtered by `position_id`).
+One page per position. Three tabs: state (current fields, bracket legs, fill history); thesis (component-level structure with linked legs, current and prior status, status transitions); history (activity log filtered by `position_id`).
 
-The thesis tab renders thesis components as cards keyed by component type (entry rationale, target rationale, invalidation rationale per leg), with each component showing its narrative, key assumptions, and the linked bracket leg or order it grounds. Status transitions are a vertical timeline on the right with the cited signal for each transition.
+The thesis tab renders components as cards keyed by component type (entry rationale, target rationale, invalidation rationale per leg), each showing narrative, key assumptions, and linked bracket leg or order. Status transitions are a vertical timeline on the right with cited signal per transition.
 
 #### Theses dashboard
 
-Filterable list of theses by status (active, resolved, cancelled), thesis status classification (on-track / partially-realized / at-risk / stale / invalidated), sector, age, resolution category once closed. One row per thesis showing the thesis summary, current status with `prior_status` if recently transitioned, linked position, age, P/L of the underlying position.
+Filterable list of theses by status (active, resolved, cancelled), classification (on-track / partially-realized / at-risk / stale / invalidated), sector, age, resolution category. One row per thesis showing summary, current status with `prior_status` if recently transitioned, linked position, age, P/L of the underlying position.
 
 #### Thesis detail
 
-Full thesis: summary, all components with type and narrative, status history with cited signals at each transition, resolution outcome if closed (component-level outcomes plus thesis-level category). Cross-link to the source-brief retrieval store viewer for any reference IDs cited in component narratives.
+Full thesis: summary, all components with type and narrative, status history with cited signals at each transition, resolution outcome if closed (component-level outcomes plus thesis-level category). Cross-link to the source-brief retrieval store viewer for cited reference IDs.
 
 ### D. Configuration
 
 #### Config editor
 
-A graphical editor over the entire `config/` tree. The operator never sees raw YAML.
+Graphical editor over the entire `config/` tree. The operator never sees raw YAML.
 
-Each settings page corresponds to one config file or one bundle (`profiles/<profile>.yaml`, `regimes/<regime>.yaml`, etc.). Each leaf value renders as an input control type-matched to the value:
+Each settings page corresponds to one config file or bundle (`profiles/<profile>.yaml`, `regimes/<regime>.yaml`). Each leaf value renders as an input control type-matched to the value:
 
 | Value type | Control |
 |---|---|

@@ -39,6 +39,8 @@ from alphamind.data_sources.eia.energy import bootstrap_series as eia_bootstrap_
 from alphamind.data_sources.finnhub.calendar import (
     bootstrap_earnings_calendar,
     bootstrap_economic_calendar,
+    collect_fda_calendar,
+    collect_ipo_calendar,
 )
 from alphamind.data_sources.polygon.corporate_actions import bootstrap_corporate_actions
 from alphamind.data_sources.polygon.equity import bootstrap_universe_bars
@@ -226,7 +228,7 @@ def run_all(only_vendor: str | None = None) -> None:
     # ------------------------------------------------------------------
     if _runs("polygon"):
         _run_step("assets.yaml seed", _seed_asset_universe)
-        _run_step("polygon.reference", collect_reference, [])
+        _run_step("polygon.reference", collect_reference)
         _run_step("polygon.corporate_actions", bootstrap_corporate_actions)
         _run_step("polygon.equity", bootstrap_universe_bars)
 
@@ -254,5 +256,10 @@ def run_all(only_vendor: str | None = None) -> None:
     if _runs("finnhub"):
         _run_step("finnhub.earnings_calendar", bootstrap_earnings_calendar)
         _run_step("finnhub.economic_calendar", bootstrap_economic_calendar)
+        # IPO and FDA calendars have no dedicated bootstrap wrappers; the
+        # catch-up paths resolve a forward-90d window themselves when called
+        # with no ``since``. lifecycle.md § Bootstrap step 6 includes them.
+        _run_step("finnhub.ipo_calendar", collect_ipo_calendar)
+        _run_step("finnhub.fda_calendar", collect_fda_calendar)
 
     log.info("bootstrap: complete")
