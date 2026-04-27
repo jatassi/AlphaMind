@@ -23,4 +23,6 @@ class TestSeriesRegistry:
     def test_frequency_values_are_valid(self) -> None:
         valid = {"daily", "weekly", "monthly", "quarterly", "annual"}
         for series_id, meta in SERIES.items():
-            assert meta["frequency"] in valid, f"{series_id} has invalid frequency {meta['frequency']!r}"
+            assert meta["frequency"] in valid, (
+                f"{series_id} has invalid frequency {meta['frequency']!r}"
+            )

@@ -17,6 +17,6 @@ SERIES: dict[str, dict[str, str]] = {
     # CPI-U
     "CUSR0000SA0": {"frequency": "monthly", "units": "index"},
     "CUSR0000SA0L1E": {"frequency": "monthly", "units": "index"},  # core CPI-U (ex food & energy)
-    "CUSR0000SAF1": {"frequency": "monthly", "units": "index"},    # food
-    "CUSR0000SACE": {"frequency": "monthly", "units": "index"},    # energy commodities
+    "CUSR0000SAF1": {"frequency": "monthly", "units": "index"},  # food
+    "CUSR0000SACE": {"frequency": "monthly", "units": "index"},  # energy commodities
 }

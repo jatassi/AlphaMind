@@ -9,7 +9,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
 
 from alphamind.data_sources.kalshi.client import KalshiClient
 
@@ -42,8 +41,10 @@ class TestLoginCaching:
     def test_login_called_on_first_request(self) -> None:
         """Client performs POST /login on first request and caches the token."""
         client = KalshiClient(email="user@example.com", password="secret")
-        with patch.object(client._http, "post", return_value=_mock_login_response()) as mock_post, \
-             patch.object(client._http, "get", return_value=_mock_get_response({"events": []})):
+        with (
+            patch.object(client._http, "post", return_value=_mock_login_response()) as mock_post,
+            patch.object(client._http, "get", return_value=_mock_get_response({"events": []})),
+        ):
             client.get("/events")
         mock_post.assert_called_once()
         assert LOGIN_URL in mock_post.call_args[0][0]
@@ -51,8 +52,10 @@ class TestLoginCaching:
     def test_login_not_repeated_on_second_request(self) -> None:
         """Token is cached; second request does not trigger another login."""
         client = KalshiClient(email="user@example.com", password="secret")
-        with patch.object(client._http, "post", return_value=_mock_login_response()) as mock_post, \
-             patch.object(client._http, "get", return_value=_mock_get_response({"events": []})):
+        with (
+            patch.object(client._http, "post", return_value=_mock_login_response()) as mock_post,
+            patch.object(client._http, "get", return_value=_mock_get_response({"events": []})),
+        ):
             client.get("/events")
             client.get("/events")
         mock_post.assert_called_once()
@@ -60,8 +63,12 @@ class TestLoginCaching:
     def test_auth_header_sent_after_login(self) -> None:
         """Requests carry the Authorization header after login."""
         client = KalshiClient(email="user@example.com", password="secret")
-        with patch.object(client._http, "post", return_value=_mock_login_response("tok-xyz")), \
-             patch.object(client._http, "get", return_value=_mock_get_response({"events": []})) as mock_get:
+        with (
+            patch.object(client._http, "post", return_value=_mock_login_response("tok-xyz")),
+            patch.object(
+                client._http, "get", return_value=_mock_get_response({"events": []})
+            ) as mock_get,
+        ):
             client.get("/events")
         headers = mock_get.call_args[1].get("headers", {})
         assert headers.get("Authorization") == "Bearer tok-xyz"
@@ -92,8 +99,10 @@ class TestRefreshOn401:
                 raise httpx.HTTPStatusError("401", request=request, response=unauthorized)
             return _mock_get_response({"events": []})
 
-        with patch.object(client._http, "post", side_effect=lambda *a, **kw: next(login_iter)), \
-             patch.object(client._http, "get", side_effect=fake_get):
+        with (
+            patch.object(client._http, "post", side_effect=lambda *a, **kw: next(login_iter)),
+            patch.object(client._http, "get", side_effect=fake_get),
+        ):
             result = client.get("/events")
 
         assert result == {"events": []}
@@ -119,8 +128,10 @@ class TestRefreshOn401:
                 raise httpx.HTTPStatusError("401", request=request, response=unauthorized)
             return _mock_get_response({"events": []})
 
-        with patch.object(client._http, "post", side_effect=lambda *a, **kw: next(login_iter)), \
-             patch.object(client._http, "get", side_effect=fake_get):
+        with (
+            patch.object(client._http, "post", side_effect=lambda *a, **kw: next(login_iter)),
+            patch.object(client._http, "get", side_effect=fake_get),
+        ):
             client.get("/events")
 
         assert captured_headers[1].get("Authorization") == "Bearer new-tok"
@@ -142,8 +153,14 @@ class TestProactiveRefresh:
         client._token = "old-tok"
         client._token_issued_at = time.monotonic() - (26 * 60)
 
-        with patch.object(client._http, "post", return_value=_mock_login_response("fresh-tok")) as mock_post, \
-             patch.object(client._http, "get", return_value=_mock_get_response({"events": []})) as mock_get:
+        with (
+            patch.object(
+                client._http, "post", return_value=_mock_login_response("fresh-tok")
+            ) as mock_post,
+            patch.object(
+                client._http, "get", return_value=_mock_get_response({"events": []})
+            ) as mock_get,
+        ):
             client.get("/events")
 
         mock_post.assert_called_once()

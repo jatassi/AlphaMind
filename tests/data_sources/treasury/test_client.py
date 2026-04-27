@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import httpx
-from unittest.mock import patch, MagicMock
 
 from alphamind.data_sources.treasury.client import TreasuryClient
 

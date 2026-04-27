@@ -14,7 +14,6 @@ import pytest
 from alphamind.persistence.models import Base, PredictionMarketContracts, PredictionMarketSnapshots
 from alphamind.persistence.session import make_engine, make_session_factory
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -118,7 +117,7 @@ class TestCollectSnapshots:
 
     def test_contracts_have_correct_category_for_fed(self, db_session) -> None:
         """FED series_ticker maps to monetary_policy category."""
-        from alphamind.data_sources.kalshi.contracts import collect_snapshots, SERIES_CATEGORY_MAP
+        from alphamind.data_sources.kalshi.contracts import SERIES_CATEGORY_MAP
 
         assert "FED" in SERIES_CATEGORY_MAP
         assert SERIES_CATEGORY_MAP["FED"] == "monetary_policy"
@@ -195,11 +194,7 @@ class TestCollectSnapshots:
 
         client = _make_mock_client(
             _make_events_payload(["FED"]),
-            {
-                "FED": _make_markets_payload(
-                    "FED", "FED-001", status="finalized", result="yes"
-                )
-            },
+            {"FED": _make_markets_payload("FED", "FED-001", status="finalized", result="yes")},
         )
         since = "2024-01-01T00:00:00Z"
         repo = MagicMock()
@@ -252,8 +247,20 @@ class TestCollectSnapshots:
         repo.update_success.return_value = None
 
         # Use a fixed snapshot_ts by freezing time via a fixed ingested_at
-        collect_snapshots(since, client=client, session=db_session, _repo=repo, _snapshot_ts="2024-06-01T12:00:00+00:00")
-        collect_snapshots(since, client=client, session=db_session, _repo=repo, _snapshot_ts="2024-06-01T12:00:00+00:00")
+        collect_snapshots(
+            since,
+            client=client,
+            session=db_session,
+            _repo=repo,
+            _snapshot_ts="2024-06-01T12:00:00+00:00",
+        )
+        collect_snapshots(
+            since,
+            client=client,
+            session=db_session,
+            _repo=repo,
+            _snapshot_ts="2024-06-01T12:00:00+00:00",
+        )
 
         snaps = db_session.query(PredictionMarketSnapshots).all()
         assert len(snaps) == 1

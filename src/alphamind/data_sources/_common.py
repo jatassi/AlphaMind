@@ -14,12 +14,13 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Generator, TypeVar
+from typing import Any, TypeVar
 
 import httpx
 from dotenv import dotenv_values
@@ -82,16 +83,14 @@ def load_config(
             return yaml.safe_load(fh) or {}
 
     data_sources = DataSourcesConfig.model_validate(_read("data_sources.yaml"))
-    collector_schedule = CollectorScheduleConfig.model_validate(
-        _read("collector_schedule.yaml")
-    )
+    collector_schedule = CollectorScheduleConfig.model_validate(_read("collector_schedule.yaml"))
     news_outlets = NewsOutletsConfig.model_validate(_read("news_outlets.yaml"))
 
     # Validate that every api_key_env reference resolves
     for name, provider in data_sources.providers.items():
         if provider.api_key_env is not None:
             if provider.api_key_env not in env_values or env_values[provider.api_key_env] is None:
-                raise EnvironmentError(
+                raise OSError(
                     f"Provider {name!r} requires environment variable "
                     f"{provider.api_key_env!r} but it is not set in {dot_env}"
                 )
@@ -337,7 +336,7 @@ def track_run(
     collector_name: str,
     *,
     _repo: Any = None,
-) -> Generator[RunState, None, None]:
+) -> Generator[RunState]:
     """
     Context manager that tracks a collection run in ``collection_runs``.
 

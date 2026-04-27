@@ -9,3 +9,4 @@ venv/
 
 # Secrets
 .env
+.claude/scheduled_tasks.lock

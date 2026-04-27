@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from alphamind.persistence.models import Base, MacroObservations, CollectionRuns
-
+from alphamind.persistence.models import Base, CollectionRuns, MacroObservations
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -45,12 +44,14 @@ def mock_repo(engine):
     class Repo:
         def insert_running(self, run_id: str, collector: str, started_at: str) -> None:
             with Session() as sess:
-                sess.add(CollectionRuns(
-                    run_id=run_id,
-                    collector=collector,
-                    started_at=started_at,
-                    status="running",
-                ))
+                sess.add(
+                    CollectionRuns(
+                        run_id=run_id,
+                        collector=collector,
+                        started_at=started_at,
+                        status="running",
+                    )
+                )
                 sess.commit()
 
         def update_success(self, run_id: str, completed_at: str, rows_written: int) -> None:
@@ -83,14 +84,16 @@ def _make_series_data(dates: list[date], values: list[float]) -> pd.Series:
 
 def _make_series_info(frequency_short: str = "D", units: str = "Percent") -> pd.Series:
     """Build a pandas Series that mimics fredapi.Fred.get_series_info() output."""
-    return pd.Series({
-        "id": "DGS10",
-        "title": "10-Year Treasury",
-        "frequency_short": frequency_short,
-        "units": units,
-        "observation_start": "2000-01-01",
-        "observation_end": "2026-04-26",
-    })
+    return pd.Series(
+        {
+            "id": "DGS10",
+            "title": "10-Year Treasury",
+            "frequency_short": frequency_short,
+            "units": units,
+            "observation_start": "2000-01-01",
+            "observation_end": "2026-04-26",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -164,17 +167,20 @@ def test_collect_series_sets_frequency_from_metadata(engine, Session, mock_repo)
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("fred_units,expected_short", [
-    ("Percent", "pct"),
-    ("Percent Change", "pct"),
-    ("Basis Points", "bp"),
-    ("Index", "index"),
-    ("Dollars per Barrel", "bbl"),
-    ("Billions of Dollars", "usd"),
-    ("Millions of Dollars", "usd"),
-    ("Thousands", "units"),
-    ("Index 1982-84=100", "index"),
-])
+@pytest.mark.parametrize(
+    "fred_units,expected_short",
+    [
+        ("Percent", "pct"),
+        ("Percent Change", "pct"),
+        ("Basis Points", "bp"),
+        ("Index", "index"),
+        ("Dollars per Barrel", "bbl"),
+        ("Billions of Dollars", "usd"),
+        ("Millions of Dollars", "usd"),
+        ("Thousands", "units"),
+        ("Index 1982-84=100", "index"),
+    ],
+)
 def test_collect_series_normalizes_units(
     fred_units: str,
     expected_short: str,
@@ -218,16 +224,18 @@ def test_collect_series_inserts_revision_when_value_differs(engine, Session, moc
 
     # Seed an existing row at revision 0
     with Session() as sess:
-        sess.add(MacroObservations(
-            source="fred",
-            series_id="DGS10",
-            observation_date="2026-04-24",
-            revision_number=0,
-            value=4.20,
-            units="pct",
-            frequency="daily",
-            ingested_at="2026-04-24T00:00:00+00:00",
-        ))
+        sess.add(
+            MacroObservations(
+                source="fred",
+                series_id="DGS10",
+                observation_date="2026-04-24",
+                revision_number=0,
+                value=4.20,
+                units="pct",
+                frequency="daily",
+                ingested_at="2026-04-24T00:00:00+00:00",
+            )
+        )
         sess.commit()
 
     # New pull returns a different value for the same date
@@ -266,16 +274,18 @@ def test_collect_series_no_revision_when_value_same(engine, Session, mock_repo) 
     from alphamind.data_sources.fred.macro import collect_series
 
     with Session() as sess:
-        sess.add(MacroObservations(
-            source="fred",
-            series_id="DGS10",
-            observation_date="2026-04-24",
-            revision_number=0,
-            value=4.25,
-            units="pct",
-            frequency="daily",
-            ingested_at="2026-04-24T00:00:00+00:00",
-        ))
+        sess.add(
+            MacroObservations(
+                source="fred",
+                series_id="DGS10",
+                observation_date="2026-04-24",
+                revision_number=0,
+                value=4.25,
+                units="pct",
+                frequency="daily",
+                ingested_at="2026-04-24T00:00:00+00:00",
+            )
+        )
         sess.commit()
 
     series_data = _make_series_data([date(2026, 4, 24)], [4.25])
@@ -391,7 +401,7 @@ def test_bootstrap_series_uses_90_days_for_daily(engine, Session, mock_repo) -> 
     mock_client.get_series_info.return_value = _make_series_info("D", "Percent")
 
     bootstrap_series(
-        daily_series=DAILY_SERIES[:1],   # only one series to keep the test fast
+        daily_series=DAILY_SERIES[:1],  # only one series to keep the test fast
         monthly_series=[],
         client=mock_client,
         session_factory=Session,

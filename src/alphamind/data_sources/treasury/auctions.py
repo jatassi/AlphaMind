@@ -42,17 +42,19 @@ def _fetch_all_pages(since: date) -> list[dict[str, Any]]:
     """Fetch all auction records from the API for the given date window."""
     security_terms = ",".join(_TENOR_MAP.keys())
     params: dict[str, Any] = {
-        "fields": ",".join([
-            "record_date",
-            "security_term",
-            "high_yield",
-            "bid_to_cover_ratio",
-            "tail_basis_point",
-            "primary_dealer_amt_pct",
-            "indirect_bidder_amt_pct",
-            "direct_bidder_amt_pct",
-            "total_accepted_amt",
-        ]),
+        "fields": ",".join(
+            [
+                "record_date",
+                "security_term",
+                "high_yield",
+                "bid_to_cover_ratio",
+                "tail_basis_point",
+                "primary_dealer_amt_pct",
+                "indirect_bidder_amt_pct",
+                "direct_bidder_amt_pct",
+                "total_accepted_amt",
+            ]
+        ),
         "filter": f"record_date:gte:{since.isoformat()},security_term:in:({security_terms})",
         "page[size]": _PAGE_SIZE,
         "page[number]": 1,

@@ -42,8 +42,8 @@ providers:
     rate_limit_per_minute: 10
     retry_shape: important
 
-  polymarket:                  # open access — read-only
-    rate_limit_per_minute: 30
+  polymarket:                  # open access — read-only; 300 req/10s = 1800/min
+    rate_limit_per_minute: 1800
     retry_shape: optional
 
   kalshi:

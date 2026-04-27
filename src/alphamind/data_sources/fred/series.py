@@ -21,34 +21,34 @@ from __future__ import annotations
 
 DAILY_SERIES: list[str] = [
     # Treasury yields
-    "DGS2",          # 2-Year Treasury Constant Maturity Rate
-    "DGS5",          # 5-Year Treasury Constant Maturity Rate
-    "DGS10",         # 10-Year Treasury Constant Maturity Rate
-    "DGS30",         # 30-Year Treasury Constant Maturity Rate
-    "T10Y2Y",        # 10Y-2Y Treasury yield spread
-    "T10Y3M",        # 10Y-3M Treasury yield spread
+    "DGS2",  # 2-Year Treasury Constant Maturity Rate
+    "DGS5",  # 5-Year Treasury Constant Maturity Rate
+    "DGS10",  # 10-Year Treasury Constant Maturity Rate
+    "DGS30",  # 30-Year Treasury Constant Maturity Rate
+    "T10Y2Y",  # 10Y-2Y Treasury yield spread
+    "T10Y3M",  # 10Y-3M Treasury yield spread
     # Breakeven inflation (TIPS-implied)
-    "T5YIE",         # 5-Year Breakeven Inflation Rate
-    "T10YIE",        # 10-Year Breakeven Inflation Rate
+    "T5YIE",  # 5-Year Breakeven Inflation Rate
+    "T10YIE",  # 10-Year Breakeven Inflation Rate
     # Real yields
-    "DFII5",         # 5-Year TIPS yield (real)
-    "DFII10",        # 10-Year TIPS yield (real)
+    "DFII5",  # 5-Year TIPS yield (real)
+    "DFII10",  # 10-Year TIPS yield (real)
     # Funding / repo
-    "SOFR",          # Secured Overnight Financing Rate
-    "RRPONTSYD",     # Overnight Reverse Repo: Accepted Bids Amount (RRP usage)
-    "DFEDTARU",      # Federal Funds Target Range - Upper Limit
-    "DFEDTARL",      # Federal Funds Target Range - Lower Limit
+    "SOFR",  # Secured Overnight Financing Rate
+    "RRPONTSYD",  # Overnight Reverse Repo: Accepted Bids Amount (RRP usage)
+    "DFEDTARU",  # Federal Funds Target Range - Upper Limit
+    "DFEDTARL",  # Federal Funds Target Range - Lower Limit
     # Credit spreads (ICE BofA indices — weekly/daily)
     "BAMLH0A0HYM2",  # ICE BofA US High Yield Option-Adjusted Spread
-    "BAMLC0A0CM",    # ICE BofA US Corporate Option-Adjusted Spread (IG)
+    "BAMLC0A0CM",  # ICE BofA US Corporate Option-Adjusted Spread (IG)
     # Volatility / risk
-    "VIXCLS",        # CBOE Volatility Index (VIX)
+    "VIXCLS",  # CBOE Volatility Index (VIX)
     # Dollar
-    "DTWEXBGS",      # Nominal Broad U.S. Dollar Index
+    "DTWEXBGS",  # Nominal Broad U.S. Dollar Index
     # Commodity
-    "DCOILWTICO",    # WTI Crude Oil Spot Price
+    "DCOILWTICO",  # WTI Crude Oil Spot Price
     # St. Louis Financial Stress Index (weekly)
-    "STLFSI4",       # St. Louis Fed Financial Stress Index
+    "STLFSI4",  # St. Louis Fed Financial Stress Index
 ]
 
 # ---------------------------------------------------------------------------
@@ -57,19 +57,19 @@ DAILY_SERIES: list[str] = [
 
 MONTHLY_SERIES: list[str] = [
     # Inflation
-    "CPIAUCSL",      # CPI All Urban Consumers (headline)
-    "CPILFESL",      # CPI Less Food and Energy (core CPI)
-    "PCEPI",         # PCE Price Index (headline)
-    "PCEPILFE",      # PCE excluding food and energy (core PCE)
+    "CPIAUCSL",  # CPI All Urban Consumers (headline)
+    "CPILFESL",  # CPI Less Food and Energy (core CPI)
+    "PCEPI",  # PCE Price Index (headline)
+    "PCEPILFE",  # PCE excluding food and energy (core PCE)
     # Employment (monthly NFP-adjacent)
-    "UNRATE",        # Civilian Unemployment Rate
-    "PAYEMS",        # Total Nonfarm Payrolls (monthly change)
-    "AHETOT",        # Average Hourly Earnings of All Employees
+    "UNRATE",  # Civilian Unemployment Rate
+    "PAYEMS",  # Total Nonfarm Payrolls (monthly change)
+    "AHETOT",  # Average Hourly Earnings of All Employees
     # PMI / ISM proxies (monthly)
-    "MANEMP",        # Manufacturing Sector Employment (proxy)
+    "MANEMP",  # Manufacturing Sector Employment (proxy)
     # Consumer
-    "RSXFS",         # Advance Retail Sales (monthly)
+    "RSXFS",  # Advance Retail Sales (monthly)
     # Money market fund flows (monthly)
-    "WRMFSL",        # Retail Money Market Fund Assets
-    "WRMFNS",        # Non-Retail (Institutional) Money Market Fund Assets
+    "WRMFSL",  # Retail Money Market Fund Assets
+    "WRMFNS",  # Non-Retail (Institutional) Money Market Fund Assets
 ]

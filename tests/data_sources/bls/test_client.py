@@ -13,7 +13,6 @@ import pytest
 
 from alphamind.data_sources.bls.client import BLSClient
 
-
 BLS_URL = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
 
 
@@ -111,11 +110,7 @@ class TestPostTimeseries:
                 status_code=200,
                 json=lambda b=batch_ids: {
                     "status": "REQUEST_SUCCEEDED",
-                    "Results": {
-                        "series": [
-                            {"seriesID": sid, "data": []} for sid in b
-                        ]
-                    },
+                    "Results": {"series": [{"seriesID": sid, "data": []} for sid in b]},
                 },
                 raise_for_status=lambda: None,
             )

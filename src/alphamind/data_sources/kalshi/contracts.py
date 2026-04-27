@@ -134,9 +134,7 @@ def collect_snapshots(
                 result: str | None = market.get("result")
 
                 resolution_outcome = (
-                    _map_result(result)
-                    if market_status in ("closed", "finalized")
-                    else None
+                    _map_result(result) if market_status in ("closed", "finalized") else None
                 )
 
                 # UPSERT contract (slow-changing reference row)

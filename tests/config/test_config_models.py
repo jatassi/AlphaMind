@@ -82,9 +82,7 @@ def test_data_sources_rejects_unknown_retry_shape() -> None:
                 "retry_shape": "nonexistent",
             }
         },
-        "retry_shapes": {
-            "critical": {"attempts": 3, "backoff": "exponential", "failover": True}
-        },
+        "retry_shapes": {"critical": {"attempts": 3, "backoff": "exponential", "failover": True}},
         "categories": {},
     }
     with pytest.raises(ValidationError, match="nonexistent"):
@@ -102,9 +100,7 @@ def test_data_sources_rejects_category_with_missing_primary() -> None:
                 "retry_shape": "critical",
             }
         },
-        "retry_shapes": {
-            "critical": {"attempts": 3, "backoff": "exponential", "failover": True}
-        },
+        "retry_shapes": {"critical": {"attempts": 3, "backoff": "exponential", "failover": True}},
         "categories": {
             "q1_price_volume": {
                 "tier": "critical",
@@ -133,9 +129,7 @@ def test_data_sources_rejects_api_key_env_not_in_env_example(
                 "retry_shape": "critical",
             }
         },
-        "retry_shapes": {
-            "critical": {"attempts": 3, "backoff": "exponential", "failover": True}
-        },
+        "retry_shapes": {"critical": {"attempts": 3, "backoff": "exponential", "failover": True}},
         "categories": {},
     }
     with pytest.raises(ValidationError, match="BAD_KEY"):

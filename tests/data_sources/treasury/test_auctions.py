@@ -11,7 +11,6 @@ from sqlalchemy import select
 from alphamind.persistence.models import Base, CollectionRuns, TreasuryAuctions
 from alphamind.persistence.session import make_engine, make_session_factory
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -266,16 +265,18 @@ class TestFailureHandling:
         """HTTP error marks collection_runs as failed and writes no auction rows."""
         from alphamind.data_sources.treasury.auctions import collect_auctions
 
-        with patch(
-            "alphamind.data_sources.treasury.auctions._client.get",
-            side_effect=Exception("API down"),
+        with (
+            patch(
+                "alphamind.data_sources.treasury.auctions._client.get",
+                side_effect=Exception("API down"),
+            ),
+            pytest.raises(Exception, match="API down"),
         ):
-            with pytest.raises(Exception, match="API down"):
-                collect_auctions(
-                    since=date(2026, 3, 1),
-                    _session_factory=session_factory,
-                    _repo=fake_repo,
-                )
+            collect_auctions(
+                since=date(2026, 3, 1),
+                _session_factory=session_factory,
+                _repo=fake_repo,
+            )
 
         with session_factory() as sess:
             runs = sess.execute(select(CollectionRuns)).scalars().all()

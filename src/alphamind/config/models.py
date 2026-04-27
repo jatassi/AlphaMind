@@ -120,8 +120,7 @@ class ProviderConfig(BaseModel):
         has_day = self.rate_limit_per_day is not None
         if not (has_minute ^ has_day):
             raise ValueError(
-                "Provider must specify exactly one of rate_limit_per_minute "
-                "or rate_limit_per_day"
+                "Provider must specify exactly one of rate_limit_per_minute or rate_limit_per_day"
             )
         return self
 
@@ -158,9 +157,7 @@ class DataSourcesConfig(BaseModel):
                 )
             for fp in cat.failover:
                 if fp not in self.providers:
-                    raise ValueError(
-                        f"Category {cat_name!r} failover {fp!r} is not in providers"
-                    )
+                    raise ValueError(f"Category {cat_name!r} failover {fp!r} is not in providers")
         return self
 
     @model_validator(mode="after")

@@ -22,7 +22,6 @@ from alphamind.data_sources._common import (
     with_retries,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers / fakes
 # ---------------------------------------------------------------------------
@@ -263,7 +262,9 @@ class TestWithRetriesCritical:
             if call_count < 2:
                 request = httpx.Request("GET", "https://api.example.com/data")
                 response = httpx.Response(503, request=request)
-                raise httpx.HTTPStatusError("503 Service Unavailable", request=request, response=response)
+                raise httpx.HTTPStatusError(
+                    "503 Service Unavailable", request=request, response=response
+                )
             return "ok"
 
         result = server_error()
@@ -281,7 +282,9 @@ class TestWithRetriesCritical:
             if call_count < 2:
                 request = httpx.Request("GET", "https://api.example.com/data")
                 response = httpx.Response(429, request=request)
-                raise httpx.HTTPStatusError("429 Too Many Requests", request=request, response=response)
+                raise httpx.HTTPStatusError(
+                    "429 Too Many Requests", request=request, response=response
+                )
             return "ok"
 
         result = rate_limited()
@@ -547,9 +550,8 @@ class TestTrackRun:
     def test_failed_row_has_error_summary(self) -> None:
         """error_summary field is populated on failure."""
         repo = self._make_repo()
-        with pytest.raises(ValueError):
-            with track_run("fred.macro", _repo=repo):
-                raise ValueError("bad data from api")
+        with pytest.raises(ValueError), track_run("fred.macro", _repo=repo):
+            raise ValueError("bad data from api")
 
         row = next(iter(repo.rows.values()))
         assert "bad data from api" in row["error_summary"]

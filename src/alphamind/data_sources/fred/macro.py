@@ -125,15 +125,19 @@ def _bulk_fetch_latest(
     if not observation_dates:
         return {}
     with session_factory() as sess:
-        rows = sess.execute(
-            select(MacroObservations)
-            .where(
-                MacroObservations.source == _SOURCE,
-                MacroObservations.series_id == series_id,
-                MacroObservations.observation_date.in_(observation_dates),
+        rows = (
+            sess.execute(
+                select(MacroObservations)
+                .where(
+                    MacroObservations.source == _SOURCE,
+                    MacroObservations.series_id == series_id,
+                    MacroObservations.observation_date.in_(observation_dates),
+                )
+                .order_by(MacroObservations.revision_number.desc())
             )
-            .order_by(MacroObservations.revision_number.desc())
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     # Keep only the highest revision per date
     latest: dict[str, MacroObservations] = {}
     for row in rows:
@@ -184,6 +188,7 @@ def collect_series(
     if session_factory is None:
         from alphamind.persistence.models import Base
         from alphamind.persistence.session import make_engine, make_session_factory
+
         engine = make_engine()
         Base.metadata.create_all(engine)
         session_factory = make_session_factory(engine)
@@ -222,16 +227,18 @@ def collect_series(
                 if existing is not None and not _values_differ(existing.value, float_value):
                     continue
                 revision_number = 0 if existing is None else existing.revision_number + 1
-                new_rows.append(MacroObservations(
-                    source=_SOURCE,
-                    series_id=series_id,
-                    observation_date=obs_date,
-                    revision_number=revision_number,
-                    value=float_value,
-                    units=units,
-                    frequency=frequency,
-                    ingested_at=ingested_at,
-                ))
+                new_rows.append(
+                    MacroObservations(
+                        source=_SOURCE,
+                        series_id=series_id,
+                        observation_date=obs_date,
+                        revision_number=revision_number,
+                        value=float_value,
+                        units=units,
+                        frequency=frequency,
+                        ingested_at=ingested_at,
+                    )
+                )
 
             if new_rows:
                 with session_factory() as sess:

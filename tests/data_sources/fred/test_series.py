@@ -24,17 +24,26 @@ def test_required_series_are_present() -> None:
     # From api-key-checklist.md + 05b spec
     required = {
         # Yields
-        "DGS10", "DGS2", "T10Y2Y", "T10YIE",
+        "DGS10",
+        "DGS2",
+        "T10Y2Y",
+        "T10YIE",
         # Breakeven inflation
         "T5YIE",
         # Credit spreads
-        "BAMLH0A0HYM2", "BAMLC0A0CM",
+        "BAMLH0A0HYM2",
+        "BAMLC0A0CM",
         # Funding / repo
-        "SOFR", "RRPONTSYD",
+        "SOFR",
+        "RRPONTSYD",
         # Other macro
-        "VIXCLS", "DTWEXBGS", "DCOILWTICO",
-        "CPIAUCSL", "PCEPI",
-        "STLFSI4", "DFEDTARU",
+        "VIXCLS",
+        "DTWEXBGS",
+        "DCOILWTICO",
+        "CPIAUCSL",
+        "PCEPI",
+        "STLFSI4",
+        "DFEDTARU",
     }
     missing = required - all_series
     assert not missing, f"Missing series: {missing}"
