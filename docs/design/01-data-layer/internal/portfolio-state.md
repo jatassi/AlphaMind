@@ -1,6 +1,6 @@
 # Portfolio state — raw state
 
-Direct reads from the OMS database (populated from Alpaca's account / positions / orders / activities endpoints and the `trade_updates` websocket — see [broker-adapter.md](../../05-execution-layer/broker-adapter.md)) or direct aggregations of stored data. No market data cross-reference or LLM judgment. For derived metrics, see [derived-metrics.md](derived-metrics.md).
+Direct reads from the OMS database (populated from Alpaca's account / positions / orders / activities endpoints and the `trade_updates` websocket — see [broker-adapter.md](../../05-execution-layer/broker-adapter.md)) or direct aggregations of stored data. No market data cross-reference or LLM judgment. For derived metrics, see [../../02-distillation-layer/internal.md](../../02-distillation-layer/internal.md).
 
 ---
 
@@ -20,7 +20,7 @@ What the system currently owns or is short. Every open position with enough deta
   For exposure calculations (delta-adjusted vs. notional), see [position-model.md](../../05-execution-layer/position-model.md). The ingestion layer delivers both notional and delta-adjusted exposure per position.
 
   *1b. Sector and directional exposure*
-  Direct rollups of the position inventory. Beta-adjusted metrics requiring quant 1f live in [derived metrics 7a](derived-metrics.md).
+  Direct rollups of the position inventory. Beta-adjusted metrics requiring quant 1f live in [derived metrics 7a](../../02-distillation-layer/internal.md).
   - Sector allocation: total long and short per sector (tech, semis, financials, energy) in dollars and as portfolio percentage — primary concentration measure. Uses delta-adjusted exposure for options/strategy positions per [position-model.md](../../05-execution-layer/position-model.md).
   - Net directional exposure: long minus short as portfolio percentage — net long, short, or neutral.
   - Gross exposure: long plus short as portfolio percentage — leverage proxy. 150% gross means more directional bets than capital even at low net exposure.
@@ -156,7 +156,7 @@ Process health dashboard, separate from P/L. Over short periods a system can be 
 
   *Design principle — meta-awareness over raw metrics:* The dangerous failure mode is gradual process degradation undetected until the drawdown is severe. Early warning to the PM (and human overseer) is the purpose.
 
-  *Note on risk-adjusted performance and execution quality:* Sharpe, Sortino, profit factor, and execution monitoring are analysis-layer at daily/weekly cadence. See [derived metrics 11a–11b](derived-metrics.md).
+  *Note on risk-adjusted performance and execution quality:* Sharpe, Sortino, profit factor, and execution monitoring are analysis-layer at daily/weekly cadence. See [derived metrics 11a–11b](../../02-distillation-layer/internal.md).
 
   *6a. Thesis accuracy trend*
   - Thesis accuracy trend: trailing validation rate (correct-for-right-reasons / total resolutions) over 5d, 20d, inception — declining accuracy is the earliest warning.

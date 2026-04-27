@@ -377,7 +377,7 @@ Indexes: `(collector, started_at)`.
 
 ## Deferred categories
 
-Categories not implemented in v1 (per [SESSION-BRIEF](../SESSION-BRIEF.md)):
+Categories not implemented in v1:
 
 | Category | Reason |
 |---|---|
