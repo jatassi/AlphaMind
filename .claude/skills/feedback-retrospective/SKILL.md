@@ -32,6 +32,7 @@ The ingestion pulls:
 - All counterfactual replays with verdicts and confidence
 - All anti-pattern occurrences across all PM envelopes
 - Cost and latency aggregates per agent
+- All validation outcomes with `rollback_status = optional_pending_retrospective` that have not yet been resolved by a `decision_type: follow_up` entry on a prior retrospective (per [feedback-loop.md § Rollback evidence protocol](../../../docs/design/feedback-loop.md#rollback-evidence-protocol))
 
 This is heavy. It will consume substantial tokens. Confirm at the start that the operator is OK with a several-minute pause, then proceed without further interaction until Phase 2 completes.
 
@@ -89,6 +90,7 @@ Produce a structured report with these sections:
 - {candidate_2}: ...
 
 ## Suggested follow-ups
+- Pending rollback decisions: one bullet per ingested `optional_pending_retrospective` validation outcome — the failed validation's edited artifact, watched metric, verdict, the rule that produced the deferred status, and a recommended accept/reject framing. Item identifier prefix `follow_up.rollback_<artifact_slug>` so the decision rail's accept/reject capture routes through the existing `decision_type: follow_up` mechanism.
 - Validations to register (for changes the operator might consider)
 - Investigations to schedule
 - Open questions for the next retrospective
@@ -103,7 +105,7 @@ Open a review session via `create_review_session()` (backed by `POST /review-ses
 Capture decisions in real-time via `POST /api/retrospective/{report_id}/decisions` with body `{item_identifier, decision_type, verdict, rationale, linked_validation_id?}` per [command-center.md § Retrospective view](../../../docs/design/command-center.md#retrospective-view), which writes a `retrospective_decisions` record per [state-persistence.md § Retrospective decisions](../../../docs/design/05-execution-layer/state-persistence.md):
 - Promotion candidates accepted (`decision_type: promotion_candidate`, `verdict: accepted`) → operator implements the new metric separately
 - Promotion candidates rejected (`decision_type: promotion_candidate`, `verdict: rejected`) → record with rationale
-- Suggested follow-ups accepted (`decision_type: follow_up`, `verdict: accepted`) → some may convert to validation registrations (handoff to `/feedback-validate`); when they do, capture the resulting validation ID as `linked_validation_id`
+- Suggested follow-ups accepted (`decision_type: follow_up`, `verdict: accepted`) → some may convert to validation registrations (handoff to `/feedback-validate`); when they do, capture the resulting validation ID as `linked_validation_id`. For pending rollback decisions, an accept verdict means the operator will execute the rollback; route the registration handoff to the paired post-rollback validation flow per [`feedback-validate` § The evaluation walk](../feedback-validate/SKILL.md#the-evaluation-walk) step 9, and capture the resulting validation ID as `linked_validation_id`.
 
 End the session via `end_review_session()` (backed by `DELETE /review-sessions/{id}`). The report itself persists; the session state is transient.
 

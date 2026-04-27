@@ -431,6 +431,7 @@ Validation outcome record:
 - Posterior summary: structured representation of the pre/post comparison with explicit uncertainty (per-metric shape resolved by the metric the validation watched)
 - Confounder notes: capture of any confounders that affected attribution (regime shift, model update, concurrent edits)
 - Narrative: rationale for the verdict
+- Rollback status: derived value persisted at EVALUATE time per [feedback-loop.md § Rollback evidence protocol](../feedback-loop.md#rollback-evidence-protocol). One of `mandatory_clean_failure`, `optional_pending_retrospective`, `not_applicable`. Derived from `verdict`, whether the post-edit window crossed the validation's pre-registered failure criterion, the presence of confounder notes, the registration's `expected_direction`, and the most recent prior outcome's verdict on the same `edited_artifact`. Persisted (not recomputed at read time) so the rule applied at evaluation is preserved across schema or threshold evolution.
 
 ---
 

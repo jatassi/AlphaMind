@@ -379,11 +379,15 @@ Dedicated view for evaluating a registered validation (the EVALUATE mode of [`/f
 
 Layout, top to bottom:
 
-1. **Registration recap.** Verbatim re-display of the validation record (edited artifact, pre/post git SHAs, watched metric, window length, expected direction and magnitude, success criterion, failure criterion, registered timestamp). The anti-rationalization anchor the skill reads aloud at evaluation start.
+1. **Registration recap.** Verbatim re-display of the validation record (edited artifact, pre/post git SHAs, watched metric, window length, expected direction and magnitude, success criterion, failure criterion, registered timestamp), with a deep-link to the artifact's git history for the operator to inspect adjacent commits. The anti-rationalization anchor the skill reads aloud at evaluation start.
 2. **Pre-edit window panel.** The watched metric over the registered pre-edit window: line chart with 80% credible band, sample size annotation, regime distribution overlay, active model version overlay, list of other prompt edits that landed in the window.
 3. **Post-edit window panel.** Same shape as the pre-edit panel, for the post-edit window.
 4. **Comparison summary.** Delta with credible-interval shape (overlapping vs. disjoint), confounder flags surfaced from the pre/post conditioning context (regime distribution mismatch, model version straddle, concurrent edits in window), and a non-binding suggested verdict (`improved` / `degraded` / `no_change` / `inconclusive`).
-5. **Verdict capture.** Form for verdict and narrative; submits via `submit_validation_outcome()` and writes the validation outcome record per [state-persistence.md](05-execution-layer/state-persistence.md).
+5. **Verdict capture.** Form for verdict and narrative; submits via `submit_validation_outcome()` and writes the validation outcome record per [state-persistence.md](05-execution-layer/state-persistence.md). Submission derives `rollback_status` per [feedback-loop.md § Rollback evidence protocol](feedback-loop.md#rollback-evidence-protocol) from the verdict, the failure-criterion crossing, the confounder flags from step 4, the registration's expected direction, and the most recent prior outcome on the same `edited_artifact`.
+6. **Rollback determination.** Renders the persisted `rollback_status` with the rule that produced it. Status-specific affordances:
+   - `mandatory_clean_failure`: a "Register paired post-rollback validation" button hands off to `/feedback-validate` REGISTER seeded with the failed validation's `edited_artifact`, `watched_metric_ids`, and `window_length_days`; `expected_direction = improved`; auto-derived success and failure criteria framed as restore-to-pre-edit-baseline. The deep-link to the artifact's git history surfaces here too as the operator's revert reference.
+   - `optional_pending_retrospective`: states that the entry will surface in the next [retrospective view](#retrospective-view) under Suggested follow-ups for an accept/reject decision; no in-session affordance.
+   - `not_applicable`: states so explicitly; no affordance.
 
 Session-mode affordances specific to this view: `pin_pre_panel(metric_id)` and `pin_post_panel(metric_id)` keep a specific pre or post panel visible across navigation. Standard `highlight_metric`, `navigate_to_view`, `annotate`, `pin_for_comparison` work as elsewhere.
 

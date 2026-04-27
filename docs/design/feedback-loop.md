@@ -461,6 +461,22 @@ Session-mode affordances are dimmed when no session is active so self-review sta
 
 Validation is operationalized through the [`/feedback-validate` skill](#skills): pre-registration of expected impact captured at change time as a contract, criteria frozen at registration, posterior bands rather than point estimates, confounder conditioning mandatory, "inconclusive" as a first-class verdict, one change per validation window. The skill's REGISTER and EVALUATE flows enforce these; the [validation evaluation view](command-center.md#validation-evaluation-view) is the dashboard surface EVALUATE walks through.
 
+### Rollback evidence protocol
+
+EVALUATE produces a verdict; the verdict shape determines what evidence is sufficient to roll back the change. Layered defense — structural threshold first, confounder check second, retrospective context for everything ambiguous — produces a `rollback_status` value carried on the validation outcome record per [state-persistence.md § Validation outcomes](05-execution-layer/state-persistence.md).
+
+| `rollback_status` | Triggers when | Operator action |
+|---|---|---|
+| `mandatory_clean_failure` | Verdict is `degraded`, the post-edit window crossed the pre-registered failure criterion, and no confounder from [Confounder management](#confounder-management) (regime distribution mismatch, model version straddle, concurrent edits in window) was flagged on the outcome | Roll back the edit; the same EVALUATE session pre-fills a paired post-rollback validation through the existing REGISTER flow |
+| `optional_pending_retrospective` | Verdict is `degraded` with a confounder flagged, OR `no_change` when the registration's expected direction was `improved`, OR `inconclusive` when the most recent prior outcome on the same `edited_artifact` was also `inconclusive` | Rollback decision deferred to the next [`/feedback-retrospective`](../../.claude/skills/feedback-retrospective/SKILL.md), where the entry surfaces in the report's Suggested follow-ups section and the operator's accept/reject decision lands as a `decision_type: follow_up` in the [retrospective decisions ledger](05-execution-layer/state-persistence.md) |
+| `not_applicable` | Any verdict shape not covered by the rows above | None |
+
+**Mandatory clean failure → paired post-rollback validation.** The pre-registered failure criterion crossing on a clean window is the operator's own contract firing. The skill pre-fills a paired registration in the same EVALUATE session: same `edited_artifact`, same `watched_metric_ids`, same `window_length_days`, `expected_direction = improved` (restore-to-pre-edit-baseline), success criterion auto-derived as "metric returns to within posterior band of the pre-failed-edit baseline." Operator confirms or adjusts before commit. A revert is itself a change to the artifact and goes through the same validation discipline as the edit it reverts.
+
+**Optional pending retrospective.** Single-window verdicts with confounders, or with shapes that fall short of the strictest threshold, carry no rollback obligation but accumulate in the [retrospective view](command-center.md#retrospective-view)'s decision rail. The retrospective is the cadence at which patterns become legible; rollback decisions in this band deserve that evidence base. Two consecutive `inconclusive` outcomes on the same artifact also land here — once the second window failed to distinguish from noise, the question is whether the artifact's current shape is worth keeping at all, which is a retrospective question.
+
+The protocol is calibrated, not pessimistic: structural rollback only fires on the operator's own pre-registered criterion, the system never rolls back unilaterally, and the retrospective path absorbs the noise that single-window verdicts cannot resolve.
+
 ---
 
 ## Pending
@@ -479,7 +495,7 @@ Outcome-tier surfaces need real resolved-thesis volume before the design is mean
 
 ### Waiting on operating the system
 
-- **Validation methodology edge cases.** Two procedures the existing framework points at but doesn't specify: handling interrupted windows (regime shift or model update straddling the validation window mid-run), and protocol for what evidence is sufficient to roll back a shipped change. Both surface naturally as the system runs.
+- **Validation methodology edge cases.** Handling interrupted windows (regime shift or model update straddling the validation window mid-run) — the procedure surfaces naturally as the system runs.
 - **Skill prompt iteration.** The three skill drafts cover orchestration logic and discipline; behavioral specifics refine once the skills are evaluable against real sessions. Normal skill iteration, not a design gap.
 
 ---
