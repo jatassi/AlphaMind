@@ -280,29 +280,29 @@ If current signals no longer support the original intent, the entry lapses; the 
 
 ## Corporate-action-pending positions
 
-Positions flagged `corporate_action_adjustment_needed` had their bracket cancelled when a corporate action fired on the underlying — split, reverse split, stock dividend, cash dividend, merger, acquisition, or spin-off (see [orders-and-brackets.md § Corporate action handling](../05-execution-layer/orders-and-brackets.md#corporate-action-handling)). Every flagged position must receive an `adjust-bracket` or `close` recommendation; hold without a fresh bracket is not permitted because every AlphaMind position requires a complete bracket.
+Positions flagged `corporate_action_adjustment_needed` had their bracket cancelled when a corporate action fired on the underlying — split, reverse split, stock dividend, cash dividend, merger, acquisition, or spin-off (see [orders-and-brackets.md § Corporate action handling](../05-execution-layer/orders-and-brackets.md#corporate-action-handling)). Every flagged position must receive an `adjust-bracket` or `close` recommendation — every AlphaMind position requires a complete bracket.
 
 **Default actions by corporate action type:**
 
-- **Splits, reverse splits, stock dividends.** Thesis economically unchanged; share count and cost basis re-scaled by the OMS. Default to `adjust-bracket` with prior parameters re-scaled to the new price basis. Reverse splits warrant additional scrutiny — they often signal distress — assess thesis survival before re-bracketing; if not, `close`.
-- **Cash dividends.** Thesis unchanged. Default to `adjust-bracket` with prior parameters unchanged — absolute-price stops remain correct because the underlying moved by the dividend amount, not by the thesis level. Unusually large special distributions that function as recapitalizations warrant a fresh thesis review; default to `close` when the distribution materially changes capital structure.
-- **Cash mergers and acquisitions.** Position has effectively liquidated at the deal price. Default to `close`.
-- **Stock mergers.** Position has converted to the acquirer's shares. The pre-merger thesis on the target does not apply to the acquirer. Default to `close` unless a fresh thesis on the acquirer is articulated (in which case `adjust-bracket` with new parameters).
-- **Spin-offs.** The parent's thesis may survive. Default to `adjust-bracket` at the parent's post-spin price basis. The spun-off child is a new position without a thesis; default to `close` unless a fresh thesis on the child is proposed with appropriate brackets.
+- **Splits, reverse splits, stock dividends.** Thesis economically unchanged; share count and cost basis re-scaled by the OMS. Default to `adjust-bracket` with prior parameters re-scaled to the new price basis. Reverse splits warrant scrutiny — they often signal distress — assess thesis survival; if not, `close`.
+- **Cash dividends.** Thesis unchanged. Default to `adjust-bracket` with prior parameters unchanged — absolute-price stops remain correct because the underlying moved by the dividend amount. Unusually large special distributions warrant a fresh thesis review; default to `close` when the distribution materially changes capital structure.
+- **Cash mergers and acquisitions.** Position effectively liquidated at the deal price. Default to `close`.
+- **Stock mergers.** Position converted to the acquirer's shares. The pre-merger thesis on the target does not apply to the acquirer. Default to `close` unless a fresh thesis on the acquirer is articulated (then `adjust-bracket` with new parameters).
+- **Spin-offs.** The parent's thesis may survive. Default to `adjust-bracket` at the parent's post-spin price basis. The spun-off child is a new position without a thesis; default to `close` unless a fresh thesis on the child is proposed with brackets.
 
-**Rationale requirements:** name the corporate action type and ratio/amount, state thesis disposition (unchanged / needs re-evaluation / invalidated), and for `adjust-bracket` provide updated parameters tied to current signals. Standard action rationale burden applies — corporate-action-triggered re-bracketing is not a reduced-ceremony path. Reverse-split and large-special-distribution cases especially require explicit thesis survival reasoning.
+**Rationale requirements:** name the corporate action type and ratio/amount, state thesis disposition (unchanged / needs re-evaluation / invalidated), and for `adjust-bracket` provide updated parameters tied to current signals. Standard action rationale burden applies. Reverse-split and large-special-distribution cases especially require explicit thesis survival reasoning.
 
 ---
 
 ## Regime-transition remedy proposals
 
-When the guardrail state header flags [regime-transition breaches](../06-risk-guardrails/regime-adaptation.md#position-handling-when-tightening-creates-breaches) or market-movement breaches on existing positions, the strategist proposes specific remedies. Position-level thesis context — target proximity, conviction, catalyst timing — makes the strategist the right agent to decide *which* positions to reduce; the PM handles cross-constraint validation and final execution.
+When the guardrail state header flags [regime-transition breaches](../06-risk-guardrails/regime-adaptation.md#position-handling-when-tightening-creates-breaches) or market-movement breaches, the strategist proposes specific remedies. Position-level thesis context — target proximity, conviction, catalyst timing — makes the strategist the right agent to decide *which* positions to reduce; the PM handles cross-constraint validation and final execution.
 
 ### Format: integrated into per-position assessments
 
-Remedies are not a separate section. Each flagged position receives a normal per-position assessment whose `recommended_action` is the remedy (`reduce`, `close`, or `hold`), with `remedy_flag` set to the breach identifier (e.g., `BREACH-1`) and `remedy_rationale` explaining why this action is the right response given the thesis state.
+Each flagged position receives a normal per-position assessment whose `recommended_action` is the remedy (`reduce`, `close`, or `hold`), with `remedy_flag` set to the breach identifier (e.g., `BREACH-1`) and `remedy_rationale` explaining why this action is right given the thesis state.
 
-This keeps the output uniform — the PM evaluates every assessment through the same action-warrant / action-status / action-specific / portfolio-coherence rubric — while making remedies traceable to breaches. The [portfolio-level observations](#per-position-assessment--structured-fields) section carries a `regime_transition_summary` listing addressed and uncured breaches with rationale.
+The PM evaluates every assessment through the same action-warrant / action-status / action-specific / portfolio-coherence rubric. The [portfolio-level observations](#per-position-assessment--structured-fields) section carries a `regime_transition_summary` listing addressed and uncured breaches with rationale.
 
 ### Remedy action selection
 
@@ -320,8 +320,8 @@ These are defaults, not mechanical rules. Per-position context may support a dif
 
 When the remedy is `reduce`, the quantity must be:
 
-- **Sufficient to cure the breach** when combined with other remedies addressing the same breach. The aggregate should bring the breaching rule back to the 85% zone (below the critical threshold), not the 95% zone (one tick from re-breach).
-- **Validated via the guardrail validation tool.** Call `validate_guardrail` with `action: "CLOSE"` (or partial close) and the proposed quantity to confirm cumulative effect. Cumulative-impact tracking makes multi-position remedy validation deterministic.
+- **Sufficient to cure the breach** when combined with other remedies addressing the same breach. The aggregate should bring the breaching rule back to the 85% zone, not the 95% zone (one tick from re-breach).
+- **Validated via the guardrail validation tool.** Call `validate_guardrail` with `action: "CLOSE"` (or partial close) and the proposed quantity to confirm cumulative effect.
 
 ### Interaction with per-position thesis status
 
@@ -331,7 +331,7 @@ When a breach coincides with independent signals weakening the thesis, status mo
 
 ### Guardrail validation requirements
 
-Remedy `reduce` and `close` actions on breaching positions require validation, for two reasons:
+Remedy `reduce` and `close` actions on breaching positions require validation:
 
 1. **Confirm the remedy cures the breach** — cumulative-impact tracking confirms the aggregate effect on the breaching rule.
 2. **Detect secondary breaches.** A close on a short providing directional balance could push net long exposure into its own breach; the tool surfaces this before reaching the PM. Name detected secondary breaches in the remedy rationale.
@@ -346,34 +346,34 @@ The strategist operates in two modes set by the guardrail state header: `normal`
 
 ### Defensive-posture mode
 
-Triggered when daily drawdown halt or cumulative drawdown tier 3 is active. The upstream pipeline continues running, so the strategist still receives a full synthesizer brief. The change is behavioral, not informational.
+Triggered when daily drawdown halt or cumulative drawdown tier 3 is active. The upstream pipeline continues running, so the strategist still receives a full synthesizer brief. The change is behavioral.
 
 **Behavioral shift:**
 
-- **Emphasis pivots to risk reduction.** Actively look for deterioration signals, stop-tightening candidates, and positions whose risk/reward has weakened even modestly; recommend correspondingly defensive actions.
-- **`add` is not permitted.** Action enum restricted to `hold`, `reduce`, `close`, and `adjust-bracket` (schema-enforced via conditional on the mode field). If a signal-grounded add would be warranted under `normal`, record it in portfolio-level observations as deferred until defensive posture lifts.
-- **Hold thresholds raise.** A `hold` on `on-track` with stable signals may warrant complementary bracket tightening even on `on-track`, because the environment triggering the halt itself signals weakened asymmetries. The adjustment rationale names the halt as the new signal.
-- **Pending order review emphasis.** Pending entry orders are default-cancel candidates — they represent pre-halt commitments the new market context may have rendered obsolete. Re-assess every pending entry and justify any `maintain` against the halt condition.
-- **Portfolio-level observations emphasize capital preservation.** Commentary shifts from "what does the book look like" to "where is the book most exposed to further drawdown, and what is the orderly-reduction priority if the PM needs to cut further."
+- **Emphasis pivots to risk reduction.** Actively look for deterioration signals, stop-tightening candidates, and positions whose risk/reward has weakened even modestly.
+- **`add` is not permitted.** Action enum restricted to `hold`, `reduce`, `close`, `adjust-bracket` (schema-enforced via conditional on the mode field). A signal-grounded add warranted under `normal` is recorded in portfolio-level observations as deferred until defensive posture lifts.
+- **Hold thresholds raise.** A `hold` on `on-track` may warrant complementary bracket tightening, because the environment triggering the halt signals weakened asymmetries. The adjustment rationale names the halt as the new signal.
+- **Pending order review emphasis.** Pending entry orders are default-cancel candidates — pre-halt commitments the new market context may have rendered obsolete. Re-assess every pending entry and justify any `maintain` against the halt condition.
+- **Portfolio-level observations emphasize capital preservation.** Commentary shifts to "where is the book most exposed to further drawdown, and what is the orderly-reduction priority if the PM needs to cut further."
 
 ### Output mode flag and schema variant
 
-The output document's top-level `mode` field is set to `defensive_posture` (analogous to the analyst's `watchlist` mode). The schema enforces:
+The output document's top-level `mode` field is set to `defensive_posture`. The schema enforces:
 
 - `recommended_action` restricted to `hold | reduce | close | adjust-bracket`
 - Pending order assessments use the same structure as `normal`
 - Portfolio-level observations include a required `defensive_posture_summary` — an explicit orderly-reduction priority list
 
-The schema is a strict superset across modes — `mode` controls which subset of the action enum and which required fields apply.
+The schema is a strict superset across modes — `mode` controls which subset of the action enum and required fields apply.
 
 ### Emergency invocation handling
 
-Emergency invocations (continuous-monitor-triggered; see [breach-behavior.md](../06-risk-guardrails/breach-behavior.md#emergency-invocation-trigger)) are independent of halt mode — they indicate a sudden regime shift, multi-rule breach, drawdown velocity, or margin-call event warranting immediate reasoning rather than waiting for the next scheduled invocation. Emergency invocations can co-occur with halt mode or `normal` mode.
+Emergency invocations (continuous-monitor-triggered; see [breach-behavior.md](../06-risk-guardrails/breach-behavior.md#emergency-invocation-trigger)) are independent of halt mode — they indicate a sudden regime shift, multi-rule breach, drawdown velocity, or margin-call event warranting immediate reasoning. Emergency invocations can co-occur with halt mode or `normal` mode.
 
 When the guardrail header includes the `** EMERGENCY INVOCATION **` flag, the strategist:
 
 - **Prioritizes breach resolution.** Address flagged regime-transition or market-movement breaches first; place the corresponding per-position assessments first in the output.
-- **Re-examines adjacent positions.** The triggering event (regime jump, multi-rule breach, margin call) typically bears on more than the breaching position. Assess whether adjacent positions — same sector, catalyst, or directional exposure — warrant status changes and defensive adjustments.
+- **Re-examines adjacent positions.** The triggering event typically bears on more than the breaching position. Assess whether adjacent positions — same sector, catalyst, or directional exposure — warrant status changes and defensive adjustments.
 - **Raises the bar for `hold` and defers discretionary recommendations.** Non-urgent adjustments wait for the next scheduled invocation.
 
 If an emergency invocation fires while halt mode is active, both behaviors apply.
@@ -400,40 +400,40 @@ The portfolio-level observations section follows last.
 
 ### Token budget
 
-The strategist's input bundle is larger than the analyst's because it must carry full thesis component detail for every open position (the [strategist guardrail state header](../06-risk-guardrails/state-delivery.md#strategist-guardrail-state-header) contributes the constraint portion; the thesis components come from portfolio state). The target ranges below scale with portfolio complexity.
+The strategist's input bundle is larger than the analyst's because it carries full thesis component detail for every open position. Target ranges scale with portfolio complexity.
 
 | Portfolio profile | Positions in typical range | Target context budget | Target output budget |
 |-------------------|---------------------------|----------------------|---------------------|
 | Primary ($1,500, no options/shorts) | 1–4 positions | 400–700 tokens | 300–600 tokens |
 | Full-system ($100K) | 6–15 positions | 1,500–2,500 tokens | 1,200–2,500 tokens |
 
-**Notes on the ranges:**
+**Notes:**
 
-- The context budget covers the guardrail state header (constraint portion), pending orders, and active thesis records at component level from portfolio state. It does not include the synthesizer brief, which is shared across agents and is not a strategist-specific allocation.
-- The output budget covers structured fields, per-position narratives, pending-order assessments, and portfolio-level observations. Per-position narrative length scales with thesis complexity, not with position count directly — a simple equity position with an uncomplicated thesis produces a shorter narrative than a multi-leg options strategy with several thesis components.
-- These are sizing targets for the state-delivery layer, not behavioral targets for the strategist. The strategist does not have a per-invocation output-length target — quality over brevity applies. The ranges exist so the pipeline orchestrator can budget prompt construction; drift of individual invocations above the upper bound triggers a prompt-iteration review, not a mid-invocation truncation.
+- Context budget covers the guardrail state header (constraint portion), pending orders, and active thesis records at component level from portfolio state. It excludes the shared synthesizer brief.
+- Output budget covers structured fields, per-position narratives, pending-order assessments, and portfolio-level observations. Per-position narrative length scales with thesis complexity, not position count.
+- These are sizing targets for the state-delivery layer, not behavioral targets. Quality over brevity applies. Drift above the upper bound triggers prompt-iteration review, not mid-invocation truncation.
 
 ---
 
 ## Pre-submission guardrail validation
 
-The strategist validates proposals that would change portfolio exposure — specifically **add** recommendations and any **close** or **reduce** recommendations that interact with guardrail constraints (e.g., closing a short position that would increase net long exposure beyond directional limits).
+The strategist validates proposals that would change portfolio exposure — **add** recommendations and any **close** or **reduce** recommendations that interact with guardrail constraints (e.g., closing a short that would increase net long exposure beyond directional limits).
 
-The strategist has access to the same guardrail validation tool as the analyst (see [analyst.md](analyst.md) for the full specification). The workflow is identical: propose, validate, revise if needed. The tool computes delta-adjusted exposure for options, tracks cumulative impact across multiple recommendations, and returns per-rule pass/fail with headroom.
+Same guardrail validation tool as the analyst (see [analyst.md](analyst.md) for the full specification). Workflow: propose, validate, revise if needed. The tool computes delta-adjusted exposure for options, tracks cumulative impact across multiple recommendations, and returns per-rule pass/fail with headroom.
 
-**Hold and adjust-bracket recommendations** do not require guardrail validation — they don't change exposure. **Close and reduce recommendations** are generally guardrail-relieving (reducing exposure), but the strategist should be aware of cases where closing one position inadvertently pushes another constraint over the limit (e.g., closing a short that was providing directional balance). The headroom data in the strategist's guardrail state header makes these interactions visible; the validation tool confirms.
+**Hold and adjust-bracket** do not require validation (no exposure change). **Close and reduce** are generally guardrail-relieving, but be aware of cases where closing one position pushes another constraint over the limit (e.g., closing a short providing directional balance). The headroom data in the guardrail state header makes these interactions visible; the validation tool confirms.
 
-**Interaction with analyst proposals:** The strategist and analyst run in parallel with no visibility into each other's proposals. The strategist validates against current portfolio state, not against a hypothetical state that includes the analyst's proposals. This means the combined set of analyst + strategist proposals might collectively breach a limit even though each set is individually compliant. This is an accepted trade-off of the parallel execution model — the portfolio manager evaluates both sets holistically and can reject or downsize proposals to maintain compliance. See [portfolio-manager.md](portfolio-manager.md) for how the PM handles cross-proposal interactions.
+**Interaction with analyst proposals:** The strategist and analyst run in parallel with no visibility into each other's proposals. The strategist validates against current portfolio state, not against a hypothetical state including the analyst's proposals. The combined set might collectively breach a limit even though each set is individually compliant. The PM evaluates both sets holistically and can reject or downsize to maintain compliance. See [portfolio-manager.md](portfolio-manager.md).
 
 ---
 
 ## Source brief retrieval
 
-The strategist has the same retrieval tool as the analyst — it can pull source analysis brief sections by reference ID from the synthesizer output. This is particularly useful when:
+Same retrieval tool as the analyst — pulls source analysis brief sections by reference ID. Useful when:
 
-- Evaluating whether new information contradicts a specific key assumption in an existing thesis component
-- Investigating whether a signal cited in the thesis entry rationale has strengthened, weakened, or reversed
-- Assessing cross-position dynamics by retrieving correlation or regime data from `[CR-*]` references
+- Evaluating whether new information contradicts a specific key assumption in a thesis component
+- Investigating whether an entry-rationale signal has strengthened, weakened, or reversed
+- Assessing cross-position dynamics via correlation or regime data from `[CR-*]` references
 
 ---
 
@@ -441,9 +441,9 @@ The strategist has the same retrieval tool as the analyst — it can pull source
 
 | Agent | Relationship |
 |-------|-------------|
-| [Analyst](analyst.md) | Runs in parallel — no direct interaction. Both produce structured output that feeds into the [proposal pre-processor](proposal-pre-processor.md). The pre-processor detects same-name conflicts (e.g., analyst proposes new NVDA position while strategist recommends closing existing NVDA position) and annotates them for the PM |
-| [Proposal pre-processor](proposal-pre-processor.md) | Deterministic processing step that reads structured fields from both the analyst and strategist outputs, computes cross-proposal annotations (conflicts, cumulative exposure, sector impact), and delivers annotated proposals to the PM |
-| [Portfolio manager](portfolio-manager.md) | The ultimate consumer. Receives the strategist's position assessments alongside the analyst's new trade proposals, with pre-processor annotations, and makes holistic portfolio decisions |
+| [Analyst](analyst.md) | Runs in parallel — no direct interaction. Both feed the [proposal pre-processor](proposal-pre-processor.md), which detects same-name conflicts (e.g., analyst proposes new NVDA position while strategist closes existing NVDA position) and annotates them for the PM |
+| [Proposal pre-processor](proposal-pre-processor.md) | Deterministic processing step that reads structured fields from both outputs, computes cross-proposal annotations (conflicts, cumulative exposure, sector impact), and delivers annotated proposals to the PM |
+| [Portfolio manager](portfolio-manager.md) | Ultimate consumer. Receives strategist position assessments alongside analyst proposals, with pre-processor annotations, and makes holistic portfolio decisions |
 
 ---
 
