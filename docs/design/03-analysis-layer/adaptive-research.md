@@ -45,6 +45,7 @@ An agentic tool-use loop searches for answers to generated questions. Qualitativ
 
 Tools below are registered with the agent SDK with defined input/output contracts so the agent can compose multi-step investigations.
 
+
 ### Tool inventory
 
 | Tool ID | Description | Input | Output | Rate limit |
@@ -71,7 +72,7 @@ Tools below are registered with the agent SDK with defined input/output contract
 
 ### On-demand vs. routine data
 
-Some tools provide data not routinely ingested for the full universe but available on-demand. `sec_lending` and `short_interest` are the primary examples — available via API but not worth the cost/rate-limit budget across 65+ tickers every invocation. Pulled selectively when a squeeze or short-selling anomaly warrants investigation.
+Some tools provide data not routinely ingested for the full universe but available on-demand. `sec_lending` and `short_interest` are the primary examples — available via API but not worth the cost/rate-limit budget across 65+ tickers every invocation; pulled selectively when a squeeze or short-selling anomaly warrants investigation.
 
 **Per-thread execution model:** Each thread is an independent agentic loop with its own tool-use context — question, targeted pulls, synthesized answer. Inconclusive initial pulls allow bounded follow-ups.
 
@@ -81,7 +82,7 @@ Some tools provide data not routinely ingested for the full universe but availab
 
 **Max 3–5 investigation threads per cycle,** each with capped tool calls. Without the bound, adaptive research consumes unbounded time and tokens while the market moves and the pipeline stalls.
 
-The bound creates prioritization pressure: triage selects the highest-value questions, knowing most anomalies go uninvestigated this cycle. Uninvestigated persistent anomalies re-flag next cycle, producing a natural persistence-weighted queue — sustained anomalies eventually get investigated.
+The bound creates prioritization pressure: triage selects the highest-value questions, knowing most anomalies go uninvestigated this cycle. Persistent anomalies re-flag next cycle, producing a natural persistence-weighted queue — sustained anomalies eventually get investigated.
 
 **Cost implications:** Most variable-cost component of the pipeline. Range: near-zero on quiet cycles to the full 3–5 thread budget on volatile ones. The per-run scoping TODO in the [README](README.md) addresses how the adaptive budget varies — pre-open runs likely warrant more (overnight developments); after-hours runs less.
 
@@ -91,7 +92,7 @@ The bound creates prioritization pressure: triage selects the highest-value ques
 
 Findings delivered to the [synthesizer](synthesizer.md) alongside the [baseline qualitative brief](qualitative-research.md) and sector-researcher briefs. Reference prefix `AR`; individual threads `AR-1`, `AR-2`, etc.
 
-Structured around **investigation threads** — each self-contained question → evidence → verdict for a single anomaly. Differs from the [qualitative brief](qualitative-research.md) (narrative threads spanning multiple sources) and [domain researcher briefs](domain-researchers/tech-semis.md) (ticker-level findings with signal types). The synthesizer uses AR findings to **add or remove certainty** from domain-researcher observations and qualitative narrative threads.
+Structured around **investigation threads** — each self-contained question → evidence → verdict for a single anomaly. Differs from the [qualitative brief](qualitative-research.md) (narrative threads spanning multiple sources) and [domain researcher briefs](domain-researchers/tech-semis.md) (ticker-level findings with signal types). The synthesizer uses AR findings to **add or remove certainty** from domain-researcher observations and qualitative threads.
 
 ### Output schema
 
@@ -133,11 +134,11 @@ Anomalies deferred: {anomaly refs not investigated this cycle, or "none"}
 
 ### Schema design rationale
 
-**`Trigger` with explicit reference — the cross-referencing key.** Each investigation links back to its spawning anomaly. Sector-researcher anomalies carry the exact reference ID (e.g., `[SA-TECH-ANOM-1]`); distillation flags carry spec ID and detection details (e.g., `Distillation: Q2 volume spike, NVDA, 3.2σ`). The synthesizer can mechanically link AR findings back to the domain-researcher briefs that flagged the anomaly — without this it would have to infer relationships by content matching.
+**`Trigger` with explicit reference — the cross-referencing key.** Each investigation links back to its spawning anomaly. Sector-researcher anomalies carry the exact reference ID (e.g., `[SA-TECH-ANOM-1]`); distillation flags carry spec ID and detection details (e.g., `Distillation: Q2 volume spike, NVDA, 3.2σ`). The synthesizer mechanically links AR findings back to the briefs that flagged the anomaly — without this it would have to infer relationships by content matching.
 
-**`Strengthens` / `Weakens` cross-references.** AR findings often have implications beyond the triggering anomaly. "I investigated the NVDA volume spike and found pre-earnings institutional positioning — strengthens `[SA-TECH-3]` (unusual call buying) and weakens `[SA-TECH-TC-2]` (short thesis candidate)." Explicit directional links pre-compute the cross-references for the synthesizer rather than forcing it to reason about every pairwise interaction. References can point to any ID: domain findings (`SA-*`), anomalies (`SA-*-ANOM-*`), thesis candidates (`SA-*-TC-*`), qualitative threads (`QR-*`), or correlation/regime findings (`CR-*`).
+**`Strengthens` / `Weakens` cross-references.** AR findings often have implications beyond the triggering anomaly. "Investigated the NVDA volume spike, found pre-earnings institutional positioning — strengthens `[SA-TECH-3]` (unusual call buying), weakens `[SA-TECH-TC-2]` (short thesis candidate)." Explicit directional links pre-compute cross-references rather than forcing the synthesizer to reason about every pairwise interaction. References can point to any ID: domain findings (`SA-*`), anomalies (`SA-*-ANOM-*`), thesis candidates (`SA-*-TC-*`), qualitative threads (`QR-*`), or correlation/regime findings (`CR-*`).
 
-**Three-way assessment (signal / noise / inconclusive).** Binary loses information. "Inconclusive" with a `Missing` field feeds next invocation's triage — the anomaly stays in the pipeline's awareness, and the agent sees "investigated last cycle but couldn't resolve because X." Over multiple invocations, persistent inconclusive anomalies accumulate triage priority — the persistence-weighted queue described in [bounded search](#bounded-search).
+**Three-way assessment (signal / noise / inconclusive).** Binary loses information. "Inconclusive" with a `Missing` field feeds next invocation's triage — the anomaly stays in pipeline awareness with "investigated last cycle but couldn't resolve because X." Persistent inconclusive anomalies accumulate triage priority across invocations — the persistence-weighted queue from [bounded search](#bounded-search).
 
 **`Anomalies deferred` header.** Transparency about what was NOT investigated. Downstream agents see that `[SA-ENERGY-ANOM-1]` was flagged but uninvestigated and treat it at the original domain-researcher severity rather than assuming resolved. Quiet days: "none"; busy days: shows which anomalies lost triage.
 
@@ -146,7 +147,7 @@ Anomalies deferred: {anomaly refs not investigated this cycle, or "none"}
 **Deliberately absent:**
 - **Narrative threads** — qualitative brief's territory
 - **Thesis candidates** — AR assesses anomalies; thesis generation is the domain researchers' and [analyst's](../04-decision-layer/analyst.md) job
-- **Signal type taxonomy** — the domain researcher signal types (`price_action`, `flow`, `options`, etc.) don't apply; AR threads are classified by trigger and assessment
+- **Signal type taxonomy** — domain researcher signal types (`price_action`, `flow`, `options`, etc.) don't apply; AR threads are classified by trigger and assessment
 
 ### Token budget
 
@@ -154,6 +155,6 @@ Anomalies deferred: {anomaly refs not investigated this cycle, or "none"}
 
 - 0–5 threads × ~100–150 tokens each = ~0–750 tokens
 - Header (threads investigated, anomalies deferred) = ~30–50 tokens
-- The 4,000-token cumulative tool-output budget ([research execution](#research-execution)) bounds evidence; the output schema bounds synthesis
+- The 4,000-token cumulative tool-output budget ([research execution](#research-execution)) bounds evidence; the schema bounds synthesis
 
 Quiet cycles: ~50 tokens (header "0 of 0", empty thread section). Volatile cycles: 5 threads near the upper range approach the cap, enforcing concise findings and precise assessments.

@@ -8,22 +8,16 @@ Reads all analysis briefs and produces a unified market snapshot. The job is NOT
 
 Briefs from every analysis component, the volatility regime label as universal context, and on-demand access to portfolio state. Each brief source has a reference prefix used throughout the output:
 
-| Source | Prefix | Document |
-|--------|--------|----------|
-| Tech & semis domain researcher | `SA-TECH` | [tech-semis.md](domain-researchers/tech-semis.md) |
-| Financials domain researcher | `SA-FIN` | [financials.md](domain-researchers/financials.md) |
-| Energy domain researcher | `SA-ENERGY` | [energy.md](domain-researchers/energy.md) |
-| Correlation and regime brief | `CR` | From the [distillation layer](../02-distillation-layer/external.md) |
-| Baseline qualitative research | `QR` | [qualitative-research.md](qualitative-research.md) |
-| Adaptive research threads | `AR` | [adaptive-research.md](adaptive-research.md) |
+| Source | Prefix | Document | Content |
+|--------|--------|----------|---------|
+| Tech & semis domain researcher | `SA-TECH` | [tech-semis.md](domain-researchers/tech-semis.md) | Intra-sector conditions, anomalies, thesis candidates |
+| Financials domain researcher | `SA-FIN` | [financials.md](domain-researchers/financials.md) | Intra-sector conditions, anomalies, thesis candidates |
+| Energy domain researcher | `SA-ENERGY` | [energy.md](domain-researchers/energy.md) | Intra-sector conditions, anomalies, thesis candidates |
+| Correlation and regime brief | `CR` | From the [distillation layer](../02-distillation-layer/external.md) | Category-7 cross-asset data — intra-sector divergences, cross-sector rotation, intermarket regime signals, lead-lag gaps, correlation regime changes |
+| Baseline qualitative research | `QR` | [qualitative-research.md](qualitative-research.md) | Headlines, macro calendar, sentiment, prediction market shifts, portfolio catalyst proximity |
+| Adaptive research threads | `AR` | [adaptive-research.md](adaptive-research.md) | One brief per investigation thread; anomaly-driven findings with signal/noise assessments. Threads `AR-1`, `AR-2`, etc. |
 
-**Domain researcher briefs** (`SA-TECH`, `SA-FIN`, `SA-ENERGY`): One from each sector agent covering intra-sector conditions, anomalies, and thesis candidates.
-
-**Correlation and regime brief** (`CR`, from the [distillation layer](../02-distillation-layer/external.md)): Dedicated brief computed from category 7 (cross-asset and correlation) data — intra-sector divergences, cross-sector rotation, intermarket regime signals, lead-lag gaps, and correlation regime changes. The synthesizer's native territory; processed as a first-class input alongside sector briefs, not embedded within them.
-
-**Baseline qualitative brief** (`QR`, from [qualitative-research.md](qualitative-research.md)): The always-on context layer — headlines, macro calendar, sentiment, prediction market shifts, portfolio catalyst proximity.
-
-**Adaptive research findings** (`AR`, from [adaptive-research.md](adaptive-research.md)): One brief per investigation thread — anomaly-driven findings with signal-or-noise assessments and thesis implications. Threads referenced as `AR-1`, `AR-2`, etc.
+The `CR` brief is the synthesizer's native territory — processed as a first-class input alongside sector briefs, not embedded within them.
 
 **Volatility regime label** (from the [distillation layer](../02-distillation-layer/external.md), section 4): Current regime classification (low-vol compression, vol expansion, crisis/spike, vol normalization) plus regime-transition flag. Universal context delivered to every analysis-layer agent.
 
@@ -91,11 +85,11 @@ When confidence in a finding is low — insufficient data, ambiguous signals, so
 
 ## Output
 
-A prose synthesis brief capturing the full state of the world as relevant to trading decisions. Consumed by all three decision-layer agents — the [analyst](../04-decision-layer/analyst.md), [strategist](../04-decision-layer/strategist.md), and [portfolio manager](../04-decision-layer/portfolio-manager.md) — each loading it into their fresh context window at invocation start.
+A prose synthesis brief capturing the full state of the world as relevant to trading decisions. Consumed by all three decision-layer agents — the [analyst](../04-decision-layer/analyst.md), [strategist](../04-decision-layer/strategist.md), and [portfolio manager](../04-decision-layer/portfolio-manager.md) — each loading it into their fresh context window at invocation start. The analyst generates theses from this picture; the strategist re-evaluates existing theses against it; the PM evaluates resulting recommendations.
 
-The synthesizer does not make trade recommendations and produces no reference IDs of its own. It presents the state of the world by surfacing intersections and contradictions across the upstream briefs, embedding upstream source references (`[SA-TECH-3]`, `[QR-4]`, `[AR-2]`, `[CR-1]`, etc.) where each claim originates. The [analyst](../04-decision-layer/analyst.md) generates theses from this picture; the [strategist](../04-decision-layer/strategist.md) re-evaluates existing theses against it; the [portfolio manager](../04-decision-layer/portfolio-manager.md) evaluates the resulting recommendations.
+The synthesizer makes no trade recommendations and produces no reference IDs of its own. It surfaces intersections and contradictions across upstream briefs, embedding upstream references (`[SA-TECH-3]`, `[QR-4]`, `[AR-2]`, `[CR-1]`, etc.) where each claim originates.
 
-The brief is prose, not structured data — no producer-side schema; the shape is whatever best serves the three decision-layer consumers under current conditions. The single load-bearing constraint is reference-ID embedding: every claim tracing back to an upstream brief must cite the corresponding `[<prefix>-<index>]` so downstream agents can drill in. Invented references surface at the consumer's referential-integrity check (see [llm-output-validation.md — Layer 3](../testing/llm-output-validation.md#layer-3--referential-integrity)) — keeping the synthesizer's contract minimal pushes structural enforcement to the agents that depend on the references.
+The brief is prose, not structured data — no producer-side schema; the shape is whatever best serves the three decision-layer consumers under current conditions. The single load-bearing constraint is reference-ID embedding: every claim tracing back to an upstream brief must cite the corresponding `[<prefix>-<index>]`. Invented references surface at the consumer's referential-integrity check (see [llm-output-validation.md — Layer 3](../testing/llm-output-validation.md#layer-3--referential-integrity)) — keeping the synthesizer's contract minimal pushes structural enforcement to the agents that depend on the references.
 
 ### Retrieval store side-effect
 
