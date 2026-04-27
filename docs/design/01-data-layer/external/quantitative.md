@@ -356,11 +356,7 @@ The gravitational field everything trades in. Every sector is sensitive through 
   *Not tracked:* EM currencies and exotic crosses. Signal-to-noise drops fast outside the majors for a US large-cap portfolio.
 
   *6g. Macro event calendar and surprise index*
-  The scheduling and scoring layer.
-  - Event calendar: FOMC meetings (decision + minutes), CPI/PPI/PCE dates, NFP, ISM/PMI, GDP, consumer confidence, Fed speaker appearances — timestamps and consensus estimates where applicable
-  - Macro surprise index: running aggregate of whether data is broadly beating or missing expectations — is the consensus narrative too optimistic or pessimistic
-  - Event proximity flags: alerts when a market-moving release is within N hours — sector researchers and PM need imminent event-risk awareness
-  - Historical event impact by sector: how each sector has historically reacted to surprises in each data type — hot CPI hits tech harder than energy, weak NFP hits financials harder than semis. Lookup table for analyst sector-thesis sizing around events
+  The scheduling and scoring layer for macro releases — FOMC meetings (decision + minutes), CPI/PPI/PCE dates, NFP, ISM/PMI, GDP, consumer confidence, Fed speaker appearances — feeds the unified [`EventCalendar`](../schema/events.py) (Events:CAL) alongside regulatory / policy / geopolitical events. The macro surprise index, event proximity flags, and historical event-impact-by-sector lookup live on that entity.
 
 **7. Cross-asset and correlation**
 Measures *relationships between things*, not the things themselves. No raw data sources — computed from categories 1–6 and 8 by the distillation layer. Divergences between correlated assets are one of the clearest setups for the 4–72h horizon: when things that should move together stop moving together, something is about to resolve.

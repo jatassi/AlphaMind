@@ -13,30 +13,31 @@ Entity naming convention:
     - Each entity maps 1:1 to a sub-category in the design spec
 
 Package structure:
-    Quantitative (10 modules, 65 entities):
+    Quantitative (10 modules, 64 entities):
         price_volume        Q1:1a-1g    7 entities
         order_flow          Q2:2a-2f    6 entities
         derivatives         Q3:3a-3h    8 entities
         short_selling       Q4:4a-4e    5 entities
         fundamentals        Q5:5a-5g    7 entities
-        macro               Q6:6a-6g    7 entities
+        macro               Q6:6a-6f    6 entities
         cross_asset         Q7:7a-7g    7 entities
         commodities         Q8:8a-8f    6 entities
         volatility          Q11:11a-11f 6 entities
         corporate_actions   Q12:12a-12f 6 entities
 
-    Qualitative (5 modules, 21 entities):
+    Qualitative (5 modules, 20 entities):
         news_sentiment      Qual 1:1a-1b + Qual 2:2a-2c   5 entities
         prediction_markets  Qual 3:3a-3c                   3 entities
         earnings_commentary Qual 4:4a-4e                   5 entities
-        regulatory          Qual 5:5a-5e                   5 entities
+        regulatory          Qual 5:5a-5d                   4 entities
         sector_catalysts    Qual 6:6a-6c                   3 entities
 
     Reference Data (1 module, 2 entities):
         reference           REF:UNIVERSE, REF:SECTOR       2 entities
 
-    Cross-cutting (in fundamentals module):
-        ValuationMultiples  Q5:VAL                         1 entity
+    Unified (cross-cutting):
+        events              Events:CAL — unified macro + policy event calendar   1 entity
+        fundamentals        ValuationMultiples (Q5:VAL)                          1 entity
 
     Infrastructure:
         _common             Shared types, enums, and base definitions
@@ -146,6 +147,11 @@ from .earnings_commentary import (
     TargetUpdate,
     TopicEmphasis,
 )
+from .events import (
+    Event,
+    EventCalendar,
+    EventProximityFlag,
+)
 from .fundamentals import (
     AnalystRatingChange,
     AnalystRatings,
@@ -169,7 +175,6 @@ from .macro import (
     CurveSpread,
     DollarMoveAttribution,
     EmploymentData,
-    EventProximityFlag,
     FedPolicyExpectations,
     FedProbabilityAssessment,
     FundingMarketMetrics,
@@ -178,8 +183,6 @@ from .macro import (
     HousingData,
     InflationDataRelease,
     InflationMetrics,
-    MacroEvent,
-    MacroEventCalendar,
     PMISubcomponent,
     PrivateCreditMetrics,
     PublicCreditMetrics,
@@ -253,8 +256,6 @@ from .regulatory import (
     ExecutiveAction,
     FedCommunication,
     GeopoliticalEvent,
-    PolicyEvent,
-    PolicyEventCalendar,
     RegulatoryAction,
     StatementChange,
 )
@@ -347,6 +348,8 @@ __all__ = [
     "EmploymentData",
     "EnergyCatalyst",
     "EstimateRevision",
+    "Event",
+    "EventCalendar",
     "EventProximityFlag",
     "EventType",
     "Exchange",
@@ -406,8 +409,6 @@ __all__ = [
     "LockupSecondaryCalendar",
     "LockupStatus",
     "LongFormAnalysis",
-    "MacroEvent",
-    "MacroEventCalendar",
     "ManagementToneAnalysis",
     "MarginProfitabilityShift",
     "MarketCapBucket",
@@ -425,8 +426,6 @@ __all__ = [
     "PMISubcomponent",
     "PlatformSentimentBreakdown",
     "PolicyContract",
-    "PolicyEvent",
-    "PolicyEventCalendar",
     "PreciousMetals",
     "PrivateCreditMetrics",
     "ProductCycle",

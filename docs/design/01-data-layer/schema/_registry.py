@@ -66,7 +66,6 @@ ENTITY_REGISTRY: dict[str, tuple[str, str]] = {
     "Q6:6d": ("macro", "GrowthIndicators"),
     "Q6:6e": ("macro", "CreditConditions"),
     "Q6:6f": ("macro", "CurrencyAndDollar"),
-    "Q6:6g": ("macro", "MacroEventCalendar"),
     # ── Q7: Cross-Asset ──
     "Q7:7a": ("cross_asset", "IntraSectorCorrelation"),
     "Q7:7b": ("cross_asset", "CrossSectorRotation"),
@@ -118,7 +117,6 @@ ENTITY_REGISTRY: dict[str, tuple[str, str]] = {
     "Qual5:5b": ("regulatory", "RegulatoryAction"),
     "Qual5:5c": ("regulatory", "ExecutiveAction"),
     "Qual5:5d": ("regulatory", "GeopoliticalEvent"),
-    "Qual5:5e": ("regulatory", "PolicyEventCalendar"),
     # ── Qual 6: Sector Catalysts ──
     "Qual6:6a": ("sector_catalysts", "TechSemiCatalyst"),
     "Qual6:6b": ("sector_catalysts", "EnergyCatalyst"),
@@ -126,6 +124,8 @@ ENTITY_REGISTRY: dict[str, tuple[str, str]] = {
     # ── Reference Data (no spec ID — structural) ──
     "REF:UNIVERSE": ("reference", "AssetUniverse"),
     "REF:SECTOR": ("reference", "SectorClassification"),
+    # ── Cross-cutting (unified event calendar — macro + policy + geopolitical) ──
+    "Events:CAL": ("events", "EventCalendar"),
     # ── Cross-cutting (valuation — derived from Q5 financials + prices) ──
     "Q5:VAL": ("fundamentals", "ValuationMultiples"),
 }
