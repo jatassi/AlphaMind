@@ -8,10 +8,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single OHLCV candle at a specific timeframe. The atomic unit of price data.
   is_primary_entity: false
-  primary_source: Polygon Stocks Starter
-  fallback_source: Alpaca (free IEX)
-  cadence: Every invocation
-  feasibility: HIGH
   fields:
   - target_field: open
     target_type: float
@@ -90,10 +86,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Key reference price levels where institutional algos cluster orders,
   is_primary_entity: false
-  primary_source: Polygon Stocks Starter
-  fallback_source: Alpaca
-  cadence: Every invocation
-  feasibility: HIGH
   fields:
   - target_field: prior_day_high
     target_type: float
@@ -187,10 +179,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A detected swing high or swing low — a local price extreme that defines
   is_primary_entity: false
-  primary_source: Derived (distillation layer)
-  fallback_source: N/A
-  cadence: Every invocation
-  feasibility: HIGH
   fields:
   - target_field: price
     target_type: float
@@ -229,10 +217,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Trend state assessment at a single timeframe. Combines swing structure
   is_primary_entity: false
-  primary_source: Derived (distillation layer)
-  fallback_source: N/A
-  cadence: Every invocation
-  feasibility: HIGH
   fields:
   - target_field: timeframe
     target_type: Timeframe
@@ -558,10 +542,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single indicator value at a specific timeframe. Used as building blocks
   is_primary_entity: false
-  primary_source: Derived (TA-Lib / pandas-ta)
-  fallback_source: N/A
-  cadence: Every invocation
-  feasibility: HIGH — 100% computed
   fields:
   - target_field: timeframe
     target_type: Timeframe
@@ -623,10 +603,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A detected divergence between an indicator and price, or between the same
   is_primary_entity: false
-  primary_source: Derived (distillation layer)
-  fallback_source: N/A
-  cadence: Every invocation
-  feasibility: HIGH — 100% computed
   fields:
   - target_field: divergence_type
     target_type: str
@@ -958,10 +934,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A sudden intraday price dislocation — a gap within the session caused by
   is_primary_entity: false
-  primary_source: Derived from Polygon 1-min bars
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: timestamp
     target_type: datetime

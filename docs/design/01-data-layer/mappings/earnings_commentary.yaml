@@ -8,10 +8,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A forward-looking claim extracted from management prepared remarks.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: text
     target_type: str
@@ -20,7 +16,7 @@ entities:
     source_endpoint: 'Scrape: fool.com/earnings-call-transcripts/ | YouTube Whisper transcription'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: forward-looking statement extracted from prepared remarks transcript (Motley Fool / Quartr) by qualitative researcher. See entity docstring for computation logic.'
   - target_field: topic
     target_type: str
     description: ''
@@ -28,7 +24,7 @@ entities:
     source_endpoint: 'Scrape: fool.com/earnings-call-transcripts/ | YouTube Whisper transcription'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: forward-looking statement extracted from prepared remarks transcript (Motley Fool / Quartr) by qualitative researcher. See entity docstring for computation logic.'
   - target_field: sentiment
     target_type: Direction
     description: ''
@@ -36,7 +32,7 @@ entities:
     source_endpoint: 'Scrape: fool.com/earnings-call-transcripts/ | YouTube Whisper transcription'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: forward-looking statement extracted from prepared remarks transcript (Motley Fool / Quartr) by qualitative researcher. See entity docstring for computation logic.'
   - target_field: confidence_level
     target_type: float
     description: ''
@@ -44,15 +40,11 @@ entities:
     source_endpoint: 'Scrape: fool.com/earnings-call-transcripts/ | YouTube Whisper transcription'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: forward-looking statement extracted from prepared remarks transcript (Motley Fool / Quartr) by qualitative researcher. See entity docstring for computation logic.'
 - entity: TopicEmphasis
   spec_id: N/A (supporting type)
   description: Time allocation and emphasis signals from prepared remarks analysis.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: topic
     target_type: str
@@ -61,7 +53,7 @@ entities:
     source_endpoint: 'Scrape: fool.com/earnings-call-transcripts/ | YouTube Whisper transcription'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: time-allocation tally over prepared remarks transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: time_allocation_pct
     target_type: float
     description: ''
@@ -69,7 +61,7 @@ entities:
     source_endpoint: 'Scrape: fool.com/earnings-call-transcripts/ | YouTube Whisper transcription'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: time-allocation tally over prepared remarks transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: vs_prior_quarter_change
     target_type: float
     description: ''
@@ -77,15 +69,11 @@ entities:
     source_endpoint: 'Scrape: fool.com/earnings-call-transcripts/ | YouTube Whisper transcription'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: time-allocation tally over prepared remarks transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
 - entity: QuestionTheme
   spec_id: N/A (supporting type)
   description: A clustered theme of analyst questions from the Q&A section.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: theme
     target_type: str
@@ -94,7 +82,7 @@ entities:
     source_endpoint: 'Scrape: fool.com/earnings-call-transcripts/ | YouTube Whisper transcription'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: clustered analyst question theme from Q&A transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: question_count
     target_type: int
     description: ''
@@ -102,7 +90,7 @@ entities:
     source_endpoint: 'Scrape: fool.com/earnings-call-transcripts/ | YouTube Whisper transcription'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: clustered analyst question theme from Q&A transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: pct_of_questions
     target_type: float
     description: ''
@@ -110,7 +98,7 @@ entities:
     source_endpoint: 'Scrape: fool.com/earnings-call-transcripts/ | YouTube Whisper transcription'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: clustered analyst question theme from Q&A transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: is_dominant_concern
     target_type: bool
     description: ''
@@ -118,15 +106,11 @@ entities:
     source_endpoint: 'Scrape: fool.com/earnings-call-transcripts/ | YouTube Whisper transcription'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: clustered analyst question theme from Q&A transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
 - entity: NonAnswerFlag
   spec_id: N/A (supporting type)
   description: Detected evasion or non-answer in Q&A exchange.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: question_topic
     target_type: str
@@ -135,7 +119,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: detected evasion in Q&A transcript by qualitative researcher (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: evasion_type
     target_type: str
     description: ''
@@ -143,7 +127,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: detected evasion in Q&A transcript by qualitative researcher (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: severity
     target_type: str
     description: ''
@@ -151,15 +135,11 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: detected evasion in Q&A transcript by qualitative researcher (Motley Fool / Quartr). See entity docstring for computation logic.'
 - entity: QAExchange
   spec_id: N/A (supporting type)
   description: A notable question-answer pair from the earnings call.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: analyst_firm
     target_type: str
@@ -168,7 +148,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: notable Q&A exchange selected from earnings call transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: question_topic
     target_type: str
     description: ''
@@ -176,7 +156,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: notable Q&A exchange selected from earnings call transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: was_direct_answer
     target_type: bool
     description: ''
@@ -184,7 +164,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: notable Q&A exchange selected from earnings call transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: significance
     target_type: str
     description: ''
@@ -192,15 +172,11 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: notable Q&A exchange selected from earnings call transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
 - entity: BellwetherRead
   spec_id: N/A (supporting type)
   description: Sector bellwether earnings commentary that sets expectations for peers.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: reported_date
     target_type: date
@@ -209,7 +185,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: bellwether commentary extracted from sector-leader earnings transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: demand_commentary_direction
     target_type: Direction
     description: ''
@@ -217,7 +193,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: bellwether commentary extracted from sector-leader earnings transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: pricing_commentary
     target_type: Optional[str]
     description: ''
@@ -225,7 +201,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: bellwether commentary extracted from sector-leader earnings transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: competitive_commentary
     target_type: Optional[str]
     description: ''
@@ -233,7 +209,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: bellwether commentary extracted from sector-leader earnings transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: macro_commentary
     target_type: Optional[str]
     description: ''
@@ -241,7 +217,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: bellwether commentary extracted from sector-leader earnings transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: implications_for_sector
     target_type: str
     description: ''
@@ -249,15 +225,11 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: bellwether commentary extracted from sector-leader earnings transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
 - entity: SupplyChainSignal
   spec_id: N/A (supporting type)
   description: Customer/supplier commentary extracted from company earnings.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: reporting_ticker
     target_type: Ticker
@@ -266,7 +238,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: supply-chain commentary extracted from earnings transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: mentioned_ticker
     target_type: Ticker
     description: ''
@@ -274,7 +246,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: supply-chain commentary extracted from earnings transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: relationship
     target_type: str
     description: ''
@@ -282,7 +254,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: supply-chain commentary extracted from earnings transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: commentary_direction
     target_type: Direction
     description: ''
@@ -290,7 +262,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: supply-chain commentary extracted from earnings transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
   - target_field: key_quote
     target_type: str
     description: ''
@@ -298,15 +270,11 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: supply-chain commentary extracted from earnings transcript (Motley Fool / Quartr). See entity docstring for computation logic.'
 - entity: TargetUpdate
   spec_id: N/A (supporting type)
   description: Long-term target guidance announced at a conference or investor day.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: metric
     target_type: str
@@ -315,7 +283,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: target metric revision extracted from conference presentation (SEC EDGAR 8-K Item 7.01 + company IR materials). See entity docstring for computation logic.'
   - target_field: prior_target
     target_type: Optional[float]
     description: ''
@@ -323,7 +291,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: target metric revision extracted from conference presentation (SEC EDGAR 8-K Item 7.01 + company IR materials). See entity docstring for computation logic.'
   - target_field: new_target
     target_type: float
     description: ''
@@ -331,7 +299,7 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: target metric revision extracted from conference presentation (SEC EDGAR 8-K Item 7.01 + company IR materials). See entity docstring for computation logic.'
   - target_field: target_year
     target_type: int
     description: ''
@@ -339,9 +307,9 @@ entities:
     source_endpoint: 'Motley Fool: scrape fool.com/earnings-call-transcripts/ | yfinance: Ticker.get_earnings_estimate()'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: target metric revision extracted from conference presentation (SEC EDGAR 8-K Item 7.01 + company IR materials). See entity docstring for computation logic.'
 - entity: ManagementToneAnalysis
-  spec_id: Qual 4:4a
+  spec_id: Qual4:4a
   description: Qual 4:4a — Tone shift detection and forward-looking statement extraction.
   is_primary_entity: true
   primary_source: |-
@@ -492,7 +460,7 @@ entities:
       Distillation: derived from Motley Fool transcripts (free, <24hr) + Quartr
       (~95% coverage) + YouTube/Whisper fallback. Fallback: FMP Ultimate ($149/mo).. See entity docstring for computation logic.
 - entity: AnalystQADynamics
-  spec_id: Qual 4:4b
+  spec_id: Qual4:4b
   description: Qual 4:4b — Analyst question clustering, non-answer detection, and tone analysis.
   is_primary_entity: true
   primary_source: Motley Fool transcripts (free) + Quartr +
@@ -591,7 +559,7 @@ entities:
     transform: 'Distillation: derived from Motley Fool transcripts (free) + Quartr +. See entity docstring for computation
       logic.'
 - entity: CrossCompanyEarningsIntel
-  spec_id: Qual 4:4c
+  spec_id: Qual4:4c
   description: Qual 4:4c + 4d — Bellwether reads, supply chain commentary, and season momentum.
   is_primary_entity: true
   primary_source: Derived from
@@ -696,7 +664,7 @@ entities:
     source_type: varies
     transform: 'Distillation: derived from Derived from. See entity docstring for computation logic.'
 - entity: ConferencePresentation
-  spec_id: Qual 4:4e
+  spec_id: Qual4:4e
   description: Qual 4:4e — Industry conference and investor day signal extraction.
   is_primary_entity: true
   primary_source: SEC EDGAR 8-K Item 7.01 + company IR event calendars
@@ -813,5 +781,6 @@ entities:
     transform: 'Distillation: derived from SEC EDGAR 8-K Item 7.01 + company IR event calendars. See entity docstring for
       computation logic.'
 audit_notes: 'AUDIT 2026-03-15: Finnhub earnings_calendar requires symbol filter for useful results. yfinance earnings dates
-  and earnings history both working. Transcript sources: Motley Fool scraping (no auth needed), Quartr API (TBD), YouTube+Whisper
-  (pipeline needed). These are scraping-based and require Playwright/Selenium infrastructure.'
+  and earnings history both working. AUDIT 2026-04-27: transcript ingestion deferred — research pass found no free API source
+  meeting coverage and latency requirements; Qual4 stays in the deferred-category list per storage.md until a viable source
+  emerges or paid spend is approved.'

@@ -1,4 +1,4 @@
-You are orchestrating completion of the AlphaMind data-layer collector. Nineteen user stories live at `docs/implementation/01-data-layer/collector/` (files `01-...md` through `08-...md`). Each story is self-contained — read it before you act on it.
+You are orchestrating completion of the AlphaMind data-layer collector. Twenty-two user stories live at `docs/implementation/01-data-layer/collector/` (files `01-...md` through `08-...md`). Each story is self-contained — read it before you act on it.
 
 ## Operating posture
 

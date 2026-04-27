@@ -8,10 +8,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A detected statistical anomaly. The distillation layer produces these as part of every entity.
   is_primary_entity: false
-  primary_source: Derived (distillation layer)
-  fallback_source: N/A
-  cadence: Every invocation
-  feasibility: HIGH — 100% computed
   fields:
   - target_field: anomaly_type
     target_type: str
@@ -77,10 +73,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Metadata attached to every entity instance, identifying when and how the data was collected.
   is_primary_entity: false
-  primary_source: System-generated
-  fallback_source: N/A
-  cadence: Every invocation
-  feasibility: HIGH — system infrastructure
   fields:
   - target_field: invocation_id
     target_type: str

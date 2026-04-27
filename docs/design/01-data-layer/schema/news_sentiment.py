@@ -41,6 +41,7 @@ from datetime import datetime
 from ._common import (
     AnomalyFlag,
     Direction,
+    HeadlineType,
     InvocationMetadata,
     SignalStrength,
     SourceCredibilityTier,
@@ -203,24 +204,14 @@ class BreakingHeadline:
     # All other tickers mentioned in the headline. E.g., headline about NVIDIA
     # may also mention competitors AMD, QCOM, or customer/supplier relationships.
     # Research layer uses this to propagate signals across correlated names.
-    topic_tags: list[str] = field(default_factory=list)
-    # LLM-extracted topic tags for categorization and clustering:
-    # "earnings" | "m&a" | "short_report" | "regulatory" | "supply_chain" |
-    # "executive_change" | "product_launch" | "legal" | "macro" | etc.
-    # Enables downstream filtering and routing to specialist research agents.
-    is_earnings_related: bool = False
-    # True if the headline is specifically about earnings (guidance, misses, beats).
-    # Earnings create synchronized spikes across the universe; this flag enables
-    # coordinated relative-strength analysis across names reporting.
-    is_ma_related: bool = False
-    # True if the headline involves M&A (acquisition rumors, deal announcements,
-    # deal breaks). M&A is event-driven, time-bound, high-volatility catalyst.
-    # Flags for distinct M&A thesis routing.
-    is_short_report: bool = False
-    # True if the headline is about a short-seller report (Hindenburg, Muddy Waters,
-    # etc.) or short attack. High-signal for sentiment divergence: if shorts attack
-    # and price doesn't move, thesis is "priced in" or "shorts are wrong"; if price
-    # crashes, "shorts exposed real risk".
+    topic_tags: list[HeadlineType] = field(default_factory=list)
+    # Canonical headline-type tags from `HeadlineType` (see schema/_common.py).
+    # Vendor tag vocabularies are normalized into this set at the collector
+    # boundary via `config/headline_tag_mapping.yaml`. Multiple values allowed —
+    # an M&A rumor from a Tier 1 source carries both `M_AND_A` and `BREAKING`.
+    # Enables downstream filtering and routing to specialist research agents;
+    # earnings-coordinated analysis, M&A thesis routing, and short-report
+    # detection consume this field directly via `HeadlineType` membership.
 
     # ── Cross-ticker clustering ──
     cross_ticker_cluster_id: str | None = None

@@ -61,7 +61,7 @@ Price correlation measures how assets have moved historically. Thesis dependency
   Concentration metric that accounts for thesis dependency, not just position correlation:
   - Effective independent thesis count: truly independent bets after clustering — might be 3 independent theses across 7 positions
   - Maximum catalyst exposure: total dollar exposure conditional on a single catalyst failing — "if AI capex disappoints, positions totaling $X and Y% of portfolio are at risk." The PM's most actionable concentration metric
-  - Dependency risk flag: binary alert when thesis-level concentration exceeds the threshold (defined in risk guardrails)
+  - Dependency risk flag: binary alert raised when *maximum catalyst exposure* exceeds the [thesis-dependency limit](../06-risk-guardrails/rules-and-limits.md#thesis-dependency-risk-flag) (T1+T2; the regime-adjusted threshold tracks the sector concentration ceiling)
 
 ---
 

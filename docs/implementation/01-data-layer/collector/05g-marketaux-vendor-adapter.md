@@ -1,7 +1,7 @@
 ---
-status: done
-completed_date: 2026-04-26
-commit_id: 86ec590
+status: not_started
+completed_date:
+commit_id:
 ---
 
 # 05g — Marketaux vendor adapter
@@ -26,8 +26,8 @@ Implement `src/alphamind/data_sources/marketaux/` to pull Qual1 news with vendor
 In scope: under `src/alphamind/data_sources/marketaux/` —
 - `client.py` — HTTP wrapper around Marketaux REST API (no SDK; use `httpx`). Integrates `with_retries(important)`, `RateLimiter` (configured for the daily-cap reality), `verify_connectivity()`.
 - `news.py`:
-  - `collect_news(ticker_scope, since)` — pulls `/v1/news/all?symbols=<ticker>&filter_entities=true` per ticker batch and `/v1/news/all?countries=us` for market-wide. Writes `news_articles` (with `vendor_sentiment_score` from Marketaux's `entities[].sentiment_score` and `vendor_sentiment_label` from a derived label using Marketaux's score thresholds — typically positive >0.15, negative <-0.15, neutral otherwise). Body text persists to disk; `body_path` populated.
-  - `news_article_tickers` populated from Marketaux's `entities[]` array; primary ticker = the ticker that drove the query, others get `is_primary=0`.
+  - `collect_news(ticker_scope, since)` — pulls `/v1/news/all?symbols=<ticker>&filter_entities=true` per ticker batch and `/v1/news/all?countries=us` for market-wide. Writes `news_articles` (with `vendor_sentiment_score` from the primary ticker's `entities[].sentiment_score` and `vendor_sentiment_label` from a derived label using Marketaux's score thresholds — typically positive >0.15, negative <-0.15, neutral otherwise). Body text persists to disk; `body_path` populated.
+  - `news_article_tickers` populated from Marketaux's `entities[]` array; primary ticker = the ticker that drove the query, others get `is_primary=0`. Per-entity `sentiment_score` is written to `vendor_sentiment_score` for every row, and `vendor_sentiment_label` is derived per the same threshold rule applied at the article level.
   - `article_id` synthesized as SHA-256 of `(source='marketaux', url, published_at)`.
   - No bootstrap function — forward-only.
 - Unit tests with mocked HTTP responses.
@@ -42,7 +42,7 @@ Marketaux free-tier cap: **100 requests per day**. Set `data_sources.yaml.provid
 
 Batch tickers per query: Marketaux accepts comma-separated symbol lists (max 5 per request on free tier). The collector should batch the ~65-ticker universe into 13 calls per cron fire if it queries all tickers; or rotate (e.g., one sector per cron fire) to stay under daily cap.
 
-Sentiment score is per-entity (per-ticker mention) in Marketaux's response. Use the score for the article's primary ticker (the one we queried) for `news_articles.vendor_sentiment_score`; the per-ticker variants flow into a TODO for future enrichment.
+Sentiment score is per-entity (per-ticker mention) in Marketaux's response. The primary ticker's score (the one we queried) populates the article-level `news_articles.vendor_sentiment_score`; every entity's score (primary and non-primary) populates `news_article_tickers.vendor_sentiment_score` for the corresponding (article, ticker) row. `vendor_sentiment_label` derives from the score at both levels using the same threshold rule.
 
 `source_credibility_tier` stamped at ingestion via `news_outlets.yaml` keyed on Marketaux's `source` field.
 
@@ -53,7 +53,7 @@ Sentiment score is per-entity (per-ticker mention) in Marketaux's response. Use 
 - [ ] `news.collect_news()` writes `news_articles` rows with `vendor_sentiment_score` populated from Marketaux's per-entity score.
 - [ ] `vendor_sentiment_label` derived from the score per documented thresholds.
 - [ ] Body text persists to `%USERPROFILE%\AlphaMind\data\news\<YYYY>\<MM>\<article_id>.txt`, `body_path` populated.
-- [ ] `news_article_tickers` populated for every ticker mentioned in `entities[]`.
+- [ ] `news_article_tickers` populated for every ticker mentioned in `entities[]`, including `vendor_sentiment_score` and `vendor_sentiment_label` per row.
 - [ ] `source_credibility_tier` stamped from `news_outlets.yaml` lookup.
 - [ ] Re-running on the same window produces no duplicate rows (idempotent on `article_id`).
 - [ ] Per-cron-fire request count stays inside the 100/day budget under steady-state cadence.

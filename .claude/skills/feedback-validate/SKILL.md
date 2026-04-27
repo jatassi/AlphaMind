@@ -24,7 +24,7 @@ This skill assumes the AlphaMind dashboard exposes review-session tools and vali
 
 If the operator's intent is unclear from their opening message, ask: *"Are we registering a new validation for an edit you just made, or evaluating one you registered earlier?"*
 
-When the operator's intent is "I just made an edit," call `list_pending_validations()` first as a sanity check — if a previously-registered validation is near its evaluation window's end, surface it: *"You have a strategist-prompt validation due tomorrow; want to handle that first?"*
+When the operator's intent is "I just made an edit," call `list_pending_validations()` (lists validations entities per [state-persistence.md § Validations](../../../docs/design/05-execution-layer/state-persistence.md)) first as a sanity check — if a previously-registered validation is near its evaluation window's end, surface it: *"You have a strategist-prompt validation due tomorrow; want to handle that first?"*
 
 ---
 
@@ -57,7 +57,7 @@ Walk the operator through capturing each:
 
 ### Confirmation
 
-When all fields are captured, call `register_validation(...)` and confirm the projected evaluation date to the operator. The validation is now active and will surface in `list_pending_validations()` when the window elapses.
+When all fields are captured, call `register_validation(...)` (writes a validation entity per [state-persistence.md § Validations](../../../docs/design/05-execution-layer/state-persistence.md)) and confirm the projected evaluation date to the operator. The validation is now active and will surface in `list_pending_validations()` when the window elapses.
 
 ---
 
@@ -67,9 +67,9 @@ Triggered when the operator wants to check a registered validation whose window 
 
 ### Setup
 
-Call `get_validation(validation_id)` to load the registration. Call `list_pending_validations()` if the operator hasn't named a specific one — surface the candidates and let them pick.
+Call `get_validation(validation_id)` (reads the validation entity per [state-persistence.md § Validations](../../../docs/design/05-execution-layer/state-persistence.md)) to load the registration. Call `list_pending_validations()` (lists validations entities per [state-persistence.md § Validations](../../../docs/design/05-execution-layer/state-persistence.md)) if the operator hasn't named a specific one — surface the candidates and let them pick.
 
-Open a review session via `create_review_session()` and `mcp__claude-in-chrome__tabs_create_mcp(url=dashboard_url)` as in `/feedback-review`. The dashboard navigates to a dedicated validation view that shows pre/post side by side for the registered metric.
+Open a review session via `create_review_session()` (backed by `POST /review-sessions`) and `mcp__claude-in-chrome__tabs_create_mcp(url=dashboard_url)` as in `/feedback-review`. The dashboard navigates to a dedicated validation view that shows pre/post side by side for the registered metric.
 
 ### The evaluation walk
 
@@ -85,7 +85,7 @@ In strict order, do not deviate:
    - `degraded` — post-window meets the failure criterion with confidence
    - `no_change` — post-window distinguishable from neither success nor failure; falls in the middle
    - `inconclusive` — sample size insufficient or confounders prevent attribution
-7. **Capture the outcome.** Call `submit_validation_outcome(validation_id, verdict, posterior_summary, narrative)`. The validation is now closed; the record is permanent.
+7. **Capture the outcome.** Call `submit_validation_outcome(validation_id, verdict, posterior_summary, narrative)` (writes a validation outcome entity per [state-persistence.md § Validation outcomes](../../../docs/design/05-execution-layer/state-persistence.md)). The validation is now closed; the record is permanent.
 
 ### Anti-patterns in evaluation
 
@@ -114,7 +114,7 @@ These echo `/feedback-review` but apply with greater stringency since validation
 
 ## 5. Using the dashboard affordances
 
-Same affordances as `/feedback-review` (highlight, navigate, annotate, pin, batched calls). One session-mode addition: the validation evaluation view shows pre/post panels side by side; pin the relevant pre and post panels so they stay visible across navigation when the operator wants to drill into a related metric.
+Same affordances as `/feedback-review` (highlight, navigate, annotate, pin, batched calls). One session-mode addition: the validation evaluation view shows pre/post panels side by side and exposes view-specific affordances `pin_pre_panel(metric_id)` and `pin_post_panel(metric_id)` (per [command-center.md § Validation evaluation view](../../../docs/design/command-center.md#validation-evaluation-view)) — pin the relevant pre and post panels so they stay visible across navigation when the operator wants to drill into a related metric.
 
 Chrome tools beyond opening the tab: routine state reads via `get_session_state`; visual fallback via `mcp__claude-in-chrome__read_page` only when the structured state misses something specific (a chart's actual rendering, a pre/post panel's exact label).
 

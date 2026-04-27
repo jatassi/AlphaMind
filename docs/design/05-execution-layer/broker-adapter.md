@@ -88,6 +88,12 @@ The OMS provides `client_order_id` on every submission as its stable identifier;
 - `403` with `insufficient_buying_power` or `insufficient_shares` → gateway rejection distinct from guardrail rejection; the PM sees it and may adjust on the next invocation
 - Asset-level rejections (symbol halted, non-shortable on a short-sell, options level not approved) → `403` / `422` with specific error codes
 
+**Options-specific rejections.** Beyond the codes above, options submissions surface:
+- `403 options_level_not_approved` — the strategy implies a level higher than the account holds (e.g., a long call without Level 2, an mleg without Level 3). The OMS abandons the command; the PM does not retry without an account-level config change
+- `422 contract_expired` — the option's expiration is in the past, typically from a stale chain query. The adapter refreshes the chain and resubmits once; persistent rejection signals a chain-staleness bug and escalates as a data-pipeline issue
+- `403 underlying_halted` — the option's underlying is in a regulatory halt. The submission abandons; the monitor consumes the halt event from the underlying's market-data stream and the strategist re-evaluates on the next invocation
+- `422 invalid_legs` — mleg structural validation failure (>4 legs, mismatched expirations on an incompatible structure, `ratio_qty` not in simplified form). The adapter surfaces the specific `legs[]` index Alpaca flagged so the strategist can correct or substitute a different structure
+
 ---
 
 ## Order cancellation — `DELETE /v2/orders/{id}`
@@ -105,6 +111,8 @@ Alpaca's modification is **cancel-and-replace**: the response carries a **new or
 **Unreplaceable orders.** Notional and OTO orders cannot be replaced — modification requires explicit cancel + new submission at the OMS level. The OMS avoids notional orders ([orders-and-brackets.md](orders-and-brackets.md)) and uses bracket instead of OTO.
 
 **Fields modifiable via PATCH:** `limit_price`, `stop_price`, `qty`, `trail_price`, `trail_percent`, `time_in_force`. Bracket/OCO children's `limit_price` and `stop_price` are modifiable the same way.
+
+**Options modification surface.** Single-leg options orders accept `limit_price`, `stop_price`, `qty`, and `time_in_force` on PATCH (no `trail_price`/`trail_percent` since trailing stop is unsupported on options). Mleg orders accept `limit_price` (the strategy's net debit/credit) and `qty` only — `qty` applies to all legs proportionally per the leg ratios. Any change to `legs[]` — adding, removing, or substituting a leg, or changing strike, expiration, side, or `ratio_qty` on an existing leg — requires explicit cancel-and-resubmit at the OMS level; Alpaca rejects PATCHes that mutate the leg structure with `422 unprocessable_entity`. The strategist surfaces leg-structure changes as a fresh OPEN of the new strategy paired with a CLOSE of the old, never as an `adjust-bracket` ([orders-and-brackets.md § Bracket modification](orders-and-brackets.md#bracket-modification)).
 
 ---
 
@@ -127,6 +135,18 @@ The adapter subscribes to `wss://{paper|api}.alpaca.markets/stream`, authenticat
 | `rejected` | Post-acceptance rejection (rare — halts, corporate actions) | Order terminal as `rejected` |
 | `done_for_day` | Day order with remaining quantity at session close | Order terminal (will not receive further events today) |
 | `order_replace_rejected` | See `replace_rejected` | — |
+
+### Multi-leg (`mleg`) fill events
+
+Mleg orders surface on `trade_updates` as a parent strategy event plus per-leg child events. Each child carries the parent strategy's order ID alongside the leg's option symbol (OCC format), `side`, and `position_intent` (`buy_to_open`, `sell_to_open`, `buy_to_close`, `sell_to_close`), so the adapter correlates leg fills back to the OMS's strategy position ([position-model.md § Strategy position](position-model.md#strategy-position)). The adapter maps the parent strategy ID to the OMS's `client_order_id` exactly as for simple orders; per-leg children inherit the parent's correlation.
+
+**Atomicity.** Alpaca executes the strategy as a combined fill when liquidity permits — all legs fill at the strategy's net price and emit paired `fill` events on the same timestamp. Under thin liquidity, Alpaca may emit `partial_fill` events on individual legs at different timestamps; the strategy is not considered open until every leg has reached `filled` status. The OMS waits for all legs before activating the strategy-level bracket ([orders-and-brackets.md § Multi-leg strategies](orders-and-brackets.md)).
+
+**Cancellation.** A cancel on the parent cancels all unfilled legs atomically. If some legs have already filled when the cancel arrives, those fills stand; the adapter surfaces a `partially_filled` strategy state and the monitor reconciles via `GET /v2/orders`. An unbalanced residual position is escalated as a strategy-leg orphan and resolved by the strategist on the next invocation.
+
+### Greeks passthrough — none
+
+Alpaca does not populate greeks on the order record or fill events for options or mleg orders. The [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md) is the sole producer of greeks: it computes them at OPEN/ADD validation (persisted as the position's initial greeks per [architecture.md § Guardrail enforcement](architecture.md#3-guardrail-enforcement-layer)), and the [continuous monitor's greeks refresh](architecture.md#4d-greeks-refresh-orchestration) maintains them in-session. The adapter never reads or writes a `greeks` field on a fill report.
 
 ### Fill buffer model
 
@@ -159,7 +179,7 @@ Thin wrappers over the Alpaca REST endpoints the OMS uses for state reconciliati
 - `GET /v2/account` — cash, equity, buying power (day and overnight), regt_buying_power, maintenance margin, day trade count, pattern day trader flag
 - `GET /v2/positions` — authoritative current positions. The OMS reconciles internal state against this every Phase 1
 - `GET /v2/orders` — order state query, used for disconnect recovery and spot reconciliation
-- `GET /v2/account/activities` — EOD fee reconciliation, dividends, corporate actions, and other non-fill debits/credits
+- `GET /v2/account/activities` — EOD fee reconciliation, dividends, corporate actions, options exercise/assignment notifications, and other non-fill debits/credits. Exercise and assignment surface as `OPEXC` (exercise) and `OPASN` (assignment) activity types — the OMS treats each as a terminal event on the option position and an opening event on the resulting equity position (long for exercised calls / assigned puts, short for assigned calls / exercised puts), with cost basis derived from the strike price and the equity position carrying a fresh thesis stub flagged for strategist review at the next invocation
 - `GET /v2/assets/{symbol}` — asset metadata (`shortable`, `fractionable`, `tradable`, `easy_to_borrow`); used by the guardrail layer for short-sell eligibility
 - `GET /v2/calendar`, `GET /v2/clock` — trading calendar and current market state; consulted by the scheduler and continuous monitor
 
@@ -195,6 +215,8 @@ Cases where Alpaca's surface is narrower than AlphaMind's design; each is handle
 
 - [architecture.md](architecture.md) — places this adapter within the four-component engine architecture
 - [orders-and-brackets.md](orders-and-brackets.md) — the order vocabulary the adapter translates
+- [position-model.md](position-model.md) — strategy positions and per-leg structure consumed by mleg fill correlation
 - [paper-evaluation-harness.md](paper-evaluation-harness.md) — what runs on top of paper fills
 - [state-persistence.md](state-persistence.md) — where the fill buffer lives
 - [venue-configuration.md](venue-configuration.md) — Alpaca-specific venue rules (settlement, sessions, margin, PDT)
+- [guardrail-evaluation.md](../06-risk-guardrails/guardrail-evaluation.md) — sole producer of options greeks; adapter never populates greeks on fill records

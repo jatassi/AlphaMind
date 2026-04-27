@@ -8,10 +8,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Word-level or section-level changes in FOMC statements over time.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: section
     target_type: str
@@ -20,7 +16,7 @@ entities:
     source_endpoint: 'SEC EDGAR: GET /cgi-bin/browse-edgar + GET /api/xbrl/companyfacts/ | Finnhub: /sec-filings, /fda-advisory-committee-calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: word/section diff over successive FOMC statements scraped from Fed website. See entity docstring for computation logic.'
   - target_field: change_type
     target_type: str
     description: ''
@@ -28,7 +24,7 @@ entities:
     source_endpoint: 'SEC EDGAR: GET /cgi-bin/browse-edgar + GET /api/xbrl/companyfacts/ | Finnhub: /sec-filings, /fda-advisory-committee-calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: word/section diff over successive FOMC statements scraped from Fed website. See entity docstring for computation logic.'
   - target_field: old_text
     target_type: Optional[str]
     description: ''
@@ -36,7 +32,7 @@ entities:
     source_endpoint: 'SEC EDGAR: GET /cgi-bin/browse-edgar + GET /api/xbrl/companyfacts/ | Finnhub: /sec-filings, /fda-advisory-committee-calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: word/section diff over successive FOMC statements scraped from Fed website. See entity docstring for computation logic.'
   - target_field: new_text
     target_type: Optional[str]
     description: ''
@@ -44,7 +40,7 @@ entities:
     source_endpoint: 'SEC EDGAR: GET /cgi-bin/browse-edgar + GET /api/xbrl/companyfacts/ | Finnhub: /sec-filings, /fda-advisory-committee-calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: word/section diff over successive FOMC statements scraped from Fed website. See entity docstring for computation logic.'
   - target_field: hawkish_dovish_impact
     target_type: Direction
     description: ''
@@ -52,15 +48,11 @@ entities:
     source_endpoint: 'SEC EDGAR: GET /cgi-bin/browse-edgar + GET /api/xbrl/companyfacts/ | Finnhub: /sec-filings, /fda-advisory-committee-calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: word/section diff over successive FOMC statements scraped from Fed website. See entity docstring for computation logic.'
 - entity: PolicyEvent
   spec_id: N/A (supporting type)
   description: A single scheduled regulatory, policy, or macroeconomic event on the calendar.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: event_id
     target_type: str
@@ -69,7 +61,7 @@ entities:
     source_endpoint: 'SEC EDGAR: GET /cgi-bin/browse-edgar + GET /api/xbrl/companyfacts/ | Finnhub: /sec-filings, /fda-advisory-committee-calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Finnhub economic calendar (free): GET /api/v1/calendar/economic. See entity docstring for computation logic.'
   - target_field: event_type
     target_type: str
     description: ''
@@ -77,7 +69,7 @@ entities:
     source_endpoint: 'SEC EDGAR: GET /cgi-bin/browse-edgar + GET /api/xbrl/companyfacts/ | Finnhub: /sec-filings, /fda-advisory-committee-calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Finnhub economic calendar (free): GET /api/v1/calendar/economic. See entity docstring for computation logic.'
   - target_field: event_date
     target_type: date
     description: ''
@@ -85,7 +77,7 @@ entities:
     source_endpoint: 'SEC EDGAR: GET /cgi-bin/browse-edgar + GET /api/xbrl/companyfacts/ | Finnhub: /sec-filings, /fda-advisory-committee-calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Finnhub economic calendar (free): GET /api/v1/calendar/economic. See entity docstring for computation logic.'
   - target_field: description
     target_type: str
     description: ''
@@ -93,7 +85,7 @@ entities:
     source_endpoint: 'SEC EDGAR: GET /cgi-bin/browse-edgar + GET /api/xbrl/companyfacts/ | Finnhub: /sec-filings, /fda-advisory-committee-calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Finnhub economic calendar (free): GET /api/v1/calendar/economic. See entity docstring for computation logic.'
   - target_field: affected_sectors
     target_type: list[AlphaMindSector]
     description: ''
@@ -101,7 +93,7 @@ entities:
     source_endpoint: 'SEC EDGAR: GET /cgi-bin/browse-edgar + GET /api/xbrl/companyfacts/ | Finnhub: /sec-filings, /fda-advisory-committee-calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Finnhub economic calendar (free): GET /api/v1/calendar/economic. See entity docstring for computation logic.'
   - target_field: expected_volatility_impact
     target_type: SignalStrength
     description: ''
@@ -109,7 +101,7 @@ entities:
     source_endpoint: 'SEC EDGAR: GET /cgi-bin/browse-edgar + GET /api/xbrl/companyfacts/ | Finnhub: /sec-filings, /fda-advisory-committee-calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Finnhub economic calendar (free): GET /api/v1/calendar/economic. See entity docstring for computation logic.'
   - target_field: consensus_estimate
     target_type: Optional[str]
     description: ''
@@ -117,9 +109,9 @@ entities:
     source_endpoint: 'SEC EDGAR: GET /cgi-bin/browse-edgar + GET /api/xbrl/companyfacts/ | Finnhub: /sec-filings, /fda-advisory-committee-calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Finnhub economic calendar (free): GET /api/v1/calendar/economic. See entity docstring for computation logic.'
 - entity: FedCommunication
-  spec_id: Qual 5:5a
+  spec_id: Qual5:5a
   description: Qual 5:5a — FOMC statement analysis, press conference tone, and speaker commentary.
   is_primary_entity: true
   primary_source: FRED (rate data) + Fed website + Finnhub news
@@ -353,7 +345,7 @@ entities:
     transform: 'Distillation: derived from FRED (rate data) + Fed website + Finnhub news. See entity docstring for computation
       logic.'
 - entity: RegulatoryAction
-  spec_id: Qual 5:5b
+  spec_id: Qual5:5b
   description: Qual 5:5b — SEC, FTC/DOJ, CFPB, EPA, and international regulatory events.
   is_primary_entity: true
   primary_source: SEC EDGAR (free) + Federal Register (free) + news APIs
@@ -506,7 +498,7 @@ entities:
     transform: 'Distillation: derived from SEC EDGAR (free) + Federal Register (free) + news APIs. See entity docstring for
       computation logic.'
 - entity: ExecutiveAction
-  spec_id: Qual 5:5c
+  spec_id: Qual5:5c
   description: Qual 5:5c — Executive orders and administrative actions on trade, tech, and energy.
   is_primary_entity: true
   primary_source: Federal Register (free) + news APIs
@@ -619,7 +611,7 @@ entities:
     source_type: varies
     transform: 'Distillation: derived from Federal Register (free) + news APIs. See entity docstring for computation logic.'
 - entity: GeopoliticalEvent
-  spec_id: Qual 5:5d
+  spec_id: Qual5:5d
   description: Qual 5:5d — Geopolitical developments across key theaters affecting markets.
   is_primary_entity: true
   primary_source: News APIs + prediction markets (Qual 3:3c)
@@ -763,7 +755,7 @@ entities:
     transform: 'Distillation: derived from News APIs + prediction markets (Qual 3:3c). See entity docstring for computation
       logic.'
 - entity: PolicyEventCalendar
-  spec_id: Qual 5:5e
+  spec_id: Qual5:5e
   description: Qual 5:5e — Known regulatory/policy event dates with clustering risk detection.
   is_primary_entity: true
   primary_source: Finnhub economic calendar (free)

@@ -8,10 +8,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Record of a ticker symbol change for a universe name. Maintains the
   is_primary_entity: false
-  primary_source: Polygon ticker details + Finnhub company profile
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: previous_ticker
     target_type: str
@@ -46,13 +42,9 @@ entities:
     source_type: varies
     transform: Polygon ticker_details or Finnhub company_profile. See field-specific mapping.
 - entity: ETFMembership
-  spec_id: Q12:12f
+  spec_id: N/A (supporting type)
   description: A ticker's membership in a specific ETF, with weight and rebalance context.
-  is_primary_entity: true
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
+  is_primary_entity: false
   fields:
   - target_field: etf_ticker
     target_type: str
@@ -61,7 +53,7 @@ entities:
     source_endpoint: 'Polygon: GET /v3/reference/tickers (ETF tickers) | yfinance: Ticker.info (holdings)'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Polygon ticker_details + Finnhub ETF holdings + manual sector mapping. See entity docstring for computation logic.'
   - target_field: etf_name
     target_type: str
     description: Full ETF name for readability
@@ -69,7 +61,7 @@ entities:
     source_endpoint: 'Polygon: GET /v3/reference/tickers (ETF tickers) | yfinance: Ticker.info (holdings)'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Polygon ticker_details + Finnhub ETF holdings + manual sector mapping. See entity docstring for computation logic.'
   - target_field: weight_pct
     target_type: float
     description: Weight in ETF as of last rebalance (0.0–100.0)
@@ -77,7 +69,7 @@ entities:
     source_endpoint: 'Polygon: GET /v3/reference/tickers (ETF tickers) | yfinance: Ticker.info (holdings)'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Polygon ticker_details + Finnhub ETF holdings + manual sector mapping. See entity docstring for computation logic.'
   - target_field: weight_as_of
     target_type: date
     description: Date the weight was last confirmed
@@ -85,7 +77,7 @@ entities:
     source_endpoint: 'Polygon: GET /v3/reference/tickers (ETF tickers) | yfinance: Ticker.info (holdings)'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Polygon ticker_details + Finnhub ETF holdings + manual sector mapping. See entity docstring for computation logic.'
   - target_field: is_top_10_holding
     target_type: bool
     description: Whether this name is a top-10 holding in the ETF
@@ -93,15 +85,11 @@ entities:
     source_endpoint: 'Polygon: GET /v3/reference/tickers (ETF tickers) | yfinance: Ticker.info (holdings)'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Polygon ticker_details + Finnhub ETF holdings + manual sector mapping. See entity docstring for computation logic.'
 - entity: ReclassificationEvent
-  spec_id: Q12:12a
+  spec_id: N/A (supporting type)
   description: Record of a sector or industry reclassification. Rare but consequential —
-  is_primary_entity: true
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
+  is_primary_entity: false
   fields:
   - target_field: effective_date
     target_type: date
@@ -110,7 +98,7 @@ entities:
     source_endpoint: 'Polygon: GET /v3/reference/tickers/{ticker} (sic_code changes) | SEC EDGAR: 8-K filings'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Polygon ticker_details (sic_code change tracking) + SEC EDGAR 8-K filings on reclassifications. See entity docstring for computation logic.'
   - target_field: previous_sector
     target_type: AlphaMindSector
     description: ''
@@ -118,7 +106,7 @@ entities:
     source_endpoint: 'Polygon: GET /v3/reference/tickers/{ticker} (sic_code changes) | SEC EDGAR: 8-K filings'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Polygon ticker_details (sic_code change tracking) + SEC EDGAR 8-K filings on reclassifications. See entity docstring for computation logic.'
   - target_field: new_sector
     target_type: AlphaMindSector
     description: ''
@@ -126,7 +114,7 @@ entities:
     source_endpoint: 'Polygon: GET /v3/reference/tickers/{ticker} (sic_code changes) | SEC EDGAR: 8-K filings'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Polygon ticker_details (sic_code change tracking) + SEC EDGAR 8-K filings on reclassifications. See entity docstring for computation logic.'
   - target_field: previous_gics_sub_industry
     target_type: str
     description: ''
@@ -134,7 +122,7 @@ entities:
     source_endpoint: 'Polygon: GET /v3/reference/tickers/{ticker} (sic_code changes) | SEC EDGAR: 8-K filings'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Polygon ticker_details (sic_code change tracking) + SEC EDGAR 8-K filings on reclassifications. See entity docstring for computation logic.'
   - target_field: new_gics_sub_industry
     target_type: str
     description: ''
@@ -142,7 +130,7 @@ entities:
     source_endpoint: 'Polygon: GET /v3/reference/tickers/{ticker} (sic_code changes) | SEC EDGAR: 8-K filings'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Polygon ticker_details (sic_code change tracking) + SEC EDGAR 8-K filings on reclassifications. See entity docstring for computation logic.'
   - target_field: reason
     target_type: str
     description: Why the reclassification happened
@@ -150,7 +138,7 @@ entities:
     source_endpoint: 'Polygon: GET /v3/reference/tickers/{ticker} (sic_code changes) | SEC EDGAR: 8-K filings'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Polygon ticker_details (sic_code change tracking) + SEC EDGAR 8-K filings on reclassifications. See entity docstring for computation logic.'
   - target_field: expected_flow_impact
     target_type: Optional[str]
     description: Brief description of expected passive flow impact
@@ -158,11 +146,11 @@ entities:
     source_endpoint: 'Polygon: GET /v3/reference/tickers/{ticker} (sic_code changes) | SEC EDGAR: 8-K filings'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Polygon ticker_details (sic_code change tracking) + SEC EDGAR 8-K filings on reclassifications. See entity docstring for computation logic.'
 - entity: AssetUniverse
-  spec_id: N/A (supporting type)
-  description: REF:UNIVERSE — Canonical ticker list with metadata for the ~65-name universe.
-  is_primary_entity: false
+  spec_id: REF:UNIVERSE
+  description: Canonical ticker list with metadata for the ~65-name universe.
+  is_primary_entity: true
   primary_source: Polygon ticker details + Finnhub company profile
   fallback_source: SEC EDGAR company search + Finnhub company profile
   cadence: On change (index rebalance, M&A, universe review)
@@ -375,8 +363,8 @@ entities:
     transform: 'Distillation: derived from Manual curation (asset-universe.md) + Polygon reference API (free). See entity
       docstring for computation logic.'
 - entity: SectorClassification
-  spec_id: Q1:1e
-  description: REF:SECTOR — Ticker-to-sector mapping with index membership and ETF linkage.
+  spec_id: REF:SECTOR
+  description: Ticker-to-sector mapping with index membership and ETF linkage.
   is_primary_entity: true
   primary_source: Polygon + Finnhub + manual sector mapping
   fallback_source: Finnhub company profile + manual curation

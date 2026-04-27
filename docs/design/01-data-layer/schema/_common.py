@@ -42,6 +42,7 @@ __all__ = [
     "DataConfidence",
     "Direction",
     "Exchange",
+    "HeadlineType",
     "InflationRegime",
     "InvocationMetadata",
     "MarketCapBucket",
@@ -174,6 +175,32 @@ class SourceCredibilityTier(Enum):
     TIER_1 = "tier_1"  # Wire services (Reuters, Bloomberg, DJ), WSJ/FT exclusives
     TIER_2 = "tier_2"  # Major financial outlets, established reporters
     TIER_3 = "tier_3"  # Financial blogs, aggregators, social-media-first outlets
+
+
+class HeadlineType(Enum):
+    """Canonical headline-type taxonomy used by Qual 1:1a (BreakingHeadline) and the
+    news digest. See `qualitative-research.md § Type tags` (in `docs/design/03-analysis-layer/`).
+
+    Vendor tag vocabularies (Marketaux, Finnhub, SEC EDGAR 8-K item codes, RSS topics)
+    are normalized into this set at the collector boundary via
+    `config/headline_tag_mapping.yaml`. Multiple values per headline are allowed —
+    an M&A rumor from a Tier 1 source carries both ``M_AND_A`` and ``BREAKING``.
+    """
+
+    BREAKING = "breaking"
+    EARNINGS_RELATED = "earnings_related"
+    M_AND_A = "m_and_a"
+    ANALYST_ACTION = "analyst_action"
+    REGULATORY = "regulatory"
+    GEOPOLITICAL = "geopolitical"
+    MACRO_DATA = "macro_data"
+    INSIDER_ACTIVITY = "insider_activity"
+    SHORT_REPORT = "short_report"
+    ACTIVIST = "activist"
+    PRODUCT_LAUNCH = "product_launch"
+    SUPPLY_CHAIN = "supply_chain"
+    GUIDANCE = "guidance"
+    SECTOR_ROTATION = "sector_rotation"
 
 
 # ── Direction and sentiment ──────────────────────────────────────────────────

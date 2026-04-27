@@ -234,11 +234,11 @@ Deterministic composite-score ranking per sector bucket — no LLM involvement.
 
 ### Type tags
 
-Each headline carries one or more type tags from a fixed taxonomy:
+Each headline carries one or more type tags from the canonical [`HeadlineType`](../01-data-layer/schema/_common.py) enum:
 
-`breaking` · `earnings_related` · `M&A` · `analyst_action` · `regulatory` · `geopolitical` · `macro_data` · `insider_activity` · `short_report` · `activist` · `product_launch` · `supply_chain` · `guidance` · `sector_rotation`
+`breaking` · `earnings_related` · `m_and_a` · `analyst_action` · `regulatory` · `geopolitical` · `macro_data` · `insider_activity` · `short_report` · `activist` · `product_launch` · `supply_chain` · `guidance` · `sector_rotation`
 
-Tags are assigned at ingestion time by the data layer based on headline content and source classification. Multiple tags per headline are allowed (e.g., an M&A rumor from a Tier 1 source carries `M&A` + `breaking`).
+Tags are assigned at ingestion time by the data layer; vendor tag vocabularies (Marketaux, Finnhub, SEC EDGAR 8-K item codes, RSS topics) are normalized into the canonical set via [`config/headline_tag_mapping.yaml`](../../../config/headline_tag_mapping.yaml). Multiple tags per headline are allowed (e.g., an M&A rumor from a Tier 1 source carries `m_and_a` + `breaking`).
 
 ### Token budget
 

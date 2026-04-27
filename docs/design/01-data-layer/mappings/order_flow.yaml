@@ -8,10 +8,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Aggregated trade flow metrics over a specific time window. The fundamental
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: window_label
     target_type: str
@@ -89,10 +85,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Distribution of trade sizes within a window. Shifting mix signals changing
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: window_label
     target_type: str
@@ -154,10 +146,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single detected block trade — a large print that signals institutional
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: timestamp
     target_type: datetime
@@ -235,10 +223,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Volume breakdown by execution venue. Different venues have different
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: venue_name
     target_type: str
@@ -284,10 +268,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A burst of unusual volume at an atypical time of day.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: window_start
     target_type: datetime

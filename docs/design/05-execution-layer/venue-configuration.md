@@ -65,7 +65,7 @@ AlphaMind's target capital deployment schedule ([paper-evaluation-harness.md](pa
 
 Interest accrues daily and charges monthly on EOD debit balances. Intraday leverage does not accrue interest.
 
-**Reg T ceiling.** Alpaca runs Reg T margin, not portfolio margin. Hedged or paired long/short positions are margined per-leg with no risk netting — a well-hedged book pays margin on the gross, not the net. Non-binding at current and near-term deployment scale; if future scale makes per-leg margining the capital bottleneck, the broker choice warrants revisiting.
+**Reg T ceiling.** Alpaca runs Reg T margin, not portfolio margin. Hedged or paired long/short positions are margined per-leg with no risk netting — a well-hedged book pays margin on the gross, not the net. Non-binding at current and near-term deployment scale; if future scale makes per-leg margining the capital bottleneck, the broker choice warrants revisiting. Per-fill attribution of Reg T vs. portfolio-margin-equivalent consumption is computed in [regt-margin-attribution.md](regt-margin-attribution.md); the cumulative excess surfaces in portfolio state and the command center as the operator's broker-switch signal.
 
 **Wash sale tracking:** the OMS logs potential wash sale events (sells followed by buys of substantially identical securities within a 30-day window) for tax-lot accounting. Does not block trades on wash-sale rules — that's a tax optimization strategy, not a structural constraint. Alpaca surfaces cost-basis adjustments via `account/activities` after the fact.
 

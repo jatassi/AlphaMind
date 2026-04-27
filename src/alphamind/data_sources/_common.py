@@ -144,11 +144,12 @@ def _is_retryable(exc: BaseException) -> bool:
 # with_retries
 # ---------------------------------------------------------------------------
 
-# Default attempt counts per shape (matches data_sources.yaml retry_shapes)
+# Canonical retry schedule per tier — see api-failure-handling.md § Retry
+# semantics and data-sources.md § Retry-per-tier.
 _SHAPE_ATTEMPTS: dict[RetryShape, int] = {
-    RetryShape.critical: 3,
-    RetryShape.important: 2,
-    RetryShape.optional: 2,  # "single retry" == 1 retry → 2 total attempts
+    RetryShape.critical: 3,  # 2 retries → sleeps of 1.0s, 2.0s
+    RetryShape.important: 2,  # 1 retry  → sleep  of 1.0s
+    RetryShape.optional: 2,  # 1 retry  → sleep  of 0.5s
 }
 
 _SHAPE_INITIAL_DELAY: dict[RetryShape, float] = {
@@ -160,7 +161,7 @@ _SHAPE_INITIAL_DELAY: dict[RetryShape, float] = {
 _SHAPE_BACKOFF_MULTIPLIER: dict[RetryShape, float] = {
     RetryShape.critical: 2.0,
     RetryShape.important: 2.0,
-    RetryShape.optional: 1.0,  # no backoff growth for optional
+    RetryShape.optional: 1.0,  # flat — Optional uses brief, non-growing delay
 }
 
 

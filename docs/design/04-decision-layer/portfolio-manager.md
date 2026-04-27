@@ -26,6 +26,7 @@ Tools available during reasoning:
 | Source-brief retrieval | [Retrieval tools — Source-brief retrieval](#source-brief-retrieval) | Pull a section of an analysis brief by reference ID from the synthesizer's retrieval store. Used to verify analyst/strategist narrative claims against the underlying source signal |
 | Thesis-component retrieval | [Retrieval tools — Thesis-component retrieval](#thesis-component-retrieval) | `get_thesis_components(position_id)` — pulls full component-level thesis record for one held position. Required because thesis records are delivered at summary level by default for the PM |
 | Guardrail validation tool | [state-delivery.md — Guardrail validation tool](../06-risk-guardrails/state-delivery.md#guardrail-validation-tool) | Deterministic check on PM modifications (sizing adjustments) before commands are finalized. See [Pre-submission guardrail check on PM modifications](#pm-originated-envelopes-pm_analyst-and-pm_strategist) |
+| Envelope submission tool | [submit-envelope-tool-schema.md](submit-envelope-tool-schema.md) | `submit_envelope(envelope)` — submits one finalized envelope to the engine and returns a per-command result list with synchronous accept/reject payloads. See [Synchronous command feedback](#synchronous-command-feedback) |
 
 The volatility regime label is delivered as the `Regime:` line in the guardrail state header.
 
@@ -307,7 +308,7 @@ When the PM submits OMS commands, the engine validates each command and returns 
 
 **Interaction with envelope model:** The envelope is produced during evaluation (before submission). If a command is rejected and the PM reissues with modified parameters, the envelope is updated with an additional modification record: field changed, original value, revised value, adjustment category `guardrail_rejection_response`, and the specific guardrail that triggered the revision.
 
-**TODO — execution failure notification channel:** The contract for how the engine communicates rejection payloads back to the PM (tool call response, structured return value, etc.) is to be specified during implementation. The semantic contract is defined here; the transport mechanism is an implementation detail.
+**Transport:** The PM submits via the `submit_envelope` tool — input is one finalized envelope, response is one `submission_result` per embedded command (`command_ordinal`, `status`, `command_id`, plus `acknowledgment` on accept or `rejection_payload` on reject). The PM updates the envelope with a `phase: post_rejection` modification and re-invokes `submit_envelope` with the revised envelope. Tool I/O contract: [submit-envelope-tool-schema.md](submit-envelope-tool-schema.md).
 
 ---
 

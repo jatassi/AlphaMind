@@ -61,11 +61,11 @@ Three categories that might appear decision-relevant are Optional because their 
 
 ## Retry semantics
 
-- **Critical** — multiple retries with exponential backoff, plus provider failover where a fallback is configured.
-- **Important** — limited retries with exponential backoff, no failover.
-- **Optional** — single retry on brief delay.
+- **Critical** — 3 attempts with exponential backoff (1.0s, 2.0s sleeps), plus provider failover where a fallback is configured.
+- **Important** — 2 attempts with exponential backoff (1.0s sleep), no failover.
+- **Optional** — 2 attempts with a flat 0.5s delay, no failover.
 
-Specific retry counts, backoff intervals, and failover configurations are tuned during testing.
+The schedule is pinned in `_common.py`; see [data-sources.md § Retry-per-tier](collector/data-sources.md#retry-per-tier) for the canonical table. Revisions follow the [threshold-calibration](../02-distillation-layer/threshold-calibration.md) discipline, driven by `collection_runs.error_summary` history.
 
 ## Abort semantics
 
@@ -86,7 +86,7 @@ When the continuous monitor triggers an emergency invocation (regime jump, multi
 
 ## Alerting
 
-Severity follows the tier mapping — Critical warrants immediate notification, Important warrants review, Optional warrants trend logging. Specific alerting infrastructure is scoped to the Phase 4 monitoring design.
+Severity follows the tier mapping — Critical-tier failures map to Critical alerts, Important-tier failures map to Important alerts, Optional-tier failures map to Operational alerts. Routing, debounce, and notification channels are owned by the command-center alert registry; default rules covering Critical-tier API failure, Important-tier API failure, schedule miss on a critical category, and Optional-tier data category skipped land in [`config/alerts.yaml`](../command-center.md#alerting).
 
 ---
 

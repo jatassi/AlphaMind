@@ -61,10 +61,19 @@ providers:
     rate_limit_per_minute: 60
     retry_shape: optional
 
+  finra:                       # open access — User-Agent header only; CDN file downloads
+    rate_limit_per_minute: 30
+    retry_shape: important
+
+  iborrowdesk:                 # open access — undocumented JSON endpoint; aggressive rate limit
+    rate_limit_per_minute: 12  # observed: ~4 calls in burst trips HTTP 444 block; 5s spacing safe
+    retry_shape: optional
+
 retry_shapes:
+  # Concrete schedule lives in _common.py — see data-sources.md § Retry-per-tier.
   critical:  { attempts: 3, backoff: exponential, failover: true  }
   important: { attempts: 2, backoff: exponential, failover: false }
-  optional:  { attempts: 1, backoff: none,        failover: false }
+  optional:  { attempts: 2, backoff: none,        failover: false }
 
 categories:
   q1_price_volume:
@@ -87,9 +96,9 @@ categories:
 
   q4_short_selling:
     tier: optional
-    freshness_max_seconds: null
-    primary: sec_edgar
-    failover: []
+    freshness_max_seconds: 86400  # daily collector; on-demand single-ticker refresh available for analyst tools
+    primary: finra
+    failover: [iborrowdesk]      # borrow cost (Q4:4b) is iBorrowDesk-only — failover lists secondary domain coverage
 
   q5_fundamentals:
     tier: important

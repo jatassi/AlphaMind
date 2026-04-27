@@ -139,6 +139,7 @@ Fill record:
 - **Processing status:** unprocessed (persisted but not yet integrated into state) or processed (fully integrated during Phase 1)
 - **Processing invocation ID:** which pipeline invocation's Phase 1 integrated this fill into state (null while unprocessed)
 - **Processing timestamp:** when the OMS processed this fill into state updates (null while unprocessed)
+- **Reg T margin attribution:** structured metadata attached during Phase 1 per [regt-margin-attribution.md](regt-margin-attribution.md). Captures pre/post Reg T and portfolio-margin-equivalent requirements, marginal consumption deltas, the `regt_excess_over_pm` headline, and `pm_model_version`. Null on fills predating the attribution module.
 
 The two-timestamp design (persistence vs. processing) captures the full lifecycle: a fill at 12:15 is persisted at 12:15 (persistence timestamp), sits unprocessed until the 1:30 invocation's Phase 1, and integrates at 1:30 (processing timestamp, invocation ID). Fill timestamp is authoritative for P/L and position age; persistence timestamp confirms durability; processing timestamp and invocation ID provide the integration audit trail.
 

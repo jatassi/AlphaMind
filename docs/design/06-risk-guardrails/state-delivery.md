@@ -248,6 +248,11 @@ Correlation state:                         [omitted if < 3 concurrent positions]
   Portfolio weighted avg correlation: {value} / {limit} [{zone}]
   Highest pairwise: POS-X ↔ POS-Y = {value}
 
+Dependency risk flag:                       [omitted if < 3 concurrent positions]
+  Max catalyst-failure exposure: {value}% / {limit}% [{zone}]
+  Effective independent thesis count: {n}
+  Worst shared catalyst: "{label}" — positions: {POS-A, POS-B, ...}
+
 Hard blocks (do NOT issue commands violating):
   {list of any rules at ≥95% consumption, with specific constraint}
   [if options_enabled: false] "Options: DISABLED for this portfolio"

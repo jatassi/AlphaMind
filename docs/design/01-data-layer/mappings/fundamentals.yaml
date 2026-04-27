@@ -8,10 +8,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single estimate revision event tracked to the hour for intraday timing.
   is_primary_entity: false
-  primary_source: yfinance (Yahoo Finance)
-  fallback_source: Finnhub (basic, free tier limited)
-  cadence: Daily cache refresh
-  feasibility: HIGH
   fields:
   - target_field: revision_timestamp
     target_type: datetime
@@ -81,10 +77,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A timestamped rating change event from a covering analyst.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: change_timestamp
     target_type: datetime
@@ -146,10 +138,6 @@ entities:
   spec_id: N/A (supporting type)
   description: 'A Form 4 filing: insider transaction (buy, sell, exercise).'
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: transaction_date
     target_type: date
@@ -219,10 +207,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Snapshot of analyst price target distribution at a point in time.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: snapshot_date
     target_type: date

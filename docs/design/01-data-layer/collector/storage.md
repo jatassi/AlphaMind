@@ -204,6 +204,103 @@ Time-series. Populated from Polygon `/v3/snapshot/options/{ticker}`. Rows older 
 
 Primary key: `(snapshot_ts, contract_ticker)`. Indexes: `(underlying_ticker, snapshot_ts)`.
 
+### Short selling — Q4
+
+Three tables — bi-monthly short interest, daily short volume, daily/intraday borrow cost. The schema entities (`schema/short_selling.py`) compose trends, spike flags, and a squeeze composite from these primitives at distillation time; storage carries only raw observations.
+
+#### `short_interest_snapshots`
+
+Bi-monthly FINRA short interest. One row per ticker per FINRA settlement date. Source: `https://cdn.finra.org/equity/otcmarket/biweekly/shrt{YYYYMMDD}.csv` (no auth, User-Agent only). Publication lag ~7–10 days from settlement.
+
+| Column | Type | Notes |
+|---|---|---|
+| `settlement_date` | TEXT NOT NULL | FINRA reporting settlement date (15th or last business day of month). |
+| `ticker` | TEXT NOT NULL | FK to `asset_universe.ticker`. |
+| `current_short_shares` | INTEGER NOT NULL | Aggregated short position quantity. |
+| `previous_short_shares` | INTEGER | Prior-cycle position quantity. |
+| `avg_daily_volume_shares` | INTEGER | FINRA's reported ADV used for `days_to_cover`. |
+| `days_to_cover` | REAL | FINRA's reported short-interest ratio. |
+| `change_pct` | REAL | Cycle-over-cycle change in short shares. |
+| `source` | TEXT NOT NULL | `finra`. |
+| `ingested_at` | TEXT NOT NULL | UTC. |
+
+Primary key: `(settlement_date, ticker)`. Indexes: `(ticker, settlement_date)`.
+
+#### `short_volume_daily`
+
+Daily FINRA Reg SHO short sale volume — same-day publication by 6pm ET. Source: `https://cdn.finra.org/equity/regsho/daily/{PREFIX}shvol{YYYYMMDD}.txt` (pipe-delimited; no auth). Multiple FINRA facilities publish parallel files; the consolidated `cnms` row is the canonical view, the per-facility rows are retained for venue analysis.
+
+| Column | Type | Notes |
+|---|---|---|
+| `trade_date` | TEXT NOT NULL | ISO date. |
+| `ticker` | TEXT NOT NULL | FK to `asset_universe.ticker`. |
+| `market` | TEXT NOT NULL | `cnms` / `trf_carteret` / `trf_chicago` / `trf_nyse` / `adf` / `orf`. |
+| `short_volume` | INTEGER NOT NULL | Shares sold short on this market. |
+| `short_exempt_volume` | INTEGER NOT NULL | Shares short-exempt. |
+| `total_volume` | INTEGER NOT NULL | Total shares reported. |
+| `source` | TEXT NOT NULL | `finra`. |
+| `ingested_at` | TEXT NOT NULL | UTC. |
+
+Primary key: `(trade_date, ticker, market)`. Indexes: `(ticker, trade_date)`.
+
+#### `borrow_cost_daily`
+
+EOD borrow cost summary per ticker. One row per universe ticker per trading day. Source: iBorrowDesk's `daily` array (`https://www.iborrowdesk.com/api/ticker/{TICKER}` — undocumented JSON endpoint, see [api-key-checklist.md § iBorrowDesk](../api-key-checklist.md)). Single fetch returns ~1 trading year of daily history; the collector upserts every observed row.
+
+| Column | Type | Notes |
+|---|---|---|
+| `observation_date` | TEXT NOT NULL | ISO date. |
+| `ticker` | TEXT NOT NULL | FK to `asset_universe.ticker`. |
+| `fee_pct` | REAL | Closing annualized borrow fee %. |
+| `rebate_pct` | REAL | Closing rebate. |
+| `available_shares` | INTEGER | Closing lendable share count. |
+| `intraday_high_fee_pct` | REAL | Nullable when iBorrowDesk did not record extremes for the day. |
+| `intraday_low_fee_pct` | REAL | |
+| `intraday_high_available_shares` | INTEGER | |
+| `intraday_low_available_shares` | INTEGER | |
+| `source` | TEXT NOT NULL | `iborrowdesk`. |
+| `ingested_at` | TEXT NOT NULL | UTC. |
+
+Primary key: `(observation_date, ticker)`. Indexes: `(ticker, observation_date)`.
+
+#### `borrow_cost_intraday`
+
+~16-minute borrow-cost snapshots from iBorrowDesk's `real_time` array. Each daily collector pull captures the trailing 3–5 trading days of intraday history. On-demand single-ticker refreshes (when an analyst tool requests fresher data) write to the same table.
+
+| Column | Type | Notes |
+|---|---|---|
+| `snapshot_at` | TEXT NOT NULL | UTC datetime. |
+| `ticker` | TEXT NOT NULL | FK to `asset_universe.ticker`. |
+| `fee_pct` | REAL NOT NULL | Annualized borrow fee % at the snapshot. |
+| `available_shares` | INTEGER | |
+| `source` | TEXT NOT NULL | `iborrowdesk`. |
+| `ingested_at` | TEXT NOT NULL | UTC. |
+
+Primary key: `(snapshot_at, ticker)`. Indexes: `(ticker, snapshot_at)`. Rows older than 90 days are pruned by an ops-time policy.
+
+### Fundamentals — Q5
+
+Q5 storage covers analyst-estimate revision tracking. The `earnings_event_details` extension to `event_calendar` already carries the EPS/revenue *expectations vs. reality* surprise; revision dynamics (how forward consensus moves between releases) live here.
+
+#### `earnings_estimate_revisions`
+
+Append-only log of consensus changes for each (ticker, fiscal period, metric). Source: Finnhub `/api/v1/stock/recommendation`, `/api/v1/stock/earnings` and revision endpoints. The collector polls daily and inserts a row whenever the observed consensus differs from the latest stored row for the same `(ticker, fiscal_year, fiscal_period, metric)`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `revised_at` | TEXT NOT NULL | UTC datetime when the new consensus was observed. |
+| `ticker` | TEXT NOT NULL | FK to `asset_universe.ticker`. |
+| `fiscal_period` | TEXT NOT NULL | `Q1` / `Q2` / `Q3` / `Q4` / `FY`. |
+| `fiscal_year` | INTEGER NOT NULL | |
+| `metric` | TEXT NOT NULL | `eps` / `revenue` / `ebitda`. |
+| `consensus_value` | REAL | |
+| `prior_consensus_value` | REAL | The stored value this revision supersedes; null on first observation. |
+| `num_analysts` | INTEGER | Contributing analyst count when reported. |
+| `source` | TEXT NOT NULL | `finnhub`. |
+| `ingested_at` | TEXT NOT NULL | UTC. |
+
+Primary key: `(revised_at, ticker, fiscal_year, fiscal_period, metric)`. Indexes: `(ticker, fiscal_year, fiscal_period)`.
+
 ### Macro — Q6
 
 #### `macro_observations`
@@ -305,19 +402,21 @@ Article metadata. Body text stored on disk at `%USERPROFILE%\AlphaMind\data\news
 | `ingested_at` | TEXT NOT NULL | |
 | `vendor_sentiment_score` | REAL | Marketaux pre-computed (-1 to +1). Nullable. |
 | `vendor_sentiment_label` | TEXT | `positive` / `negative` / `neutral`. Nullable. |
-| `topic_tags` | TEXT | JSON array of vendor tags (`earnings`, `m_and_a`, `regulatory`, etc.). |
+| `topic_tags` | TEXT | JSON array of canonical `HeadlineType` values (see [schema/_common.py § HeadlineType](../schema/_common.py)). Vendor tags are normalized at the collector boundary via [`config/headline_tag_mapping.yaml`](../../../../config/headline_tag_mapping.yaml). |
 
 Indexes: `(published_at DESC)`, `(source, published_at)`.
 
 #### `news_article_tickers`
 
-Many-to-many: articles to mentioned tickers. The primary subject ticker is flagged.
+Many-to-many: articles to mentioned tickers, with per-(article, ticker) sentiment when the vendor produces it. The primary subject ticker is flagged.
 
 | Column | Type | Notes |
 |---|---|---|
 | `article_id` | TEXT NOT NULL | FK to `news_articles.article_id` ON DELETE CASCADE. |
 | `ticker` | TEXT NOT NULL | FK to `asset_universe.ticker`. |
 | `is_primary` | INTEGER NOT NULL | Boolean. |
+| `vendor_sentiment_score` | REAL | Per-(article, ticker) score from Marketaux's `entities[].sentiment_score` (-1 to +1). Nullable for sources that don't emit per-ticker sentiment (e.g., Finnhub headlines). |
+| `vendor_sentiment_label` | TEXT | `positive` / `negative` / `neutral`, derived from `vendor_sentiment_score` per the same thresholds as `news_articles.vendor_sentiment_label`. Nullable when score is null. |
 
 Primary key: `(article_id, ticker)`. Indexes: `(ticker, article_id)`.
 
@@ -382,9 +481,8 @@ Categories not implemented in v1:
 | Category | Reason |
 |---|---|
 | Q2 order flow / microstructure / dark pool | Schema depends on Polygon tick-data shape; tick-data subscription not yet active. |
-| Q4 short selling | Bi-monthly FINRA cycle; daily short volume + borrow cost can fit `macro_observations` later. |
-| Q5 fundamental data (earnings revisions, expectations vs. reality) | Requires a separate revision-tracking shape; deferred until decision layer needs it. |
-| Q8 commodities specialized (futures curves, CFTC positioning) | WTI / nat-gas spot fits `macro_observations`; futures curves and COT need their own table. |
+| Q5 fundamentals — analyst ratings, ownership, multi-period growth/margin trajectories | Revision tracking landed (`earnings_estimate_revisions`); the remaining Q5 entities depend on the decision-layer consumer pattern. |
+| Q8 commodities specialized (futures curves, CFTC positioning) | WTI / nat-gas spot fits `macro_observations`; futures curves and COT need their own table once the CME/CFTC source choice is made. |
 | Qual2 social sentiment | StockTwits + Google Trends; deferred until distillation needs the input. |
 | Qual4 earnings transcripts | Hybrid pattern: metadata in DB, transcript text on disk per Qual1's news pattern. |
 | Qual6 sector-specific qualitative catalysts | LLM-derived; lands when the qualitative research layer is built. |
@@ -412,10 +510,15 @@ Numbers reflect the bootstrap windows defined in [lifecycle.md § Per-category s
 |---|---|
 | `ohlcv_bars` | Retained indefinitely. |
 | `options_contract_snapshots` | Rows older than 120 days pruned by an ops-time policy. `options_contracts` reference rows are not pruned. |
-| `news_articles` + body files on disk | Retained indefinitely; revisit if growth exceeds projections. |
-| `prediction_market_snapshots` | Retained indefinitely for v1; revisit when `prediction_market_history_days=30` calibration window grows. |
+| `news_articles` + body files on disk | Retained indefinitely; reviewed when the `data_dir.disk_pressure` alert fires (see [command-center.md § Alerting](../../command-center.md#alerting)). The trigger is on-disk size of `%USERPROFILE%\AlphaMind\data\` against a threshold pinned at command-center landing — adaptive research's `grep`-able body archive stays intact until physical disk constraints surface. |
+| `prediction_market_snapshots` | Retained indefinitely. The retention review trigger is upward edits to `prediction_market_history_days` in `config/distillation.yaml` — extending the calibration window per [threshold-calibration.md § Persistence and percentile windows](../../02-distillation-layer/threshold-calibration.md) is the consumer-side authority on how much history is useful; the calibration log entry is the audit anchor. |
 | `macro_observations` | Retained indefinitely. |
 | `event_calendar` | Past-event rows retained for reconciliation. |
+| `short_interest_snapshots` | Retained indefinitely. |
+| `short_volume_daily` | Retained indefinitely. |
+| `borrow_cost_daily` | Retained indefinitely. |
+| `borrow_cost_intraday` | Rows older than 90 days pruned by an ops-time policy — the 16-min granularity is only useful within the trend-computation window. |
+| `earnings_estimate_revisions` | Retained indefinitely. |
 | `collection_runs` | Trim after 90 days. |
 
 ---

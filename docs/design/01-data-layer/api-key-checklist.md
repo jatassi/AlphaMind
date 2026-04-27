@@ -167,12 +167,13 @@ Inventory of every external data provider AlphaMind reads from: authentication m
   - Public Reporting Environment API
 
 ### 14. FINRA (Short Interest + ATS Transparency)
-- **Auth:** None (file downloads)
-- **Domains served:** Q4a (Short interest), Q4c (Daily short volume), Q2c (Dark pool volume)
+- **Cost:** Free
+- **Auth:** None — `User-Agent` header is the only requirement (CDN file downloads)
+- **Domains served:** Q4a (Short interest), Q4c (Daily short volume), Q2c (Dark pool volume — deferred)
 - **Endpoints:**
-  - Short interest bulk files
-  - ATS transparency weekly files
-  - Daily short volume files
+  - Daily short volume (Reg SHO): `https://cdn.finra.org/equity/regsho/daily/{PREFIX}shvol{YYYYMMDD}.txt` — pipe-delimited; published by 6pm ET on the trade date. Prefixes: `CNMS` (consolidated NMS), `FNRA` (TRF Carteret), `FNYX` (TRF NYSE), `FNQC` (TRF Chicago), `FORF` (ORF), `ADF` (ADF).
+  - Bi-weekly short interest: `https://cdn.finra.org/equity/otcmarket/biweekly/shrt{YYYYMMDD}.csv` — CSV; published ~7–10 days after settlement (typically Tuesdays). FINRA's data glossary at `https://www.finra.org/finra-data/browse-catalog/equity-short-interest/glossary` documents the field set.
+  - File layout reference: `https://www.finra.org/sites/default/files/DailyShortSaleVolumeFileLayout.pdf`.
 
 ### 15. Polymarket
 - **Auth:** None (read-only)
@@ -191,11 +192,17 @@ Inventory of every external data provider AlphaMind reads from: authentication m
   - Python: `yfinance.Ticker("AAPL").get_analyst_price_targets()`
   - Python: `yfinance.Ticker("AAPL").options` + `option_chain()`
 
-### 17. iBorrowDesk (scraping)
-- **Auth:** None
-- **Domains served:** Q4b (Borrow cost/fee rates)
+### 17. iBorrowDesk (undocumented JSON API)
+- **Cost:** Free (the site's $10/mo "Patron" tier unlocks website features only — there is no sanctioned programmatic-access tier at any price)
+- **Auth:** None — browser-like `User-Agent` header expected
+- **Domains served:** Q4b (Borrow cost / fee rates)
 - **Endpoints:**
-  - Scrape `https://iborrowdesk.com/report/{ticker}` (React SPA — needs headless browser)
+  - `GET https://www.iborrowdesk.com/api/ticker/{TICKER}` — undocumented JSON endpoint. Returns ~65 KB per ticker: 1 trading year of EOD daily history (`daily` array), trailing 3–5 days of ~16-min intraday snapshots (`real_time` array), and `latest_*` summary fields. Apex `iborrowdesk.com` 301-redirects to `www.` — follow redirects.
+  - 404 returns a structured `{"errors": [{"code": "not_found", ...}]}` body — handle gracefully (universe coverage gaps).
+- **Operational notes:**
+  - Aggressive rate limit. Empirical: ~4 calls in tight succession trips an `HTTP 444` (NGINX `return 444` — connection terminated) block; the block persists across subsequent requests for an unknown duration. Pace at ≥5s between requests; treat 444 and TCP empty-reply as "blocked, back off heavily" distinct from 4xx/5xx.
+  - Single-call payload covers everything the schema needs (1y daily + recent intraday) — daily collector cadence is sufficient; on-demand single-ticker refresh handles fresher analyst-tool requests.
+  - Endpoint is undocumented: monitor for breakage; no SLA exists.
 
 ### 18. Earnings Transcripts (Motley Fool / Quartr / YouTube)
 - **Auth:** None (scraping-based)
@@ -224,10 +231,10 @@ Inventory of every external data provider AlphaMind reads from: authentication m
 | 11 | Treasury Fiscal Data | None | Free |
 | 12 | SEC EDGAR | User-Agent header | Free |
 | 13 | CFTC COT Reports | None | Free |
-| 14 | FINRA | None | Free |
+| 14 | FINRA | User-Agent header | Free |
 | 15 | Polymarket | None | Free |
 | 16 | Yahoo Finance (yfinance) | None | Free |
-| 17 | iBorrowDesk | None (scraping) | Free |
+| 17 | iBorrowDesk | User-Agent header | Free |
 | 18 | Earnings Transcripts | None (scraping) | Free |
 
 Live keys are stored locally in `docs/design/01-data-layer/api-keys.md` (gitignored) and consumed via `.env` per `data_sources.yaml`.

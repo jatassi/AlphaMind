@@ -35,6 +35,7 @@ config/
   execution.yaml                         # execution-layer behavior knobs
   guardrails.yaml                        # rule registry (metadata only)
   distillation.yaml                      # distillation-layer thresholds and windows
+  digest.yaml                            # weekly-digest notable-shift thresholds
   assets.yaml                            # per-sector ticker list and benchmarks
   llm_failure.yaml                       # per-failure retry policy
   profiles/
@@ -73,7 +74,8 @@ triggers:
   off_hours_rolling:    "0 0,4,8,20 * * mon-fri"
   pre_open:             "0 9 * * mon-fri"
   pre_close:            "30 15 * * mon-fri"
-  weekend:              "0 */6 * * sat,sun"
+  weekend_saturday:     "0 10 * * sat"
+  weekend_sunday:       "0 18 * * sun"
 ```
 
 ### `data_sources.yaml`
@@ -118,14 +120,21 @@ Per-agent configuration. The tool allowlist is a list of tool names that must re
 ```yaml
 agents:
   analyst:
-    model: claude-opus-4
+    model: claude-opus-4-7
     prompt: prompts/decision/analyst.md
     latency_budget_seconds: 180
     context_token_budget: 8000
     output_token_budget: 2000
     tools: [retrieve_brief, validate_guardrail]
+  pm:
+    model: claude-opus-4-7
+    prompt: prompts/decision/pm.md
+    latency_budget_seconds: 240
+    context_token_budget: 12000
+    output_token_budget: 3000
+    tools: [retrieve_brief, validate_guardrail, get_thesis_components, submit_envelope]
   adaptive_researcher:
-    model: claude-sonnet-4
+    model: claude-sonnet-4-6
     prompt: prompts/analysis/adaptive.md
     latency_budget_seconds: 300
     cumulative_tool_call_limit: 25
@@ -276,6 +285,34 @@ persistence_windows:
 prediction_market:
   prediction_market_delta_pp_threshold:           5.0
   prediction_market_low_liquidity_volume_min_usd: 10000
+```
+
+### `digest.yaml`
+Notable-shift thresholds for the weekly digest's [Section 5](feedback-loop.md#section-5--notable-shifts). Universe-wide — does not compose with profile, regime, mode, or overlay. The digest itself is generated deterministically (no LLM tokens), so numeric thresholds are the operator interface. Per-shift block keyed by canonical shift name; each shift's substructure is exactly what that shift needs.
+
+```yaml
+anti_pattern_spike:
+  baseline_window_weeks:     4         # rolling window the current week is compared against
+  multiplier_vs_baseline:    2.0       # current-week count must exceed baseline mean × this multiple
+  min_occurrences_this_week: 5         # AND raw weekly count must be at least this floor
+
+regime_change:
+  enabled: true                        # fire on any classification change from the prior week's regime label
+
+sector_underperform:
+  baseline_window_weeks: 4             # window over which each sector's rolling P/L is computed
+  median_offset_sigma:   1.5           # fire when a sector's rolling P/L falls below (median of other sectors − this many σ)
+
+citation_chain_shift:
+  baseline_window_weeks: 4
+  delta_pp_threshold:    20.0          # fire when synthesizer citation rate per source changes by more than this many percentage points
+
+source_signal_survival_drop:
+  baseline_window_weeks: 4
+  delta_pp_threshold:    20.0          # fire when a per-source signal survival rate drops by more than this many percentage points
+
+validation_window_end:
+  days_before_due: 7                   # fire when an active validation is within this many days of evaluation-due, or already overdue
 ```
 
 ### `assets.yaml`
@@ -432,7 +469,7 @@ The resolver runs once at invocation start and produces a resolved-config snapsh
 
 Composition order for numeric rule limits: profile base → regime multiplier → active overlay multipliers (multiplicative). Mode transform applied last, restricting action vocabulary and guardrail state header sections.
 
-Profile transitions are manual per [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md#transitioning-between-profiles). A profile-boundary advisory when portfolio equity crosses a tier boundary is a candidate follow-up.
+Profile transitions are manual per [rules-and-limits.md](06-risk-guardrails/rules-and-limits.md#transitioning-between-profiles); the `Profile boundary crossed` alert rule in [`config/alerts.yaml`](command-center.md#alerting) emits an Operational advisory whenever `portfolio_summary.total_equity` falls outside the active profile's `capital_range_usd`, symmetric for upward (graduation candidate) and downward (downgrade candidate) crossings.
 
 ## Runtime vs. deploy-time classification
 
@@ -450,7 +487,7 @@ Three layers, run in order at each invocation's config load:
 
 **Cross-reference.** Checks relationships between files: `active_profile` in `main.yaml` names a file that exists in `profiles/`; `active_sectors` in every profile is a subset of the sector keys in `assets.yaml`'s `sectors:` map; every rule ID referenced by a profile's `rule_values` exists in `guardrails.yaml`'s registry; every regime's `multipliers` covers every rule present in every profile; `api_key_env` and `api_secret_env` references resolve to keys present in `.env`; agent `model` values are in the allowed-models list; every tool name in an agent's `tools` list is a registered tool.
 
-**Semantic self-test.** Invariants requiring computation: cumulative-drawdown `progressive_tiers` are monotonically increasing in trigger percentage; no regime multiplier drives a rule limit to zero or negative for any profile; escalation zones are ordered `warning < critical < hard_block`; each profile's `capital_range_usd` does not overlap another profile's; every ticker symbol in `assets.yaml` is unique across all sectors and benchmarks and matches `^[A-Z][A-Z0-9.]*$`; each sector listed in any profile's `active_sectors` has at least one ticker in `assets.yaml`; `last_full_validation` in `assets.yaml` is no later than today; feature-flag closure — for each profile with `options_enabled: false`, no options rule appears in `rule_values`, no options-specific agent appears in `agents.yaml`'s active set, and no options-dependent field appears in guardrail state header configuration.
+**Semantic self-test.** Invariants requiring computation: cumulative-drawdown `progressive_tiers` are monotonically increasing in trigger percentage; no regime multiplier drives a rule limit to zero or negative for any profile; escalation zones are ordered `warning < critical < hard_block`; each profile's `capital_range_usd` does not overlap another profile's; every ticker symbol in `assets.yaml` is unique across all sectors and benchmarks and matches `^[A-Z][A-Z0-9.]*$`; each sector listed in any profile's `active_sectors` has at least one ticker in `assets.yaml`; `last_full_validation` in `assets.yaml` is no later than today; feature-flag closure — for each profile with `options_enabled: false`, no options rule appears in `rule_values`, no options-specific agent appears in `agents.yaml`'s active set, and no options-dependent field appears in guardrail state header configuration; in `digest.yaml`, every `baseline_window_weeks` ≥ 1, `anti_pattern_spike.multiplier_vs_baseline` > 1.0, `anti_pattern_spike.min_occurrences_this_week` ≥ 0, `sector_underperform.median_offset_sigma` > 0, `delta_pp_threshold` values in `(0, 100]`, and `validation_window_end.days_before_due` ≥ 0.
 
 A failure at any layer aborts the invocation and alerts the operator.
 

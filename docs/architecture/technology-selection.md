@@ -71,19 +71,40 @@ SQLite is the database engine (Python stdlib `sqlite3`); no additional driver.
 
 Used by the scheduler to skip holidays and adjust weekend cadence.
 
+### Command center backend
+
+| Package | Purpose | Architectural reference |
+|---------|---------|----------------------|
+| `fastapi` | Async web framework — public-facing surface plus per-process loopback control surfaces | [Command center § Tech stack](../design/command-center.md#tech-stack) |
+| `uvicorn[standard]` | ASGI server hosting FastAPI in each of pipeline, monitor, command center | [Command center § Tech stack](../design/command-center.md#tech-stack) |
+| `aiosqlite` | Async SQLite driver paired with SQLAlchemy 2.0's async session | [Command center § Backend](../design/command-center.md#backend) |
+| `webauthn` (`py_webauthn`) | WebAuthn relying-party logic for browser authentication | [Command center § Backend](../design/command-center.md#backend) |
+
+Frontend: TypeScript / React / Vite / shadcn/ui — BaseUI variants / Tailwind / TanStack (Router, Query, Table) / React Hook Form + Zod / Recharts / `openapi-typescript`. Node LTS for the toolchain. Frontend-package detail in [command-center.md § Frontend](../design/command-center.md#frontend); the FastAPI-emitted OpenAPI schema is the single source of truth for shared types.
+
 ---
 
 ## Market data providers
 
+### Quantitative
+
 | Provider | Tier | Monthly cost | Data provided |
 |----------|------|-------------|---------------|
-| Polygon.io | Stocks Starter + Options Starter | $58 | OHLCV bars (all timeframes), last quote/trade, extended hours, options snapshots, ticker reference |
+| Polygon.io | Stocks Starter + Options Starter | $58 | OHLCV bars (all timeframes), last quote/trade, extended hours, options snapshots, ticker reference, `/v2/reference/news` |
 | Alpaca | Free | $0 | IEX trade data (order flow proxy), account-free market data, paper-trading execution |
 | FRED | Free | $0 | Treasury yields, economic indicators, macro data |
 | Finnhub | Free | $0 | Analyst recommendations, earnings calendar, company news |
 | FINRA | Free | $0 | Short volume, ATS (dark pool) weekly data |
 
-Additional qualitative sources (news APIs, sentiment, prediction markets) are TBD. The data layer's adapter pattern keeps each source an independent integration.
+### Qualitative
+
+| Category | Provider(s) | Monthly cost | Data provided |
+|----------|-------------|-------------|---------------|
+| Qual1 — News & sentiment | Marketaux + Finnhub + Polygon `/v2/reference/news` | $0 (Marketaux + Finnhub free; Polygon news bundled in Stocks Starter above) | Per-article metadata, vendor sentiment scores, ticker entity tags. Three independent streams overlaid by the credibility-tier model in [news_sentiment.yaml](../design/01-data-layer/mappings/news_sentiment.yaml) |
+| Qual2 — Social sentiment | Deferred | — | No viable free-tier vendor; StockTwits API registration closed and Finnhub social-sentiment endpoint returns 403 on free tier. The qualitative researcher's `social_sentiment` tool reports unavailable; per [api-failure-handling.md § Criticality tiers](../design/01-data-layer/api-failure-handling.md), Qual2 is Optional and the absence is a budgeted outcome |
+| Qual3 — Prediction markets | Kalshi + Polymarket | $0 (public read APIs) | Contract probabilities, liquidity, bid/ask trajectories. Categories per [qualitative.md § 3](../design/01-data-layer/external/qualitative.md): macro/policy (Kalshi) and election/event (Polymarket) |
+
+The data layer's adapter pattern keeps each source an independent integration.
 
 ---
 
@@ -130,6 +151,12 @@ alpaca-py             # Alpaca
 finnhub-python        # Finnhub
 fredapi               # FRED
 
+# Command center backend
+fastapi
+uvicorn[standard]
+aiosqlite
+webauthn              # py_webauthn on PyPI as `webauthn`
+
 # Development
 ruff
 mypy
@@ -137,6 +164,8 @@ pytest
 pytest-asyncio
 pytest-cov
 ```
+
+Manifests pin minimum-version floors only; reproducibility comes from `uv.lock` (Python) and `package-lock.json` (frontend). Cross-platform validation runs in CI on a Windows + macOS matrix. See [command-center.md § Versioning policy](../design/command-center.md#versioning-policy) for detail.
 
 ---
 
@@ -149,5 +178,4 @@ pytest-cov
 | Celery / task queues | No distributed task execution needed ([Component boundaries](component-boundaries.md)) |
 | LangChain / LangGraph | Agent SDK provides the orchestration primitives directly ([LLM integration](llm-integration.md)) |
 | APScheduler v4 | Still alpha, known data integrity issues ([Infrastructure](infrastructure.md)) |
-| FastAPI / web framework | No web UI or API server needed initially ([Infrastructure](infrastructure.md)) |
 | Prometheus / Grafana | Over-engineered for a local paper trading system ([Infrastructure](infrastructure.md)) |

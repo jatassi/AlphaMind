@@ -8,10 +8,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single yield level with rate-of-change metrics at multiple horizons.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: level
     target_type: float
@@ -57,10 +53,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single yield curve spread and its dynamics.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: spread
     target_type: float
@@ -98,10 +90,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Results from a single Treasury auction (2Y, 5Y, 10Y, or 30Y).
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: tenor
     target_type: str
@@ -179,10 +167,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Market-implied probability distribution over Fed action at next FOMC meeting.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: probability_hike
     target_type: float
@@ -220,10 +204,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Implied rate expectations over multiple horizons from Fed funds futures.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: implied_terminal_rate
     target_type: float
@@ -269,10 +249,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single inflation data release (CPI, PPI, or PCE) with surprise scoring.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: metric
     target_type: str
@@ -366,10 +342,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Market-implied inflation expectations from TIPS spreads.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: breakeven_5y
     target_type: float
@@ -439,10 +411,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single PMI subcomponent (New Orders, Production, Inventories, etc.).
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: component
     target_type: str
@@ -472,10 +440,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Latest employment snapshot from monthly NFP or weekly claims.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: nonfarm_payroll_change
     target_type: Optional[float]
@@ -521,10 +485,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Latest consumer-side economic data.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: retail_sales_yoy
     target_type: Optional[float]
@@ -562,10 +522,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Housing market indicators.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: new_home_sales_monthly
     target_type: Optional[float]
@@ -603,10 +559,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Investment grade and high-yield credit spread data.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: ig_spread
     target_type: float
@@ -716,10 +668,6 @@ entities:
   spec_id: N/A (supporting type)
   description: BDC and private lending market health indicators.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: bdc_price_index
     target_type: Optional[float]
@@ -821,10 +769,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Overnight and short-term repo, SOFR, and money market funding conditions.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: sofr_rate
     target_type: float
@@ -958,10 +902,6 @@ entities:
   spec_id: N/A (supporting type)
   description: High-level funding and credit stress aggregate maintained by distillation layer.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: stress_score
     target_type: float
@@ -991,10 +931,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single currency rate with change and context.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: rate
     target_type: float
@@ -1048,10 +984,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Distillation layer's interpretation of why the dollar moved.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: primary_driver
     target_type: str
@@ -1097,10 +1029,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single economic event scheduled or recently released.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: event_name
     target_type: str
@@ -1178,10 +1106,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Alert that a market-moving event is imminent.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: next_event
     target_type: str

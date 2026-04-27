@@ -8,10 +8,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A rate level and its probability from a terminal rate distribution.
   is_primary_entity: false
-  primary_source: Kalshi + Polymarket
-  fallback_source: N/A
-  cadence: Real-time
-  feasibility: HIGH
   fields:
   - target_field: rate_bps
     target_type: int
@@ -39,10 +35,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Per-meeting odds for an upcoming FOMC decision.
   is_primary_entity: false
-  primary_source: Kalshi + Polymarket
-  fallback_source: N/A
-  cadence: Real-time
-  feasibility: HIGH
   fields:
   - target_field: meeting_date
     target_type: date
@@ -125,10 +117,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single regulatory/political outcome contract on a prediction market.
   is_primary_entity: false
-  primary_source: Kalshi + Polymarket
-  fallback_source: N/A
-  cadence: Real-time
-  feasibility: HIGH
   fields:
   - target_field: contract_id
     target_type: str
@@ -266,10 +254,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single geopolitical outcome contract (conflict, sanctions, OPEC decisions).
   is_primary_entity: false
-  primary_source: Kalshi + Polymarket
-  fallback_source: N/A
-  cadence: Real-time
-  feasibility: HIGH
   fields:
   - target_field: contract_id
     target_type: str
@@ -402,7 +386,7 @@ entities:
     transform: 'Polymarket: search events/markets for geopolitical topics (Taiwan, Middle East, etc.). outcomePrices for probabilities.
       Kalshi: filter by relevant series.'
 - entity: MonetaryPolicyOutcome
-  spec_id: Qual 3:3a
+  spec_id: Qual3:3a
   description: Qual 3:3a — Fed rate decision probabilities from prediction markets.
   is_primary_entity: true
   primary_source: Kalshi + Polymarket
@@ -532,7 +516,7 @@ entities:
       market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
       weighted by market liquidity.'
 - entity: RegulatoryPoliticalOutcome
-  spec_id: Qual 3:3b
+  spec_id: Qual3:3b
   description: Qual 3:3b — Regulatory, trade, and political event probability markets.
   is_primary_entity: true
   primary_source: Kalshi + Polymarket
@@ -585,7 +569,7 @@ entities:
       market.outcomePrices (JSON array of Yes/No prices), market.volume, market.liquidity. Combine: average probabilities
       weighted by market liquidity.'
 - entity: GeopoliticalOutcome
-  spec_id: Qual 3:3c
+  spec_id: Qual3:3c
   description: Qual 3:3c — Geopolitical conflict, sanctions, and OPEC decision markets.
   is_primary_entity: true
   primary_source: Kalshi + Polymarket

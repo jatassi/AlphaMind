@@ -39,6 +39,7 @@ Each regime defines a multiplier applied to the base (normal) parameter value fr
 | **Borrow cost budget** | 0.05%/day | 0.05% (no change) | 0.04% (×0.8) | 0.02% (×0.4) |
 | **Min cash reserve** | 10% | 8% (×0.8) | 15% (×1.5) | 25% (×2.5) |
 | **Correlation limit** | 0.70 | 0.75 | 0.60 | 0.50 |
+| **Thesis-dependency risk flag** | 25% | 28% (×1.12) | 20% (×0.8) | 15% (×0.6) |
 
 **Design rationale for multiplier choices:**
 

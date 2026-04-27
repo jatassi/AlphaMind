@@ -419,14 +419,14 @@ Empty state: "No active validations."
 
 #### Section 5 — Notable shifts
 
-Auto-flagged items, each row links to the relevant deeper view. Default thresholds (operator-tunable):
+Auto-flagged items, each row links to the relevant deeper view. Default thresholds (operator-tunable in [`config/digest.yaml`](configuration-management.md#digestyaml)):
 
-- **Anti-pattern spike** — fires when any canonical pattern's weekly count exceeds 2× the prior 4-week average AND ≥5 occurrences this week
-- **Regime change** — fires on any classification change from the prior week
-- **Sector underperforming** — fires when a sector's rolling-4-week P/L falls below (median of other sectors − 1.5σ)
-- **Citation chain shift** — fires when synthesizer citation rate per source changes by >20pp from the prior 4-week average
-- **Source signal survival drop** — fires when a per-source signal survival rate drops by >20pp from the prior 4-week average
-- **Validation reaching window end** — fires when an active validation is within 7 days of due, or overdue
+- **Anti-pattern spike** (`anti_pattern_spike`) — fires when any canonical pattern's weekly count exceeds `multiplier_vs_baseline` × the prior `baseline_window_weeks` average AND `min_occurrences_this_week` floor met
+- **Regime change** (`regime_change`) — fires on any classification change from the prior week
+- **Sector underperforming** (`sector_underperform`) — fires when a sector's rolling P/L over `baseline_window_weeks` falls below (median of other sectors − `median_offset_sigma` × σ)
+- **Citation chain shift** (`citation_chain_shift`) — fires when synthesizer citation rate per source changes by more than `delta_pp_threshold` percentage points from the prior `baseline_window_weeks` average
+- **Source signal survival drop** (`source_signal_survival_drop`) — fires when a per-source signal survival rate drops by more than `delta_pp_threshold` percentage points from the prior `baseline_window_weeks` average
+- **Validation reaching window end** (`validation_window_end`) — fires when an active validation is within `days_before_due` days of evaluation-due, or overdue
 
 Empty state: "Nothing crossed a notable-shift threshold this week."
 
@@ -472,11 +472,9 @@ Items waiting on data accumulation, dashboard build, or operating the system.
 Outcome-tier surfaces need real resolved-thesis volume before the design is meaningful.
 
 - **Monthly view metric set and conditioning-slice UI.** Structure named in [Dashboard and digest curation](#dashboard-and-digest-curation); specific layout, metric subset, and slice-comparison UI ship once resolved-thesis count crosses the threshold for meaningful credible bands.
-- **Retrospective view layout.** Calendar-anchored quarterly; the dashboard view rendering a `retrospective_reports` record is drafted alongside the first quarterly retrospective.
 
 ### Waiting on the dashboard build
 
-- **`config/digest.yaml` schema.** Key/value tree for operator-tunable notable-shift thresholds. Drafted as part of the dashboard build's config wiring.
 - **Ad-hoc query surface UI.** Filter dimensions, query input shape, result rendering, export. Drafted with the dashboard frontend.
 
 ### Waiting on operating the system

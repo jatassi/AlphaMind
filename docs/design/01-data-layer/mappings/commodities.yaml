@@ -8,10 +8,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single point on a commodity futures curve (e.g., front month, 3-month out).
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: expiry_label
     target_type: str
@@ -41,10 +37,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Inflow/outflow data for a specific commodity ETF.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: flow_usd
     target_type: float

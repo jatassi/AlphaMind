@@ -108,8 +108,9 @@ The PM's gating input for any new position — regardless of thesis quality, the
 
   *4a. Cash and buying power*
   Underlying data is the cash ledger entity in [state-persistence.md](../../05-execution-layer/state-persistence.md): current cash, settled cash, reserved capital, available buying power, margin held, unsettled proceeds with settlement dates. The ingestion layer delivers these fields plus:
-  - Cash as percentage of portfolio: cash / (cash + position market value). The PM maintains this above a minimum floor (future risk guardrail) to preserve optionality.
+  - Cash as percentage of portfolio: cash / (cash + position market value). The PM maintains this above the [Minimum cash reserve guardrail](../../06-risk-guardrails/rules-and-limits.md) — 10% base of total portfolio value measured against settled cash, regime-adapted via the rule's multiplier table (8% in low-vol up to 25% in crisis), enforced T3.
   - True deployable capital: settled cash minus reserved (for pending orders) minus margin held — actually available for new positions, accounting for settlement cycles per [venue configuration](../../05-execution-layer/venue-configuration.md).
+  - Reg T excess (cumulative): trailing-30d, trailing-90d, and lifetime sums of `regt_excess_over_pm` across processed fills, computed at delivery time from fill-record attribution metadata per [regt-margin-attribution.md](../../05-execution-layer/regt-margin-attribution.md). The dollar cost of running on Reg T vs. a portfolio-margin equivalent — the operator's broker-switch signal.
 
   *4b. Pending orders*
   Approved but unfilled orders — committed capital, an active thesis, a decision that may need revision. Records from the Orders entity in [state-persistence.md](../../05-execution-layer/state-persistence.md), filtered to status in (pending, partially-filled). The ingestion layer delivers all order fields plus:

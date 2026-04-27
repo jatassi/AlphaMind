@@ -8,10 +8,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single point-in-time borrow cost measurement. Used as building blocks
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: timestamp
     target_type: datetime
@@ -49,10 +45,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Rolling trend statistics for short volume over multiple days. Captures
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: days_in_period
     target_type: int
@@ -98,10 +90,6 @@ entities:
   spec_id: N/A (supporting type)
   description: 'Fee trajectory measurement: fee level and direction of movement.'
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: period_start
     target_type: date

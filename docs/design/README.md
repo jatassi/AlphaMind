@@ -46,7 +46,9 @@ The pipeline runs on a fixed schedule tied to US market hours (NYSE: 9:30 AM –
 
 **TODO — Refine scope per run type:** Tailored pipeline configurations per invocation type. Pre-open warrants expanded adaptive research budget and broader qualitative sweep; pre-close prioritizes portfolio review and thesis invalidation; intraday runs are monitoring-heavy with selective deep dives; after-hours runs can be lighter. Scoped profiles also drive the cost model.
 
-**Total daily invocations:** ~8–10 per trading day (4 market + 2 anchored + 3–4 off hours). Weekend cadence TBD — likely every 6–8 hours since only futures and prediction markets provide signal.
+**Total daily invocations:** ~8–10 per trading day (4 market + 2 anchored + 3–4 off hours).
+
+**Weekend invocations:** Two anchored runs concentrated on the highest-signal moments. Saturday ~10:00 ET digests Friday's close and the start of weekend news flow; Sunday ~18:00 ET positions before Monday's pre-market open and the Sunday-evening earnings-preannouncement window. Strategist re-evaluates open positions against new weekend signal; analyst's inclusion threshold suppresses noise on quiet weekends. Off-weekend events (geopolitical breaks, prediction-market shifts beyond distillation thresholds) reach the system through the continuous monitor's emergency-invocation path.
 
 
 ---

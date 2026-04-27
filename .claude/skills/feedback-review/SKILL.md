@@ -21,11 +21,11 @@ This skill assumes two things about the environment:
 The mechanics around the dashboard. Brief, then move on to the substance.
 
 1. **Open.**
-   - Call `create_review_session()` to obtain `session_id` and `dashboard_url`.
+   - Call `create_review_session()` (backed by `POST /review-sessions`) to obtain `session_id` and `dashboard_url`.
    - Open the URL directly in the operator's Chrome via `mcp__claude-in-chrome__tabs_create_mcp(url=dashboard_url)`.
    - Confirm the tab opened; if it failed (chrome MCP unavailable, permission denied), fall back to handing the operator the URL.
-2. **Each turn.** Call `get_session_state(session_id)` at the start of the turn. The returned state tells you the operator's current view, what they have selected, and recent navigation. Inject this into your reasoning — it is your equivalent of seeing what the operator is looking at right now.
-3. **End.** When the operator signals end (explicit "we're done", or a natural close), call `end_review_session(session_id)`. The session is transient by design; once ended it is gone. Do not auto-close the operator's tab — leave that to them in case they want to keep looking.
+2. **Each turn.** Call `get_session_state(session_id)` (backed by `GET /review-sessions/{id}/state`) at the start of the turn. The returned state tells you the operator's current view, what they have selected, and recent navigation. Inject this into your reasoning — it is your equivalent of seeing what the operator is looking at right now.
+3. **End.** When the operator signals end (explicit "we're done", or a natural close), call `end_review_session(session_id)` (backed by `DELETE /review-sessions/{id}`). The session is transient by design; once ended it is gone. Do not auto-close the operator's tab — leave that to them in case they want to keep looking.
 
 The operator drives the dashboard at their own pace. You do not react to every interaction — you read state at turn boundaries and respond to what the operator says.
 
@@ -106,7 +106,7 @@ The dashboard is your shared canvas, not a passive backdrop. Use the affordances
 
 **`pin_for_comparison`** — Use when comparing two or more items that live on different views or in different time windows. Pinning keeps them visible across navigation.
 
-**`clear_*`** — Use sparingly. Highlights and annotations from earlier in the session form a useful trail; clear only when they are actively cluttering or the operator asks for a clean slate.
+**`clear_highlights`, `clear_annotations`, `clear_pins`** — Use sparingly. Highlights and annotations from earlier in the session form a useful trail; clear only when they are actively cluttering or the operator asks for a clean slate.
 
 **Batch where possible.** The control endpoint accepts batched actions in a single call. When highlighting three related metrics, send them as one batched call rather than three sequential ones.
 

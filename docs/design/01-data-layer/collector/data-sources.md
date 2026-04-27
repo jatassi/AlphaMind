@@ -17,15 +17,19 @@ src/alphamind/data_sources/
 ├── eia/       { client.py, energy.py }
 ├── bls/       { client.py, macro.py }
 ├── treasury/  { client.py, auctions.py }
-├── finnhub/   { client.py, news.py, calendar.py }
+├── finnhub/   { client.py, news.py, calendar.py, estimate_revisions.py }
 ├── marketaux/ { client.py, news.py }
 ├── sec_edgar/ { client.py, rss.py }
 ├── polymarket/ { client.py, contracts.py }
 ├── kalshi/    { client.py, contracts.py }
+├── finra/     { client.py, short_volume.py, short_interest.py }
+├── iborrowdesk/ { client.py, borrow_cost.py }
 └── alpaca/    { client.py, equity.py }   # failover, deferred
 ```
 
 Per-vendor packages own the HTTP/SDK boundary. Each `client.py` wraps the vendor SDK with `_common.py`'s retry, rate-limit, and run-tracking primitives. Per-domain modules expose narrow collection functions.
+
+News adapters (`finnhub/news.py`, `marketaux/news.py`, `sec_edgar/rss.py`) normalize vendor headline tags into the canonical [`HeadlineType`](../schema/_common.py) set via [`config/headline_tag_mapping.yaml`](../../../../config/headline_tag_mapping.yaml) before writing `news_articles.topic_tags`.
 
 ## Collection function shape
 
@@ -53,15 +57,17 @@ Functions are idempotent — every UPSERT keys on the natural composite key from
 
 ### Retry-per-tier
 
-Three retry shapes per [api-failure-handling.md](../api-failure-handling.md), bound to vendors via `data_sources.yaml.providers.<v>.retry_shape`:
+Three retry shapes per [api-failure-handling.md](../api-failure-handling.md), bound to vendors via `data_sources.yaml.providers.<v>.retry_shape`. The schedule is pinned in `_common.py` — `initial_delay × multiplier^(attempt-1)` is the sleep before each retry.
 
-| Shape | Attempts | Backoff | Failover |
-|---|---|---|---|
-| `critical` | multiple | exponential | enabled where a fallback is configured |
-| `important` | limited | exponential | none |
-| `optional` | single | brief | none |
+| Shape | Attempts | Initial delay | Multiplier | Sleep schedule | Failover |
+|---|---|---|---|---|---|
+| `critical` | 3 | 1.0s | 2.0× | 1.0s, 2.0s | enabled where a fallback is configured |
+| `important` | 2 | 1.0s | 2.0× | 1.0s | none |
+| `optional` | 2 | 0.5s | 1.0× | 0.5s | none |
 
 The retry decorator wraps the SDK call. On exhausted retries, `track_run` writes a `failed` row to `collection_runs` and the function raises. The runner catches and continues with other jobs.
+
+Schedule revisions follow the [threshold-calibration](../../02-distillation-layer/threshold-calibration.md) discipline, driven by `collection_runs.error_summary` history.
 
 ### Rate limiting
 
@@ -108,7 +114,7 @@ Distillation reads what is in the data tables; absence is interpreted by the fai
 
 ## Multi-source failover
 
-Deferred for v1. `data_sources.yaml` lists `primary` and `failover` providers per category; the `critical` retry shape carries `failover: true`. Initial collectors implement only the primary path. Failover dispatch lands inside per-vendor `client.py` modules when a provider's reliability proves it necessary.
+Deferred for v1. `data_sources.yaml` lists `primary` and `failover` providers per category; the `critical` retry shape carries `failover: true`. Initial collectors implement only the primary path. Failover dispatch lands inside per-vendor `client.py` modules when `collection_runs` shows a Critical-tier provider failing its freshness window in two consecutive paper-trading weeks — the deterministic promotion trigger.
 
 ## Future pipeline reuse
 

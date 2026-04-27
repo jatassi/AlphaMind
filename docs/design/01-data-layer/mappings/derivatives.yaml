@@ -8,10 +8,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Implied volatility at a specific expiration. IV term structure (near vs.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: days_to_expiration
     target_type: int
@@ -57,10 +53,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Open Interest concentrated at a specific strike. Used to identify put walls,
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: strike_price
     target_type: float
@@ -114,10 +106,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Open Interest clustering analysis at a specific expiration. Reveals where
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: days_to_expiration
     target_type: int
@@ -171,10 +159,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single block trade (large institutional print) detected in options. Alert
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: timestamp
     target_type: datetime
@@ -244,10 +228,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Detected spike in options volume relative to open interest at a specific
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: strike_price
     target_type: float
@@ -317,10 +297,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Detected sweep order — institutional urgency signal. Sweeps hit multiple
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: timestamp
     target_type: datetime
@@ -398,10 +374,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Equity index futures positioning from CFTC Commitments of Traders report.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: index_name
     target_type: str
@@ -463,10 +435,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Aggregated gamma/delta/vanna/charm exposure at the ticker level. Determines
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: timestamp
     target_type: datetime
@@ -544,10 +512,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Snapshot of OI distribution across strikes at a specific expiration. Identifies
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: expiration_date
     target_type: str
@@ -617,10 +581,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Pricing of ATM straddle spanning an earnings event. Reveals market's
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: earnings_date
     target_type: str
@@ -706,10 +666,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Put/call flow directionality classification. Same ratio reads very differently
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: expiration_date
     target_type: Optional[str]
@@ -803,10 +759,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A detected pair trade signature — simultaneous bullish flow on one name
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: detected_at
     target_type: datetime
@@ -876,10 +828,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Options flow data for a single sector ETF. Institutions express sector views
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: etf_ticker
     target_type: str

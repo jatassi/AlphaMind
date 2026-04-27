@@ -98,6 +98,19 @@ A single port serves the entire surface in production: FastAPI mounts the Vite-b
 
 NSSM wraps each of the three Windows-side processes (pipeline, monitor, command center) as a Windows Service with restart-on-failure and stdout/stderr capture, per [infrastructure.md § Process supervision](../architecture/infrastructure.md#process-supervision-when-running-unattended). Log files and the SQLite database live under `%USERPROFILE%\AlphaMind\`.
 
+### Versioning policy
+
+Manifests carry minimum-version floors (`>=`) only; lockfiles (`uv.lock`, `package-lock.json`) provide build reproducibility. Floors are pinned to current stable releases at the lock date and float upward on subsequent `uv lock` / `npm install`. No upper bounds — upgrade friction outweighs the breakage they prevent. Cross-platform validation (Windows production, macOS development) lives in CI as a Windows + macOS job matrix running lint, type-check, build, and unit tests on each push.
+
+| Toolchain | Floor |
+|---|---|
+| Python | `requires-python = ">=3.13"` in `pyproject.toml` |
+| Node | LTS (current LTS line; the engine field in `package.json` pins the major) |
+| Backend packages | Listed in `pyproject.toml` `[project.dependencies]` under the `# Command center backend` block — `fastapi`, `uvicorn[standard]`, `aiosqlite`, `webauthn` |
+| Frontend packages | Listed in the command-center `package.json` under `dependencies` / `devDependencies` |
+
+Cross-platform integration is handled by upstream libraries: `aiosqlite` and `webauthn` are pure-Python; `Uvicorn` handles signal differences between Windows and POSIX internally; FastAPI's `StaticFiles` mount handles Windows-vs-Unix path separators when serving the Vite-built `dist/`.
+
 ---
 
 ## Interaction model
@@ -277,7 +290,7 @@ Single page showing current portfolio state in aggregate.
 | Pane | Content | Source |
 |---|---|---|
 | Equity and P/L | Total portfolio value, equity high-water mark, current drawdown, daily realized P/L, cumulative realized P/L, total unrealized P/L | `portfolio_summary` |
-| Cash and capital | Current cash balance, settled cash, reserved capital, available buying power, margin held, unsettled proceeds with settlement dates | `cash_ledger` |
+| Cash and capital | Current cash balance, settled cash, reserved capital, available buying power, margin held, unsettled proceeds with settlement dates, Reg T excess (trailing 30d / 90d / lifetime — cumulative dollar cost of Reg T vs. portfolio-margin equivalent per [regt-margin-attribution.md](05-execution-layer/regt-margin-attribution.md)) | `cash_ledger`, `fill_records.regt_margin_attribution` |
 | Exposure | Gross exposure %, net long/short exposure %, sector exposure breakdown ($ and %, long and short separately), delta-adjusted equivalents where options are present | `portfolio_summary` |
 | Positions table | One row per open position: ticker / underlying, instrument type, direction, quantity, market value, unrealized P/L (abs and %), thesis status, position age, distance to target, distance to nearest invalidation | `positions` joined with `theses` |
 | Pending orders | One row per pending order: order id, type, instrument, parameters, age, fill probability assessment from most recent strategist review if any | `orders` filtered by status `pending` or `partially-filled` |
@@ -382,7 +395,29 @@ Outcome-tier metrics with conditioning slices (regime, sector, conviction band, 
 
 #### Retrospective view
 
-Renders a `retrospective_reports` record's saved markdown plus the joining `retrospective_decisions`. Walked through during Phase 4 of [`/feedback-retrospective`](../../.claude/skills/feedback-retrospective/SKILL.md). Layout drafted alongside the first quarterly retrospective.
+Renders a `retrospective_reports` record's saved markdown plus the joining `retrospective_decisions`. Walked through during Phase 4 of [`/feedback-retrospective`](../../.claude/skills/feedback-retrospective/SKILL.md), which is explicitly a top-to-bottom read of the report — the rendering supports that flow rather than imposing an alternative structure.
+
+Layout:
+
+| Pane | Content | Source |
+|---|---|---|
+| Header strip | Window range, generated timestamp, generated-by session ID, decisions-captured progress (`{decided}/{total}`) | `retrospective_reports` record + count of joined `retrospective_decisions` |
+| Report body (left, scrollable) | Rendered markdown of the persisted report. Section headings get stable anchor IDs (slug of the heading text) so the rail can deep-link into them | Filesystem path on `retrospective_reports.report_file` (e.g., `data/retrospective_reports/{report_id}/report.md`) |
+| Decision rail (right, sticky) | One row per promotion candidate and per suggested follow-up extracted from the report; each row carries a status pill (`open` / `accepted` / `rejected`), the item title, and either inline capture controls (open rows) or the captured verdict + rationale text (decided rows). Clicking any row scrolls the report body to the row's anchor and highlights it | Item rows parsed from the report's `## Promotion candidates` and `## Suggested follow-ups` sections; existing decisions joined on `(report_id, item_identifier)` from `retrospective_decisions` |
+
+Item identifier and parsing: each promotion-candidate and follow-up bullet in the rendered report carries a stable identifier emitted by the report generator (slug of the bullet's title within its section, prefixed by section — e.g., `promotion_candidate.synthesizer_drop_pattern`, `follow_up.validation_strategist_at_risk_regime`). Identifiers are stable across re-renders so a captured decision survives editing the report's prose.
+
+Decision capture (open rows in the rail):
+
+- Accept / reject toggle, rationale textarea (required), and — for follow-ups whose accept verdict implies a validation registration — an optional "register a paired validation" affordance that hands off to `/feedback-validate` REGISTER seeded with the follow-up's title and rationale.
+- Submit posts to `POST /api/retrospective/{report_id}/decisions` with `{item_identifier, decision_type, verdict, rationale, linked_validation_id?}` and writes a `retrospective_decisions` record per [state-persistence.md § Retrospective decisions](05-execution-layer/state-persistence.md). On success, the row flips to its read-only captured state.
+- Captured rows are immutable from this view; correcting a decision is a new decision (the latest by `captured_at` wins for status-pill display, and the rail surfaces "{n} prior decisions" when n > 1, expandable to show the audit trail).
+
+Session-mode affordances specific to this view: `scroll_to_section(section_anchor)` brings a markdown section into the operator's viewport during the walkthrough; `highlight_decision_row(item_identifier)` calls attention to a specific rail row when Claude wants to point at a particular promotion candidate or follow-up. Standard `highlight_metric`, `navigate_to_view`, `annotate`, `pin_for_comparison` work as elsewhere; `pin_for_comparison` on a captured decision row keeps it visible across navigation, supporting cross-quarter comparisons later in the session.
+
+Reachable from: a "Recent retrospectives" entry in the weekly digest's notable-shifts section, the `/feedback-retrospective` Phase 4 `create_review_session()` + `navigate_to_view` step, and direct deep-link to `/feedback/retrospective/{report_id}`.
+
+Cross-retrospective decisions ledger (deferred): a separate view filtering `retrospective_decisions` across every `retrospective_reports` record (by decision type, verdict, linked-validation presence, time range) ships once the second retrospective produces enough cross-period decisions to make the ledger meaningful. Per-report rendering does not depend on it.
 
 #### Ad-hoc query surface
 
@@ -517,14 +552,18 @@ An alert rule has four fields: condition, severity, debounce window, channels. C
 |---|---|---|
 | Pipeline aborted | Most recent invocation `status = failed` | Critical |
 | Critical-tier API failure | Q1, Q6, or Q8 data category failed in the most recent invocation | Critical |
+| Schedule miss on critical category | A scheduled trigger for a Critical-tier category (Q1, Q6, Q8) fires but no `collection_runs` row starts within five minutes | Critical |
 | Monitor websocket disconnected | Monitor reports websocket disconnected for ≥ 15 min | Critical |
 | Margin call detected | Activity log `margin_call` event in the last hour | Critical |
 | Drawdown progressive tier crossed | `portfolio_summary` cumulative drawdown crosses a [progressive tier](06-risk-guardrails/breach-behavior.md) threshold | Critical |
 | Halt mode entered | Halt-mode flag transitions from off to on for any reason | Critical |
+| Important-tier API failure | Q2, Q3, Q5, Q12, Qual 1, Qual 4, Qual 5, or Qual 6 data category failed in the most recent invocation | Important |
 | Hard-block guardrail rejection | Activity log `guardrail_rejection` with zone `hard_block` | Important |
 | Regime jump | Regime classification skips a level (e.g., normal → crisis without elevated) | Important |
 | Agent malformed output | Activity log shows an agent malformed-output retry, before resolution | Important |
 | Schedule miss | A scheduled trigger fires but no invocation runs within five minutes | Important |
+| Data directory disk pressure | On-disk size of `%USERPROFILE%\AlphaMind\data\` exceeds the configured threshold (operator-pinned at landing — default candidate: 50 GB or 25% of the volume, whichever is smaller) | Important |
+| Profile boundary crossed | `portfolio_summary.total_equity` falls outside the active profile's `capital_range_usd` (downward = downgrade candidate; upward = graduation candidate) | Operational |
 | Optional data category skipped | Q4, Qual 2, or Qual 3 skipped by failure handler | Operational |
 | Command abandoned | Activity log `command_abandoned` event | Operational |
 | Thesis resolved | Activity log `thesis_resolved` event (informational, for feedback loop tracking) | Operational |

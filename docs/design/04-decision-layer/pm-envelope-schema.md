@@ -171,7 +171,8 @@ Enum values and structural constraints trace back to these sources:
           "then": {
             "properties": {
               "commands": { "maxItems": 0 },
-              "modifications": { "maxItems": 0 }
+              "modifications": { "maxItems": 0 },
+              "concerns": { "minItems": 1 }
             }
           }
         },
@@ -222,7 +223,8 @@ Enum values and structural constraints trace back to these sources:
           "then": {
             "properties": {
               "commands": { "maxItems": 0 },
-              "modifications": { "maxItems": 0 }
+              "modifications": { "maxItems": 0 },
+              "concerns": { "minItems": 1 }
             }
           }
         },
@@ -395,7 +397,7 @@ Enforced by the OMS command intake layer rather than the schema:
 
 - **Anti-pattern names match the canonical strings used across the system.** The `anti_patterns_identified` enum is the single authoritative list aggregated on by the feedback loop. Drift between strategist self-identification, PM detection, and this schema would silently fragment the aggregation surface.
 
-- **Rejection envelopes should populate at least one `concerns` entry.** A rejection with no structured concerns is a structural failure — the feedback loop's "what proposals does the PM reject and why" depends on every rejection carrying its failure structure. Not yet schema-enforced (an empty concerns list is technically valid per criterion semantics — the PM can reject on an "other"-source concern); a `minItems: 1` rule on reject verdicts is an appropriate addition once the edge case is fully characterized.
+- **Rejection envelopes populate at least one `concerns` entry.** Schema-enforced via `concerns: { minItems: 1 }` in the `verdict == reject` conditional of both per-provenance branches. The feedback loop's "what proposals does the PM reject and why" depends on every rejection carrying its failure structure; an `"other"`-source `concern_record` accommodates rejections not captured by a named criterion.
 
 ---
 

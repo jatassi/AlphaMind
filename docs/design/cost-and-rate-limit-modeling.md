@@ -86,15 +86,15 @@ Anthropic deployed a server-side classifier in early 2026 rejecting OAuth tokens
 
 Per [architecture/infrastructure.md § Scheduling](../architecture/infrastructure.md#scheduling):
 
-| Trigger | Times (US/Eastern), Mon–Fri | Per week |
+| Trigger | Times (US/Eastern) | Per week |
 |---|---|---|
-| Pre-open anchored | 09:00 | 5 |
-| Market-hours rolling | 09:30, 11:30, 13:30, 15:30 (deduplicated against anchored) | 20 (or 16 after dedup) |
-| Pre-close anchored | 15:30 (overlaps and replaces the 15:30 rolling) | included above |
-| Off-hours rolling | 20:00, 00:00, 04:00, 08:00 | 20 |
-| Weekend reduced | every 6–8h Sat/Sun | 6 |
+| Pre-open anchored | 09:00 Mon–Fri | 5 |
+| Market-hours rolling | 09:30, 11:30, 13:30, 15:30 Mon–Fri (deduplicated against anchored) | 20 (or 16 after dedup) |
+| Pre-close anchored | 15:30 Mon–Fri (overlaps and replaces the 15:30 rolling) | included above |
+| Off-hours rolling | 20:00, 00:00, 04:00, 08:00 Mon–Fri | 20 |
+| Weekend anchored | Sat 10:00, Sun 18:00 | 2 |
 
-Net scheduled invocations per week: **~32 normal market week**, with dedup and skip-on-recent-completion trimming the raw cron count.
+Net scheduled invocations per week: **~28 normal market week**, with dedup and skip-on-recent-completion trimming the raw cron count.
 
 Emergency invocations triggered by the continuous monitor add a variable tail: **0–2 in a quiet week, 4–8 in a stress week, occasionally more in a crisis week**. Each runs the same agent surface as a scheduled invocation, with the analyst in `watchlist` mode and the strategist in `defensive_posture` mode, both producing smaller outputs than normal mode.
 
@@ -171,14 +171,14 @@ Per scheduled invocation: 3 Opus calls (analyst, strategist, PM).
 
 | Scenario | Scheduled | Emergency | Retries | Opus calls/week | Vs. 15-Opus-hour cap (~180 msg) | Vs. 35-Opus-hour cap (~420 msg) |
 |---|---|---|---|---|---|---|
-| Quiet week, primary | 32 × 3 = 96 | 0 | +5% = +5 | ~101 | 56% | 24% |
-| Normal week, primary | 32 × 3 = 96 | 4 × 3 = 12 | +10% = +11 | ~119 | 66% | 28% |
-| Stress week, full-system | 32 × 3 = 96 | 8 × 3 = 24 | +20% = +24 | ~144 | 80% | 34% |
-| Crisis week, full-system | 32 × 3 = 96 | 16 × 3 = 48 | +20% = +29 | ~173 | 96% | 41% |
+| Quiet week, primary | 28 × 3 = 84 | 0 | +5% = +4 | ~88 | 49% | 21% |
+| Normal week, primary | 28 × 3 = 84 | 4 × 3 = 12 | +10% = +10 | ~106 | 59% | 25% |
+| Stress week, full-system | 28 × 3 = 84 | 8 × 3 = 24 | +20% = +22 | ~130 | 72% | 31% |
+| Crisis week, full-system | 28 × 3 = 84 | 16 × 3 = 48 | +20% = +26 | ~158 | 88% | 38% |
 
 The cap-numerator uses the 12-message-per-Opus-hour calibration baseline. AlphaMind's PM call (~9K tokens combined) is meaningfully heavier than that baseline; effective cap may be tighter than message count suggests. Treat percentages as "best-case headroom from published structure"; expect actual paper-trading measurements to land at the higher end of utilization.
 
-**Read:** Normal weeks consume 28–66% of the weekly Opus cap depending on which end of the published range Anthropic enforces. Stress weeks push 34–80%. A crisis week with large sustained breaches could exhaust the cap. The operating posture is built around this risk.
+**Read:** Normal weeks consume 25–59% of the weekly Opus cap depending on which end of the published range Anthropic enforces. Stress weeks push 31–72%. A crisis week with large sustained breaches could exhaust the cap. The operating posture is built around this risk.
 
 ### Weekly Sonnet utilization
 
@@ -186,8 +186,8 @@ Per scheduled invocation: 7 Sonnet calls. Stress and crisis weeks approximately 
 
 | Scenario | Sonnet calls/week | Vs. 140-Sonnet-hour cap (~1,680 msg) | Vs. 280-Sonnet-hour cap (~3,360 msg) |
 |---|---|---|---|
-| Normal week | 32 × 7 + ~12 emergency + ~22 retries = ~258 | 15% | 8% |
-| Crisis week | 32 × 7 + ~48 emergency + ~58 retries = ~330 | 20% | 10% |
+| Normal week | 28 × 7 + ~12 emergency + ~22 retries = ~230 | 14% | 7% |
+| Crisis week | 28 × 7 + ~48 emergency + ~58 retries = ~302 | 18% | 9% |
 
 Sonnet has comfortable headroom in every realistic scenario.
 
@@ -199,7 +199,7 @@ Against a community-measured ~225-message Max 5x window allowance: **~18% utiliz
 
 ### Combined all-models weekly cap
 
-Anthropic enforces an umbrella all-models weekly cap in addition to per-model sub-caps. The numeric value is not published, but per-model caps are roughly half the umbrella cap. Opus + Sonnet combined (normal week ~258 + ~119 = ~377 calls) sits well below either per-model cap and clears the umbrella by a wider margin.
+Anthropic enforces an umbrella all-models weekly cap in addition to per-model sub-caps. The numeric value is not published, but per-model caps are roughly half the umbrella cap. Opus + Sonnet combined (normal week ~230 + ~106 = ~336 calls) sits well below either per-model cap and clears the umbrella by a wider margin.
 
 ### What happens if the cap estimates are wrong
 
@@ -254,7 +254,7 @@ The adaptive researcher's 25-call / 4,000-token budget is the longest-running to
 
 ### Normal-day operation
 
-The system runs unattended. The pipeline consumes ~30–50% of the weekly Opus cap (best estimate, normal week, primary profile) and ~10% of the weekly Sonnet cap. The operator interacts via the command center for routine review, not intervention.
+The system runs unattended. The pipeline consumes ~25–60% of the weekly Opus cap (best estimate, normal week, primary profile) and ~10% of the weekly Sonnet cap. The operator interacts via the command center for routine review, not intervention.
 
 ### Cap-approach response
 

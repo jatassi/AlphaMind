@@ -78,6 +78,15 @@ Enum values and structural constraints trace back to these sources:
         "properties": {
           "portfolio_level_observations": {
             "required": ["defensive_posture_summary"]
+          },
+          "position_assessments": {
+            "items": {
+              "properties": {
+                "recommended_action": {
+                  "enum": ["hold", "reduce", "close", "adjust-bracket"]
+                }
+              }
+            }
           }
         }
       }
@@ -609,12 +618,11 @@ Enforced by the validation pipeline rather than the schema:
 
 - **`action_parameters.action` must match `recommended_action`** — the discriminator on the action-parameters union is denormalized; the pipeline verifies equality.
 - **`thesis_status: "invalidated"` requires `recommended_action: "close"`.** Encoded conditionally; any invalidated position not paired with close fails validation.
-- **`mode: "defensive_posture"` restricts `recommended_action` to `hold | reduce | close | adjust-bracket`** — enforced as a mode-level conditional in the schema's `allOf` block. The behavioral spec in [strategist.md](strategist.md#halt-mode-and-defensive-posture-behavior) is authoritative until that validator is finalized.
+- **`mode: "defensive_posture"` restricts `recommended_action` to `hold | reduce | close | adjust-bracket`** — enforced as a mode-level conditional in the schema's `allOf` block.
 - **`remedy_flag` values must correspond to breach identifiers in the strategist's guardrail state header.** The pre-processor cross-references and produces an annotation on mismatch.
 - **Pending-order `linked_position_assessment_id` must match an `assessment_id` in the same document.** Referential check.
 - **`position_id` on per-position assessments must match an open position.** Referential check against portfolio state.
 - **Action-quantity sanity.** A `reduce` with `quantity` ≥ current position quantity should have been `close` with `quantity: "all"`; `close_parameters quantity: "all"` on a position with no remaining shares is inconsistent. Checked against current portfolio state.
-- **`add` actions not permitted in `defensive_posture` mode.** Enforced by the behavioral spec; schema-level conditional alongside the mode-level allOf.
 
 ---
 

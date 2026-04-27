@@ -1,0 +1,87 @@
+# Vendor headline-tag → canonical HeadlineType mapping.
+# Canonical taxonomy: docs/design/01-data-layer/schema/_common.py § HeadlineType
+# Applied at the collector boundary in the per-vendor news adapters
+# (data_sources/finnhub/news.py, data_sources/marketaux/news.py,
+#  data_sources/sec_edgar/rss.py). Unmapped vendor tags are dropped silently.
+
+# Marketaux exposes a coarse `topic` array per article. Values listed below
+# are the documented vocabulary as of 2026; revisit when the vendor adds tags.
+marketaux:
+  earnings:           earnings_related
+  guidance:           guidance
+  m_and_a:            m_and_a
+  analyst_ratings:    analyst_action
+  stock_movement:     breaking
+  geopolitics:        geopolitical
+  macro:              macro_data
+  insider_trading:    insider_activity
+  short_sellers:      short_report
+  activist_investing: activist
+  product:            product_launch
+  supply_chain:       supply_chain
+  regulation:         regulatory
+  sector:             sector_rotation
+
+# Finnhub news returns `category` plus headline text; categories are coarse,
+# so most type assignment runs against headline text in the adapter and falls
+# back to the category mapping below.
+finnhub:
+  general:        breaking
+  company:        breaking
+  merger:         m_and_a
+  earnings:       earnings_related
+  ipo:            breaking
+  press_release:  breaking
+  insider:        insider_activity
+
+# SEC EDGAR 8-K item codes carry an exact filer-asserted type. Map by item.
+sec_edgar_8k:
+  "1.01": m_and_a            # Entry into a Material Definitive Agreement
+  "1.02": m_and_a            # Termination of a Material Definitive Agreement
+  "2.01": m_and_a            # Completion of Acquisition or Disposition
+  "2.02": earnings_related   # Results of Operations and Financial Condition
+  "2.03": breaking           # Material direct financial obligation
+  "2.05": breaking           # Costs Associated with Exit / Disposal Activities
+  "2.06": breaking           # Material Impairments
+  "3.01": regulatory         # Notice of Delisting / Listing Standard Failure
+  "3.02": breaking           # Unregistered Sales of Equity Securities
+  "4.01": regulatory         # Changes in Registrant's Certifying Accountant
+  "4.02": regulatory         # Non-Reliance on Previously Issued Financials
+  "5.02": insider_activity   # Departure / Election of Officers / Directors
+  "5.07": breaking           # Submission of Matters to a Vote of Security Holders
+  "7.01": guidance           # Regulation FD Disclosure
+  "8.01": breaking           # Other Events
+
+# Generic RSS / wire topic feeds. Keys are lower-cased, whitespace stripped.
+rss_topic:
+  earnings:           earnings_related
+  guidance:           guidance
+  outlook:            guidance
+  merger:             m_and_a
+  acquisition:        m_and_a
+  takeover:           m_and_a
+  upgrade:            analyst_action
+  downgrade:          analyst_action
+  rating:             analyst_action
+  analyst:            analyst_action
+  fda:                regulatory
+  sec:                regulatory
+  doj:                regulatory
+  antitrust:          regulatory
+  sanctions:          geopolitical
+  tariff:             geopolitical
+  geopolitical:       geopolitical
+  cpi:                macro_data
+  ppi:                macro_data
+  pce:                macro_data
+  fomc:               macro_data
+  jobs:               macro_data
+  insider:            insider_activity
+  short_seller:       short_report
+  hindenburg:         short_report
+  muddy_waters:       short_report
+  activist:           activist
+  product:            product_launch
+  launch:             product_launch
+  supply_chain:       supply_chain
+  rotation:           sector_rotation

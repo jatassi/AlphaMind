@@ -16,7 +16,11 @@ collectors:
   treasury.auctions:         { cron: "0 17 * * mon-fri" }
   finnhub.news:              { cron: "*/30 * * * *" }
   finnhub.calendar:          { cron: "0 6 * * *" }
+  finnhub.estimate_revisions: { cron: "0 8 * * *" }
   marketaux.news:            { cron: "*/30 * * * *" }
   sec_edgar.rss:             { cron: "*/15 * * * *" }
   polymarket:                { cron: "*/30 * * * *" }
   kalshi:                    { cron: "*/30 * * * *" }
+  finra.short_volume:        { cron: "0 19 * * mon-fri" }   # after FINRA's 6pm ET publication
+  finra.short_interest:      { cron: "0 10 * * tue" }       # weekly poll for new bi-weekly file (FINRA publishes Tuesdays)
+  iborrowdesk.borrow_cost:   { cron: "0 6 * * mon-fri" }    # pre-market — captures yesterday's full intraday + EOD

@@ -18,16 +18,21 @@ Features below have full requirements landed in the design docs and zero outstan
 - [Language and runtime](architecture/language-and-runtime.md)
 - [LLM integration](architecture/llm-integration.md)
 - [System characterization](architecture/system-characterization.md)
+- [Technology selection](architecture/technology-selection.md)
 
 ### Data layer
 
 - [Collector lifecycle](design/01-data-layer/collector/lifecycle.md)
 - [Collector runner](design/01-data-layer/collector/runner.md)
+- [Data sources library](design/01-data-layer/collector/data-sources.md)
+- [Portfolio state](design/01-data-layer/internal/portfolio-state.md)
 - [API key inventory](design/01-data-layer/api-key-checklist.md)
+- [Source-to-target mappings](design/01-data-layer/mappings/README.md)
 
 ### Distillation layer
 
 - [External distillation](design/02-distillation-layer/external.md)
+- [Internal distillation](design/02-distillation-layer/internal.md)
 - [Threshold calibration framework](design/02-distillation-layer/threshold-calibration.md)
 
 ### Analysis layer
@@ -38,7 +43,9 @@ Features below have full requirements landed in the design docs and zero outstan
 ### Decision layer
 
 - [Analyst](design/04-decision-layer/analyst.md) ([output schema](design/04-decision-layer/analyst-output-schema.md))
+- [Portfolio manager](design/04-decision-layer/portfolio-manager.md) ([envelope schema](design/04-decision-layer/pm-envelope-schema.md), [submit_envelope tool schema](design/04-decision-layer/submit-envelope-tool-schema.md))
 - [Proposal pre-processor](design/04-decision-layer/proposal-pre-processor.md) ([bundle schema](design/04-decision-layer/proposal-pre-processor-bundle-schema.md))
+- [Strategist](design/04-decision-layer/strategist.md) ([output schema](design/04-decision-layer/strategist-output-schema.md))
 
 ### Execution layer
 
@@ -52,6 +59,9 @@ Features below have full requirements landed in the design docs and zero outstan
 - [Paper-evaluation harness](design/05-execution-layer/paper-evaluation-harness.md)
 - [Continuous monitor](design/05-execution-layer/architecture.md)
 - [Guardrail enforcement layer](design/05-execution-layer/architecture.md)
+- [Broker adapter](design/05-execution-layer/broker-adapter.md)
+- [Venue configuration](design/05-execution-layer/venue-configuration.md)
+- [Reg T margin attribution](design/05-execution-layer/regt-margin-attribution.md)
 
 ### Risk guardrails
 
@@ -101,7 +111,7 @@ These items define what the decision-layer agents can see and do. Finish all of 
 - [x] Breach behavior: drawdown halt mode — daily halt (block new positions) plus progressive cumulative drawdown response (three tiers: constrained → heavily constrained → full halt with orderly wind-down)
 - [x] Breach behavior: escalation threshold percentages (70/85/95 default, 60/80/90 for daily drawdown, 50/70/85 for cumulative drawdown)
 - [x] Breach behavior: margin call cascade interaction with other guardrails — margin calls take absolute priority, cascade detection and logging via shared cascade_id
-- [x] Regime adaptation: parameter sets for each of the four regimes (low-vol, normal, elevated, crisis) — full multiplier table for all 17 rules
+- [x] Regime adaptation: parameter sets for each of the four regimes (low-vol, normal, elevated, crisis) — full multiplier table for all 18 rules
 - [x] Regime adaptation: transition mechanics — immediate tightening, gradual loosening over 3 invocations with linear interpolation, plus pre-event tightening overlay and stress overlay
 - [x] Regime adaptation: position handling when tightening creates immediate breaches — deferred to strategist → PM (not engine); strategist proposes thesis-informed remedies, PM reviews cross-constraint interactions and executes
 
@@ -211,160 +221,356 @@ With the constraint surface fully defined, these become "given X inputs and Y ac
 
 ## Backlog
 
-Outstanding work surfaced by the design audit on 2026-04-26. Grouped by area; within each area, features are alphabetical. Items defer from Phase 0–4 either because they require empirical data to specify (paper-trading calibration), depend on infrastructure not yet built (dashboard, backtest harness), or were intentionally scoped out of v1. Features absent from this section are listed in [Ready for implementation](#ready-for-implementation).
+Outstanding work surfaced by the design audit on 2026-04-26. Active work is sorted in perceived order of complexity to resolve, ascending — quick wins first, most complex last. A trailing _Deferred_ section holds items whose work is gated on an external trigger (a vendor activation, a downstream consumer materializing, etc.) rather than on operator capacity. Each entry retains its source area in the topic heading and lists the design doc(s) it currently blocks. Items defer from Phase 0–4 either because they require empirical data to specify (paper-trading calibration), depend on infrastructure not yet built (dashboard, backtest harness), or were intentionally scoped out of v1. Features absent from this section are listed in [Ready for implementation](#ready-for-implementation).
 
-### Architecture
+### Quick wins
 
-#### Qualitative vendor selection
+_Single-line spec edits, config additions, doc cross-references, or deferrals._
 
-- [ ] Pick concrete vendors for the qualitative data sources still labeled TBD (news APIs beyond Marketaux, social sentiment beyond StockTwits placeholder, prediction markets beyond Kalshi/Polymarket if expansion is needed). _Source: [architecture/technology-selection.md](architecture/technology-selection.md)._
+### Moderate
 
-### Data layer
+_Schema additions, well-scoped multi-file edits, or single-component contributions._
 
-#### Alerting infrastructure
+### Substantial
 
-- [ ] Specify alert routing, severity thresholds, and operator notification channels for collector failures and pipeline aborts. May be subsumed by the [command center alert registry](design/command-center.md). _Source: [api-failure-handling.md](design/01-data-layer/api-failure-handling.md)._
+_New infrastructure, cross-cutting consolidations, or UI surfaces._
 
-#### API retry parameter tuning
+#### Headline tagging — clustering algorithm _(Analysis layer)_
 
-- [ ] Concrete retry counts, backoff intervals, and provider-failover configuration values per criticality tier — to be tuned against observed provider reliability during paper trading. _Source: [api-failure-handling.md](design/01-data-layer/api-failure-handling.md)._
-
-#### Mapping coverage
-
-- [ ] Resolve TBD `primary_source`, `cadence`, and `feasibility` fields across 14 source-to-target mapping YAMLs (~361 unmapped fields). The bulk are derived/computed entities (cross-asset signals, earnings tone analysis, derived macro entities, sector catalysts); raw series are mostly mapped. _Source: [01-data-layer/mappings/](design/01-data-layer/mappings/)._
-- [ ] Land per-category storage schemas for the seven categories deferred in v1 — Q2 microstructure (depends on Polygon tick-data subscription), Q4 short selling, Q5 fundamentals (partial), Q8 commodities (partial), Qual2 social sentiment, Qual4 earnings transcripts, Qual6 regulatory. _Source: [storage.md](design/01-data-layer/collector/storage.md)._
-
-#### Marketaux per-ticker sentiment variants
-
-- [ ] Implement enrichment for the per-ticker sentiment score variants from Marketaux (currently a single composite score per article). _Source: [05g-marketaux-vendor-adapter.md](implementation/01-data-layer/collector/05g-marketaux-vendor-adapter.md)._
-
-#### Multi-source failover (collector)
-
-- [ ] Implement failover dispatch in per-vendor `client.py` modules — fall through to the configured fallback when the primary's exhausted retries fire. Deferred for v1 until a provider's reliability proves it necessary. _Source: [data-sources.md](design/01-data-layer/collector/data-sources.md)._
-
-#### News retention review trigger
-
-- [ ] Define a concrete growth threshold (or storage-pressure trigger) for revisiting the "retain indefinitely" policy on news articles. _Source: [storage.md](design/01-data-layer/collector/storage.md)._
-
-#### Prediction market retention review trigger
-
-- [ ] Define a concrete growth threshold for revisiting the "retain indefinitely for v1" policy on prediction market snapshots, paired with `prediction_market_history_days` calibration window growth. _Source: [storage.md](design/01-data-layer/collector/storage.md)._
-
-### Distillation layer
-
-#### Thesis-dependency risk flag threshold
-
-- [ ] Define the concrete threshold for the thesis-dependency risk flag (effective independent thesis count). Cross-cuts distillation, threshold-calibration, and risk guardrails; gates the corresponding distillation unit. _Source: [02-distillation-layer/internal.md](design/02-distillation-layer/internal.md), [threshold-calibration.md](design/02-distillation-layer/threshold-calibration.md), [unit-test-plan.md](design/testing/unit-test-plan.md)._
-
-### Analysis layer
-
-#### Earnings transcript NLP pipeline
-
-- [ ] Specify the transcript ingestion pipeline (Motley Fool scraping or Quartr API) and the NLP extraction pipeline (tone classification, Q&A clustering, non-answer detection, forward-looking statement extraction). _Source: [qualitative-research.md](design/03-analysis-layer/qualitative-research.md)._
-
-#### Headline tagging + clustering
-
-- [ ] Add the headline-type tagging taxonomy to the data-layer spec (currently defined only in the analysis-layer doc). _Source: [qualitative-research.md](design/03-analysis-layer/qualitative-research.md)._
 - [ ] Specify the headline clustering / deduplication algorithm and cluster metadata fields (currently described conceptually but not algorithmically). _Source: [qualitative-research.md](design/03-analysis-layer/qualitative-research.md)._
 
-#### Unified event calendar
+**Unblocks.**
+
+- [qualitative-research.md](design/03-analysis-layer/qualitative-research.md) — co-blockers: _Unified event calendar_, _Earnings transcript NLP pipeline_.
+
+**Context.** [qualitative-research.md §Ranking algorithm Step 1](design/03-analysis-layer/qualitative-research.md) calls for "Cluster same-event headlines (headline similarity + co-occurring ticker mentions within a short window). Keep the highest-credibility source per cluster. Record cluster size — 10 articles on one event signals higher attention than one." The schema already defines `HeadlineCluster` with `cluster_id`, `headline_count`, `primary_theme`, `tickers_involved` and a per-headline `cross_ticker_cluster_id` foreign key ([schema/news_sentiment.py](design/01-data-layer/schema/news_sentiment.py)) — but the clustering algorithm itself is unspecified. This is deterministic distillation work (the digest is "produced by the data layer's news ingestion pipeline with no LLM involvement" per [qualitative-research.md §News digest](design/03-analysis-layer/qualitative-research.md)), so numeric thresholds are appropriate here.
+
+**Options.**
+
+1. **Embedding-based clustering with deterministic merge.** Compute sentence-transformer embeddings on `headline_text` at ingestion. Cluster by single-link agglomeration: two headlines join the same cluster when cosine similarity ≥ 0.78 AND publication time within 6 hours AND at least one shared primary ticker (or both ticker-less and same `topic_tags` intersection ≥ 1). Cluster ID is the `article_id` of the earliest member. `primary_theme` is the most-frequent member's first `HeadlineType`. Re-cluster on a sliding 24h window — clusters seal after the window closes.
+2. **Lexical fingerprint + ticker co-occurrence.** Hash each headline to a SimHash/MinHash fingerprint after stop-word removal and ticker-symbol normalization. Two headlines cluster when Jaccard similarity of fingerprints ≥ 0.6 AND publication time within 6 hours AND at least one shared ticker. No embeddings, no model dependency. Cluster ID and `primary_theme` derivation as in Option 1.
+3. **Source-canonicalization first, then ticker+window grouping.** Many "duplicate" headlines are syndicated copies — the same wire item republished by different outlets within minutes. Stage 1: detect syndication via near-identical headline text (Levenshtein ratio ≥ 0.9) and collapse into source-canonical groups. Stage 2: cluster source-canonical headlines by shared ticker + 6h window + headline-overlap heuristic (token-set Jaccard ≥ 0.5). Two-pass keeps near-duplicates separated from same-event-different-angle headlines.
+
+**Steelmans.**
+
+- *Option 1.* Embeddings handle paraphrase well — "Apple beats Q3 estimates" and "AAPL crushes consensus" cluster correctly; lexical methods often miss that. Sentence-transformers run cheaply at the ~1000-headline/day scale of the universe, the model lives on disk and incurs zero per-call cost. Clusters seal after 24h matches the digest's "since the last invocation" cadence; the clustering state is bounded.
+- *Option 2.* Zero new dependencies — SimHash is a few lines of Python over standard hashlib, fully deterministic, replayable. Lexical similarity is sufficient when headlines are short (most are < 20 tokens) and the universe is bounded — the failure mode (paraphrase miss) is rare for wire-service-style headlines, which dominate. Aligns with simplify-before-building: no model artifact, no embedding store, no GPU.
+- *Option 3.* Empirically, syndication is the dominant duplication source in news APIs — Reuters → Yahoo → MarketWatch → CNBC chains produce 4–8 near-identical headlines per breaking event. Splitting syndication from event-clustering means `headline_count` reflects independent reporting (true attention signal) rather than syndication multiplier (noise). Source-canonicalization also gives `is_first_mover` ([schema/news_sentiment.py — BreakingHeadline](design/01-data-layer/schema/news_sentiment.py)) a reliable derivation.
+
+**Recommendation.** **Option 3, with Option 2 as the cluster-similarity primitive.** Two-pass design: Stage 1 collapses syndication via Levenshtein ratio ≥ 0.9 on headline text (within a 30-minute window); Stage 2 clusters source-canonical headlines via SimHash Jaccard ≥ 0.6 + ≥ 1 shared ticker + within a 6h window. Stage 1 fixes the dominant noise source (syndication multiplier) directly. Stage 2 stays embedding-free — within the scaffolded universe, lexical sufficiency is high and zero new dependencies preserves replayability. Cluster persists in `news_article_clusters` (new table, composite PK `(cluster_id)`) with fields `cluster_id`, `primary_theme` (first `HeadlineType` of mode-frequency member), `headline_count` (post-syndication, distinct sources only), `first_seen_at`, `last_seen_at`, `tickers_involved` (JSON array). Per-headline link via the existing `cross_ticker_cluster_id` field on `BreakingHeadline`. Clusters seal after a 24h sliding window; later headlines on the same event start a new cluster (the digest's invocation-windowed view doesn't need cross-day continuity).
+
+#### Unified event calendar _(Analysis layer)_
 
 - [ ] Specify the merge of qualitative-5e (catalyst calendar) + quantitative-6g (economic calendar) into a single sector-tagged feed in the data layer. _Source: [qualitative-research.md](design/03-analysis-layer/qualitative-research.md)._
 
-### Decision layer
+**Unblocks.**
 
-#### PM envelope: rejection-array minItems validator
+- [qualitative-research.md](design/03-analysis-layer/qualitative-research.md) — co-blockers: _Headline tagging — clustering algorithm_, _Earnings transcript NLP pipeline_.
 
-- [ ] Add `minItems: 1` validation on rejection envelopes' `concerns` array, after fully characterizing the edge case. _Source: [pm-envelope-schema.md](design/04-decision-layer/pm-envelope-schema.md)._
+**Context.** Two near-overlapping calendar entities exist today: `MacroEventCalendar` ([schema/macro.py](design/01-data-layer/schema/macro.py), Q6:6g — economic releases, FOMC, NFP, ISM, Treasury auctions, Fed speakers) and `PolicyEventCalendar` ([schema/regulatory.py](design/01-data-layer/schema/regulatory.py), Qual5:5e — FOMC, CPI/PPI/PCE, hearings, court dates, OPEC, Treasury auctions, regulatory deadlines). The two `event_type` enumerations overlap on FOMC, CPI, PPI, PCE, NFP, OPEC, and Treasury auctions. Storage already pre-collapsed the redundancy: `event_calendar` ([storage.md §Events](design/01-data-layer/collector/storage.md)) is "All scheduled events with an `event_type` discriminator. Consolidates Q6g (macro events), Qual5 (regulatory / policy / geopolitical), and Qual5e earnings calendar entries into one shape." [qualitative-research.md §Dependencies](design/03-analysis-layer/qualitative-research.md) lists "Unified event calendar" as Not specified. The schema package still emits two separate calendar entities; the consumer-side analysis layer expects one merged feed with sector tags.
 
-#### PM execution failure notification channel
+**Options.**
 
-- [ ] Specify the transport contract for how the engine communicates guardrail rejection payloads back to the PM (tool call response, structured return value, etc.) at implementation time. _Source: [portfolio-manager.md](design/04-decision-layer/portfolio-manager.md)._
+1. **Single `EventCalendar` entity with sector tags; deprecate `MacroEventCalendar` + `PolicyEventCalendar`.** Replace both with one `EventCalendar` ([schema/events.py](design/01-data-layer/schema/events.py), new module) carrying a unified `Event` supporting type. The `event_type` enumeration is the union of the two existing sets; `affected_sectors: list[AlphaMindSector]` is required (empty list for genuinely market-wide events; populated for sector-tilted releases per [quantitative.md §6g](design/01-data-layer/external/quantitative.md) "hot CPI hits tech harder than energy"). Event-clustering risk and macro-surprise-index fields fold in from the two source entities. Storage stays as-is (`event_calendar` already conforms). Producers (the FRED/Finnhub/SEC EDGAR collectors) write through one path; consumers read one entity.
+2. **Keep the two source entities; add a derived `UnifiedCalendarFeed` view.** Preserve `MacroEventCalendar` and `PolicyEventCalendar` as data-layer producer outputs (collector emits each from its native source). Add a distillation-layer derived view that joins both into a sector-tagged feed for the qualitative-research agent's in-context calendar block.
+3. **Per-source ingestion modules emitting to one `EventCalendar` entity.** Each ingestion source (`fred/calendar.py`, `finnhub/calendar.py`, `sec_edgar/calendar.py`, `manual/calendar.py`) parses its native format and writes to the shared `event_calendar` storage table via one consolidated `EventCalendar` schema. Per-source contracts live as collector module boundaries, not as separate schema entities.
 
-#### Strategist defensive_posture schema enforcement
+**Steelmans.**
 
-- [ ] Add the mode-level `allOf` conditional that enforces `defensive_posture` mode restricting `recommended_action` to `hold | reduce | close | adjust-bracket` and prohibiting `add` actions. Behavioral spec is authoritative until the validator lands. _Source: [strategist-output-schema.md](design/04-decision-layer/strategist-output-schema.md)._
+- *Option 1.* Direct collapse to one entity matches what storage already did and what consumers already need. The two existing entities replicate fields (`upcoming_events`, `next_event`, `events_this_week`, clustering risk, anomalies) — the duplication is what the simplify-before-building constraint targets. Sector tagging on the unified `Event` is enforced once. Eliminating two redundant entities reduces schema surface, mapping YAML, and consumer cross-reference burden in one move.
+- *Option 2.* Producer-side preservation respects the source-system shape — FRED economic releases and SEC EDGAR/Federal Register policy events have genuinely different metadata profiles (consensus estimates vs. action_stage, surprise_bps vs. is_surprise). Forcing them into one wide entity creates a schema with mostly-null fields. Distillation-layer composition is the right place for the merge because it's a derived presentation, not a producer contract.
+- *Option 3.* The producer/consumer split is the existing architectural pattern: per-source ingestion modules; one shared storage shape; one read-side merged view. Collector module boundaries already isolate per-source parsing concerns, so a single `EventCalendar` entity at the schema layer keeps the consumer surface clean while preserving per-source isolation where it actually lives (in the collectors).
 
-### Execution layer
+**Recommendation.** **Option 1.** Storage already collapsed the two calendars into `event_calendar`; the schema package is the lagging artifact. Replace `MacroEventCalendar` (Q6:6g) and `PolicyEventCalendar` (Qual5:5e) with a single `EventCalendar` ([schema/events.py](design/01-data-layer/schema/events.py), new file under the existing schema package) containing one `Event` supporting type whose `event_type` is the union enum, `affected_sectors: list[AlphaMindSector]` is required, and `consensus_estimate`/`surprise_bps`/`actual_result` are optional (populated for releases, null for hearings/deadlines). Move `event_clustering_risk` and `unscheduled_event_risk_factors` from `PolicyEventCalendar` and `macro_surprise_index`/`event_proximity_alerts` from `MacroEventCalendar` into the unified entity. The producer-side collectors (`fred/`, `finnhub/calendar.py`, `sec_edgar/`) write through one path keyed on `event_calendar.event_id`. Per-producer concern is handled by the existing collector module split — each module owns its source-format parsing — without needing per-producer schema files because the entity is a deterministic ingestion target where the producers all serialize into the same storage row shape, not a multi-producer LLM-output contract. Mapping YAMLs `macro.yaml` and `regulatory.yaml` lose their calendar entries; a single `events.yaml` replaces them. Consumers (the qualitative-research agent's in-context block, the synthesizer's catalyst-watch source) read one entity.
 
-#### Options support
+#### Options support — Counterfactual replay engine v2 _(Execution layer)_
 
-- [ ] Broker adapter: design the Alpaca options surface (order types, modification semantics, fill-stream nuances). _Source: [broker-adapter.md](design/05-execution-layer/broker-adapter.md)._
 - [ ] Counterfactual replay engine v2: Black-Scholes-derived option pricing from underlying + IV surface. _Source: [counterfactual-replay-engine.md](design/05-execution-layer/counterfactual-replay-engine.md)._
-- [ ] Set the portfolio-value threshold at which `options_enabled` flips to `true` — calibrated during paper trading. _Source: [rules-and-limits.md](design/06-risk-guardrails/rules-and-limits.md)._
 
-#### Reg T per-leg margin monitoring
+**Unblocks.**
 
-- [ ] Track scale at which per-leg margining becomes the capital bottleneck; revisit broker choice if/when the bottleneck binds. _Source: [venue-configuration.md](design/05-execution-layer/venue-configuration.md)._
+- [counterfactual-replay-engine.md](design/05-execution-layer/counterfactual-replay-engine.md) — sole remaining blocker.
 
-### Risk guardrails
+**Context.** The replay engine v1 explicitly skips options proposals with `replay_status = unevaluable, unevaluable_reason = unsupported_instrument` ([counterfactual-replay-engine.md § Scope (v1)](design/05-execution-layer/counterfactual-replay-engine.md#scope-v1)). Once `options_enabled` flips to true and the PM is rejecting/modifying options proposals, those decisions become unmeasurable without an option-pricing path. The same Black-Scholes model already runs in two places: the [guardrail-evaluation library](design/06-risk-guardrails/guardrail-evaluation.md) for OPEN/ADD validation, and the continuous monitor's [greeks refresh](design/05-execution-layer/architecture.md#4d-greeks-refresh-orchestration) for live derived pricing. The IV surface is produced as part of the data pipeline ([programmatic distillation — quantitative](design/02-distillation-layer/external.md), schema in `01-data-layer/schema/derivatives.py § ImpliedVolSurface`).
 
-#### Minimum cash floor
+**Options.**
 
-- [ ] Specify the minimum cash floor a guardrail value the PM must keep above. Deferred to risk-guardrail rule values. _Source: [portfolio-state.md](design/01-data-layer/internal/portfolio-state.md), [rules-and-limits.md](design/06-risk-guardrails/rules-and-limits.md)._
+1. **Reuse the [guardrail-evaluation library](design/06-risk-guardrails/guardrail-evaluation.md)'s Black-Scholes primitive directly, sourcing IV from a historical surface snapshot keyed on `(timestamp, underlying, expiration, strike)`** — Replay reads the contemporaneous IV surface for each bar and computes option price by re-solving Black-Scholes at the bar's underlying price, time-to-expiration, and surface-interpolated IV. Single shared model across guardrail validation, monitor refresh, and replay; replay runs as a thin adapter that supplies `(S, K, T, σ, r)` per bar.
+2. **Reuse the Black-Scholes primitive but freeze IV at the proposal timestamp** — Same model, but the IV input is held constant at the IV captured when the proposal was generated. Eliminates the requirement to persist a historical IV surface dense enough to reconstruct the replay window; the replay's option-price trajectory is driven entirely by underlying movement, time decay, and the frozen IV.
+3. **Skip per-bar option-price simulation; replay the trigger logic against the underlying and apply a closing-price model** — Treat options replays the same as equity replays for the trigger decision (underlying-triggered stops already work this way per [orders-and-brackets.md](design/05-execution-layer/orders-and-brackets.md#options-price-based-stops-trigger-on-the-underlying)), and use Black-Scholes once at the exit-bar to estimate the closing fill price. P/L-based brackets and per-bar derived prices are not simulated.
+4. **Defer v2 indefinitely; report options replays as `unevaluable` with sub-reason `awaiting_v2`** — Document the decision point and accept that options PM accuracy is unmeasured until a separate v2 is scoped.
 
-#### Small-tier thesis review trigger
+**Steelmans.**
 
-- [ ] Specify the thesis-review trigger cadence for the small-tier ($1,500 primary) profile; the corresponding cell in the rules-and-limits matrix is currently bare TBD. _Source: [rules-and-limits.md](design/06-risk-guardrails/rules-and-limits.md)._
+- *Option 1.* Greatest fidelity. The IV surface is already collected by the data pipeline and consumed by the guardrail library, so the marginal cost is persistence and historical lookup, not new modeling. Captures vol-regime effects (a mid-window IV spike that would have moved the option's bracket trigger) the v1 replay cannot. Same calibration path as the harness — bias is auditable against actual options fills.
+- *Option 2.* Massively simpler. The replay window is ≤72 hours; intraday IV drift on liquid underlyings within that window is small relative to underlying-driven price change for at-the-money to slightly-OTM strikes. Persisting a 72-hour-resolution surface across the entire replay queue is a real engineering cost that "frozen IV" sidesteps. Documented bias toward underrating vol-regime effects, surfaced as a confidence caveat the same way same-bar disambiguation is.
+- *Option 3.* Aligns replay with the actual bracket trigger semantics — AlphaMind's options brackets fire on the underlying, not the option's price ([orders-and-brackets.md § Options price-based stops](design/05-execution-layer/orders-and-brackets.md#options-price-based-stops-trigger-on-the-underlying)). For thesis-level invalidation, the trigger decision needs the underlying only. Black-Scholes runs once for the exit fill and the entry fill; per-bar derived pricing is over-modeling for the actual question PM accuracy is asking. P/L-based brackets are skippable in replay because the PM's decision was an underlying-thesis evaluation.
+- *Option 4.* Forces an explicit calibration of when options replay accuracy is worth its complexity. If options volume in PM rejections is low at the threshold where `options_enabled` flips, the metric the engine produces is too noisy to drive any tuning. Avoids building a v2 that's unused.
 
-#### Tier graduation profitability criteria
+**Recommendation.** **Option 3**. AlphaMind's options brackets are explicitly thesis statements about the underlying — the trigger evaluates against the underlying's stream and capital protection lives in the [position-level max loss guardrail](design/06-risk-guardrails/rules-and-limits.md), not in the bracket. P/L-based exits exist but are a smaller surface. Replaying the trigger against the underlying and pricing only entry and exit via Black-Scholes mirrors the production decision shape, reuses the existing primitive, and avoids the historical IV surface persistence cost. P/L-based bracket replay drops to a documented v2 sub-scope with a confidence caveat — same shape as the v1 same-bar disambiguation.
+
+#### Tier graduation profitability criteria _(Risk guardrails)_
 
 - [ ] Specify the demonstrated-profitability criteria gating graduation between deployment tiers (deployment-validation → primary → full-system). _Source: [rules-and-limits.md](design/06-risk-guardrails/rules-and-limits.md)._
 
-### Pipeline orchestration
+**Unblocks.**
 
-#### Per-run-type pipeline scoping
+- [rules-and-limits.md](design/06-risk-guardrails/rules-and-limits.md) — co-blockers: _Small-tier thesis review trigger_, _Minimum cash floor_, _Options support — `options_enabled` threshold_.
+
+**Context.** `rules-and-limits.md` specifies sequential validation: paper-trade at a tier → tune → deploy real capital → accumulate results → paper-trade at the next tier, with graduation gated on demonstrated profitability with real capital at the current tier. Profile transitions are manual; "exact profitability criteria TBD" is the open item. The feedback loop spec is the calibration substrate: outcome metrics (P/L, win rate, profit factor, conviction calibration, status calibration, anti-pattern detector accuracy) need real resolved-thesis volume before they support inference, and the sparkline annotation pattern ("needs N more observations") encodes the discipline. The paper-evaluation harness is calibrated, not pessimistic — the live-execution drag estimate is meant to be accurate, so paper performance approximates live within the harness's posterior band. The project-tracker source pointer references micro→small→medium→large; the parenthetical "deployment-validation → primary → full-system" appears to be older naming.
+
+**Options.**
+
+1. **Outcome-metric thresholds with sample-size gates.** Graduation requires (a) a minimum count of resolved theses at the current tier, (b) realized P/L positive (cumulative absolute or rolling-window) over a defined operating window, (c) thesis validation rate at or above a calibration target consistent with the conviction-scale calibration the analyst is meant to demonstrate, all measured by the deterministic analytics layer. The specific thresholds are set per-tier — micro emphasizes thesis volume and validation rate; medium adds drawdown-discipline (max drawdown contained); large adds execution-quality (live-vs-harness slippage match).
+2. **Operator-judgment gate with required evidence.** No mechanical thresholds. Graduation requires the operator to run a `/feedback-review` session at the current tier and produce a written readiness assessment covering specific evidence categories (P/L sign, validation rate trajectory, anti-pattern frequency, drawdown discipline, regime coverage). The dashboard surfaces the evidence; the operator commits the readiness note as the graduation artifact.
+3. **Hybrid — mechanical gate plus operator confirmation.** Combine: mechanical thresholds in option 1 are *necessary* to graduate but not sufficient; the operator must additionally confirm via a `/feedback-review` session that the conditioning slices (regime, sector, model version) don't expose a confound that inflates the outcome.
+
+**Steelmans.**
+
+- *Option A.* Mechanical thresholds are the only way to defeat confirmation bias on graduation decisions — the operator who deployed micro real capital wants graduation; the rule has to be reachable from observed performance but unreachable through wishful interpretation. The feedback loop's outcome-tier metrics (P/L, win rate, conviction calibration with credible bands) and the dashboard's "needs N more observations" annotation already encode the sample-size discipline. Tier-specific thresholds let the gate test what each tier validates: micro tests thesis volume → require resolved-thesis count plus positive cumulative P/L; medium tests exposure management → add drawdown ceiling; large tests execution quality → add slippage calibration. The harness-is-calibrated principle means paper accumulates evidence faster on the deferred side (counterfactual replay) without manufacturing forward outcomes the gate requires.
+- *Option B.* Tier graduation is a structural change in deployed capital, not a tunable parameter — the kind of decision the feedback loop explicitly leaves to the operator. The `/feedback-review` skill is designed for exactly this shape of question: pull a window-bounded slice of conditioned outcomes, walk it with Claude, produce a written record. Mechanical thresholds invite Goodhart drift (the operator tuning the prompt to clear the threshold rather than to improve the system) and false confidence (a threshold cleared in a benign regime). Operator + Claude + the dashboard's existing posterior bands is the structurally honest mechanism.
+- *Option C.* Combining the two captures the strengths of each. The mechanical floor defeats the wishful "I think we're ready" graduation; the operator review defeats the regime-confound graduation. The operator can fail to clear either gate without the other path opening — graduation requires both. The dashboard already renders both surfaces (Section 3 trajectories with credible bands, Section 5 notable-shifts flags), so the cost is procedural, not infrastructural.
+
+**Recommendation.** **Option C** with the mechanical thresholds set explicitly per tier. The mechanical gate is necessary because graduation is the system's largest commit-of-capital decision and the feedback loop's confounder management is exactly the discipline the threshold operationalizes — pre-registered and conditioned, not post-hoc rationalized. The operator confirmation is necessary because no static threshold catches the regime confound (a profitable micro window during a low-vol regime is structurally different from one across regimes). Concrete thresholds, citing the design's existing calibration targets and harness behavior:
+
+- **Micro → small.** (a) Minimum 30 resolved theses at micro real-capital (matches the existing weekly-trade-count threshold the dashboard uses for sample-size annotations on the conviction-calibration sparkline; the micro profile's 18–22 concurrent positions and the every-20-trades thesis review trigger establish 30 resolved theses as roughly two review cycles' worth of signal). (b) Cumulative realized P/L positive across the operating window. (c) Conviction calibration spread positive — win-rate at conviction ≥4 exceeds win-rate at conviction ≤2 with a non-zero credible band (the calibration discipline the analyst spec defines). (d) Operator `/feedback-review` confirms the regime conditioning doesn't show all the positive performance concentrated in a single regime. Plus: the thesis performance review the micro profile already includes must have completed at least one positive cycle (the trigger that fires at 20 trades).
+- **Small → medium.** All micro→small criteria, plus: (e) Maximum cumulative drawdown stayed within the small profile's progressive-response envelope (didn't trigger tier 2 or tier 3 of the cumulative-drawdown system) — demonstrates concentration management discipline at the tier whose risk priority is concentration management. (f) Conviction-sizing-deviation tracking shows PM modifications correlated with improved outcomes (`conviction_disagreement` adjustment category effectiveness positive over the window) — the tier introduces options-greeks dimensions and the PM's sizing-discipline calibration is what manages them.
+- **Medium → large.** All small→medium criteria, plus: (g) Execution-quality calibration validated — paper-harness slippage estimate within posterior band of realized live execution drag (the harness-is-calibrated principle made operational at the tier where market impact starts to matter). (h) Regime adaptation exercised — the operating window covered at least one regime transition with the strategist→PM remedy mechanism executed without drawdown tier-2 escalation.
+
+The thresholds are concrete, deterministic, and reachable from observed paper-and-then-live performance — calibrated, not pessimistic per the harness principle. The operator confirmation step uses the existing `/feedback-review` surface; the graduation artifact is the saved review note keyed to the tier transition. No new component names are introduced; every cited mechanism already exists in the design.
+
+#### Per-run-type pipeline scoping _(Pipeline orchestration)_
 
 - [ ] Define tailored pipeline configurations per invocation type (pre-open, intraday, pre-close, after-hours): agent depth, adaptive-research budget, qualitative sweep breadth. Cross-cuts the run_types/ overlay shape in configuration-management. _Source: [design/README.md](design/README.md), [configuration-management.md](design/configuration-management.md), [adaptive-research.md](design/03-analysis-layer/adaptive-research.md)._
 
-#### Profile-boundary detector
+**Unblocks.**
 
-- [ ] Emit an advisory when portfolio equity crosses a tier boundary (between deployment-validation, primary, full-system profiles). _Source: [configuration-management.md](design/configuration-management.md)._
+- [design/README.md](design/README.md) — co-blockers: _Weekend invocation cadence_.
+- [configuration-management.md](design/configuration-management.md) — co-blockers: _Profile-boundary detector_.
+- [adaptive-research.md](design/03-analysis-layer/adaptive-research.md) — sole remaining blocker.
 
-#### Weekend invocation cadence
+**Context.** The README's TODO (`design/README.md` line 47) calls for tailored configurations per invocation: pre-open expanded research, pre-close portfolio review and thesis invalidation, intraday monitoring with selective deep dives, after-hours light. `configuration-management.md` (lines 469–471) defers this as `run_types/` directory parallel to `modes/`, composed at resolution time based on the firing trigger. The scheduler already distinguishes triggers (`scheduler.yaml`: `market_hours_rolling`, `off_hours_rolling`, `pre_open`, `pre_close`, `weekend`), and the `invocations` table already records `run_type` (`command-center.md` line 141). The cost model (`cost-and-rate-limit-modeling.md`) treats every invocation as identical Opus-trio + Sonnet-7 today, with weekly Opus as the binding constraint — non-uniform run-type costs land directly on that constraint.
 
-- [ ] Decide the weekend invocation schedule (currently flagged as likely 6–8 hours since only futures and prediction markets provide signal). _Source: [design/README.md](design/README.md)._
+**Options.**
 
-### Command center
+1. **`run_types/` overlay bundle, deterministic knobs only** — Add a fifth named bundle alongside profile/regime/mode/overlay. Each `run_types/<trigger>.yaml` carries deterministic scheduler-side knobs the resolver composes onto the resolved snapshot: adaptive-researcher `cumulative_tool_call_limit` and `cumulative_tool_token_budget`, qualitative-research news-digest `top_n_per_sector`, agent `latency_budget_seconds` and `output_token_budget`, and an `enabled_agents` list (e.g., omit adaptive on after-hours). Decision-layer agent prompts are unchanged; agent depth scales structurally via deterministic budgets (output-token caps, tool-call caps, retrieval-store availability) rather than via prompt instructions about run type.
+2. **Single `run_type` field on the resolved snapshot, agents read it from the prompt** — Resolver injects `run_type` as a single string; analyst/strategist/PM prompts branch on it ("on pre-open, expand counterargument depth", "on after-hours, prioritize thesis invalidation review"). Determinism stays in the scheduler; behavioral shaping is delegated to the LLM prompts.
+3. **Single profile, no per-run-type variation** — Treat every invocation identically. Anchored runs already have implicit emphasis from the synthesizer brief content (overnight news dominates pre-open, intraday flow dominates rolling, end-of-day price action dominates pre-close). The model decides per-invocation what to emphasize from the data.
+4. **Hybrid: `run_types/` overlay for budgets + agent-roster gate, no behavioral prompt branching** — Combination of A's structural scoping with explicit agent-roster control. The `run_types/` bundle decides which agents fire (after-hours skips adaptive-researcher entirely), and sets deterministic budgets, but no agent prompt receives a "you are running on a pre-open invocation" instruction. Behavioral consequences flow from the brief's data composition and the budget envelope.
 
-#### Ad-hoc query surface
+**Steelmans.**
 
-- [ ] Design filter dimensions, query input shape, result rendering, and export flow for the operator's ad-hoc query surface in the feedback view group. Drafted alongside the dashboard frontend. _Source: [feedback-loop.md](design/feedback-loop.md)._
+- *Option A.* `run_types/` is the natural extension of the existing four-bundle composition model. The bundle abstraction already proves itself for profile/regime/mode/overlay; adding a fifth dimension keyed off the firing trigger is mechanical. Determinism stays where determinism belongs — pipeline scheduler decides budgets, not the agents. The cost model gets first-class hooks: a weekend overlay can drop adaptive-researcher token budget by 80% without touching the analysis-layer prompt. Calibrated paper-trading data informs each run-type budget independently. Avoids the failure mode of LLM agents anchoring on "you're a pre-open invocation, expand depth" — they already get richer briefs on pre-open from data composition (overnight headlines, pre-market flow, FOMC overnight moves), and the structural budget envelope channels that into longer outputs without anchoring on numeric targets in the prompt.
+- *Option B.* Cheapest to implement — one config field, prompt edits. Agents are already reasoning about market context; telling them "this is pre-open" is no more anchoring than the regime label is. The synthesizer brief plus regime label already shapes behavior heavily; one more contextual flag fits in.
+- *Option C.* Honors *simplify before building*. The system runs a deterministic pipeline whose inputs differ by trigger time; that's all the differentiation needed. The pre-open brief has overnight news the 11:30 brief doesn't; the pre-close brief sees full-day flow the 9:30 brief can't. Run-type scoping is solving a problem the brief composition already solves. No new bundle, no new prompt branches, no per-run-type calibration table to maintain.
+- *Option D.* Compromise. Captures A's deterministic-cost benefit and explicit agent-roster gate (after-hours can omit adaptive entirely, dropping ~25 tool-calls and a Sonnet call from the workload) while explicitly refusing to inject run-type into LLM prompts — the user's anti-anchoring constraint applied at design time rather than as a fix later. The brief still shapes agent behavior; the budget envelope shapes output volume; the roster controls which agents even run.
 
-#### Digest config schema
+**Recommendation.** **Option D**. Use `run_types/` overlays for two deterministic surfaces: the agent roster (which agents fire on this trigger) and the budget envelope (per-agent latency/output-token budgets, adaptive-researcher tool-call and token caps, qualitative news-digest depth). Author one file per trigger key already declared in `scheduler.yaml`. No agent prompt receives a run-type instruction — behavioral shaping flows from the synthesizer brief's data composition and the structural budget envelope. This honors the cost-model hook (weekly Opus needs run-type-conditional accounting), avoids LLM anchoring on numeric targets, and respects the user's *simplify before building* constraint by keeping LLM prompts uniform across triggers.
 
-- [ ] Define `config/digest.yaml` schema for operator-tunable notable-shift thresholds. Drafted as part of dashboard config wiring. _Source: [feedback-loop.md](design/feedback-loop.md)._
-
-#### Monthly outcome view
-
-- [ ] Specify the metric subset, slice-comparison UI, and layout for the monthly outcome view; ships once resolved-thesis count crosses the threshold. _Source: [feedback-loop.md](design/feedback-loop.md)._
-
-#### Pipeline/monitor wire format
+#### Pipeline/monitor wire format _(Command center)_
 
 - [ ] Specify the `/control/*` HTTP surface and `/events` SSE stream wire format the pipeline and monitor processes expose to the command center backend. _Source: [command-center.md](design/command-center.md)._
 
-#### Retrospective view
+**Unblocks.**
 
-- [ ] Design the dashboard view that renders a `retrospective_reports` record. Drafted alongside the first quarterly retrospective. _Source: [feedback-loop.md](design/feedback-loop.md)._
+- [command-center.md](design/command-center.md) — sole remaining blocker.
 
-#### Skill prompts
+**Context.** `command-center.md § Control surface` and `§ Live event stream` already enumerate the endpoints (per-process control verbs, the event taxonomy with payload fields per event, the per-process SSE channel) and the architectural posture (loopback-bound FastAPI within each long-running process, command-center backend is the only client, no replay, browsers never reach pipeline/monitor directly). The wire-format work that remains is the precise request/response/event JSON shape: field names, types, error envelope, header conventions, the SSE framing per event. The pipeline and monitor each need their own contract — they are separate producers per the per-producer-schema discipline.
 
-- [ ] Draft the orchestration prompts for `/feedback-review`, `/feedback-validate`, and `/feedback-retrospective` against the command center's review-session surface. _Source: [command-center.md](design/command-center.md)._
+**Options.**
 
-#### Tech stack & framework selection
+1. **Per-producer JSON Schema files matching the existing schema-files convention.** Two top-level schemas: `pipeline-control-and-events-schema.md` and `monitor-control-and-events-schema.md`, each a Draft 2020-12 JSON Schema (same convention as `pm-envelope-schema.md`, `oms-command-schema.md`, `analyst-output-schema.md`). Each schema carries the request bodies for its `POST /control/*` endpoints, the response envelope shape, and a `oneOf` over its event payloads keyed by `event` field. SSE framing wraps the payload (`event: <name>\ndata: <json>\n\n`) — framing rule lives in the schema's preamble.
+2. **OpenAPI emitted from FastAPI on each process plus a sibling event-schema doc.** The pipeline and monitor each run FastAPI, so each emits its own OpenAPI document at `/openapi.json` describing `POST /control/*` and `GET /events`. The command-center backend fetches these at start to validate its proxy logic. SSE event payloads — which OpenAPI doesn't model well — live in two sibling JSON Schema files (`pipeline-events-schema.md`, `monitor-events-schema.md`).
+3. **Single combined wire-format spec doc, prose-led.** One markdown spec, `pipeline-monitor-wire-format.md`, that documents both processes' control verbs and event streams in a unified prose-led format with embedded JSON examples. Validation is Pydantic models in the implementation; the doc is the contract.
 
-- [ ] Lock the proposed frontend (React + Vite + shadcn/ui + TanStack) and backend (FastAPI + SQLAlchemy + aiosqlite + py_webauthn) stacks; finalize package versions and cross-platform integration. _Source: [command-center.md](design/command-center.md)._
+**Steelmans.**
 
-### Feedback loop
+- *Option A.* Mirrors how every other multi-producer contract in the project is documented — analyst, strategist, PM, OMS, engine envelope each have their own JSON Schema file. The pipeline and the monitor are distinct producers; the project already split engine envelopes from PM envelopes for exactly this reason. JSON Schema gives the FastAPI request/response models a lift-off point on each side and gives the command-center backend deterministic contracts to validate against. The schemas are inherent inputs to the type-sharing surface (`openapi-typescript`) the frontend stack already uses.
+2. *Option B.* FastAPI generates OpenAPI for free; writing a separate JSON Schema is duplicate work. The control endpoints are HTTP, OpenAPI is the HTTP-API contract format, the frontend type-sharing strategy already targets OpenAPI. Carving SSE event payloads into a sibling JSON Schema document handles the one thing OpenAPI doesn't model.
+- *Option C.* One unified doc avoids navigating between two schema files when the operator is reasoning about the integration end-to-end. The pipeline and monitor SSE streams are multiplexed downstream into a single browser-facing `/api/events` per `command-center.md`, so the operator does in fact think about them together.
 
-#### Backtest-for-deterministic-layer infrastructure
+**Recommendation.** **Option A — per-producer JSON Schema files.** The pipeline and monitor are separate producers of separate event taxonomies; conflating them via a shared variant union is exactly the per-producer-schema anti-pattern flagged in prior feedback. The JSON Schema convention matches every existing multi-producer contract (PM envelope, engine envelope, OMS command, analyst output) and feeds the existing `openapi-typescript` type-sharing path through FastAPI's automatic schema reuse. Option B's "use OpenAPI for HTTP" is right for the HTTP verbs but wrong for events; Option A unifies both surfaces under one convention without inventing a new doc shape.
 
-- [ ] Stand up the backtest harness needed for regime-sensitive prompt validation (deterministic-layer replay, not full-pipeline backtest). _Source: [feedback-loop.md](design/feedback-loop.md)._
-
-#### Validation methodology: interrupted-window handling
+#### Validation methodology: interrupted-window handling _(Feedback loop)_
 
 - [ ] Specify how the validation skill handles a window interrupted partway through (e.g., a regime shift mid-validation). _Source: [feedback-loop.md](design/feedback-loop.md)._
 
-#### Validation methodology: rollback evidence protocol
+**Unblocks.**
+
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Ad-hoc query surface_, _Monthly outcome view_, _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
+
+**Context.** [`feedback-loop.md § Pending`](docs/design/feedback-loop.md#pending) flags the gap directly: "handling interrupted windows (regime shift or model update straddling the validation window mid-run)." Today, [`/feedback-validate` EVALUATE](.claude/skills/feedback-validate/SKILL.md) names regime-distribution mismatch and model-version straddle as confounders that should drive the verdict to `inconclusive`, but does not specify what happens when the regime shifts (or Anthropic ships a model update, or the operator lands a second prompt edit) *during* the registered window — should the validation be re-anchored, the window re-started, the verdict pre-committed to `inconclusive`, or the validation cancelled? The [validation entity in state-persistence](docs/design/05-execution-layer/state-persistence.md) carries no `cancelled` or `superseded` status field today; status is derived from the existence of a joining outcome record.
+
+**Options.**
+
+1. **Mid-window invalidation: any in-flight validation whose conditioning context shifts materially is auto-marked `superseded`; operator re-registers with a fresh window if the edit is still worth assessing.** A new `superseded_at` timestamp and `superseded_reason` field on the validation record (additive — not on the outcome record, since no outcome was reached). The dashboard's [validation status row](docs/design/feedback-loop.md#section-4--validation-status) surfaces superseded validations with their reason for visibility but they don't enter the `validation_outcomes` ledger.
+
+2. **Pre-commit `inconclusive` at evaluation time: the window completes regardless of mid-window events, but the EVALUATE walk surfaces the interruption as a structural confounder and the verdict is forced `inconclusive`.** No new fields; the existing confounder-conditioning step in EVALUATE step 4 promotes detected mid-window shifts from "consider for verdict" to "verdict is `inconclusive` if a qualifying shift occurred." Operator may then re-register.
+
+3. **Dynamic re-anchoring: detect the mid-window event, split the window into pre-shift and post-shift segments, and evaluate each segment against the success/failure criterion separately.** The outcome record carries per-segment posterior summaries; the verdict is some structural combination (e.g., `improved` only if both segments meet success).
+
+4. **Window-extension: detect the mid-window event and extend the validation window by the unaffected period to recover the lost data, capped at a configured maximum.** Window-end timestamp updates, operator notified, evaluation deferred.
+
+**Steelmans.**
+
+- *Option 1.* Cleanest separation — superseded validations are not validations that produced a `no_change` or `inconclusive` outcome, they are validations whose pre-registration contract was structurally broken. Distinct verdict ledgers (outcomes vs. supersessions) preserve the discipline that "inconclusive is a first-class verdict": a real `inconclusive` outcome means the data didn't move enough to distinguish, which is different from "we can't read this window because confounders contaminated it." Aligns with [`/feedback-validate § Anti-patterns`](.claude/skills/feedback-validate/SKILL.md#anti-patterns-in-evaluation): "stretching the window... requires explicit operator direction with a stated reason." Supersession is the operator-explicit mechanism.
+
+- *Option 2.* Strongest pre-registration discipline — the contract said "evaluate at window-end," so we evaluate at window-end and let the verdict reflect reality. Adding any new state to the validation record creates a new surface for confirmation bias ("I should keep this window alive because the edit is still working"); pre-committing to `inconclusive` on any qualifying shift mechanizes the decision and is structurally what the skill's confounder-conditioning step already implies. No new schema. The lowest-complexity option.
+
+- *Option 3.* Most information-preserving — a mid-window regime shift may itself be evidence about the edit's regime sensitivity. A prompt edit that improves PM rejection accuracy in normal regime but degrades it in elevated regime is a discovery the binary verdict obscures; per-segment evaluation surfaces it. The structural combination is mechanical and audit-friendly.
+
+- *Option 4.* The least operator burden — most edits are time-bounded only because the operator wants a meaningful sample, and an extension that recovers the unaffected window length restores the original sample target. Pre-registration discipline is preserved (criteria frozen, expected direction unchanged, just the clock moves).
+
+**Recommendation.** **Option 1.** Auto-supersede on a structural conditioning shift; operator re-registers if the edit is still worth assessing. The structural shifts that should trigger supersession are the ones already named in [`feedback-loop.md § Confounder management`](docs/design/feedback-loop.md#confounder-management) — regime transition (the distillation layer emits the label per invocation; supersession fires when the active regime at any point during the post-edit window differs from the regime at registration), Anthropic model version change (the `agent_calls` provenance fields capture model ID per call), or any other prompt edit landing on the watched artifact's git ancestry. Option 2 is structurally similar but conflates the supersession decision with the evaluation walk, which corrupts the operator-facing meaning of `inconclusive` — a verdict whose ledger answers "did the edit work" should not also carry "the window was unreadable." Option 3 imports a new analytical surface (per-segment posterior shapes, structural verdict combination) that propagates into the dashboard, the outcome schema, and the skill prompt — substantial scope creep against [`Simplify before building`](.claude/projects/-Users-jatassi-Git-AlphaMind/memory/feedback_simplify_before_building.md). Option 4 lets a clock slip silently, which the skill's anti-pattern list explicitly forbids. The supersession path adds two fields to the validation record (`superseded_at`, `superseded_reason`), one notable-shift dashboard row when a supersession fires (so the operator notices and can re-register if appropriate), and a single rule in the EVALUATE walk: detect supersession before reading the registration verbatim, and if superseded, the EVALUATE walk does not run — the operator either re-registers with a fresh post-shift window or accepts the supersession as the resolution. Confounders detected at evaluation time that didn't trigger automatic supersession during the window remain `inconclusive` material per the existing skill, preserving the layered defense.
+
+#### Earnings transcript NLP pipeline _(Analysis layer)_
+
+- [ ] Specify the transcript ingestion pipeline (Motley Fool scraping or Quartr API) and the NLP extraction pipeline (tone classification, Q&A clustering, non-answer detection, forward-looking statement extraction). _Source: [qualitative-research.md](design/03-analysis-layer/qualitative-research.md)._
+
+**Unblocks.**
+
+- [qualitative-research.md](design/03-analysis-layer/qualitative-research.md) — co-blockers: _Headline tagging — clustering algorithm_, _Unified event calendar_.
+
+**Context.** Tier 2 of the `earnings_commentary` tool ([qualitative-research.md §earnings_commentary tool contract](design/03-analysis-layer/qualitative-research.md)) currently degrades to `partial_no_transcript` for every call — the schemas (`ManagementToneAnalysis`, `AnalystQADynamics`, `ForwardLookingStatement`, `NonAnswerFlag`, `QAExchange` in [schema/earnings_commentary.py](design/01-data-layer/schema/earnings_commentary.py)) and mappings ([mappings/earnings_commentary.yaml](design/01-data-layer/mappings/earnings_commentary.yaml)) exist but every transcript-derived field is `derived from TBD`. Storage is already pre-cleared for the hybrid pattern: metadata in `event_calendar` + `earnings_event_details`, transcript text on disk under `%USERPROFILE%\AlphaMind\data\news\` ([storage.md §Deferred categories — Qual4](design/01-data-layer/collector/storage.md)). The universe is ~65 names ([asset-universe.md](design/asset-universe.md)) clustering 2–4 calls/day across 4–6 weeks per quarter, so the pipeline is bursty, not continuous.
+
+**Options.**
+
+1. **Quartr-first ingestion + single-pass LLM extraction.** Try Quartr API as primary (clean text, speaker turns, timestamps); fall back to Motley Fool scrape; YouTube + Whisper as last resort. A single LLM extraction pass over the structured transcript emits all four signals (tone, Q&A themes, non-answer flags, forward-looking statements) into the existing per-call schemas. Distillation classifies tone-vs-prior-quarter by diffing the new emission against the prior quarter's emission for the same ticker.
+2. **Motley Fool-first scrape + per-task extraction passes.** Default to scraping `fool.com/earnings-call-transcripts/` (validated free path in [api-key-checklist.md §18](design/01-data-layer/api-key-checklist.md)); skip Quartr unless its access tier is confirmed. Run separate extraction passes per signal — one for tone, one for Q&A clustering, one for forward-looking, one for non-answer detection — each with a focused prompt. Compose into the `transcript_analysis` block at tool-call time.
+3. **Two-stage: deterministic structuring + LLM annotation.** Stage 1 (deterministic): scrape Motley Fool, segment prepared remarks vs. Q&A using section markers, parse speaker turns, store as structured JSON on disk. Stage 2 (LLM): a single annotation pass over the structured JSON populates all four signal fields. Tone-vs-prior-quarter, Q&A theme clustering, and non-answer detection are annotation-time judgments; bellwether reads (`BellwetherRead` in [earnings_commentary.yaml](design/01-data-layer/mappings/earnings_commentary.yaml)) are computed in distillation by joining annotations across same-week sector peers.
+
+**Steelmans.**
+
+- *Option 1.* Quartr's structured speaker turns eliminate the parsing fragility that breaks Motley Fool scrapers when their template changes. A single LLM pass keeps token spend bounded per call and avoids the consistency gap that arises when separate passes disagree on what counts as a forward-looking statement vs. tone signal. Existing schemas are already shaped for unified emission — the dataclasses define one `ManagementToneAnalysis` with embedded `forward_looking_statements` and `topics_emphasized` lists, not four independent outputs.
+- *Option 2.* Motley Fool is free, validated, and listed in the api-key-checklist ([§18](design/01-data-layer/api-key-checklist.md)). Per-task passes give each signal a focused prompt and let calibration and feedback target one signal at a time — when forward-looking extraction drifts, you fix the forward-looking prompt without touching tone classification. Aligns with the per-producer schema convention — each signal has its own well-defined contract.
+- *Option 3.* Separating mechanical structuring from interpretation matches the layer convention: data layer collects/structures, distillation/analysis interpret. Once structured JSON exists, the LLM pass is auditable (the same JSON in must produce the same fields out modulo prompt drift), reproducible across re-runs, and replayable for backfill when a prompt evolves. Bellwether reads as a distillation-layer cross-call composition is correct placement — they're a deterministic join across already-annotated calls, not a per-call judgment.
+
+**Recommendation.** **Option 3.** Two-stage matches the existing layer split exactly: scraping + speaker-turn parsing are mechanical (data-layer ownership, idempotent, replayable), tone/Q&A/non-answer/forward-looking are interpretive (LLM ownership, single annotation pass over the structured JSON). Motley Fool is the primary path because it's free and validated; Quartr/YouTube+Whisper are configured fallbacks. Bellwether reads run in distillation by joining annotated calls, keeping per-call extraction stateless. Body text on disk under the existing `news\` pattern from [storage.md](design/01-data-layer/collector/storage.md); annotation result rows land in tables keyed off `event_calendar.event_id` for idempotent re-annotation.
+
+#### Ad-hoc query surface _(Command center)_
+
+- [ ] Design filter dimensions, query input shape, result rendering, and export flow for the operator's ad-hoc query surface in the feedback view group. Drafted alongside the dashboard frontend. _Source: [feedback-loop.md](design/feedback-loop.md)._
+
+**Unblocks.**
+
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: interrupted-window handling_, _Monthly outcome view_, _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
+
+**Context.** Lives in the F. Quality and feedback view group of `command-center.md` and is named in `feedback-loop.md § Dashboard and digest curation` as "everything not on the curated views." The data substrate is fixed: `agent_calls`, `activity_log`, `theses`, `counterfactual_replays`, plus the conditioning provenance fields on `invocations` (regime, profile, mode, overlays, prompt versions, model versions). The same surface is hit by `/feedback-review` ad-hoc deep-dives and by `/feedback-retrospective` Phase 1 ingestion. Read shape only — never mutates anything.
+
+**Options.**
+
+1. **Saved-view builder over a fixed entity catalog.** The operator picks an entity (PM envelopes, anti-pattern occurrences, agent calls, theses, counterfactual replays), gets a structured filter form keyed to that entity's columns plus the conditioning surface (regime, sector, conviction band, prompt version, model version, time range), and the result renders as a typed table with row-expansion to the underlying record. Saved views persist by name in a small `saved_queries` table on the command-center backend. Export is a one-click CSV of the rendered table.
+2. **Free-form SQL console with a schema sidebar.** A SQLAlchemy-text query box, schema-aware autocomplete sourced from the existing ORM models, results in a generic table renderer, single-click CSV export. No saved-view layer; operator pastes from a personal scratch pad. Mirrors what the operator would otherwise do via `sqlite3` CLI.
+3. **Hybrid — structured form composes to inspectable SQL, console accepts edits.** Default surface is the entity-keyed form from Option 1; "show as SQL" reveals the composed query in an editable console (Option 2 surface) the operator can refine before re-running. Saved views save the composed SQL string, not the form state — so a query that started in the form survives later schema evolution as plain SQL.
+
+**Steelmans.**
+
+- *Option A.* The conditioning slices in `feedback-loop.md § Conditioning surface` are fixed and discoverable; an entity-keyed form makes them clickable instead of remembered. Row-expansion to the underlying record gives the same diagnostic depth as the per-invocation detail view without a custom query. Saved views are the natural unit the operator reuses week-to-week (e.g., "this quarter's PM rejections in elevated regime on the strategist prompt v3"). No SQL competence needed for the 80% case.
+- *Option B.* The metric inventory is large and growing; any structured form will have escape valves the operator wants and the form doesn't expose. SQL is the lingua franca for SQLite, the operator already reads the schema in `state-persistence.md`, and feedback-loop questions are open-ended by design — `/feedback-retrospective` Phase 1 is described as "open-ended pattern discovery" and a fixed form constrains exactly that. Smallest surface to build.
+- *Option C.* Form-to-SQL gives the discoverable conditioning surface for routine queries and the unconstrained tail for novel investigation in one place. Saving the composed SQL means saved queries don't break when entity-form layouts evolve. The "show as SQL" pane teaches the operator the schema as they go, lowering the cost of dropping into pure SQL when needed.
+
+**Recommendation.** **Option C — hybrid form-to-SQL.** The form covers the routine conditioning slices that `/feedback-review` and the weekly digest already lean on, while the SQL drop-down preserves the open-ended investigation `/feedback-retrospective` Phase 1 needs. Saving as SQL strings keeps saved views durable across schema work. The "structured form composes to SQL" pattern is one component (form + SQL pane sharing a query model), not two — minimal incremental complexity over Option A.
+
+#### Monthly outcome view _(Command center)_
+
+- [ ] Specify the metric subset, slice-comparison UI, and layout for the monthly outcome view; ships once resolved-thesis count crosses the threshold. _Source: [feedback-loop.md](design/feedback-loop.md)._
+
+**Unblocks.**
+
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: interrupted-window handling_, _Ad-hoc query surface_, _Validation methodology: rollback evidence protocol_, _Backtest-for-deterministic-layer infrastructure_.
+
+**Context.** `feedback-loop.md` names this view but defers layout until resolved-thesis volume supports meaningful posterior bands. `command-center.md § Monthly view` echoes the same deferral. The substrate exists today: counterfactual replays cover PM accuracy and modification effectiveness; conviction calibration, status calibration, and citation-chain metrics all join through `agent_calls.output_artifact_ref` parsing plus `theses` resolution outcomes. The conditioning surface (regime / sector / conviction band / prompt version / model version) is `feedback-loop.md § Conditioning surface` and is the primary affordance per `feedback-review` skill's monthly-mode walk.
+
+**Options.**
+
+1. **Calibration-first layout.** Top of view: conviction calibration (analyst) and status calibration (strategist) curves with posterior bands. Middle: PM rejection accuracy and modification effectiveness curves from counterfactual replays. Bottom: citation-chain trajectory (per-source signal survival rate, synthesizer recall) and anti-pattern detector accuracy curves. Conditioning slices applied via a single global control bar (regime, sector, conviction band, prompt version, model version) that re-renders all panels. One-click "vs. prior month" toggle overlays last month's curves underneath.
+2. **Citation-chain-first layout.** Top of view: the citation-chain panel as the flagship — per-source signal survival rate, synthesizer recall, decision-layer citation rate per source, all on a single multi-line chart with source-as-color. Middle: calibration curves. Bottom: PM accuracy and anti-pattern detector accuracy. Reasoning: `feedback-loop.md § Citation-chain metrics — the cross-layer flagship` is the section the doc itself anchors as load-bearing.
+3. **Per-agent rollup grid.** Six tiles in a grid, one per LLM agent (analyst, strategist, PM, synthesizer, three sector researchers consolidated, qualitative+adaptive consolidated). Each tile shows that agent's process metrics on top, outcome metrics below, with conditioning controls scoped to the tile. The view is the agent-centric counterpart of the layer-centric digest.
+
+**Steelmans.**
+
+- *Option A.* Calibration is the metric the operator tunes against most directly — conviction calibration drives analyst prompt edits, status calibration drives strategist prompt edits, PM rejection accuracy drives PM prompt edits. Putting these at the top and letting the operator slice across regime/sector/prompt-version is the affordance `/feedback-review` monthly mode walks through. Single global control bar matches the dashboard's other multi-panel views.
+- *Option B.* Citation-chain is the highest-leverage diagnostic for analysis-layer prompt revisions per `/feedback-review` monthly walk. It's the unique thing the monthly view can show (digest is process-only); leading with it enforces the "outcome metrics need the monthly cadence" framing rather than letting calibration steal focus.
+- *Option C.* Operator iteration is per-prompt, not per-metric. The natural question is "is the strategist getting better?", not "is calibration improving?". A per-agent rollup answers the operator's actual question shape. Consolidating at the agent level pre-joins the right metric subset for each agent and keeps the conditioning controls local instead of global, which prevents the "I sliced regime here but not there" inconsistency.
+
+**Recommendation.** **Option A — calibration-first layout with a global conditioning control bar.** Calibration metrics are the highest-stakes structural-revision signal per `feedback-loop.md § Process vs. outcome metrics`, and a global slice control matches the unconditioned-aggregates-are-misleading discipline `/feedback-validate` and `/feedback-review` enforce. Citation-chain gets a primary panel below calibration, not the lead — the doc's "flagship" framing is about cross-layer reach, not display priority. The per-agent rollup of Option C is real value, but lives more naturally as drill-down from each calibration panel ("click conviction calibration → analyst rollup") than as the primary layout.
+
+#### Validation methodology: rollback evidence protocol _(Feedback loop)_
 
 - [ ] Specify what evidence is sufficient to roll back a previously-shipped change (validation evaluation outcome). _Source: [feedback-loop.md](design/feedback-loop.md)._
+
+**Unblocks.**
+
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: interrupted-window handling_, _Ad-hoc query surface_, _Monthly outcome view_, _Backtest-for-deterministic-layer infrastructure_.
+
+**Context.** [`feedback-loop.md § Pending`](docs/design/feedback-loop.md#pending) names the gap as "protocol for what evidence is sufficient to roll back a shipped change." Today, [`/feedback-validate` EVALUATE](.claude/skills/feedback-validate/SKILL.md) produces a verdict in `{improved, degraded, no_change, inconclusive}` and writes a `validation_outcomes` record, but the procedure following a `degraded` verdict is unspecified — does the operator immediately revert via git, register a new validation watching the revert, schedule a follow-up retrospective, or accept the degradation if the magnitude is small? The system is operator-driven per the [feedback-loop](docs/design/feedback-loop.md) preamble ("the operator is the agent of all changes"), so the protocol is decision-support, not automation.
+
+**Options.**
+
+1. **Bind rollback to a structural verdict-plus-criterion check: a `degraded` verdict whose post-edit window crosses the pre-registered failure criterion, with no qualifying confounder, mandates an operator-acknowledged revert; lesser shapes (degraded-but-confounded, no_change-after-improvement-expected, inconclusive) carry no rollback obligation.** The validation outcome record gains a derived `rollback_status` field (`mandatory`, `optional`, `not_applicable`); the dashboard's [validation evaluation view](docs/design/command-center.md#validation-evaluation-view) surfaces the status; rollback execution remains a manual git revert + a new validation registration to confirm the revert restored prior behavior.
+
+2. **Mandatory paired post-rollback validation: any rollback (regardless of trigger) automatically registers a follow-up validation watching the same metric over the same window length, with expected direction = restore-to-pre-edit-baseline.** The structural outcome of rollback is a closed cycle, not an open question.
+
+3. **Retrospective consensus: a `degraded` verdict alone never mandates rollback; rollback decisions are deferred to the next [`/feedback-retrospective`](.claude/skills/feedback-retrospective/SKILL.md) where the operator and Claude review degraded outcomes alongside the broader pattern context, and rollback is a retrospective_decision.** No new fields; rollback is a follow-up decision class in the existing retrospective entity.
+
+4. **Hybrid: structural rollback obligation on `degraded`-with-failure-criterion-crossed (Option 1's strict case), plus mandatory paired post-rollback validation (Option 2), plus retrospective consensus on the borderline cases (Option 3 for `no_change` after improvement was expected, or `degraded` with confounders).**
+
+**Steelmans.**
+
+- *Option 1.* Rollback is the operator's most consequential post-validation action; it should hang on the same anti-rationalization anchor the rest of the skill enforces. The pre-registered failure criterion is exactly the contract that says "this counts as the change not working" — binding rollback to that criterion crossing is the structural promise the operator made at REGISTER time. Distinguishing between degraded-with-failure-crossed (mandatory revert) and degraded-without-failure-crossed (optional revert pending operator judgment) preserves operator authority while removing the post-hoc bargain "the failure criterion technically tripped but I think the change is still net-positive."
+
+- *Option 2.* The most rigorous closed-loop discipline — rolling back without validating the rollback restored prior behavior is the same epistemic error the skill exists to prevent (uncontrolled change without confounder accounting). A revert is itself a change to the artifact's git history, against the same regime distribution and model version active at the time of revert; treating the revert as a free action means ungated drift in the opposite direction. The paired follow-up validation closes that loop structurally.
+
+- *Option 3.* Honors the [`Harness is calibrated, not pessimistic`](.claude/projects/-Users-jatassi-Git-AlphaMind/memory/feedback_harness_calibrated_not_pessimistic.md) memory most directly — single-validation-window degraded verdicts have unavoidable noise, and treating any individual `degraded` outcome as rollback-mandatory will cascade into churn (revert, re-register, evaluate the revert, re-revert if the window flips the other way). The retrospective is the cadence at which patterns become legible; rollback decisions deserve that cadence's evidence base, not the single-window evidence base of an EVALUATE walk.
+
+- *Option 4.* Captures the strongest case from each, layered by the strength of evidence — strict rollback obligation only when the operator's pre-registered failure criterion fired on a clean window, paired with discipline on the rollback's own outcome, with retrospective deferral as the soft path for ambiguous cases. Avoids the false trichotomy between "always rollback on degraded" and "never rollback without retrospective."
+
+**Recommendation.** **Option 4 (hybrid).** Bind structural rollback obligation to the pre-registered failure criterion crossing on a non-superseded validation window (Option 1's strict case); require a paired post-rollback validation for every revert (Option 2); defer borderline cases — `degraded` with confounders flagged, `no_change` when `improved` was expected, two consecutive `inconclusive` outcomes on the same artifact — to retrospective consensus (Option 3). Option 1 alone leaves the rollback's own outcome unmeasured, which the skill's discipline does not allow for any other change. Option 2 alone over-rotates: the paired validation is appropriate after a rollback, not as a substitute for the structural threshold deciding when to rollback. Option 3 alone defers the strictest case unnecessarily — when an operator's own pre-registered failure criterion fired on a clean window, the contract has already been honored by acknowledging the failure; deferring to retrospective is post-hoc bargaining with the contract. The hybrid mirrors the rest of the skill's layered defense: structural threshold first (the criterion the operator wrote), confounder check second (supersession from the prior to-do), retrospective context for everything ambiguous. Concretely: the validation outcome record gains a derived `rollback_status` field with values `mandatory_clean_failure`, `optional_pending_retrospective`, `not_applicable`; the [validation evaluation view](docs/design/command-center.md#validation-evaluation-view) surfaces the status with a link to the artifact's git history; a `mandatory_clean_failure` status pre-fills a paired post-rollback validation registration in the same EVALUATE session via the existing REGISTER flow, watching the same metric over the same window length with `expected_direction = improved` (restore-to-pre-edit-baseline); `optional_pending_retrospective` outcomes surface in the next retrospective's review queue alongside the `retrospective_decisions` ledger, where the rollback decision lands as a `follow_up` decision type per [`state-persistence.md § Retrospective decisions`](docs/design/05-execution-layer/state-persistence.md). Calibrated, not pessimistic — the structural rollback only fires on the operator's own pre-registered criterion, the system never rolls back unilaterally, and the retrospective path absorbs the noise that single-window verdicts cannot resolve.
+
+#### Backtest-for-deterministic-layer infrastructure _(Feedback loop)_
+
+- [ ] Stand up the backtest harness needed for regime-sensitive prompt validation (deterministic-layer replay, not full-pipeline backtest). _Source: [feedback-loop.md](design/feedback-loop.md)._
+
+**Unblocks.**
+
+- [feedback-loop.md](design/feedback-loop.md) — co-blockers: _Validation methodology: interrupted-window handling_, _Ad-hoc query surface_, _Monthly outcome view_, _Validation methodology: rollback evidence protocol_.
+
+**Context.** [`feedback-loop.md § Confounder management`](docs/design/feedback-loop.md#confounder-management) names "Backtest as sanity check" for regime-sensitive changes, qualified parenthetically as open infrastructure work. The scope is constrained: replay the *deterministic* layer (Class A/B/C distillation thresholds and the Class B rolling state from [`threshold-calibration.md`](docs/design/02-distillation-layer/threshold-calibration.md)) against historical price/macro inputs to confirm a tuning change holds across multiple historical regimes — not a full LLM-pipeline backtest. The [counterfactual replay engine](docs/design/05-execution-layer/counterfactual-replay-engine.md) already exists for PM-decision counterfactuals on price data, and the [paper-evaluation harness](docs/design/05-execution-layer/paper-evaluation-harness.md) already provides shared spread/impact/fee primitives. Validation under [`/feedback-validate`](.claude/skills/feedback-validate/SKILL.md) is an LLM-driven session; the deterministic harness is an analytical input it consumes, not a peer to it.
+
+**Options.**
+
+1. **Extend the counterfactual replay engine with a distillation-replay mode.** Add a second `replay_kind` family alongside `rejection` and `modification_original_form` — a per-invocation distillation replay that re-runs `config/distillation.yaml` against historical Q1/Q6/Q11 inputs and emits the resulting anomaly flags, regime label, and Class B baselines for a configured historical window. Reuses the engine's eligibility cursor, persistence pattern (`replay_engine_version`, confidence tag), and on-demand command-center trigger.
+
+2. **Build a standalone distillation-replay harness in `tests/replay/` (or `tools/replay/`) that consumes archived inputs and the `config/distillation.yaml` under test.** A separate command-line tool with its own fixture store of historical regime-stratified input slices (one slice per canonical regime: low-vol, normal, elevated, crisis), reading the same `Class A` threshold contracts and the same Class B baseline computation code paths the live distillation phase uses. Output is a per-regime flagging-rate report and side-by-side diff against a baseline config snapshot.
+
+3. **Repurpose the paper-evaluation harness's primitives plus a new replay loop driven by historical data fetched fresh on demand.** The harness's spread/impact/fee sub-models already share calibration discipline; bolt a distillation-replay loop on top that pulls historical price/macro on demand from Polygon/FRED rather than maintaining a fixture store.
+
+4. **Defer until the feedback loop has surfaced the first concrete tuning need; ship inline-in-skill ad-hoc replays via the existing command-center ad-hoc query surface.** Operator and Claude run config-diff replays as scratch SQL/Python over the activity log + archived distillation outputs, no new infrastructure.
+
+**Steelmans.**
+
+- *Option 1.* Maximum reuse of the engine the system already runs daily — same persistence schema, same on-demand trigger, same confidence-tagging convention. The replay record joins to invocation provenance the same way counterfactuals do, and the command center already renders aggregated counterfactual results in [Quality and feedback](docs/design/command-center.md#f-quality-and-feedback). One engine, two replay families, one versioning lineage.
+
+- *Option 2.* Strongest separation of concerns — the counterfactual engine answers PM decision questions, the distillation harness answers threshold-tuning questions, and conflating them risks accidental coupling (the replay-engine versioning rolls forward when the distillation tuner ships, invalidating PM counterfactuals). A standalone harness has its own regime-stratified fixture store curated by the operator, which is structurally what regime-sensitivity sanity-checking requires; archived live data has no guarantee of crisis-regime coverage in the first year of paper trading. Aligns with [`unit-test-plan.md § Distillation layer`](docs/design/testing/unit-test-plan.md#distillation-layer)'s threshold-crossing discipline.
+
+- *Option 3.* Minimum new infrastructure — paper-evaluation already owns the calibrated drag estimates the deterministic layer's distillation outputs eventually feed (anomaly→adaptive→thesis→fill drag); aligning the replay loop with its sub-models keeps the calibration story unified. Live data fetch on demand sidesteps the fixture-curation problem entirely.
+
+- *Option 4.* The most honest reading of [`Simplify before building`](docs/design/feedback-loop.md#confounder-management) — backtesting is named as "sanity check," not gate. Phase 4 is paper-trading-driven maturation; the backtest harness is an answer to a class of question that may not arrive in the form the spec anticipated, and ad-hoc command-center queries plus the `validate_universe.py`-style tooling pattern have served other Phase-4 needs. Defer until empirical demand shapes the right surface.
+
+**Recommendation.** **Option 2.** Standalone distillation-replay harness, with a regime-stratified fixture store curated from archived live invocation inputs and supplemented by hand-selected historical windows for regime coverage paper trading hasn't yet observed. The counterfactual replay engine answers a different question (PM-decision outcomes against forward price data) and conflating it with config-tuning sanity checks couples version lineages that should evolve independently — Option 1's reuse is superficial. Option 3's live-fetch-on-demand contaminates regime-sensitivity testing with vendor availability and rate-limit variance, which is exactly what regime-stratified fixtures exist to remove. Option 4 is tempting under simplify-first, but the [confounder list](docs/design/feedback-loop.md#confounder-management) names "calibration appears to drift but regime moved" as the biggest confounder; an ad-hoc query surface forces the operator to reconstruct the regime-sensitivity argument every time, which is the discipline failure the harness exists to prevent. The harness reuses the harness primitives from [`paper-evaluation-harness.md § Sub-models`](docs/design/05-execution-layer/paper-evaluation-harness.md#sub-models) where applicable (regulatory-fee table, spread/impact coefficients) so calibration stays unified, runs against archived `config/distillation.yaml` snapshots and the Class B baseline tables in [`threshold-calibration.md § Where each threshold lives`](docs/design/02-distillation-layer/threshold-calibration.md#where-each-threshold-lives), and emits a per-regime flag-rate report consumed as evidence by the operator-and-Claude `/feedback-validate` REGISTER step. Calibrated, not pessimistic — the harness uses the same primitives the live system uses, and surfaces flag-rate distributions per regime without adding conservatism on top.
+
+### Deferred
+
+_Items whose work is gated on an external trigger (vendor activation, downstream consumer materializing, sub-decision needed) rather than on operator capacity. Each entry names its trigger; promote to Quick wins / Moderate / Substantial when the trigger fires._
+
+#### Mapping coverage — deferred per-category schemas _(Data layer)_
+
+- [x] Q4 short selling and Q5 partial (earnings-estimate revisions) landed under the two-tier approach. Sources confirmed via POC: FINRA CDN (daily Reg SHO short volume, bi-weekly short interest) and iBorrowDesk's undocumented JSON endpoint (`/api/ticker/{TICKER}` — daily collector + on-demand single-ticker refresh, paced ≥5s to avoid the observed HTTP 444 rate-limit block). Storage tables `short_interest_snapshots`, `short_volume_daily`, `borrow_cost_daily`, `borrow_cost_intraday`, and `earnings_estimate_revisions` documented in [storage.md](design/01-data-layer/collector/storage.md); providers `finra` and `iborrowdesk` registered in [`data_sources.yaml`](../config/data_sources.yaml) (corrects the prior `q4_short_selling.primary: sec_edgar` misconfiguration); collector cron entries added to [`collector_schedule.yaml`](../config/collector_schedule.yaml); module skeletons listed in [data-sources.md § Module layout](design/01-data-layer/collector/data-sources.md). Implementation work split into user stories `05k-finra-vendor-adapter`, `05l-iborrowdesk-vendor-adapter`, `05m-finnhub-estimate-revisions` under [`docs/implementation/01-data-layer/collector/`](implementation/01-data-layer/collector/). The remaining five deferred categories convert to forward-trigger entries below; each lands when its consumer materializes per the storage doc's deferral reasons.
+
+**Forward-trigger entries** _(promote when the trigger fires)_:
+
+- **Q2 microstructure / order flow / dark pool.** Trigger: Polygon tick-data subscription activation. Entities `TradeFlowAggregate`, `LiquiditySnapshot`, `InstitutionalFlow`, `AuctionData`, `IntradayFlowPattern`, `ExtendedHoursFlow` already exist in `schema/order_flow.py`; storage tables land when the upstream tick feed comes online.
+- **Q8 commodities specialized (futures curves, CFTC positioning).** Trigger: paper-trading evidence of commodity-positioning theses needing futures-curve / COT inputs. Sub-decision required first: CFTC bulk CSV vs. their Public Reporting Environment (PRE) API; CME futures-curve source pending.
+- **Qual2 social sentiment.** Trigger: distillation layer requesting a `SocialSentimentScore` input. StockTwits provider already configured (`qual2_social.primary: stocktwits`); storage table lands when the consumer demands it.
+- **Qual4 earnings transcripts.** Trigger: qualitative-research agent or analyst tool requesting transcript bodies. Hybrid pattern (metadata in DB, transcript text on disk) per Qual1's `news_articles`. Source choice (Motley Fool / Quartr / YouTube + Whisper) deferred until consumer requirements are clear.
+- **Qual6 sector-specific qualitative catalysts.** Trigger: qualitative-research layer build-out. LLM-derived; the storage shape will track whatever the qualitative-research agent emits (likely event-shaped rows).

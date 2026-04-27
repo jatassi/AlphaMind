@@ -14,7 +14,7 @@ This document defines scope, disciplines, and preliminary unit catalogs for each
 
 - **OMS processing** — command envelope parsing, [command ID derivation](../oms-command-ids.md), conflict detection, sequential command execution for each of the [five commands](../05-execution-layer/oms-commands.md), fill integration into position / bracket / cash ledger / thesis / activity log, [Phase 1 atomicity](../05-execution-layer/architecture.md) guarantees, broker submission retry and abandonment (per [state-persistence.md Phase 2 write path](../05-execution-layer/state-persistence.md)), continuous-monitor-originated command issuance.
 
-- **Risk guardrails** — per-rule evaluation for each of the [17 rules](../06-risk-guardrails/rules-and-limits.md), [escalation zones](../06-risk-guardrails/breach-behavior.md), forced-reduction position selection, drawdown halt (daily + three-tier cumulative), [regime parameter lookup and transition interpolation](../06-risk-guardrails/regime-adaptation.md), pre-event and stress overlays, cross-constraint impact, [guardrail validation tool](../06-risk-guardrails/state-delivery.md) with cumulative tracking, cascade logic, emergency invocation triggers, guardrail state header projection per agent and per portfolio profile.
+- **Risk guardrails** — per-rule evaluation for each of the [18 rules](../06-risk-guardrails/rules-and-limits.md), [escalation zones](../06-risk-guardrails/breach-behavior.md), forced-reduction position selection, drawdown halt (daily + three-tier cumulative), [regime parameter lookup and transition interpolation](../06-risk-guardrails/regime-adaptation.md), pre-event and stress overlays, cross-constraint impact, [guardrail validation tool](../06-risk-guardrails/state-delivery.md) with cumulative tracking, cascade logic, emergency invocation triggers, guardrail state header projection per agent and per portfolio profile.
 
 - **Broker adapter** — OMS-command-to-Alpaca-REST translation (order-class mapping, `legs` array construction for `mleg`, bracket sub-object population, PATCH replace semantics including the race-window handling), `trade_updates` websocket event translation (every event type mapped to an OMS fill-report shape), Alpaca order-ID ↔ client-order-ID mapping maintenance across PATCH replacements, disconnect recovery via `GET /v2/orders` reconciliation, account-state query wrappers. Tests stub the Alpaca REST + websocket surface with a configurable mock.
 
@@ -113,14 +113,14 @@ Preliminary. Expect the list to move as implementation begins; the axes (categor
 | Correlation | rolling pairwise matrix, sector rotation velocity, lead-lag timing, correlation stability and breakdown |
 | Anomaly triggers | volume z-score, ATR-relative price move, news-price divergence, put-call skew spike, funding-stress composite |
 
-**Internal distillation** (~18 units):
+**Internal distillation** (~20 units):
 
 | Group | Units |
 |---|---|
 | Exposure | beta-weighted exposure aggregator (sector and directional) |
 | Correlation profile | pairwise correlation matrix generator, portfolio implied correlation, correlation clustering, regime-change detector |
 | P/L attribution | market component, sector component, alpha residual, attribution ratio, portfolio-level alpha |
-| Thesis concentration | effective independent thesis count (consumes thesis dependency mapping, which is scope-deferred per above) |
+| Thesis concentration | effective independent thesis count (consumes thesis dependency mapping, which is scope-deferred per above), maximum-catalyst-exposure aggregator, dependency-risk-flag threshold check (deterministic 25% boundary at 24.99 / 25.00 / 25.01 percent and across regime multipliers per [regime-adaptation.md](../06-risk-guardrails/regime-adaptation.md)) |
 | Capital efficiency | average capital utilization, capital turnover, cash drag estimate |
 | Execution efficiency | time-to-deploy, position sizing efficiency, thesis-to-execution conversion rate |
 | Performance metrics | Sharpe, Sortino, expectancy per trade, profit factor |
@@ -172,11 +172,11 @@ Preliminary. ~30 units grouped by processing phase.
 
 ## Risk guardrails
 
-Largest testable surface by rule count: 17 rules × 4 regimes × 3 escalation zones × overlay flags × profiles. Exhaustive enumeration is infeasible. Approach: per-rule evaluation at named boundaries, cross-rule interaction tests for genuinely-coupled concerns (secondary breach, forced reduction selection, cascade), snapshot tests for header projection.
+Largest testable surface by rule count: 18 rules × 4 regimes × 3 escalation zones × overlay flags × profiles. Exhaustive enumeration is infeasible. Approach: per-rule evaluation at named boundaries, cross-rule interaction tests for genuinely-coupled concerns (secondary breach, forced reduction selection, cascade), snapshot tests for header projection.
 
 ### Test concerns
 
-**Per-rule evaluation.** Each of the 17 rules is a function from (portfolio state, regime parameters) to (current value, limit, zone, headroom). Tests cover at-limit, one ε over, one ε under; each of the four regimes; each of the three escalation zones (plus drawdown-specific 60/80/90 and 50/70/85); pre-event and stress overlays present/absent; feature-flag omission under the primary profile. Rule interactions are tested separately.
+**Per-rule evaluation.** Each of the 18 rules is a function from (portfolio state, regime parameters) to (current value, limit, zone, headroom). Tests cover at-limit, one ε over, one ε under; each of the four regimes; each of the three escalation zones (plus drawdown-specific 60/80/90 and 50/70/85); pre-event and stress overlays present/absent; feature-flag omission under the primary profile. Rule interactions are tested separately.
 
 **Validation tool cumulative tracking.** The tool carries cumulative state across calls within an agent's turn (proposal 1 validates against live state; proposal 2 against live + proposal 1's projected impact; etc.). Tests cover single-call, cumulative cascade, reset at agent boundary, feature-flag first-check rejection. Underlying delta computation, conservative buffer, and per-rule projection live in the [guardrail-evaluation library](../06-risk-guardrails/guardrail-evaluation.md) with primitive-level tests.
 
@@ -205,7 +205,7 @@ Preliminary. ~40 units organized by concern rather than by rule (per-rule evalua
 
 | Group | Units |
 |---|---|
-| Per-rule evaluation | one parameterized unit covering all 17 rules (per-position size, position-level max loss, sector concentration, net long, net short, gross exposure, daily drawdown, cumulative drawdown, options delta, portfolio theta, portfolio vega, correlation, total short exposure, single short max size, borrow cost budget, min cash reserve) |
+| Per-rule evaluation | one parameterized unit covering all 18 rules (per-position size, position-level max loss, sector concentration, net long, net short, gross exposure, daily drawdown, cumulative drawdown, options delta, portfolio theta, portfolio vega, correlation, thesis-dependency risk flag, total short exposure, single short max size, borrow cost budget, min cash reserve) |
 | Breach behavior | escalation zone evaluator, forced-reduction classifier, position-selection logic, drawdown halt activator, cumulative-drawdown tier transition, daily reset |
 | Regime adaptation | parameter lookup per regime, transition interpolation (linear over 3 invocations), pre-event overlay applier, stress overlay applier, tightening-creates-immediate-breach detection |
 | Delta-adjusted exposure | delta computation (equity, option, multi-leg strategy), +10% conservative buffer, greeks integration |

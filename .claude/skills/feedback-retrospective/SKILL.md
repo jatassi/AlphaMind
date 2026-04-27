@@ -94,18 +94,18 @@ Produce a structured report with these sections:
 - Open questions for the next retrospective
 ```
 
-Save the report to a `retrospective_reports` table (or equivalent persistence; spec TBD) and render it in a dedicated dashboard view.
+Save the report as a `retrospective_reports` entity per [state-persistence.md § Retrospective reports](../../../docs/design/05-execution-layer/state-persistence.md) (record metadata in the entity, long-form markdown to `data/retrospective_reports/{report_id}/report.md`) and render it in the dedicated [retrospective view](../../../docs/design/command-center.md#retrospective-view).
 
 ### Phase 4 — Walkthrough (operator + Claude interactive)
 
-Open a review session via `create_review_session()` and `mcp__claude-in-chrome__tabs_create_mcp(url=dashboard_url)`. Navigate the operator to the rendered retrospective report and walk through it top-to-bottom using the standard affordances (highlight, navigate, annotate, pin).
+Open a review session via `create_review_session()` (backed by `POST /review-sessions`) and `mcp__claude-in-chrome__tabs_create_mcp(url=dashboard_url)`. Navigate the operator to the rendered retrospective report and walk through it top-to-bottom using the standard affordances (`highlight_metric`, `highlight_chart_point`, `navigate_to_view`, `annotate`, `pin_for_comparison`) plus the retrospective-view-specific affordances `scroll_to_section(section_anchor)` and `highlight_decision_row(item_identifier)` per [command-center.md § Retrospective view](../../../docs/design/command-center.md#retrospective-view).
 
-Capture decisions in real-time:
-- Promotion candidates accepted → record as new metric proposals (operator implements separately)
-- Promotion candidates rejected → record with brief rationale
-- Suggested follow-ups accepted → some may convert to validation registrations (handoff to `/feedback-validate`)
+Capture decisions in real-time via `POST /api/retrospective/{report_id}/decisions` with body `{item_identifier, decision_type, verdict, rationale, linked_validation_id?}` per [command-center.md § Retrospective view](../../../docs/design/command-center.md#retrospective-view), which writes a `retrospective_decisions` record per [state-persistence.md § Retrospective decisions](../../../docs/design/05-execution-layer/state-persistence.md):
+- Promotion candidates accepted (`decision_type: promotion_candidate`, `verdict: accepted`) → operator implements the new metric separately
+- Promotion candidates rejected (`decision_type: promotion_candidate`, `verdict: rejected`) → record with rationale
+- Suggested follow-ups accepted (`decision_type: follow_up`, `verdict: accepted`) → some may convert to validation registrations (handoff to `/feedback-validate`); when they do, capture the resulting validation ID as `linked_validation_id`
 
-End the session via `end_review_session()`. The report itself persists; the session state is transient.
+End the session via `end_review_session()` (backed by `DELETE /review-sessions/{id}`). The report itself persists; the session state is transient.
 
 ---
 

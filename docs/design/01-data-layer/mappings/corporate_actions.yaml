@@ -8,10 +8,6 @@ entities:
   spec_id: N/A (supporting type)
   description: An add or remove event from an index.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: index
     target_type: IndexName
@@ -73,10 +69,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A blackout period when corporate buybacks are restricted.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: blackout_start
     target_type: datetime
@@ -114,10 +106,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A single regulatory filing event.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: filing_type
     target_type: RegulatoryFilingType
@@ -181,10 +169,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A scheduled corporate event for investor engagement.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: event_name
     target_type: str
@@ -254,10 +238,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A secondary or follow-on offering of shares.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: offering_type
     target_type: str

@@ -18,7 +18,7 @@ Companion docs cover *what* is computed ([external.md](external.md), [internal.m
 | Regime multipliers on guardrail limits | [regime-adaptation.md](../06-risk-guardrails/regime-adaptation.md) |
 | Escalation breakpoints (warning / critical / hard-block) | [breach-behavior.md](../06-risk-guardrails/breach-behavior.md) |
 | Emergency invocation trigger thresholds | [breach-behavior.md § Emergency invocation trigger](../06-risk-guardrails/breach-behavior.md#emergency-invocation-trigger) |
-| Thesis-dependency risk flag threshold | [internal.md § 9b](internal.md) (deferred to risk guardrails) |
+| Thesis-dependency risk flag threshold | [rules-and-limits.md § Thesis-dependency risk flag](../06-risk-guardrails/rules-and-limits.md#thesis-dependency-risk-flag) |
 | LLM agent inclusion thresholds (analyst, strategist) | [analyst.md](../04-decision-layer/analyst.md), [strategist.md](../04-decision-layer/strategist.md) |
 | API failure tier classification thresholds | [api-failure-handling.md](../01-data-layer/api-failure-handling.md) |
 

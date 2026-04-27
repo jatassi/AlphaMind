@@ -8,10 +8,6 @@ entities:
   spec_id: N/A (supporting type)
   description: A pairwise correlation measurement between two tickers (intra-sector) or
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: ticker_1
     target_type: Ticker
@@ -20,7 +16,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: rolling correlation computed from Polygon OHLCV bars across the ticker pair. See entity docstring for computation logic.'
   - target_field: ticker_2
     target_type: Ticker
     description: Second ticker in the pair
@@ -28,7 +24,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: rolling correlation computed from Polygon OHLCV bars across the ticker pair. See entity docstring for computation logic.'
   - target_field: correlation_20d
     target_type: float
     description: 20-day rolling correlation (default window)
@@ -36,7 +32,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: rolling correlation computed from Polygon OHLCV bars across the ticker pair. See entity docstring for computation logic.'
   - target_field: correlation_60d
     target_type: float
     description: 60-day rolling correlation (trend context)
@@ -44,7 +40,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: rolling correlation computed from Polygon OHLCV bars across the ticker pair. See entity docstring for computation logic.'
   - target_field: correlation_trend
     target_type: str
     description: '"strengthening" | "weakening" | "stable"'
@@ -52,7 +48,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: rolling correlation computed from Polygon OHLCV bars across the ticker pair. See entity docstring for computation logic.'
   - target_field: last_updated
     target_type: Optional[datetime]
     description: When this pair's correlation was last computed
@@ -60,15 +56,11 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: rolling correlation computed from Polygon OHLCV bars across the ticker pair. See entity docstring for computation logic.'
 - entity: DivergenceEvent
   spec_id: N/A (supporting type)
   description: 'A detected divergence: one name breaking from its sector cohort or from'
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: peers
     target_type: list[Ticker]
@@ -77,7 +69,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: detected by comparing relative-performance trajectory against sector cohort baseline (Polygon OHLCV). See entity docstring for computation logic.'
   - target_field: divergence_magnitude_pct
     target_type: float
     description: How far this name has drifted relative to peer group (%)
@@ -85,7 +77,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: detected by comparing relative-performance trajectory against sector cohort baseline (Polygon OHLCV). See entity docstring for computation logic.'
   - target_field: divergence_duration_days
     target_type: int
     description: How many days the divergence has persisted
@@ -93,7 +85,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: detected by comparing relative-performance trajectory against sector cohort baseline (Polygon OHLCV). See entity docstring for computation logic.'
   - target_field: is_fresh
     target_type: bool
     description: True if divergence < 3 days old (more actionable)
@@ -101,7 +93,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: detected by comparing relative-performance trajectory against sector cohort baseline (Polygon OHLCV). See entity docstring for computation logic.'
   - target_field: historical_resolution_pattern
     target_type: str
     description: '"leader_caught_up" | "leader_pulled_back" |'
@@ -109,7 +101,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: detected by comparing relative-performance trajectory against sector cohort baseline (Polygon OHLCV). See entity docstring for computation logic.'
   - target_field: expected_resolution_timeframe_days
     target_type: int
     description: Estimated days until resolution based on history
@@ -117,15 +109,11 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: detected by comparing relative-performance trajectory against sector cohort baseline (Polygon OHLCV). See entity docstring for computation logic.'
 - entity: SectorRotationSignal
   spec_id: N/A (supporting type)
   description: 'A detected sector rotation: capital flowing between sectors or sectors'
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: from_sector
     target_type: Optional[AlphaMindSector]
@@ -134,7 +122,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: derived from sector ETF relative-performance and flow analysis (Polygon price bars + ETF data). See entity docstring for computation logic.'
   - target_field: to_sector
     target_type: Optional[AlphaMindSector]
     description: Sector being entered (None for inflow to equities)
@@ -142,7 +130,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: derived from sector ETF relative-performance and flow analysis (Polygon price bars + ETF data). See entity docstring for computation logic.'
   - target_field: relative_performance_gap_pct
     target_type: float
     description: '% outperformance of destination vs. source'
@@ -150,7 +138,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: derived from sector ETF relative-performance and flow analysis (Polygon price bars + ETF data). See entity docstring for computation logic.'
   - target_field: rotation_velocity_pct_per_day
     target_type: float
     description: Speed of rotation (% per day). Slow = regime shift,
@@ -158,7 +146,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: derived from sector ETF relative-performance and flow analysis (Polygon price bars + ETF data). See entity docstring for computation logic.'
   - target_field: rotation_narrative
     target_type: str
     description: '"rate_driven" | "growth_driven" | "risk_appetite_driven"'
@@ -166,7 +154,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: derived from sector ETF relative-performance and flow analysis (Polygon price bars + ETF data). See entity docstring for computation logic.'
   - target_field: net_flow_direction
     target_type: Direction
     description: Capital flowing into destination
@@ -174,7 +162,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: derived from sector ETF relative-performance and flow analysis (Polygon price bars + ETF data). See entity docstring for computation logic.'
   - target_field: flow_conviction
     target_type: SignalStrength
     description: How confident is the rotation signal
@@ -182,15 +170,11 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: derived from sector ETF relative-performance and flow analysis (Polygon price bars + ETF data). See entity docstring for computation logic.'
 - entity: BreadthMetric
   spec_id: N/A (supporting type)
   description: 'Market-wide or sector-wide breadth indicator: the composition of a move.'
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: metric_type
     target_type: str
@@ -199,7 +183,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: computed from Polygon OHLCV bars across the asset universe (advance/decline, % above moving averages). See entity docstring for computation logic.'
   - target_field: value
     target_type: float
     description: The metric value (%, count, or ratio depending on type)
@@ -207,7 +191,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: computed from Polygon OHLCV bars across the asset universe (advance/decline, % above moving averages). See entity docstring for computation logic.'
   - target_field: change_from_prior_session
     target_type: float
     description: How it changed since last invocation
@@ -215,7 +199,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: computed from Polygon OHLCV bars across the asset universe (advance/decline, % above moving averages). See entity docstring for computation logic.'
   - target_field: sector
     target_type: Optional[AlphaMindSector]
     description: If None, metric is market-wide; else sector-specific
@@ -223,15 +207,11 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: computed from Polygon OHLCV bars across the asset universe (advance/decline, % above moving averages). See entity docstring for computation logic.'
 - entity: LeadLagTiming
   spec_id: N/A (supporting type)
   description: Estimated lead-lag relationship between two assets or chains of assets.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: leader
     target_type: str
@@ -240,7 +220,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: estimated from cross-correlation lag analysis over price/macro/commodity bars (Polygon + FRED + EIA). See entity docstring for computation logic.'
   - target_field: follower
     target_type: str
     description: Asset expected to respond (e.g., "equity_weakness", "tech")
@@ -248,7 +228,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: estimated from cross-correlation lag analysis over price/macro/commodity bars (Polygon + FRED + EIA). See entity docstring for computation logic.'
   - target_field: estimated_lag_hours
     target_type: float
     description: Estimated hours for follower to respond (0–48 typical)
@@ -256,7 +236,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: estimated from cross-correlation lag analysis over price/macro/commodity bars (Polygon + FRED + EIA). See entity docstring for computation logic.'
   - target_field: lag_consistency
     target_type: float
     description: 0.0–1.0. How consistently the lag holds (1.0 = very consistent)
@@ -264,7 +244,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: estimated from cross-correlation lag analysis over price/macro/commodity bars (Polygon + FRED + EIA). See entity docstring for computation logic.'
   - target_field: regime_active
     target_type: bool
     description: Whether this lead-lag relationship is currently active
@@ -272,7 +252,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: estimated from cross-correlation lag analysis over price/macro/commodity bars (Polygon + FRED + EIA). See entity docstring for computation logic.'
   - target_field: time_since_last_lead_signal
     target_type: Optional[int]
     description: Hours since leader last moved significantly
@@ -280,15 +260,11 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: estimated from cross-correlation lag analysis over price/macro/commodity bars (Polygon + FRED + EIA). See entity docstring for computation logic.'
 - entity: IntermarketRegimeFlag
   spec_id: N/A (supporting type)
   description: A detected regime signal from a major cross-asset relationship.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: relationship
     target_type: str
@@ -297,7 +273,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: derived from cross-asset relationship state across price, macro, commodities, and volatility (Polygon + FRED + EIA). See entity docstring for computation logic.'
   - target_field: current_direction
     target_type: Direction
     description: What the relationship is currently doing
@@ -305,7 +281,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: derived from cross-asset relationship state across price, macro, commodities, and volatility (Polygon + FRED + EIA). See entity docstring for computation logic.'
   - target_field: regime_classification
     target_type: str
     description: '"bullish_regime" | "bearish_regime" | "risk_off" | "risk_on" | etc.'
@@ -313,7 +289,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: derived from cross-asset relationship state across price, macro, commodities, and volatility (Polygon + FRED + EIA). See entity docstring for computation logic.'
   - target_field: regime_stability
     target_type: float
     description: 0.0–1.0. Higher = relationship has been stable for longer
@@ -321,7 +297,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: derived from cross-asset relationship state across price, macro, commodities, and volatility (Polygon + FRED + EIA). See entity docstring for computation logic.'
   - target_field: days_in_current_regime
     target_type: int
     description: How many days this regime has persisted
@@ -329,7 +305,7 @@ entities:
     source_endpoint: Polygon (price bars) + FRED (macro) + EIA (commodities) — cross-asset correlation computation
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Distillation: derived from cross-asset relationship state across price, macro, commodities, and volatility (Polygon + FRED + EIA). See entity docstring for computation logic.'
 - entity: IntraSectorCorrelation
   spec_id: Q7:7a
   description: Q7:7a — Rolling pairwise correlation and divergence detection within sectors.

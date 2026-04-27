@@ -143,6 +143,22 @@ Weighted average uses position weight as the weighting factor, so larger positio
 
 ---
 
+## Thesis-dependency risk flag
+
+| Parameter | Default | Unit |
+|-----------|---------|------|
+| Max catalyst-failure exposure | 25% | Portfolio value (delta-adjusted) |
+
+**Enforcement:** T1 + T2 (advisory and PM-judgment — **not** T3)
+
+**Rationale:** Binds on the *maximum catalyst exposure* metric from [internal.md § 9b](../02-distillation-layer/internal.md) — total dollar exposure conditional on a single shared catalyst failing — and reuses the [sector concentration](#sector-concentration-limits) percentage. A single catalyst failing should not produce worse exposure than a sector concentration breach: shared-catalyst dependence across two sectors otherwise slips the per-sector ceiling. Surfaces in the [PM guardrail state header](state-delivery.md#portfolio-manager-guardrail-state-header) as the `Dependency risk flag` block; the analyst sees it via the [shared-catalyst summary](../02-distillation-layer/internal.md) so new proposals don't worsen an already-flagged cluster.
+
+Excluded from T3 because the upstream catalyst-clustering inputs are LLM-extracted from thesis narratives ([internal.md § 9a](../02-distillation-layer/internal.md)) and the resulting magnitude estimate inherits that noise floor — same reasoning as the [correlation limit](#correlation-limit) above. The deterministic surface is the threshold comparison itself; clustering quality is governed by the analysis layer's signal-quality regime.
+
+Boundary semantics: the flag is raised when maximum catalyst exposure strictly exceeds 25% of portfolio value (delta-adjusted). 25.00% is the highest non-flagged value; 25.01% is the lowest flagged value.
+
+---
+
 ## Options-specific limits
 
 ### Delta-adjusted exposure
@@ -219,6 +235,7 @@ The borrow cost budget (0.05% of portfolio/day = $50/day at $100K) prevents accu
 | Daily drawdown | — | ✓ (context) | ✓ | ✓ Continuous monitor |
 | Cumulative drawdown | — | ✓ (context) | ✓ | ✓ Continuous monitor |
 | Correlation | ✓ | ✓ | — | — |
+| Thesis-dependency risk flag | ✓ | ✓ | — | — |
 | Options delta exposure | ✓ | ✓ | ✓ | ✓ Continuous monitor |
 | Portfolio theta | ✓ | ✓ | ✓ | — (changes only on position entry/exit) |
 | Portfolio vega | ✓ | ✓ | ✓ | — (changes only on position entry/exit) |
@@ -236,7 +253,7 @@ The borrow cost budget (0.05% of portfolio/day = $50/day at $100K) prevents accu
 
 Guardrail rules don't scale uniformly across portfolio sizes. [Scenario testing](scenario-tests.md) revealed that at small portfolios, percentage-based exposure and drawdown rules are structurally inert (the portfolio can't deploy enough capital to reach them); at large portfolios, structural constraints like position count are redundant (exposure rules prevent over-deployment). What constrains the portfolio changes categorically with scale — small portfolios are constrained by economics (minimum viable position size, transaction cost proportionality, feature viability), large portfolios by exposure (concentration, leverage, correlation, drawdown).
 
-Each profile defines which features are enabled, which structural constraints apply, and which of the 17 rules are **binding** (active risk protection at this scale), **active but non-binding** (enforced for completeness but unlikely to trigger under normal operation), or **disabled** (feature unavailable, rule omitted from guardrail state headers). Independent of enforcement tier — a binding rule is still checked at all its designated tiers.
+Each profile defines which features are enabled, which structural constraints apply, and which of the 18 rules are **binding** (active risk protection at this scale), **active but non-binding** (enforced for completeness but unlikely to trigger under normal operation), or **disabled** (feature unavailable, rule omitted from guardrail state headers). Independent of enforcement tier — a binding rule is still checked at all its designated tiers.
 
 One profile runs at a time during both paper trading and live trading. Profiles are validated sequentially: paper trade at a tier → tune until profitable → deploy real capital → accumulate results → paper trade at the next tier. Tier graduation is gated on demonstrated profitability with real capital at the current tier, not paper trading results. Each tier's guardrail profile is informed by real market feedback from the previous tier.
 
@@ -269,6 +286,7 @@ The micro profile carries only rules that serve signal quality — protecting da
 | Daily drawdown | 2.5% ($37.50) | With 60% deployment ($900), a 4.2% decline across positions triggers halt. Reachable in a severe selloff. Protects against a broad market downturn hitting 18 correlated positions simultaneously. |
 | Cumulative drawdown | 8% ($120) | Reachable over a bad week with higher deployment. At $900 deployed, 13.3% aggregate loss hits the 8% portfolio drawdown. Progressive response (reduced sizing, flagged losers) is testable. |
 | Correlation | 0.70 | With 18–22 positions across only 2 structurally correlated sectors (AI narrative, supply chain linkages), correlation is a genuine concern. The limit pushes the analyst to find differentiated theses rather than 15 variations of the same trade. |
+| Thesis-dependency risk flag | 25% catalyst-failure exposure | Tech and semis share the AI-capex narrative; 18–22 positions can cluster on a single shared catalyst even when per-sector exposure is compliant. The flag fires when one catalyst's failure would erase more portfolio value than a single-sector breach. |
 | Min cash reserve | 10% ($150) | Capital for new opportunities as existing theses resolve. With higher deployment, a real constraint on total position count. |
 | Pending order capital | 30% ($450) | Pending limit orders across many concurrent positions could tie up significant capital. The cap prevents over-commitment to entries that may never fill. |
 
@@ -292,13 +310,13 @@ The micro profile carries only rules that serve signal quality — protecting da
 
 ### Profile: Small ($5,000–$15,000)
 
-**Purpose:** Second deployment tier. Risk management priority is **concentration management** — thesis quality is proven at micro; the system now scales up with more positions, a third sector, and (at the upper end) options. The danger is correlated failure modes emerging as complexity grows: five tech positions that all unwind on the same catalyst, or options greeks concentrating risk in dimensions the equity-only micro tier never tested. Every rule in this profile measures or constrains concentration, or protects against compounding losses concentrated portfolios produce.
+**Purpose:** Second deployment tier. Risk management priority is **concentration management** — thesis quality is proven at micro; the system now scales up with more positions and a third sector. The danger is correlated failure modes emerging as complexity grows: five tech positions that all unwind on the same catalyst. Every rule in this profile measures or constrains concentration, or protects against compounding losses concentrated portfolios produce.
 
 **Feature flags:**
 
 | Flag | Value | Rationale |
 |---|---|---|
-| `options_enabled` | `false` at $5K / `true` at $10K+ | At $5K, a $250 option premium is 5% — at the per-position limit with no room for error. At $10K+, options become practical: $500 premium is 5%, $200 is 2%. Options introduce three new concentration dimensions (delta, theta, vega) directly related to the tier's priority. Exact threshold TBD during paper trading. |
+| `options_enabled` | `false` | At $15K, a $750 conviction-3 position (5% sizing) requires a premium that hits the per-position cap with no headroom; defined-risk multi-leg structures need additional headroom for adjustment. Options enable at the medium-profile transition ($25K) where $1,250 max premium supports single-leg strategies and multi-leg becomes viable. |
 | `short_selling_enabled` | `false` | Margin requirements still consume disproportionate capital. Shorts introduce directional complexity (gross vs. net, hedge interactions) belonging at medium where the priority shifts to full exposure management. |
 | `fractional_shares_required` | `true` at $5K / `false` at $10K+ | At $5K, many asset universe names require fractional shares for compliant sizing. At $10K+, most positions support whole shares; fractional remains available. |
 | `active_sectors` | `[tech, semis, financials]` | Third sector enabled — the first genuine diversification against the structurally correlated tech/semis pair. The analyst can construct portfolios where a tech selloff doesn't hit every position simultaneously. Energy added at medium tier. |
@@ -307,36 +325,37 @@ The micro profile carries only rules that serve signal quality — protecting da
 
 **Rules — what's in the profile:**
 
-The small profile carries rules serving concentration management: measuring diversification, constraining greeks concentration from newly-enabled options, and protecting against compounding losses during correlated selloffs.
+The small profile carries rules serving concentration management: measuring diversification and protecting against compounding losses during correlated selloffs.
 
 | Rule | Value | Why it's in the profile |
 |---|---|---|
 | Per-position max size | 5% ($250–750) | Prevents single-thesis dominance. At $15K, a 5% position is $750; a 30% bracket stop loss costs $225. The cap forces diversification across theses. |
-| Position-level max loss | 30% / 80% (options) | Bracket stop backstop for equity. First tier where the 80% options threshold is relevant (options enabled at $10K+). A $500 options position losing 80% = $400 — real money. |
+| Position-level max loss | 30% | Bracket stop backstop for equity. |
 | Sector concentration | 25% | **Core concentration constraint.** With 3 active sectors and no position count cap, the analyst could load into tech. At $15K, 25% = $3,750/sector — room for 3–5 positions per favored sector. Forces looking beyond the obvious sector when it fills. |
 | Net long exposure | 60% | Caps total deployment. At $15K, 60% = $9,000. With 8–12 positions, a broad selloff hitting the full book can cost $450–900 (3–6%) on a 5–10% decline. Ensures cash buffer for correlated losses without existential damage. |
 | Gross exposure | 120% | Redundant with net long while shorts disabled (gross = net long). Included for profile consistency; binds at medium when shorts are enabled. |
 | Daily drawdown | 2.5% | At $15K with 60% deployment ($9,000), a 4.2% decline triggers halt. With 8–12 positions across only 3 sectors, a correlated sector selloff can reach this. A broad tech crash hitting 8 tech/semi positions simultaneously is exactly the concentrated failure mode this tier manages. |
 | Cumulative drawdown | 8% | At $15K, 8% = $1,200. With $9,000 deployed, a 13.3% aggregate loss hits the limit. Reachable over a bad week. Progressive response (reduced sizing at 8%, further at 10%, full halt at 12%) is testable. |
 | Correlation | 0.70 | **Core concentration constraint.** With 8–12 positions across 3 sectors, weighted average pairwise correlation is the most direct measure of genuine diversification. Tech/semis structurally correlated; financials provide diversification. If >0.70, the analyst needs differentiated theses or the PM rejects redundant proposals. The reason the third sector exists in this profile. |
-| Options delta exposure | 40% (when enabled) | At $10K+, options introduce delta concentration risk equity-only portfolios don't have. Three long calls in tech names stack correlated delta. The cap prevents options delta from dominating the portfolio's directional profile. |
-| Portfolio theta | 0.15%/day (when enabled) | At $10K, 0.15% = $15/day. A single 30DTE option carries $5–10/day theta; two positions approach the limit. Theta compounds silently and can drag the portfolio into drawdown without adverse price movement. |
-| Portfolio vega | 1.0%/pt (when enabled) | At $10K, 1.0% = $100/pt. With 2–3 options positions, a 5-point IV crush around an event costs up to $500 (5%). The cap prevents the portfolio from becoming a volatility bet when the intent is directional thesis validation. |
-| Min cash reserve | 10% | At $15K, $1,500 reserve. Capital for new positions as theses resolve; buffer against margin requirements if options enabled. |
+| Thesis-dependency risk flag | 25% catalyst-failure exposure | Catches the dependency case correlation misses — two positions in different sectors (e.g., long NVDA, long financials on a "rate-cut → growth" narrative) reading uncorrelated by price history but sharing a single macro catalyst. PM judgment converts the flag into a trim/hedge decision. |
+| Min cash reserve | 10% | At $15K, $1,500 reserve. Capital for new positions as theses resolve. |
 | Pending order capital | 30% | With more concurrent positions and limit orders, prevents over-commitment to entries that may never fill. |
 
 **Rules — what's NOT in the profile:**
 
 | Rule | Why it's excluded |
 |---|---|
+| Options delta exposure | Options disabled. |
+| Portfolio theta | Options disabled. |
+| Portfolio vega | Options disabled. |
 | Net short exposure | Shorts disabled. |
 | Total short exposure | Shorts disabled. |
 | Single short max size | Shorts disabled. |
 | Borrow cost budget | Shorts disabled. |
 
-**What this profile validates:** Concentration management across 3 sectors, correlation-aware portfolio construction, options greeks management at introductory scale, daily drawdown halt under correlated selloff, cumulative drawdown progressive response, sector concentration as an active constraint, the PM's ability to reject redundant proposals.
+**What this profile validates:** Concentration management across 3 sectors, correlation-aware portfolio construction, daily drawdown halt under correlated selloff, cumulative drawdown progressive response, sector concentration as an active constraint, the PM's ability to reject redundant proposals.
 
-**What this profile does NOT validate:** Short selling, 4-sector diversification, gross exposure management with a long+short book, margin management, regime adaptation under extreme exposure (meaningful at medium+).
+**What this profile does NOT validate:** Options-driven concentration dimensions (delta, theta, vega), defined-risk directional plays via spreads, short selling, 4-sector diversification, gross exposure management with a long+short book, margin management, regime adaptation under extreme exposure (meaningful at medium+).
 
 ### Profile: Medium ($25,000–$50,000)
 
@@ -357,7 +376,7 @@ First tier where **regime adaptation is consequential**. Crisis mode cutting gro
 
 **Rules — what's in the profile:**
 
-All 17 rules are present and binding. Justifications below focus on what's new or different from the small tier.
+All 18 rules are present and binding. Justifications below focus on what's new or different from the small tier.
 
 | Rule | Value | Why it's in the profile |
 |---|---|---|
@@ -370,6 +389,7 @@ All 17 rules are present and binding. Justifications below focus on what's new o
 | Daily drawdown | 2.5% ($625–1,250) | At $50K with $35K deployed, a 3.6% decline triggers halt. Realistic during elevated volatility — fires often enough to be a regular feature of system operation. |
 | Cumulative drawdown | 8% ($2,000–4,000) | All progressive tiers reachable: 8% ($4K) → tier 1; 10% ($5K) → tier 2; 12% ($6K) → full halt. A bad week pushes through tier 1 into tier 2. Full progressive mechanism gets a real workout. |
 | Correlation | 0.70 | With 10–15 positions across 4 sectors plus a short book, correlation structure is complex. Long/short pairs within a sector may have high pairwise correlation by design (the hedge). The weighted average needs to account for this — a long NVDA / short AMD pair is high-correlation but low directional risk. The PM understands correlation in the context of directional exposure. |
+| Thesis-dependency risk flag | 25% catalyst-failure exposure | With shorts and options enabled, a single catalyst (FOMC, CPI, earnings tone) can drive multiple positions across long and short books simultaneously — and a paired hedge does not protect against a catalyst that resolves directionally for both legs. The flag surfaces aggregate catalyst exposure the long/short pair structure can mask from raw correlation. |
 | Options delta exposure | 40% | At $50K, 40% = $20K from options alone. Combined with equity, total directional exposure can reach the net long limit primarily through options leverage — making the risk profile more sensitive to gamma and IV than it appears. The cap ensures the PM consciously manages this. |
 | Portfolio theta | 0.15%/day ($37.50–75) | At $50K, $75/day max = $1,500/month if fully consumed — a 3% monthly headwind. Multiple options positions can approach the limit, especially pre-event. Active theta management (rolling, closing, offsetting) becomes a real PM responsibility. |
 | Portfolio vega | 1.0%/pt ($250–500/pt) | At $50K, a 5-point IV crush costs up to $2,500 (5%) at the limit. Around FOMC or earnings, IV can crush 5–10 points overnight. Interacts with pre-event tightening overlay. |
@@ -381,15 +401,15 @@ All 17 rules are present and binding. Justifications below focus on what's new o
 
 **Rules — what's NOT in the profile:**
 
-None. All 17 rules are binding. First profile where no rules are excluded.
+None. All 18 rules are binding. First profile where no rules are excluded.
 
 **Regime adaptation at medium:** First tier where regime transitions create significant constraint pressure. Normal regime: portfolio at 55% net long and 85% gross. Elevated tightens net long to 45% and gross to 90% — net long now binds, requiring reductions. Crisis tightens to 30% / 60% — roughly halving operating capacity. Strategist → PM deferral, emergency invocation trigger for regime jumps, and gradual loosening on recovery are all meaningfully exercised. Pre-event tightening overlay compounds with regime parameters.
 
-**What this profile validates:** Full guardrail architecture under real constraint pressure. All 17 rules binding. Regime adaptation with meaningful parameter changes. Drawdown halt and progressive response under realistic conditions. Short book management (squeeze risk, borrow costs, margin). Long/short interaction effects. Options greeks management at scale. 4-sector correlation management. Cross-constraint interactions. Emergency invocation under regime jumps. PM ability to manage a complex multi-dimensional risk profile.
+**What this profile validates:** Full guardrail architecture under real constraint pressure. All 18 rules binding. Regime adaptation with meaningful parameter changes. Drawdown halt and progressive response under realistic conditions. Short book management (squeeze risk, borrow costs, margin). Long/short interaction effects. Options greeks management at scale. 4-sector correlation management. Cross-constraint interactions. Emergency invocation under regime jumps. PM ability to manage a complex multi-dimensional risk profile.
 
 ### Profile: Large ($100,000+)
 
-**Purpose:** Fourth deployment tier. Risk management priority is **exposure management plus execution quality**. Rule set and feature flags identical to medium — all 17 rules, all features enabled, same percentages. What changes: market impact becomes meaningful, and real dollar losses carry psychological weight.
+**Purpose:** Fourth deployment tier. Risk management priority is **exposure management plus execution quality**. Rule set and feature flags identical to medium — all 18 rules, all features enabled, same percentages. What changes: market impact becomes meaningful, and real dollar losses carry psychological weight.
 
 A $5,000 position (5% of $100K) in a mid-cap name is no longer invisible to the order book. The [paper-evaluation harness](../05-execution-layer/paper-evaluation-harness.md)'s slippage and impact estimates — conservative-but-ignorable at medium sizing — produce meaningful live-execution drag at large. A $2,500 daily drawdown halt is the same percentage as medium's $1,250 halt, but the absolute number tests whether the system (and operator) maintain discipline when losses feel larger.
 
@@ -404,7 +424,7 @@ A $5,000 position (5% of $100K) in a mid-cap name is no longer invisible to the 
 | `max_concurrent_positions` | None | Exposure rules are the binding constraints. Position count naturally lands at 12–20. |
 | `min_position_size` | `$100` | 0.1% of portfolio. Higher than medium's $75 floor — a position below $100 generates negligible P/L relative to a $100K portfolio. A 10% move on $100 is $10. |
 
-**Rules:** All 17 rules binding, same values and justifications as medium with proportionally larger absolute amounts. Regime adaptation fully consequential — crisis cutting gross from $120K to $60K forces liquidation of roughly half the portfolio's exposure.
+**Rules:** All 18 rules binding, same values and justifications as medium with proportionally larger absolute amounts. Regime adaptation fully consequential — crisis cutting gross from $120K to $60K forces liquidation of roughly half the portfolio's exposure.
 
 **What distinguishes large from medium:**
 
@@ -421,7 +441,7 @@ The large profile validates three things medium can't:
 | Parameter | Micro ($1.5K) | Small ($5–15K) | Medium ($25–50K) | Large ($100K+) |
 |---|---|---|---|---|
 | Risk priority | Signal quality | Concentration mgmt | Exposure mgmt | Exposure + execution |
-| Options | Disabled | Enabled at $10K+ | Enabled | Enabled |
+| Options | Disabled | Disabled | Enabled | Enabled |
 | Shorts | Disabled | Disabled | Enabled | Enabled |
 | Sectors | 2 | 3 | 4 | 4 |
 | Position count cap | None (exposure-limited) | None (exposure-limited) | None (exposure-limited) | None (exposure-limited) |
@@ -430,8 +450,8 @@ The large profile validates three things medium can't:
 | Drawdown limits reachable? | Yes (with 60% deployment) | Yes | Yes | Yes |
 | Regime adaptation meaningful? | Marginally | Marginally | Yes | Yes |
 | Fractional shares | Required | Required at $5K | Not required | Not required |
-| Rules in profile | 10 (no options/shorts) | 10–14 (options rules at $10K+) | All 17 | All 17 |
-| Thesis review trigger | Every 20 trades or 15% loss | TBD | None (drawdown system) | None (drawdown system) |
+| Rules in profile | 11 (no options/shorts) | 11 (no options/shorts) | All 18 | All 18 |
+| Thesis review trigger | Every 20 trades or 15% loss | None (drawdown system) | None (drawdown system) | None (drawdown system) |
 
 ### Sequential validation lifecycle
 
@@ -447,7 +467,7 @@ Each tier graduation is gated on demonstrated profitability with real capital at
 
 Profile transition is **manual, not automatic** when capital crosses a tier boundary. The operator reviews portfolio state, confirms readiness for the expanded feature set, and switches the active profile. Prevents a lucky week pushing capital past a boundary and suddenly enabling shorts or removing the position count cap before the operator is comfortable.
 
-If capital shrinks below the current tier's lower bound, the system generates a **profile downgrade advisory** but does not automatically switch. The operator decides whether to tighten or continue at the current tier with reduced capital. Automatic downgrade could force-close positions in newly-disabled features (e.g., options when dropping from small to micro) — an operator decision, not mechanical.
+When `portfolio_summary.total_equity` falls outside the active profile's `capital_range_usd`, the `Profile boundary crossed` alert in [`config/alerts.yaml`](../command-center.md#alerting) emits an Operational advisory — symmetric for downward crossings (downgrade candidate) and upward crossings (graduation candidate). The operator decides whether to switch profiles, tighten posture at the current tier, or hold; the system never automatically downgrades, which would otherwise force-close positions in newly-disabled features (e.g., options when dropping from medium to small).
 
 ---
 

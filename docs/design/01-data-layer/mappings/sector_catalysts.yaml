@@ -8,10 +8,6 @@ entities:
   spec_id: N/A (supporting type)
   description: Per-company AI/capex commentary from earnings calls, investor presentations,
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: commentary_direction
     target_type: Direction
@@ -20,7 +16,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: AI/capex commentary extracted from earnings calls and trade press (SIA + SEMI + DigiTimes + HPCwire) by tech qualitative researcher. See entity docstring for computation logic.'
   - target_field: key_statement
     target_type: str
     description: Direct quote or paraphrased evidence
@@ -28,7 +24,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: AI/capex commentary extracted from earnings calls and trade press (SIA + SEMI + DigiTimes + HPCwire) by tech qualitative researcher. See entity docstring for computation logic.'
   - target_field: capex_change_direction
     target_type: Direction
     description: BULLISH/BEARISH/NEUTRAL on capex delta vs. prior period
@@ -36,15 +32,11 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: AI/capex commentary extracted from earnings calls and trade press (SIA + SEMI + DigiTimes + HPCwire) by tech qualitative researcher. See entity docstring for computation logic.'
 - entity: ProductCycle
   spec_id: N/A (supporting type)
   description: Active semiconductor or AI infrastructure product cycle stage and market impact.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: product_name
     target_type: str
@@ -53,7 +45,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: product cycle stage extracted from trade press and company announcements (DigiTimes + HPCwire + Tom''s Hardware + company IR) by tech qualitative researcher. See entity docstring for computation logic.'
   - target_field: cycle_stage
     target_type: str
     description: '"pre_launch" | "launch" | "ramp" | "maturity" | "decline"'
@@ -61,7 +53,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: product cycle stage extracted from trade press and company announcements (DigiTimes + HPCwire + Tom''s Hardware + company IR) by tech qualitative researcher. See entity docstring for computation logic.'
   - target_field: significance
     target_type: SignalStrength
     description: STRONG/MODERATE/WEAK impact on sector narrative
@@ -69,7 +61,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: product cycle stage extracted from trade press and company announcements (DigiTimes + HPCwire + Tom''s Hardware + company IR) by tech qualitative researcher. See entity docstring for computation logic.'
   - target_field: description
     target_type: Optional[str]
     description: Additional context
@@ -77,15 +69,11 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: product cycle stage extracted from trade press and company announcements (DigiTimes + HPCwire + Tom''s Hardware + company IR) by tech qualitative researcher. See entity docstring for computation logic.'
 - entity: CompetitiveShift
   spec_id: N/A (supporting type)
   description: Market share or competitive position change in a narrowly-scoped market segment.
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: description
     target_type: str
@@ -94,7 +82,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: market-share shift extracted from trade press and analyst reports (SIA + SEMI + DigiTimes) by tech qualitative researcher. See entity docstring for computation logic.'
   - target_field: market_share_direction
     target_type: Direction
     description: BULLISH/BEARISH/NEUTRAL on this company's share
@@ -102,7 +90,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: market-share shift extracted from trade press and analyst reports (SIA + SEMI + DigiTimes) by tech qualitative researcher. See entity docstring for computation logic.'
   - target_field: significance
     target_type: SignalStrength
     description: STRONG/MODERATE/WEAK market impact
@@ -110,7 +98,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: market-share shift extracted from trade press and analyst reports (SIA + SEMI + DigiTimes) by tech qualitative researcher. See entity docstring for computation logic.'
   - target_field: affected_segment
     target_type: Optional[str]
     description: Market segment (e.g., "AI inference chips", "DPU market")
@@ -118,15 +106,11 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: market-share shift extracted from trade press and analyst reports (SIA + SEMI + DigiTimes) by tech qualitative researcher. See entity docstring for computation logic.'
 - entity: OPECStatement
   spec_id: N/A (supporting type)
   description: Individual OPEC member or group statement on production intentions, compliance,
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: speaker
     target_type: str
@@ -135,7 +119,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: statement scraped from OPEC website / press releases by energy qualitative researcher. See entity docstring for computation logic.'
   - target_field: role
     target_type: str
     description: Official role or affiliation
@@ -143,7 +127,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: statement scraped from OPEC website / press releases by energy qualitative researcher. See entity docstring for computation logic.'
   - target_field: statement_date
     target_type: datetime
     description: UTC timestamp of statement
@@ -151,7 +135,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: statement scraped from OPEC website / press releases by energy qualitative researcher. See entity docstring for computation logic.'
   - target_field: tone
     target_type: Direction
     description: BULLISH (supportive of cuts) | BEARISH (willing to increase) | NEUTRAL
@@ -159,7 +143,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: statement scraped from OPEC website / press releases by energy qualitative researcher. See entity docstring for computation logic.'
   - target_field: key_statement
     target_type: str
     description: Direct quote or paraphrased message
@@ -167,7 +151,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: statement scraped from OPEC website / press releases by energy qualitative researcher. See entity docstring for computation logic.'
   - target_field: confidence
     target_type: SignalStrength
     description: How authoritative this statement is
@@ -175,15 +159,11 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: statement scraped from OPEC website / press releases by energy qualitative researcher. See entity docstring for computation logic.'
 - entity: RegulatoryShift
   spec_id: N/A (supporting type)
   description: 'Discrete regulatory change: new rule, enforcement action, appointee impact,'
   is_primary_entity: false
-  primary_source: TBD
-  fallback_source: N/A
-  cadence: TBD
-  feasibility: TBD
   fields:
   - target_field: description
     target_type: str
@@ -192,7 +172,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: regulatory change extracted from SEC notices, Fed announcements, and agency filings by financials qualitative researcher. See entity docstring for computation logic.'
   - target_field: effective_date
     target_type: Optional[datetime]
     description: UTC timestamp when change takes effect
@@ -200,7 +180,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: regulatory change extracted from SEC notices, Fed announcements, and agency filings by financials qualitative researcher. See entity docstring for computation logic.'
   - target_field: affected_sectors
     target_type: list[str]
     description: Which subsectors (e.g., "fintech", "crypto")
@@ -208,7 +188,7 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: regulatory change extracted from SEC notices, Fed announcements, and agency filings by financials qualitative researcher. See entity docstring for computation logic.'
   - target_field: expected_impact
     target_type: Optional[str]
     description: Qualitative impact assessment
@@ -216,9 +196,9 @@ entities:
     source_endpoint: 'Finnhub: IPO calendar, company-news | FRED: macro series | Manual: event calendar'
     source_field: See transform
     source_type: varies
-    transform: 'Distillation: derived from TBD. See entity docstring for computation logic.'
+    transform: 'Analysis layer: regulatory change extracted from SEC notices, Fed announcements, and agency filings by financials qualitative researcher. See entity docstring for computation logic.'
 - entity: TechSemiCatalyst
-  spec_id: Qual 6:6a
+  spec_id: Qual6:6a
   description: Qual 6:6a — AI/semiconductor narrative, supply chain, and product cycle signals.
   is_primary_entity: true
   primary_source: |-
@@ -435,7 +415,7 @@ entities:
       Distillation: derived from SIA monthly sales (free) + SEMI equipment data (free) + DigiTimes
               (mostly free) + BIS export controls (free gov) + HPCwire/Tom's Hardware RSS. See entity docstring for computation logic.
 - entity: EnergyCatalyst
-  spec_id: Qual 6:6b
+  spec_id: Qual6:6b
   description: Qual 6:6b — OPEC rhetoric, inventory narrative, weather, and infrastructure.
   is_primary_entity: true
   primary_source: EIA (free) + news APIs + OPEC website + NOAA (weather)
@@ -622,7 +602,7 @@ entities:
     transform: 'Distillation: derived from EIA (free) + news APIs + OPEC website + NOAA (weather). See entity docstring for
       computation logic.'
 - entity: FinancialsCatalyst
-  spec_id: Qual 6:6c
+  spec_id: Qual6:6c
   description: Qual 6:6c — Credit narrative, rate environment, M&A pipeline, and fintech trends.
   is_primary_entity: true
   primary_source: FRED (free) + news APIs + SEC EDGAR + SLOOS (quarterly)
