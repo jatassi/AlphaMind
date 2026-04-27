@@ -1,16 +1,16 @@
 # Portfolio state — raw state
 
-Direct reads from the OMS database (populated from Alpaca's account / positions / orders / activities endpoints and the `trade_updates` websocket — see [broker-adapter.md](../../05-execution-layer/broker-adapter.md)) or direct aggregations of stored data. No market data cross-reference or LLM judgment required. For derived metrics requiring market data, see [derived-metrics.md](derived-metrics.md).
+Direct reads from the OMS database (populated from Alpaca's account / positions / orders / activities endpoints and the `trade_updates` websocket — see [broker-adapter.md](../../05-execution-layer/broker-adapter.md)) or direct aggregations of stored data. No market data cross-reference or LLM judgment. For derived metrics, see [derived-metrics.md](derived-metrics.md).
 
 ---
 
 **1. Position inventory**
-What the system currently owns or is short. Every open position with enough detail for any agent to assess directional exposure, concentration, and portfolio composition without further queries. The foundation — categories 2–6 reference back to this.
+What the system currently owns or is short. Every open position with enough detail for any agent to assess directional exposure, concentration, and portfolio composition without further queries. The foundation — categories 2–6 reference back.
 
-  *Design principle — positions as structured theses, not just holdings:* A position binds a directional bet to its justifying thesis, success/failure parameters, and execution history. This tight coupling makes thesis-based position management possible (see [design-decisions.md](../../design-decisions.md)) — the system can't evaluate thesis validity if the thesis isn't attached to the position it created.
+  *Design principle — positions as structured theses, not just holdings:* A position binds a directional bet to its justifying thesis, success/failure parameters, and execution history. Tight coupling makes thesis-based position management possible (see [design-decisions.md](../../design-decisions.md)) — the system can't evaluate thesis validity without the thesis attached to the position.
 
   *1a. Current holdings*
-  Each position is delivered as the position record defined in [position-model.md](../../05-execution-layer/position-model.md), which specifies the base interface (direction, entry timestamp, market value, unrealized P/L, position weight, execution history, thesis and bracket bindings) and instrument-specific extensions for equity, options, and strategy positions. This section specifies only the consumer-facing computations the ingestion layer applies at each invocation:
+  Each position is delivered as the position record defined in [position-model.md](../../05-execution-layer/position-model.md): base interface (direction, entry timestamp, market value, unrealized P/L, position weight, execution history, thesis and bracket bindings) plus instrument-specific extensions for equity, options, and strategy positions. The ingestion layer applies these consumer-facing computations at each invocation:
 
   - Current market value: quantity × current price using the latest price from quant 1a.
   - Position weight: market value as a percentage of total portfolio value (positions + cash).
@@ -20,7 +20,7 @@ What the system currently owns or is short. Every open position with enough deta
   For exposure calculations (delta-adjusted vs. notional), see [position-model.md](../../05-execution-layer/position-model.md). The ingestion layer delivers both notional and delta-adjusted exposure per position.
 
   *1b. Sector and directional exposure*
-  Direct rollups of the position inventory; no market-data cross-reference. Beta-adjusted metrics that require quant 1f live in [derived metrics 7a](derived-metrics.md).
+  Direct rollups of the position inventory. Beta-adjusted metrics requiring quant 1f live in [derived metrics 7a](derived-metrics.md).
   - Sector allocation: total long and short per sector (tech, semis, financials, energy) in dollars and as portfolio percentage — primary concentration measure. Uses delta-adjusted exposure for options/strategy positions per [position-model.md](../../05-execution-layer/position-model.md).
   - Net directional exposure: long minus short as portfolio percentage — net long, short, or neutral.
   - Gross exposure: long plus short as portfolio percentage — leverage proxy. 150% gross means more directional bets than capital even at low net exposure.
@@ -31,9 +31,9 @@ What the system currently owns or is short. Every open position with enough deta
 **2. P/L and performance tracking**
 AlphaMind's primary success metric is ending each day with more liquid cash than the opening balance (see [README.md](../README.md)), so P/L tracking is a core input to every decision, not a reporting function. A system up 2% on the day has different risk appetite than one down 1%, even with identical market and thesis landscapes.
 
-  *Design principle — P/L as context, not directive:* P/L informs the PM's risk decisions but never directly triggers trades. The thesis drives hold/close; P/L provides risk context for sizing, entry appetite, and drawdown management. The system avoids the human failure mode of letting P/L override thesis ("I'm up 3% so I'll get aggressive" or "I'm down so I'll cut everything") by keeping P/L and thesis as separate inputs the PM weighs independently.
+  *Design principle — P/L as context, not directive:* P/L informs PM risk decisions but never directly triggers trades. Thesis drives hold/close; P/L provides risk context for sizing, entry appetite, and drawdown management. Avoids the human failure mode of letting P/L override thesis ("I'm up 3% so I'll get aggressive" or "I'm down so I'll cut everything") by keeping P/L and thesis as separate inputs the PM weighs independently.
 
-  *Note on P/L attribution:* Decomposition into market, sector, and alpha components requires market-return and beta cross-reference, so it's analysis-layer work running daily pre-close. See [derived metrics 8a–8b](../../02-distillation-layer/internal.md).
+  *Note on P/L attribution:* Decomposition into market, sector, and alpha components requires market-return and beta cross-reference; analysis-layer work running daily pre-close. See [derived metrics 8a–8b](../../02-distillation-layer/internal.md).
 
   *2a. Position-level P/L*
   - Unrealized P/L: current market value minus cost basis, in dollars and as percentage of cost.
@@ -56,13 +56,13 @@ AlphaMind's primary success metric is ending each day with more liquid cash than
   - Current drawdown: percentage from the most recent equity high-water mark — monitored against the max drawdown limit.
   - Drawdown duration: time since last equity high — extended drawdowns trigger mechanical risk reduction.
   - Maximum drawdown (lifetime): deepest peak-to-trough decline — calibration input for risk guardrails.
-  - Intraday drawdown: worst point today vs. opening equity — even with end-of-day recovery, deep intraday drawdown signals over-exposure.
+  - Intraday drawdown: worst point today vs. opening equity — deep intraday drawdown signals over-exposure even with end-of-day recovery.
   - Drawdown by source: which positions/sectors contributed — broad-based (macro-driven) vs. concentrated (idiosyncratic) drives different responses.
 
 ---
 
 **3. Thesis registry**
-The intellectual core. Every open position exists because a thesis justified it. The registry holds the structured record of every active thesis and its current status — explicit *why* encoding rather than position tracking by entry/exit rules.
+The intellectual core. Every open position exists because a thesis justified it. Explicit *why* encoding rather than position tracking by entry/exit rules.
 
   *Design principle — thesis as living document:* A thesis is generated by the analyst, approved (possibly modified) by the PM, attached to a position at execution, monitored every invocation, and eventually resolved (validated, invalidated, or expired). The registry tracks the full lifecycle; resolution data feeds system tuning. Every closed thesis is a training example.
 
@@ -71,7 +71,7 @@ The intellectual core. Every open position exists because a thesis justified it.
   *Note on thesis dependency:* Whether active theses share catalysts or narratives is analysis-layer work requiring LLM judgment. See [derived metrics 9a–9b](../../02-distillation-layer/internal.md).
 
   *3a. Active thesis details*
-  Each active thesis is delivered as the record defined in [thesis-model.md](../../05-execution-layer/thesis-model.md) — summary, typed components (entry, target, invalidation rationale), key assumptions, bracket leg linkages. This section specifies only the ingestion-layer delivery contract:
+  Each active thesis is delivered as the record defined in [thesis-model.md](../../05-execution-layer/thesis-model.md) — summary, typed components (entry, target, invalidation rationale), key assumptions, bracket leg linkages. This section specifies the ingestion-layer delivery contract:
 
   - Theses delivered at the summary level by default; component-level detail available per consumer:
     - The [strategist](../../04-decision-layer/strategist.md) receives full component-level records inline because thesis-status classification is per-component (`status_rationale` cites which component weakened or held).
@@ -80,7 +80,7 @@ The intellectual core. Every open position exists because a thesis justified it.
     - The [synthesizer](../../03-analysis-layer/synthesizer.md) pulls summaries on-demand via `get_active_theses_summary` when cross-referencing market signals against positions.
   - The ingestion layer delivers all status=active theses plus child components where required.
   - Each thesis carries its generation timestamp (for age) and time expectation (for staleness detection).
-  - The gap between intended entry parameters and actual fill price (from execution history) is surfaced alongside the thesis for risk/reward assessment.
+  - Gap between intended entry parameters and actual fill price (from execution history) is surfaced alongside the thesis for risk/reward assessment.
 
   *3b. Thesis status and health*
   Updated each invocation by the [strategist](../../04-decision-layer/strategist.md). The five status classifications (on-track, partially-realized, at-risk, stale, invalidated) are defined in [thesis-model.md](../../05-execution-layer/thesis-model.md). The ingestion layer also delivers:
@@ -89,7 +89,7 @@ The intellectual core. Every open position exists because a thesis justified it.
   - Supporting signal status: for each cited signal, whether it's still present, strengthened, weakened, or reversed — assessed by the strategist during re-evaluation.
 
   *3c. Recent thesis resolutions*
-  Rolling sliding window (e.g., last 10 resolved theses or 5 trading days) of closed theses — the process feedback loop. Resolution categories and component-level outcomes are defined in [thesis-model.md](../../05-execution-layer/thesis-model.md). The ingestion layer delivers:
+  Rolling window of closed theses (e.g., last 10 or 5 trading days) — the process feedback loop. Resolution categories and component-level outcomes are defined in [thesis-model.md](../../05-execution-layer/thesis-model.md). The ingestion layer delivers:
 
   - Resolution category (validated, profitable-but-wrong, invalidated-stopped-correctly, invalidated-wrong-on-exit) and component-level outcomes (validated, wrong, inconclusive per component).
   - Resolution P/L on each closed thesis.
@@ -102,7 +102,7 @@ The intellectual core. Every open position exists because a thesis justified it.
 **4. Capital and capacity**
 The PM's gating input for any new position — regardless of thesis quality, the system can't enter if capital or risk limits are reached.
 
-  *Design principle — conservative cash management:* The primary success metric (end each day with more cash than the opening balance) creates a bias toward capital preservation. The system maintains a meaningful cash buffer to preserve the ability to act on the next high-conviction thesis. Being fully invested when the best opportunity appears is a capital-allocation failure.
+  *Design principle — conservative cash management:* The primary success metric (end each day with more cash than opening balance) biases toward capital preservation. Maintain a meaningful cash buffer to preserve ability to act on the next high-conviction thesis. Being fully invested when the best opportunity appears is a capital-allocation failure.
 
   *Note on capital efficiency:* Retrospective deployment metrics (utilization, turnover, cash drag) are analysis-layer. See [derived metrics 10a–10b](../../02-distillation-layer/internal.md).
 
@@ -112,7 +112,7 @@ The PM's gating input for any new position — regardless of thesis quality, the
   - True deployable capital: settled cash minus reserved (for pending orders) minus margin held — actually available for new positions, accounting for settlement cycles per [venue configuration](../../05-execution-layer/venue-configuration.md).
 
   *4b. Pending orders*
-  Approved but unfilled orders — committed capital, an active thesis, a decision that may need revision. Records read from the Orders entity in [state-persistence.md](../../05-execution-layer/state-persistence.md), filtered to status in (pending, partially-filled). The ingestion layer delivers all order fields plus:
+  Approved but unfilled orders — committed capital, an active thesis, a decision that may need revision. Records from the Orders entity in [state-persistence.md](../../05-execution-layer/state-persistence.md), filtered to status in (pending, partially-filled). The ingestion layer delivers all order fields plus:
   - Order age: hours since placement. The [strategist](../../04-decision-layer/strategist.md) flags orders older than their thesis's expected entry window.
   - Fill probability context: current price vs. limit. An order at $840 with current $842 is close to filling; at $840 with current $870, unlikely. The strategist uses this to advise maintain/modify/cancel.
 
@@ -120,7 +120,7 @@ The PM's gating input for any new position — regardless of thesis quality, the
   Where the system stands against hard-coded risk guardrails (max position size, max sector concentration, max daily drawdown, max gross exposure) enforced by the guardrail layer and referenced by the PM.
   - Position size headroom: max minus current largest position.
   - Sector concentration headroom: per-sector max minus current allocation.
-  - Daily drawdown budget remaining: when zero, no new positions and consider reducing existing ones — the hardest constraint.
+  - Daily drawdown budget remaining: when zero, no new positions and consider reducing existing — the hardest constraint.
   - Gross exposure headroom.
   - Correlation limit status: whether a new position would push implied correlation above max.
   - Constraint breach proximity: composite flag of which limits are closest, as percentage consumed.
@@ -134,17 +134,17 @@ The PM's gating input for any new position — regardless of thesis quality, the
 ---
 
 **5. Activity log**
-What happened since the last invocation. Categories 1–4 describe current *state*; this describes the *trajectory* that produced it. The system runs every 2 hours during market hours; between invocations orders fill, stops trigger, positions open or close.
+What happened since the last invocation. Categories 1–4 describe current *state*; this describes the *trajectory*. Between invocations (every 2 hours during market hours) orders fill, stops trigger, positions open or close.
 
-  *Design principle — changelog over snapshot diffing:* Each invocation operates in a fresh context with no memory of the prior state. An explicit changelog is cleaner than forcing agents to diff snapshots.
+  *Design principle — changelog over snapshot diffing:* Each invocation operates in a fresh context with no memory of prior state. An explicit changelog is cleaner than forcing agents to diff snapshots.
 
-  The event type catalog in [state-persistence.md](../../05-execution-layer/state-persistence.md) defines 25+ typed events in six groups: position lifecycle, order lifecycle, bracket, thesis, cash/margin, risk/guardrail, and PM decision. Each event carries a structured detail payload with full semantic context. This section specifies filtering and delivery to the analysis pipeline.
+  The event type catalog in [state-persistence.md](../../05-execution-layer/state-persistence.md) defines 25+ typed events in six groups: position lifecycle, order lifecycle, bracket, thesis, cash/margin, risk/guardrail, PM decision. Each carries a structured detail payload. This section specifies filtering and delivery to the analysis pipeline.
 
   *5a. Intra-invocation changelog*
-  All activity log entries with the current invocation ID, ordered chronologically. Highest-attention event types: `position_opened` and `position_closed` (primary state changes), `bracket_completed` (stop/invalidation triggers — thesis proven wrong between invocations), `guardrail_rejection` and `risk_limit_approached`, `margin_call` / `margin_liquidation`. The state-persistence catalog provides the complete set.
+  All activity log entries with the current invocation ID, ordered chronologically. Highest-attention types: `position_opened` and `position_closed` (primary state changes), `bracket_completed` (stop/invalidation triggers — thesis proven wrong between invocations), `guardrail_rejection` and `risk_limit_approached`, `margin_call` / `margin_liquidation`. State-persistence has the full set.
 
   *5b. PM decision log*
-  All `pm_decision` entries from the most recent N invocations (configurable sliding window, typically 2–3). Each is a full **command envelope** — the PM's structured evaluation of a proposal, preserving verdict, rationale, originating agent, original proposal, modifications, adjustment category, and resulting OMS command IDs. Lets the current PM understand recent decisions without relitigating them. See [portfolio-manager.md](../../04-decision-layer/portfolio-manager.md) for the envelope schema.
+  All `pm_decision` entries from the most recent N invocations (configurable, typically 2–3). Each is a full **command envelope** — the PM's structured evaluation of a proposal, preserving verdict, rationale, originating agent, original proposal, modifications, adjustment category, and resulting OMS command IDs. Lets the current PM understand recent decisions without relitigating. See [portfolio-manager.md](../../04-decision-layer/portfolio-manager.md) for envelope schema.
 
   *5c. Position modification trail*
   For each open position, activity log entries scoped to that position ID, chronologically — a filtered view, not a separate structure. Lifetime action history: entry, scale events, bracket modifications, parameter adjustments, cumulative realized P/L from partial exits.
@@ -152,7 +152,7 @@ What happened since the last invocation. Categories 1–4 describe current *stat
 ---
 
 **6. Thesis quality trends**
-Process health dashboard — separate from P/L, because over short periods a system can be profitable with bad process (lucky) or unprofitable with good process (unlucky). Only thesis quality is durable. Provides trailing context for PM calibration and early degradation detection.
+Process health dashboard, separate from P/L. Over short periods a system can be profitable with bad process (lucky) or unprofitable with good process (unlucky); only thesis quality is durable. Provides trailing context for PM calibration and early degradation detection.
 
   *Design principle — meta-awareness over raw metrics:* The dangerous failure mode is gradual process degradation undetected until the drawdown is severe. Early warning to the PM (and human overseer) is the purpose.
 
@@ -161,7 +161,7 @@ Process health dashboard — separate from P/L, because over short periods a sys
   *6a. Thesis accuracy trend*
   - Thesis accuracy trend: trailing validation rate (correct-for-right-reasons / total resolutions) over 5d, 20d, inception — declining accuracy is the earliest warning.
   - Thesis duration accuracy: are theses resolving faster or slower than predicted?
-  - Invalidation quality: when invalidated, is the invalidation hit early (mistimed entry, weak thesis) or late (well-calibrated invalidation, wrong direction)?
+  - Invalidation quality: when invalidated, was the invalidation hit early (mistimed entry, weak thesis) or late (well-calibrated invalidation, wrong direction)?
 
   *6b. Signal reliability and conviction calibration*
   - Signal hit rate: trailing hit rate for each signal type cited in theses (unusual options activity, earnings revisions, prediction market shifts).

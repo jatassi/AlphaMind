@@ -1,6 +1,6 @@
 # Internal data — portfolio state
 
-The system's internal memory. External data describes the world; portfolio state describes *what the system itself is doing* — positions held, performance, justifying theses, available capital, and the meaning of all that under current market conditions.
+The system's internal memory. External data describes the world; portfolio state describes *what the system itself is doing* — positions held, performance, justifying theses, available capital.
 
 Portfolio state is the only data category where the system is both producer and consumer. The [execution layer](../../05-execution-layer/README.md) writes it as it executes trades, tracks P/L, and records thesis outcomes; the data layer reads it back at invocation start. Multiple agents consume it differently — the [synthesizer](../../03-analysis-layer/synthesizer.md) via lightweight tools, the [analyst](../../04-decision-layer/analyst.md), the [strategist](../../04-decision-layer/strategist.md), and the [portfolio manager](../../04-decision-layer/portfolio-manager.md).
 
@@ -12,12 +12,12 @@ Portfolio state is the only data category where the system is both producer and 
 
 | Document | Description |
 |----------|-------------|
-| [Portfolio state](portfolio-state.md) | Categories 1–6: position inventory, P/L tracking, thesis registry, capital/capacity, activity log, thesis quality trends — direct reads from the OMS database (populated from Alpaca + internal thesis records) |
+| [Portfolio state](portfolio-state.md) | Categories 1–6: position inventory, P/L tracking, thesis registry, capital/capacity, activity log, thesis quality trends — direct reads from the OMS database |
 | [Derived metrics](../../02-distillation-layer/internal.md) | Categories 7–11: exposure analysis, P/L attribution, thesis dependency mapping, capital efficiency, system health — computed by the [distillation layer](../../02-distillation-layer/README.md) using raw state + market data |
 
 Boundary: if the OMS stores it or it's a direct aggregation, it's [portfolio state](portfolio-state.md). If it requires market-data cross-reference or LLM judgment, it's [derived metrics](../../02-distillation-layer/internal.md).
 
-**Data schemas:** Authoritative model definitions for positions, theses, and orders live in the [execution layer](../../05-execution-layer/README.md) — [position-model.md](../../05-execution-layer/position-model.md), [thesis-model.md](../../05-execution-layer/thesis-model.md), and [orders-and-brackets.md](../../05-execution-layer/orders-and-brackets.md) — because they are tightly coupled with execution behavior. The portfolio state document here describes these items from the consumer's perspective.
+**Data schemas:** Authoritative model definitions for positions, theses, and orders live in the [execution layer](../../05-execution-layer/README.md) — [position-model.md](../../05-execution-layer/position-model.md), [thesis-model.md](../../05-execution-layer/thesis-model.md), and [orders-and-brackets.md](../../05-execution-layer/orders-and-brackets.md) — tightly coupled with execution behavior. The portfolio state document here describes these items from the consumer's perspective.
 
 ---
 
