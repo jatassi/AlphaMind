@@ -10,3 +10,4 @@ venv/
 # Secrets
 .env
 .claude/scheduled_tasks.lock
+docs/design/01-data-layer/api-keys.md
