@@ -7,6 +7,9 @@ Exposes:
 - ``with_retries`` — decorator factory implementing per-tier retry behaviour
 - ``RateLimiter`` — thread-safe token-bucket per provider
 - ``track_run`` — context manager that writes to ``collection_runs``
+- ``default_session_factory`` — bootstrap a session bound to the default DB
+- ``resume_since`` — compute a per-collector ``since`` from the latest stored row
+- ``active_universe_tickers`` — read the ticker scope from ``asset_universe``
 """
 
 from __future__ import annotations
@@ -17,13 +20,14 @@ import uuid
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, TypeVar
 
 import httpx
 from dotenv import dotenv_values
+from sqlalchemy import func
 
 from alphamind.config.models import (
     CollectorScheduleConfig,
@@ -371,3 +375,79 @@ def track_run(
     else:
         completed_at = datetime.now(UTC).isoformat()
         repo.update_success(run_id, completed_at, run.rows_written)
+
+
+def default_session_factory() -> Any:
+    """Build a session factory bound to the default ``make_engine`` DB.
+
+    Equivalent to::
+
+        engine = make_engine()
+        Base.metadata.create_all(engine)
+        return make_session_factory(engine)
+    """
+    from alphamind.persistence.models import Base
+    from alphamind.persistence.session import make_engine, make_session_factory
+
+    engine = make_engine()
+    Base.metadata.create_all(engine)
+    return make_session_factory(engine)
+
+
+def resume_since(
+    *,
+    column: Any,
+    filters: tuple[Any, ...] = (),
+    default_lookback: timedelta,
+    overlap: timedelta = timedelta(0),
+    session_factory: Any = None,
+) -> datetime:
+    """Return the timestamp from which a collector should resume.
+
+    Queries ``MAX(column)`` filtered by *filters* and parses the result
+    (an ISO date or datetime string) into a UTC ``datetime``.
+
+    - When the table has no matching rows, returns ``now() - default_lookback``.
+    - When matching rows exist, returns the parsed maximum minus *overlap*
+      so the next pull catches late-arriving data without producing
+      duplicates.
+    """
+    if session_factory is None:
+        session_factory = default_session_factory()
+
+    with session_factory() as sess:
+        q = sess.query(func.max(column))
+        for f in filters:
+            q = q.filter(f)
+        latest = q.scalar()
+
+    if latest is None:
+        return datetime.now(UTC) - default_lookback
+    iso = latest if "T" in latest else f"{latest}T00:00:00+00:00"
+    parsed = datetime.fromisoformat(iso)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed - overlap
+
+
+def active_universe_tickers(
+    *,
+    include_benchmarks: bool = True,
+    session_factory: Any = None,
+) -> list[str]:
+    """Return active tickers from ``asset_universe``.
+
+    Includes ``asset_role='universe'`` rows always; benchmark roles
+    (``benchmark`` / ``broad_market`` / ``intermarket`` / ``sector_etf`` /
+    ``breadth``) are included by default.
+    """
+    from alphamind.persistence.models import AssetUniverse
+
+    if session_factory is None:
+        session_factory = default_session_factory()
+
+    with session_factory() as sess:
+        q = sess.query(AssetUniverse.ticker).filter(AssetUniverse.is_active == 1)
+        if not include_benchmarks:
+            q = q.filter(AssetUniverse.asset_role == "universe")
+        return [r.ticker for r in q.all()]

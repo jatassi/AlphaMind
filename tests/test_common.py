@@ -17,7 +17,9 @@ import pytest
 from alphamind.data_sources._common import (
     RateLimiter,
     RetryShape,
+    active_universe_tickers,
     load_config,
+    resume_since,
     track_run,
     with_retries,
 )
@@ -564,3 +566,170 @@ class TestTrackRun:
 
         row = next(iter(repo.rows.values()))
         assert row["rows_written"] == 100
+
+
+# ---------------------------------------------------------------------------
+# resume_since / active_universe_tickers helpers
+# ---------------------------------------------------------------------------
+
+
+class TestResumeSince:
+    """resume_since computes a 'since' value from MAX(column) - overlap."""
+
+    @pytest.fixture
+    def session_factory(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from alphamind.persistence.models import Base
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        return sessionmaker(bind=engine, expire_on_commit=False)
+
+    def test_falls_back_to_default_lookback_when_table_empty(self, session_factory) -> None:
+        from datetime import datetime as _dt
+        from datetime import timedelta as _td
+
+        from alphamind.persistence.models import MacroObservations
+
+        result = resume_since(
+            column=MacroObservations.observation_date,
+            default_lookback=_td(days=7),
+            session_factory=session_factory,
+        )
+        # Within a few seconds of "now - 7d"
+        delta = abs((_dt.now(result.tzinfo) - _td(days=7)) - result).total_seconds()
+        assert delta < 5
+
+    def test_returns_max_minus_overlap(self, session_factory) -> None:
+        from datetime import timedelta as _td
+
+        from alphamind.persistence.models import MacroObservations
+
+        with session_factory() as sess:
+            sess.add(
+                MacroObservations(
+                    source="fred",
+                    series_id="DGS10",
+                    observation_date="2026-04-20",
+                    revision_number=0,
+                    value=4.3,
+                    units="pct",
+                    frequency="daily",
+                    ingested_at="2026-04-20T00:00:00+00:00",
+                )
+            )
+            sess.commit()
+
+        result = resume_since(
+            column=MacroObservations.observation_date,
+            filters=(MacroObservations.source == "fred",),
+            default_lookback=_td(days=30),
+            overlap=_td(days=2),
+            session_factory=session_factory,
+        )
+        assert result.year == 2026
+        assert result.month == 4
+        assert result.day == 18  # 2026-04-20 minus 2-day overlap
+
+    def test_filters_isolate_per_source(self, session_factory) -> None:
+        """A filter on source='fred' ignores rows from other sources."""
+        from datetime import timedelta as _td
+
+        from alphamind.persistence.models import MacroObservations
+
+        with session_factory() as sess:
+            sess.add_all(
+                [
+                    MacroObservations(
+                        source="bls",
+                        series_id="X",
+                        observation_date="2030-01-01",
+                        revision_number=0,
+                        value=1.0,
+                        units="pct",
+                        frequency="monthly",
+                        ingested_at="2030-01-01T00:00:00+00:00",
+                    ),
+                ]
+            )
+            sess.commit()
+
+        # Filtering on source='fred' should NOT see the bls row
+        result = resume_since(
+            column=MacroObservations.observation_date,
+            filters=(MacroObservations.source == "fred",),
+            default_lookback=_td(days=1),
+            session_factory=session_factory,
+        )
+        from datetime import datetime as _dt
+
+        assert (_dt.now(result.tzinfo) - result).days < 2  # used the default lookback
+
+
+class TestActiveUniverseTickers:
+    """active_universe_tickers reads asset_universe with role filters."""
+
+    @pytest.fixture
+    def session_factory(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from alphamind.persistence.models import AssetUniverse, Base
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        sf = sessionmaker(bind=engine, expire_on_commit=False)
+        with sf() as sess:
+            sess.add_all(
+                [
+                    AssetUniverse(
+                        asset_id="1",
+                        ticker="AAPL",
+                        full_name="Apple",
+                        asset_class="equity",
+                        asset_role="universe",
+                        exchange="NASDAQ",
+                        is_active=1,
+                        added_date="2026-01-01",
+                        last_updated="2026-01-01T00:00:00+00:00",
+                    ),
+                    AssetUniverse(
+                        asset_id="2",
+                        ticker="SPY",
+                        full_name="SPY",
+                        asset_class="equity",
+                        asset_role="broad_market",
+                        exchange="NYSE",
+                        is_active=1,
+                        added_date="2026-01-01",
+                        last_updated="2026-01-01T00:00:00+00:00",
+                    ),
+                    AssetUniverse(
+                        asset_id="3",
+                        ticker="DELISTED",
+                        full_name="DELISTED",
+                        asset_class="equity",
+                        asset_role="universe",
+                        exchange="NASDAQ",
+                        is_active=0,
+                        added_date="2020-01-01",
+                        last_updated="2020-01-01T00:00:00+00:00",
+                    ),
+                ]
+            )
+            sess.commit()
+        return sf
+
+    def test_includes_universe_and_benchmarks_by_default(self, session_factory) -> None:
+        result = active_universe_tickers(session_factory=session_factory)
+        assert set(result) == {"AAPL", "SPY"}
+
+    def test_excludes_benchmarks_when_requested(self, session_factory) -> None:
+        result = active_universe_tickers(include_benchmarks=False, session_factory=session_factory)
+        assert result == ["AAPL"]
+
+    def test_skips_inactive_rows(self, session_factory) -> None:
+        result = active_universe_tickers(session_factory=session_factory)
+        assert "DELISTED" not in result
