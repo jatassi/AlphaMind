@@ -73,7 +73,7 @@ def fake_repo(db_session):
     return _Repo()
 
 
-def _article(  # noqa: PLR0913
+def _article(
     uuid: str = "a1",
     title: str = "Headline",
     description: str = "Body text",
