@@ -6,7 +6,7 @@ Schema spec — tables, columns, cross-cutting rules, retention. Defines what th
 
 SQLite (WAL mode) via SQLAlchemy; migrations via Alembic. Models live in `alphamind.persistence.models`. Coexists with the portfolio-state schema ([state-persistence.md](../../05-execution-layer/state-persistence.md)) in `%USERPROFILE%\AlphaMind\data\alphamind.db` — table names are disjoint.
 
-Pragma settings inherit from [data-and-state.md](../../../architecture/data-and-state.md): `journal_mode=WAL`, `busy_timeout=5000`, `foreign_keys=ON`, `synchronous=NORMAL`.
+Pragma settings inherit from [data-and-state.md](../../../architecture/data-and-state.md): `journal_mode=WAL`, `busy_timeout=60000`, `foreign_keys=ON`, `synchronous=NORMAL`.
 
 ## Cross-cutting rules
 

@@ -138,7 +138,7 @@ Raw and historical market data (OHLCV bars, options, macro series) also lives in
 
 ```
 journal_mode = WAL
-busy_timeout = 5000      -- 5 seconds
+busy_timeout = 60000     -- 60 seconds; tolerates long-held writer locks during slow rate-limited sweeps
 foreign_keys = ON
 synchronous = NORMAL     -- good balance of durability and performance for WAL mode
 ```
