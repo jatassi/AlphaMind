@@ -120,6 +120,7 @@ module = [
     "polygon.*",
     "exchange_calendars.*",
     "apscheduler.*",
+    "alphamind.*",
 ]
 ignore_missing_imports = true
 
