@@ -128,12 +128,16 @@ def collect_series(
                     )
                 )
 
+        inserted = 0
         with _session_factory() as sess:
             for row in rows_to_write:
-                sess.merge(row)
+                pk = (row.source, row.series_id, row.observation_date, row.revision_number)
+                if sess.get(MacroObservations, pk) is None:
+                    sess.add(row)
+                    inserted += 1
             sess.commit()
 
-        run.rows_written = len(rows_to_write)
+        run.rows_written = inserted
 
 
 # ---------------------------------------------------------------------------

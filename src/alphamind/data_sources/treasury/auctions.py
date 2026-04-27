@@ -150,14 +150,15 @@ def collect_auctions(
         records = _fetch_all_pages(since)
         valid_rows = [r for r in (_record_to_row(rec) for rec in records) if r is not None]
 
+        inserted = 0
         with _session_factory() as sess:
             for row in valid_rows:
-                existing = sess.get(TreasuryAuctions, row.auction_id)
-                if existing is None:
+                if sess.get(TreasuryAuctions, row.auction_id) is None:
                     sess.add(row)
+                    inserted += 1
             sess.commit()
 
-        run.rows_written = len(valid_rows)
+        run.rows_written = inserted
 
 
 def bootstrap_auctions(
