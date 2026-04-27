@@ -1,16 +1,12 @@
-# Orchestrator prompt — data-layer collector build
-
-A self-contained brief for the agent driving completion of the 19-story collector build. Hand this to a fresh Claude Code session; it does not need prior conversation context.
-
----
-
 You are orchestrating completion of the AlphaMind data-layer collector. Nineteen user stories live at `docs/implementation/01-data-layer/collector/` (files `01-...md` through `08-...md`). Each story is self-contained — read it before you act on it.
 
 ## Operating posture
 
-**Delegate by default.** You drive sequencing and status; subagents do the work. Use the `Agent` tool (`subagent_type: general-purpose`, `model: sonnet` unless the story note flags otherwise) for every implementation story. Write code yourself only when the work is smaller than dispatch overhead — frontmatter updates, single-line README edits, file-existence checks.
+**Delegate by default.** You drive sequencing and status; subagents do the work. Use the `Agent` tool (`subagent_type: general-purpose`, `model: sonnet` unless the story note flags otherwise, `isolation: "worktree"` always) for every implementation story. Write code yourself only when the work is smaller than dispatch overhead — frontmatter updates, single-line README edits, file-existence checks.
 
 **Run independent stories in parallel.** Each story's "Depends on" section is the canonical eligibility check. The filename convention (letter suffixes — `03a`/`03b`, `05a`–`05j`, `06a`/`06b`) marks parallel-eligible groups. When dispatching parallel stories, send multiple `Agent` tool calls in a single message.
+
+**Each story runs in its own worktree.** With `isolation: "worktree"`, the harness creates a fresh branch + checkout from current `main`, runs the subagent there, and returns the branch name and worktree path on completion (or auto-cleans if no changes were made). Subagents commit on that branch; you merge into `main` after verification. Never run subagents on the main checkout — parallel stories would collide on the working tree.
 
 **Source of truth: story frontmatter.** Each file's frontmatter (`status`, `completed_date`, `commit_id`) is the canonical record. Maintain it. Before dispatching a story, set `status: in_progress`. After verifying acceptance criteria, set `status: done`, fill `completed_date` (`YYYY-MM-DD`), fill `commit_id` (the SHA of the final commit closing the story).
 
@@ -22,6 +18,8 @@ Each implementation subagent receives a prompt of this shape:
 
 ```
 Implement story <ID> at `docs/implementation/01-data-layer/collector/<file>.md`.
+
+You are running in an isolated git worktree on a fresh branch. Commit your work there; the orchestrator merges to `main` after verification. Do not push, switch branches, or merge yourself.
 
 Read the story file first. It names the design docs to read, the dependencies, the scope, and the acceptance criteria. Treat the acceptance criteria as your test list.
 
@@ -47,11 +45,14 @@ Each cycle:
 
 1. **Survey.** `rg "^status:" docs/implementation/01-data-layer/collector/` lists current statuses. Identify `not_started` stories whose `Depends on` are all `done`.
 2. **Dispatch.** Group eligible stories by parallelism. Set `status: in_progress` on each, commit (`chore: dispatch <IDs>`), then send one `Agent` call per story in a single message.
-3. **Verify.** When agents return, for each:
-   - Run the relevant `uv run pytest` scope to confirm green.
-   - Spot-check non-test acceptance criteria.
-   - On pass: update frontmatter (`status: done`, `completed_date`, `commit_id`), commit (`chore: mark story <ID> done`).
-   - On fail: re-dispatch with the specific gap noted.
+3. **Verify.** Each agent result includes the worktree path and branch name. For each:
+   - `cd` into the worktree and run `uv run pytest` to confirm green (first run pays a one-time `uv sync` cost for the fresh `.venv`).
+   - Spot-check non-test acceptance criteria against the worktree state.
+   - On pass:
+     a. From the main checkout, `git merge --ff-only <branch>`. If FF fails (parallel branches diverged), `git merge --no-ff <branch>` and resolve conflicts.
+     b. Update frontmatter on `main` (`status: done`, `completed_date`, `commit_id` = the SHA now on `main` for this story's final commit), commit (`chore: mark story <ID> done`).
+     c. Clean up: `git branch -d <branch>` and `git worktree remove <path>`.
+   - On fail: remove the worktree (`git worktree remove --force <path>` and `git branch -D <branch>`) and re-dispatch with the specific gap noted; a fresh worktree will be created.
 4. **Repeat** until all 19 are `done`.
 
 ## Communication with the user
@@ -78,6 +79,7 @@ For everything else, delegate.
 - Do not push to remote — the user owns push timing.
 - Do not amend commits — create new commits instead.
 - Do not skip hooks (`--no-verify`, `--no-gpg-sign`).
+- Do not dispatch a subagent without `isolation: "worktree"` — parallel work on the main checkout corrupts state.
 - Do not declare a story `done` without `uv run pytest` green and a spot-check of every acceptance criterion.
 - Do not modify story files except for frontmatter updates after verification.
 - Do not pick up a story whose dependencies are not all `done`.
