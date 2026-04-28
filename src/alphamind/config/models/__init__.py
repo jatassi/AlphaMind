@@ -2,6 +2,13 @@
 
 from pathlib import Path
 
+from alphamind.config.models.assets import (
+    AssetRole,
+    AssetsConfig,
+    Benchmark,
+    DiscoverySource,
+    DiscoveryVendor,
+)
 from alphamind.config.models.collector_schedule import CollectorEntry, CollectorScheduleConfig
 from alphamind.config.models.data_sources import (
     BackoffStrategy,
@@ -37,13 +44,18 @@ def _load_env_example_keys() -> frozenset[str]:
 _ENV_EXAMPLE_KEYS: frozenset[str] = _load_env_example_keys()
 
 __all__ = [
+    "AssetRole",
+    "AssetsConfig",
     "BackoffStrategy",
+    "Benchmark",
     "CategoryConfig",
     "CollectorEntry",
     "CollectorScheduleConfig",
     "CredibilityTier",
     "CriticalityTier",
     "DataSourcesConfig",
+    "DiscoverySource",
+    "DiscoveryVendor",
     "NewsOutletsConfig",
     "OutletEntry",
     "ProviderConfig",
