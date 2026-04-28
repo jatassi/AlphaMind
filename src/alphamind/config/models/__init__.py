@@ -88,6 +88,13 @@ from alphamind.config.models.profiles import (
     RiskPriority,
     TokenBudgetRange,
 )
+from alphamind.config.models.run_types import (
+    AgentsSection,
+    NewsDigestConfig,
+    QualitativeResearcherSection,
+    RunType,
+    RunTypeConfig,
+)
 from alphamind.config.models.scheduler import SchedulerConfig
 from alphamind.config.models.venue import (
     Alpaca,
@@ -124,6 +131,7 @@ __all__ = [
     "AdaptiveAgentConfig",
     "AgentName",
     "AgentsConfig",
+    "AgentsSection",
     "AllowedModel",
     "Alpaca",
     "AlpacaCredentials",
@@ -162,6 +170,7 @@ __all__ = [
     "MainConfig",
     "Mode",
     "ModeConfig",
+    "NewsDigestConfig",
     "NewsOutletsConfig",
     "OrderType",
     "OutletEntry",
@@ -177,6 +186,7 @@ __all__ = [
     "ProfileConfig",
     "ProgressiveTier",
     "ProviderConfig",
+    "QualitativeResearcherSection",
     "RegimeChange",
     "RetryCondition",
     "RetryPolicy",
@@ -184,6 +194,8 @@ __all__ = [
     "RetryStrategy",
     "RiskPriority",
     "RuleEntry",
+    "RunType",
+    "RunTypeConfig",
     "SchedulerConfig",
     "SectorUnderperform",
     "SessionHours",

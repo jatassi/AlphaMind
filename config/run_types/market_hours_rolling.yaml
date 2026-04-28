@@ -1,0 +1,24 @@
+# Market-hours rolling (every 2h between 9:30 and 16:00 ET) — full roster at
+# normal adaptive budget per docs/design/configuration-management.md
+# § run_types/<trigger>.yaml.
+
+agents:
+  enabled:
+    - tech_semis_researcher
+    - financials_researcher
+    - energy_researcher
+    - qualitative_researcher
+    - adaptive_researcher
+    - synthesizer
+    - analyst
+    - strategist
+    - portfolio_manager
+  overrides:
+    adaptive_researcher:
+      cumulative_tool_call_limit: 20
+      cumulative_tool_token_budget: 3000
+
+qualitative_researcher:
+  news_digest:
+    top_n_per_sector: 5
+    top_n_high_priority: 3

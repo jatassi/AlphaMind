@@ -21,6 +21,7 @@ from alphamind.config.models.overlays import (
     StressOverlay,
 )
 from alphamind.config.models.profiles import ProfileConfig
+from alphamind.config.models.run_types import RunType, RunTypeConfig
 
 # Filename stems use hyphens for operator readability; enum members use
 # underscores per Python identifier rules. The mapping bridges the two.
@@ -80,3 +81,17 @@ def load_modes(config_dir: Path) -> dict[Mode, ModeConfig]:
         mode: ModeConfig.model_validate(_read_yaml(modes_dir / f"{mode.value}.yaml"))
         for mode in Mode
     }
+
+
+def load_run_types(config_dir: Path) -> Mapping[RunType, RunTypeConfig]:
+    """Load every ``run_types/<member>.yaml`` for every ``RunType`` enum member.
+
+    Returns a frozen mapping. The run-type bundle is closed-set; missing files
+    raise ``FileNotFoundError``.
+    """
+    run_types_dir = config_dir / "run_types"
+    bundle: dict[RunType, RunTypeConfig] = {
+        member: RunTypeConfig.model_validate(_read_yaml(run_types_dir / f"{member.value}.yaml"))
+        for member in RunType
+    }
+    return MappingProxyType(bundle)
