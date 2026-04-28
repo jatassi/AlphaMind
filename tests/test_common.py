@@ -109,16 +109,7 @@ class TestPublicInterface:
 # ---------------------------------------------------------------------------
 
 
-class TestLoadConfig:
-    def test_returns_immutable_config_with_all_three_sections(self, tmp_path: Path) -> None:
-        """load_config reads data_sources, collector_schedule, news_outlets."""
-        # Arrange: minimal but valid YAML files + .env
-        env_file = tmp_path / ".env"
-        env_file.write_text("POLYGON_API_KEY=test\n")
-
-        ds_yaml = tmp_path / "data_sources.yaml"
-        ds_yaml.write_text(
-            """
+_DATA_SOURCES_YAML = """
 providers:
   polygon:
     api_key_env: POLYGON_API_KEY
@@ -135,80 +126,63 @@ categories:
     primary: polygon
     failover: []
 """
-        )
 
-        sched_yaml = tmp_path / "collector_schedule.yaml"
-        sched_yaml.write_text(
-            """
-timezone: US/Eastern
-collectors:
-  polygon.equity: {cron: "*/15 9-16 * * mon-fri"}
-"""
-        )
+_COLLECTOR_SCHEDULE_YAML = (
+    'timezone: US/Eastern\ncollectors:\n  polygon.equity: {cron: "*/15 9-16 * * mon-fri"}\n'
+)
 
-        outlets_yaml = tmp_path / "news_outlets.yaml"
-        outlets_yaml.write_text(
-            """
-outlets:
-  Reuters: {tier: tier_1}
-"""
-        )
+_NEWS_OUTLETS_YAML = "outlets:\n  Reuters: {tier: tier_1}\n"
 
-        cfg = load_config(
-            config_dir=str(tmp_path),
-            env_file=str(env_file),
-        )
-        # Object has the three sub-configs
-        assert cfg.data_sources is not None
+
+def _seed_canonical_config_dir(tmp_path: Path) -> None:
+    """Drop a minimal valid YAML tree covering every file ``load_config`` reads."""
+    (tmp_path / "data_sources.yaml").write_text(_DATA_SOURCES_YAML)
+    (tmp_path / "collector_schedule.yaml").write_text(_COLLECTOR_SCHEDULE_YAML)
+    (tmp_path / "news_outlets.yaml").write_text(_NEWS_OUTLETS_YAML)
+    repo_root = Path(__file__).parent.parent
+    (tmp_path / "distillation.yaml").write_text(
+        (repo_root / "config" / "distillation.yaml").read_text()
+    )
+
+
+class TestLoadConfig:
+    def test_returns_immutable_config_with_all_sections(self, tmp_path: Path) -> None:
+        """load_config reads every data-layer YAML and freezes the aggregate."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("POLYGON_API_KEY=test\n")
+        _seed_canonical_config_dir(tmp_path)
+
+        cfg = load_config(config_dir=str(tmp_path), env_file=str(env_file))
+
         assert cfg.collector_schedule is not None
+        assert cfg.data_sources is not None
+        assert cfg.distillation is not None
         assert cfg.news_outlets is not None
         # Immutable: Pydantic model instance cannot be modified after creation
         with pytest.raises((TypeError, AttributeError, ValueError)):
             cfg.data_sources = None  # type: ignore[misc,assignment]  # tests read-only enforcement
 
+    def test_load_config_includes_distillation_aggregate(self, tmp_path: Path) -> None:
+        """load_config exposes ``distillation`` parsed from distillation.yaml."""
+        from alphamind.config.models import DistillationConfig
+
+        env_file = tmp_path / ".env"
+        env_file.write_text("POLYGON_API_KEY=test\n")
+        _seed_canonical_config_dir(tmp_path)
+
+        cfg = load_config(config_dir=str(tmp_path), env_file=str(env_file))
+        assert isinstance(cfg.distillation, DistillationConfig)
+        # Round-trip a representative scalar to prove the YAML traversed parse-time.
+        assert cfg.distillation.anomaly_detection.volume_anomaly_sigma == 2.5
+
     def test_missing_required_env_var_raises_named_error(self, tmp_path: Path) -> None:
         """A missing *_env reference must raise an error that names the variable."""
         env_file = tmp_path / ".env"
         env_file.write_text("")  # empty — POLYGON_API_KEY is missing
-
-        ds_yaml = tmp_path / "data_sources.yaml"
-        ds_yaml.write_text(
-            """
-providers:
-  polygon:
-    api_key_env: POLYGON_API_KEY
-    rate_limit_per_minute: 100
-    retry_shape: critical
-retry_shapes:
-  critical: {attempts: 3, backoff: exponential, failover: true}
-  important: {attempts: 2, backoff: exponential, failover: false}
-  optional:  {attempts: 1, backoff: none, failover: false}
-categories:
-  q1_price_volume:
-    tier: critical
-    freshness_max_seconds: 300
-    primary: polygon
-    failover: []
-"""
-        )
-
-        sched_yaml = tmp_path / "collector_schedule.yaml"
-        sched_yaml.write_text(
-            """
-timezone: US/Eastern
-collectors:
-  polygon.equity: {cron: "*/15 9-16 * * mon-fri"}
-"""
-        )
-
-        outlets_yaml = tmp_path / "news_outlets.yaml"
-        outlets_yaml.write_text("outlets:\n  Reuters: {tier: tier_1}\n")
+        _seed_canonical_config_dir(tmp_path)
 
         with pytest.raises(Exception, match="POLYGON_API_KEY"):
-            load_config(
-                config_dir=str(tmp_path),
-                env_file=str(env_file),
-            )
+            load_config(config_dir=str(tmp_path), env_file=str(env_file))
 
 
 # ---------------------------------------------------------------------------
