@@ -65,32 +65,10 @@ _DIGEST = DigestConfig.model_validate(_read("digest.yaml"))
 _ASSETS = AssetsConfig.model_validate(_read("assets.yaml"))
 _AGENTS = AgentsConfig.model_validate(_read("agents.yaml"))
 _PROFILES = load_profiles(CONFIG_DIR)
-_RAW_REGIMES = load_regimes(CONFIG_DIR)
+_REGIMES = load_regimes(CONFIG_DIR)
 _MODES = load_modes(CONFIG_DIR)
 _OVERLAYS = load_overlays(CONFIG_DIR)
 _RUN_TYPES = load_run_types(CONFIG_DIR)
-
-
-def _aligned_regimes() -> dict[Regime, RegimeConfig]:
-    """Return regime mapping with profile-rule coverage shipped tree lacks.
-
-    The shipped regime YAMLs predate the ``pending_order_capital_pct`` rule
-    landing in profile YAMLs; cross-reference validation (story 06a) is the
-    layer that will catch this mismatch. The resolver itself raises
-    ``KeyError`` on missing multipliers, so the resolver's tests must operate
-    over an aligned input pair. Aligning here keeps tests focused on resolver
-    arithmetic rather than entangling them with a doc-vs-config drift the
-    next story owns.
-    """
-    aligned: dict[Regime, RegimeConfig] = {}
-    for regime, config in _RAW_REGIMES.items():
-        multipliers = dict(config.multipliers)
-        multipliers.setdefault("pending_order_capital_pct", 1.0)
-        aligned[regime] = config.model_copy(update={"multipliers": multipliers})
-    return aligned
-
-
-_REGIMES = _aligned_regimes()
 
 
 def _compose(

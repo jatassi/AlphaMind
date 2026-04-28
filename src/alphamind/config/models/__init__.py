@@ -116,6 +116,11 @@ from alphamind.config.resolver import (
     RuntimeDimensions,
     compose_config,
 )
+from alphamind.config.tools import REGISTERED_TOOLS
+from alphamind.config.validation.cross_reference import (
+    CrossReferenceError,
+    validate_cross_references,
+)
 
 # ---------------------------------------------------------------------------
 # .env.example helpers — kept here so monkeypatching
@@ -141,6 +146,7 @@ def _load_env_example_keys() -> frozenset[str]:
 _ENV_EXAMPLE_KEYS: frozenset[str] = _load_env_example_keys()
 
 __all__ = [
+    "REGISTERED_TOOLS",
     "AdaptiveAgentConfig",
     "AgentName",
     "AgentsConfig",
@@ -164,6 +170,7 @@ __all__ = [
     "CommandType",
     "CredibilityTier",
     "CriticalityTier",
+    "CrossReferenceError",
     "DataSourcesConfig",
     "DigestConfig",
     "DiscoverySource",
@@ -233,4 +240,5 @@ __all__ = [
     "ValidationWindowEnd",
     "VenueConfig",
     "compose_config",
+    "validate_cross_references",
 ]
