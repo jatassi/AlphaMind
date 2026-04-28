@@ -28,7 +28,6 @@ import tempfile
 import time
 from argparse import Namespace
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -438,46 +437,6 @@ def _synthesize_invocation_id(slice_id: str, as_of: datetime) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def _drive_orchestrator(
-    session: Session,
-    *,
-    candidate: LoadedCandidateConfig,
-    ticker_scope: tuple[str, ...],
-    as_of: datetime,
-    invocation_id: str,
-    archive_root: Path,
-    provenance_root: Path,
-) -> DistillationOutputs:
-    """Run the orchestrator under a single-thread executor.
-
-    The orchestrator hands the same :class:`Session` to multiple
-    :func:`asyncio.to_thread` workers in Phase 5 (sector assembly is
-    fanned out via :func:`asyncio.gather`). A SQLAlchemy ORM session is
-    not thread-safe under concurrent reads — a multi-worker default
-    executor produces sporadic ``IndexError: tuple index out of range``
-    inside SQLAlchemy's result-row constructor. Forcing a single-worker
-    executor for the duration of the orchestrator call serializes the
-    cross-thread access without changing the orchestrator's semantics
-    (every Phase still completes; only their internal parallelism
-    collapses to sequential).
-    """
-    loop = asyncio.get_running_loop()
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="alphamind_replay")
-    loop.set_default_executor(executor)
-    try:
-        return await run_external_distillation(
-            session=session,
-            config=candidate.config,
-            ticker_scope=ticker_scope,
-            as_of=as_of,
-            invocation_id=invocation_id,
-            archive_root=archive_root,
-            provenance_root=provenance_root,
-        )
-    finally:
-        executor.shutdown(wait=True)
-
-
 def _run_one_invocation(
     session: Session,
     *,
@@ -493,9 +452,9 @@ def _run_one_invocation(
 
     started = time.monotonic()
     outputs = asyncio.run(
-        _drive_orchestrator(
-            session,
-            candidate=candidate,
+        run_external_distillation(
+            session=session,
+            config=candidate.config,
             ticker_scope=ticker_scope,
             as_of=as_of,
             invocation_id=invocation_id,
