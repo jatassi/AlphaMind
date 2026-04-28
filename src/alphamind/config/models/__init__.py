@@ -59,6 +59,13 @@ from alphamind.config.models.llm_failure import (
 )
 from alphamind.config.models.main import ExecutionMode, MainConfig, Paths, Profile
 from alphamind.config.models.news_outlets import CredibilityTier, NewsOutletsConfig, OutletEntry
+from alphamind.config.models.run_types import (
+    AgentsSection,
+    NewsDigestConfig,
+    QualitativeResearcherSection,
+    RunType,
+    RunTypeConfig,
+)
 from alphamind.config.models.scheduler import SchedulerConfig
 from alphamind.config.models.venue import (
     Alpaca,
@@ -95,6 +102,7 @@ __all__ = [
     "AdaptiveAgentConfig",
     "AgentName",
     "AgentsConfig",
+    "AgentsSection",
     "AllowedModel",
     "Alpaca",
     "AlpacaCredentials",
@@ -125,6 +133,7 @@ __all__ = [
     "GuardrailsConfig",
     "LLMFailureConfig",
     "MainConfig",
+    "NewsDigestConfig",
     "NewsOutletsConfig",
     "OrderType",
     "OutletEntry",
@@ -133,12 +142,15 @@ __all__ = [
     "Profile",
     "ProgressiveTier",
     "ProviderConfig",
+    "QualitativeResearcherSection",
     "RegimeChange",
     "RetryCondition",
     "RetryPolicy",
     "RetryShapeConfig",
     "RetryStrategy",
     "RuleEntry",
+    "RunType",
+    "RunTypeConfig",
     "SchedulerConfig",
     "SectorUnderperform",
     "SessionHours",

@@ -1,0 +1,19 @@
+# Weekend Saturday (~10:00 ET) — digest Friday's close and start of weekend
+# news flow. Adaptive_researcher omitted on Saturday per
+# docs/design/configuration-management.md § run_types/<trigger>.yaml.
+
+agents:
+  enabled:
+    - tech_semis_researcher
+    - financials_researcher
+    - energy_researcher
+    - qualitative_researcher
+    - synthesizer
+    - analyst
+    - strategist
+    - portfolio_manager
+
+qualitative_researcher:
+  news_digest:
+    top_n_per_sector: 3
+    top_n_high_priority: 3
