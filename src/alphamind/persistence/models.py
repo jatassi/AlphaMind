@@ -21,6 +21,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from alphamind.distillation.calibration import CALIBRATION_STATE_VALUES
+
 
 class Base(DeclarativeBase):
     pass
@@ -672,8 +674,11 @@ class CollectionRuns(Base):
 #
 # CHECK-constraint value sets used across the distillation tables.  Listed
 # centrally so the migration and tests reference the same source of truth.
+# The ``calibration_state`` vocabulary lives in
+# :mod:`alphamind.distillation.calibration` — the calibration framework is
+# upstream of the schema, so the schema imports the tuple it must accept.
 
-_CALIBRATION_STATES = ("calibrated", "bootstrap", "unavailable")
+_CALIBRATION_STATES = CALIBRATION_STATE_VALUES
 _BASELINE_KINDS = ("volume", "atr", "spread", "sentiment")
 _EVENT_KINDS = ("gap", "extended_hours")
 _REGIME_LABELS = (
