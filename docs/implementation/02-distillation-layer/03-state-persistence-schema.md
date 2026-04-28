@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 005a8750e279916090b5b894e5514109ea26559c
 ---
 
 # 03 — Distillation state persistence schema
