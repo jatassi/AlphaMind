@@ -1,0 +1,30 @@
+# Low-vol compression regime — VIX < 14.
+#
+# Multiplier values transcribed from
+# docs/design/06-risk-guardrails/regime-adaptation.md § Parameter sets per regime.
+# Drawdown rules and borrow-cost budget hold at 1.0 (no loosening) per the
+# design rationale: drawdown is a survival constraint, not a regime-adaptive one.
+
+vix_range: [0, 14]
+multipliers:
+  position_max_size_pct:           1.20
+  position_max_loss_equity_pct:    1.00
+  position_max_loss_options_pct:   1.00
+  sector_concentration_pct:        1.12
+  net_long_pct:                    1.17
+  net_short_pct:                   1.17
+  gross_exposure_pct:              1.08
+  daily_drawdown_pct:              1.00
+  cumulative_drawdown_pct:         1.00
+  options_delta_pct:               1.13
+  portfolio_theta_pct_per_day:     1.20
+  portfolio_vega_pct_per_iv_point: 1.20
+  total_short_pct:                 1.17
+  single_short_max_pct:            1.17
+  borrow_cost_budget_pct_per_day:  1.00
+  min_cash_reserve_pct:            0.80
+  correlation_max:                 1.07    # 0.75 / 0.70
+  thesis_dependency_flag_pct:      1.12
+transition:
+  tighten_on_entry: immediate
+  loosen_on_exit:   linear_over_invocations_3

@@ -1,0 +1,30 @@
+# Crisis regime — VIX > 35.
+#
+# Multiplier values transcribed from
+# docs/design/06-risk-guardrails/regime-adaptation.md § Parameter sets per regime.
+# Capital preservation focus: gross exposure halves, options exposure cut to a
+# fraction, min cash reserve climbs to 25 %.
+
+vix_range: [35, 200]
+multipliers:
+  position_max_size_pct:           0.40
+  position_max_loss_equity_pct:    0.67
+  position_max_loss_options_pct:   0.75
+  sector_concentration_pct:        0.60
+  net_long_pct:                    0.50
+  net_short_pct:                   0.67
+  gross_exposure_pct:              0.50
+  daily_drawdown_pct:              0.60
+  cumulative_drawdown_pct:         0.50
+  options_delta_pct:               0.38
+  portfolio_theta_pct_per_day:     0.33
+  portfolio_vega_pct_per_iv_point: 0.30
+  total_short_pct:                 0.50
+  single_short_max_pct:            0.50
+  borrow_cost_budget_pct_per_day:  0.40
+  min_cash_reserve_pct:            2.50
+  correlation_max:                 0.71    # 0.50 / 0.70
+  thesis_dependency_flag_pct:      0.60
+transition:
+  tighten_on_entry: immediate
+  loosen_on_exit:   linear_over_invocations_3

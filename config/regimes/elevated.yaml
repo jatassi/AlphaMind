@@ -1,0 +1,30 @@
+# Elevated regime — VIX 22–35.
+#
+# Multiplier values transcribed from
+# docs/design/06-risk-guardrails/regime-adaptation.md § Parameter sets per regime.
+# Mirrors the worked example in docs/design/configuration-management.md
+# § regimes/elevated.yaml.
+
+vix_range: [22, 35]
+multipliers:
+  position_max_size_pct:           0.70
+  position_max_loss_equity_pct:    0.83
+  position_max_loss_options_pct:   0.88
+  sector_concentration_pct:        0.80
+  net_long_pct:                    0.75
+  net_short_pct:                   0.83
+  gross_exposure_pct:              0.75
+  daily_drawdown_pct:              0.80
+  cumulative_drawdown_pct:         0.75
+  options_delta_pct:               0.75
+  portfolio_theta_pct_per_day:     0.67
+  portfolio_vega_pct_per_iv_point: 0.70
+  total_short_pct:                 0.83
+  single_short_max_pct:            0.83
+  borrow_cost_budget_pct_per_day:  0.80
+  min_cash_reserve_pct:            1.50
+  correlation_max:                 0.86    # 0.60 / 0.70
+  thesis_dependency_flag_pct:      0.80
+transition:
+  tighten_on_entry: immediate
+  loosen_on_exit:   linear_over_invocations_3
