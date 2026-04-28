@@ -1,0 +1,12 @@
+greeks_refresh:
+  scheduled_interval_minutes: 15
+  move_trigger_pct: 2.0
+conservative_delta_buffer_pct: 10
+submission_retry_window_seconds: 30
+paper_harness:
+  spread_buffer_pct: 10
+  impact_coefficients:
+    market: 0.5
+    limit: 0.25
+    stop: 0.75
+pl_target_margin_pct: 5
