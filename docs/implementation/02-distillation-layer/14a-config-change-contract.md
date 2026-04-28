@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: f955191ff901ebeca97f5922817a2719019f14b9
 ---
 
 # 14a — Config-change activity-log contract (doc + in-memory)
