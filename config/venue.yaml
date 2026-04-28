@@ -1,0 +1,33 @@
+# Alpaca venue parameters and US-equity session hours.
+#
+# Paper vs. live selection is resolved at composition time from
+# main.yaml's `execution_mode`. The live block must always be present —
+# missing API-key env vars surface at runtime when the operator switches
+# to live, rather than being masked by an absent block.
+#
+# Settlement rules, PDT thresholds, and Reg T margin tiers are not
+# operator-tunable and live in code per
+# docs/design/configuration-management.md § In code.
+alpaca:
+  paper:
+    rest_url: https://paper-api.alpaca.markets
+    ws_url: wss://paper-api.alpaca.markets/stream
+    api_key_env: ALPACA_PAPER_KEY
+    api_secret_env: ALPACA_PAPER_SECRET
+  live:
+    rest_url: https://api.alpaca.markets
+    ws_url: wss://api.alpaca.markets/stream
+    api_key_env: ALPACA_LIVE_KEY
+    api_secret_env: ALPACA_LIVE_SECRET
+  rate_limit_per_minute: 200
+
+session_hours:
+  regular:
+    open: "09:30"
+    close: "16:00"
+  pre_market:
+    open: "04:00"
+    close: "09:30"
+  after_hours:
+    open: "16:00"
+    close: "20:00"

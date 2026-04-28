@@ -3,6 +3,8 @@
 import alphamind.config.models as models_mod
 
 _EXPECTED_PUBLIC_NAMES = {
+    "Alpaca",
+    "AlpacaCredentials",
     "AssetRole",
     "AssetsConfig",
     "BackoffStrategy",
@@ -27,6 +29,9 @@ _EXPECTED_PUBLIC_NAMES = {
     "RetryShapeConfig",
     "RuleEntry",
     "SchedulerConfig",
+    "SessionHours",
+    "SessionWindow",
+    "VenueConfig",
 }
 
 
