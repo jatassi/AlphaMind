@@ -1,0 +1,17 @@
+# Normal mode — passthrough.
+#
+# Stored explicitly so the resolver's mode-application step is uniform across
+# modes (no `if mode == "normal": skip` branches). Every per-agent block
+# carries the unrestricted default.
+
+analyst:
+  output_mode: proposals
+
+strategist:
+  output_mode: normal
+  allowed_actions: [hold, reduce, close, adjust-bracket, add]
+  pending_orders_default: maintain
+
+pm:
+  allowed_command_types: [OPEN, CLOSE, ADJUST, CANCEL, ADD]
+  emphasis: normal
