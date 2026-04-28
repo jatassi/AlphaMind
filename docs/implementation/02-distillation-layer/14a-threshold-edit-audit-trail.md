@@ -12,8 +12,9 @@ Implement the audit trail that enforces "no silent threshold mutation" from the 
 
 ## Reading
 
-- `docs/design/02-distillation-layer/threshold-calibration.md` § Update process — "No silent threshold mutation" paragraph naming the activity-log entry and the calibration-log-in-version-control convention
-- `docs/design/02-distillation-layer/threshold-calibration.md` § Static configuration thresholds — the universe of keys this story diffs against
+- `docs/design/02-distillation-layer/threshold-calibration.md` § Update process — "No silent threshold mutation" paragraph naming the activity-log entry and the calibration-log-in-version-control convention; review-procedure step 4 names the replay harness as the regime-sensitive evidence step whose `report_id` the calibration log cites
+- `docs/design/02-distillation-layer/threshold-calibration.md` § Static configuration thresholds — the universe of keys this story diffs against; the section-prefix split (`anomaly_detection.*`, `regime_classification.*`, `persistence_windows.*`) defines what counts as a "regime-sensitive edit" for the trailer convention below
+- `docs/design/02-distillation-layer/replay-harness.md` — produces the per-regime flag-rate report at `data/replay_reports/{report_id}/report.md`; the `report_id` is what the calibration-log trailer carries
 - `docs/design/05-execution-layer/state-persistence.md` § Activity log entries — entry shape and event-type catalog (the new event type extends this catalog)
 - `docs/design/05-execution-layer/state-persistence.md` § Event type catalog — convention for declaring new event types and their detail payloads
 - `docs/design/configuration-management.md` § Reload model — when reload happens (start of every invocation) and what failure-mode aborts the invocation
@@ -54,9 +55,13 @@ In scope:
   Motivating observation: <one-paragraph why>
 
   Empirical inputs: <flag-rate report or feedback-loop output the operator consulted>
+
+  Replay-harness report: <report_id>          (required for regime-sensitive edits)
   ```
 
   Multiple `calib:` trailers per commit are allowed. The git history paired with the activity-log entries forms the full audit trail: activity log = "what changed and when," commit message = "why."
+
+  **`Replay-harness report:` semantics.** Required when the edited key path falls under `anomaly_detection.*`, `regime_classification.*`, `regime_transition.*`, `lead_lag.*`, `narrative_lag.*`, or `persistence_windows.*` — the regime-sensitive set named by [`threshold-calibration.md § Update process` step 4](../../../design/02-distillation-layer/threshold-calibration.md#update-process). Optional for `prediction_market.*` edits. The `<report_id>` is the directory name under `data/replay_reports/` produced by [`replay-harness.md`](../../../design/02-distillation-layer/replay-harness.md), and is the same identifier the operator cites in the corresponding `/feedback-validate` registration's `expected_magnitude` or `success_criterion` field — pairing the calibration-log commit and the validation registration on a single regime-grounded evidence anchor. When multiple `calib:` trailers in one commit touch the regime-sensitive set, one `Replay-harness report:` line is sufficient if the same harness run covered all the edited keys; otherwise list one per evidence run.
 
 - **Tests**:
   - Unit test: a fresh database with no prior `distillation_config_change` entry plus a loaded `DistillationConfig` produces exactly one entry on first reload, with `prior_hash = null` and an empty `changes` array, recording the bootstrap baseline.
@@ -87,6 +92,8 @@ The recursive diff implementation should produce a stable order (sort by `key_pa
 
 The commit-message trailer convention is a recommendation, not enforcement. Per CLAUDE.md the user's bar for adding hooks/linters is high, and the user's "simplify before building" memory argues against premature mechanization. The convention lives in the design doc as guidance; the operator follows it manually. If trailer adherence becomes a problem, a future hook story can be added — but not by this story.
 
+The regime-sensitive prefix list (`anomaly_detection.*`, `regime_classification.*`, `regime_transition.*`, `lead_lag.*`, `narrative_lag.*`, `persistence_windows.*`) covers every threshold whose flagging or labeling behavior shifts when the underlying volatility regime shifts — the confounder the replay harness exists to neutralize per [`replay-harness.md § Why the harness exists`](../../../design/02-distillation-layer/replay-harness.md#why-the-harness-exists). The `prediction_market.*` prefix is excluded because its 5pp threshold is universe-wide and not regime-conditioned (per [`threshold-calibration.md § Prediction market delta`](../../../design/02-distillation-layer/threshold-calibration.md#prediction-market-delta)). The list is documented in this story's design subsection and in the design doc itself; it is operator-side review-procedure guidance, not a runtime check.
+
 The `source: config_reload` value is new. Verify the existing `source` enum (or CHECK constraint) is extensible — if it's a typed enum in code, add the new value; if it's a CHECK constraint in SQL, the migration extends it. Mirror however the existing `pipeline` / `monitor` / `operator_console` values are declared.
 
 ## Acceptance criteria
@@ -102,5 +109,6 @@ The `source: config_reload` value is new. Verify the existing `source` enum (or 
 - [ ] The `changes` array is sorted by `key_path` ascending for deterministic JSON output.
 - [ ] A transaction rollback on the invocation row also rolls back the activity-log entry (atomic-emission test).
 - [ ] `docs/design/02-distillation-layer/threshold-calibration.md § Update process` includes a "Calibration log convention" subsection documenting the recommended commit-message trailer block.
+- [ ] The Calibration log convention enumerates `Replay-harness report: <report_id>` as required for edits under `anomaly_detection.*`, `regime_classification.*`, `regime_transition.*`, `lead_lag.*`, `narrative_lag.*`, or `persistence_windows.*`, with a cross-reference to [`replay-harness.md`](../../../design/02-distillation-layer/replay-harness.md) for the `report_id` provenance and to [`threshold-calibration.md § Update process` step 4](../../../design/02-distillation-layer/threshold-calibration.md#update-process) for the regime-sensitive-set definition.
 - [ ] Unit tests cover: first-reload baseline, no-change suppression, single-key change, multi-key change, nested-key change, rollback atomicity, `source` value, `git_sha` correspondence.
 - [ ] `uv run ruff check . && uv run ruff format . && uv run mypy && uv run pytest` all pass.

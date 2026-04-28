@@ -31,7 +31,7 @@ Cross-cutting policies and reference specs that constrain implementation but are
 ### Distillation layer
 
 - [ ] **Distillation** — _stories drafted_ — [external](design/02-distillation-layer/external.md), [internal](design/02-distillation-layer/internal.md), [stories](implementation/02-distillation-layer/)
-- [ ] **Threshold calibration framework** — _requirements pending_ — [design](design/02-distillation-layer/threshold-calibration.md)
+- [ ] **Threshold calibration framework** — _stories drafted (within the Distillation work tree)_ — [design](design/02-distillation-layer/threshold-calibration.md), stories 02 (config schema), 03 (state schema), 04 (bootstrap framework), 07 (Class B refresh), 09 (regime classification), 13 (verification incl. `verify_regime_transition.py`), 14a (audit trail + calibration log convention), 14b (no-magic-numbers audit), 15 (emergency-invocation review), 16 (flag-rate reporter), 17 (calibration-state snapshot + dashboard panel) under [implementation/02-distillation-layer/](implementation/02-distillation-layer/)
 - [ ] **Replay harness** — _requirements pending_ — [design](design/02-distillation-layer/replay-harness.md)
 
 ### Risk guardrails
