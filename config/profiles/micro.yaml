@@ -1,0 +1,37 @@
+# Micro profile — first deployment tier ($1,500).
+#
+# Risk priority is signal quality: maximize the volume of clean, attributable
+# thesis outcomes to determine whether the analytical framework produces
+# positive expectancy. Rules per docs/design/06-risk-guardrails/rules-and-limits.md
+# § Profile: Micro. Options and short selling disabled, so the corresponding
+# rules are omitted (not zeroed) from rule_values per
+# docs/design/configuration-management.md § Feature flag semantics.
+
+capital_range_usd: [0, 4999]
+risk_priority: signal_quality
+
+feature_flags:
+  options_enabled: false
+  short_selling_enabled: false
+  fractional_shares_required: true
+
+active_sectors: [tech, semis]
+min_position_size_usd: 50
+
+rule_values:
+  position_max_size_pct:        5
+  position_max_loss_equity_pct: 30
+  sector_concentration_pct:     25
+  net_long_pct:                 60
+  gross_exposure_pct:           120
+  daily_drawdown_pct:           2.5
+  cumulative_drawdown_pct:      8
+  correlation_max:              0.70
+  thesis_dependency_flag_pct:   25
+  min_cash_reserve_pct:         10
+  pending_order_capital_pct:    30
+
+agent_token_budgets:
+  analyst:           { context: [1500, 2500], output: [1200, 2500] }
+  strategist:        { context: [1500, 2500], output: [1200, 2500] }
+  portfolio_manager: { context: [1500, 2500], output: [1200, 2500] }

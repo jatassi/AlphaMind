@@ -1,0 +1,37 @@
+# Small profile — second deployment tier ($5,000–$15,000).
+#
+# Risk priority is concentration management: thesis quality is proven at micro;
+# the system now scales with more positions and a third sector. Rules per
+# docs/design/06-risk-guardrails/rules-and-limits.md § Profile: Small. Options
+# and short selling disabled, so the corresponding rules are omitted (not
+# zeroed) from rule_values per
+# docs/design/configuration-management.md § Feature flag semantics.
+
+capital_range_usd: [5000, 15000]
+risk_priority: concentration_management
+
+feature_flags:
+  options_enabled: false
+  short_selling_enabled: false
+  fractional_shares_required: true
+
+active_sectors: [tech, semis, financials]
+min_position_size_usd: 75
+
+rule_values:
+  position_max_size_pct:        5
+  position_max_loss_equity_pct: 30
+  sector_concentration_pct:     25
+  net_long_pct:                 60
+  gross_exposure_pct:           120
+  daily_drawdown_pct:           2.5
+  cumulative_drawdown_pct:      8
+  correlation_max:              0.70
+  thesis_dependency_flag_pct:   25
+  min_cash_reserve_pct:         10
+  pending_order_capital_pct:    30
+
+agent_token_budgets:
+  analyst:           { context: [1500, 2500], output: [1200, 2500] }
+  strategist:        { context: [1500, 2500], output: [1200, 2500] }
+  portfolio_manager: { context: [1500, 2500], output: [1200, 2500] }

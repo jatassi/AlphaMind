@@ -6,17 +6,21 @@ raise ``FileNotFoundError`` so the resolver fails closed at invocation start
 per ``docs/design/configuration-management.md`` § Validation.
 """
 
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, cast
 
 import yaml
 
+from alphamind.config.models.main import Profile
 from alphamind.config.models.modes import Mode, ModeConfig
 from alphamind.config.models.overlays import (
     Overlay,
     PreEventOverlay,
     StressOverlay,
 )
+from alphamind.config.models.profiles import ProfileConfig
 
 # Filename stems use hyphens for operator readability; enum members use
 # underscores per Python identifier rules. The mapping bridges the two.
@@ -30,6 +34,20 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Required configuration file not found: {path}")
     return cast(dict[str, Any], yaml.safe_load(path.read_text()) or {})
+
+
+def load_profiles(config_dir: Path) -> Mapping[Profile, ProfileConfig]:
+    """Load every ``profiles/<name>.yaml`` for every ``Profile`` enum member.
+
+    Returns a frozen mapping. Raises if any profile file is missing,
+    unreadable, or fails Pydantic validation.
+    """
+    profiles_dir = config_dir / "profiles"
+    loaded: dict[Profile, ProfileConfig] = {
+        profile: ProfileConfig.model_validate(_read_yaml(profiles_dir / f"{profile.value}.yaml"))
+        for profile in Profile
+    }
+    return MappingProxyType(loaded)
 
 
 def load_overlays(config_dir: Path) -> dict[Overlay, PreEventOverlay | StressOverlay]:

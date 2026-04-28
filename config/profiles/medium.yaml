@@ -1,0 +1,43 @@
+# Medium profile — third deployment tier ($25,000–$50,000).
+#
+# Risk priority is exposure management: full feature set online (shorts, options,
+# 4 sectors), with enough capital deployed that aggregate risk interactions
+# dominate. Rules per docs/design/06-risk-guardrails/rules-and-limits.md
+# § Profile: Medium. All 19 guardrail rule values present.
+
+capital_range_usd: [25000, 50000]
+risk_priority: exposure_management
+
+feature_flags:
+  options_enabled: true
+  short_selling_enabled: true
+  fractional_shares_required: false
+
+active_sectors: [tech, semis, financials, energy]
+min_position_size_usd: 75
+
+rule_values:
+  position_max_size_pct:           5
+  position_max_loss_equity_pct:    30
+  position_max_loss_options_pct:   80
+  sector_concentration_pct:        25
+  net_long_pct:                    60
+  net_short_pct:                   30
+  gross_exposure_pct:              120
+  daily_drawdown_pct:              2.5
+  cumulative_drawdown_pct:         8
+  correlation_max:                 0.70
+  thesis_dependency_flag_pct:      25
+  options_delta_pct:               40
+  portfolio_theta_pct_per_day:     0.15
+  portfolio_vega_pct_per_iv_point: 1.0
+  total_short_pct:                 30
+  single_short_max_pct:            3
+  borrow_cost_budget_pct_per_day:  0.05
+  min_cash_reserve_pct:            10
+  pending_order_capital_pct:       30
+
+agent_token_budgets:
+  analyst:           { context: [1500, 2500], output: [1200, 2500] }
+  strategist:        { context: [1500, 2500], output: [1200, 2500] }
+  portfolio_manager: { context: [1500, 2500], output: [1200, 2500] }

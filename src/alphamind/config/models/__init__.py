@@ -82,6 +82,12 @@ from alphamind.config.models.overlays import (
     StressOverlay,
     StressTrigger,
 )
+from alphamind.config.models.profiles import (
+    FeatureFlags,
+    ProfileConfig,
+    RiskPriority,
+    TokenBudgetRange,
+)
 from alphamind.config.models.scheduler import SchedulerConfig
 from alphamind.config.models.venue import (
     Alpaca,
@@ -148,6 +154,7 @@ __all__ = [
     "ExecutionConfig",
     "ExecutionMode",
     "FailureMode",
+    "FeatureFlags",
     "FinalInvocationBeforeEvent",
     "GreeksRefresh",
     "GuardrailsConfig",
@@ -167,6 +174,7 @@ __all__ = [
     "PreEventActivation",
     "PreEventOverlay",
     "Profile",
+    "ProfileConfig",
     "ProgressiveTier",
     "ProviderConfig",
     "RegimeChange",
@@ -174,6 +182,7 @@ __all__ = [
     "RetryPolicy",
     "RetryShapeConfig",
     "RetryStrategy",
+    "RiskPriority",
     "RuleEntry",
     "SchedulerConfig",
     "SectorUnderperform",
@@ -186,6 +195,7 @@ __all__ = [
     "StressActivation",
     "StressOverlay",
     "StressTrigger",
+    "TokenBudgetRange",
     "ValidationSuperseded",
     "ValidationWindowEnd",
     "VenueConfig",
