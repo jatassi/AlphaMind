@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: f51f43ed2b86450eafda4ea2f65f2d05a396b4e1
 ---
 
 # 08e — Q12 corporate actions signals
