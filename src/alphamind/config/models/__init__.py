@@ -117,6 +117,11 @@ from alphamind.config.resolver import (
     compose_config,
 )
 from alphamind.config.snapshot import SnapshotResult, persist_snapshot
+from alphamind.config.validation.semantic import (
+    SemanticInvariantError,
+    enumerate_compositions,
+    validate_semantic_invariants,
+)
 
 # ---------------------------------------------------------------------------
 # .env.example helpers — kept here so monkeypatching
@@ -218,6 +223,7 @@ __all__ = [
     "RuntimeDimensions",
     "SchedulerConfig",
     "SectorUnderperform",
+    "SemanticInvariantError",
     "SessionHours",
     "SessionWindow",
     "SnapshotResult",
@@ -235,5 +241,7 @@ __all__ = [
     "ValidationWindowEnd",
     "VenueConfig",
     "compose_config",
+    "enumerate_compositions",
     "persist_snapshot",
+    "validate_semantic_invariants",
 ]
