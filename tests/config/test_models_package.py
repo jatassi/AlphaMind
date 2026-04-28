@@ -3,11 +3,16 @@
 import alphamind.config.models as models_mod
 
 _EXPECTED_PUBLIC_NAMES = {
+    "AdaptiveAgentConfig",
+    "AgentName",
+    "AgentsConfig",
+    "AllowedModel",
     "Alpaca",
     "AlpacaCredentials",
     "AssetRole",
     "AssetsConfig",
     "BackoffStrategy",
+    "BaseAgentConfig",
     "Benchmark",
     "BreachResponse",
     "CategoryConfig",
