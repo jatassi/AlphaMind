@@ -6,6 +6,25 @@ commit_id:
 
 # 16 — Class A flag-rate empirical reporter
 
+## Blocker (2026-04-27)
+
+This story is blocked on the same substrate gap that blocks stories 14a and 15. A subagent dispatched against the spec verified the gap and stopped before improvising. Concrete preconditions absent from the codebase:
+
+1. **No `activity_log` SQL table** in `src/alphamind/persistence/models.py`. The reporter's primary data source per § Data sources is "query the activity log for entries whose event_type identifies them as anomaly flags." `models.py` defines 29 SQLAlchemy tables (data-layer collector + the six distillation-state tables from story 03) but nothing matching the activity-log entry shape from `state-persistence.md § Activity log entries`. The portfolio-state `activity_log.py` is in-memory `EventSource` records for fills/brackets/margin events — wrong vocabulary and not SQL-backed.
+2. **No `invocations` SQL table.** The reporter's "Invocations in window" header line and per-cycle rate computation both read from this table. Neither it nor a counterpart exists.
+3. **No file-archive fallback.** Per the dispatch prompt's "Possible blocker (assess and decide)" section, the documented fallback is `infrastructure.md § Layer 2 invocation archive` — the per-invocation file tree at `%USERPROFILE%\AlphaMind\archive\<date>\<time>_<trigger>/`. The writer of those files is the distillation orchestrator (story 12, `run_external_distillation()`). Story 12 frontmatter is `status: not_started` — the orchestrator has not shipped, and no other code path writes those archive directories. There is no archive on disk to scan.
+4. **`AnomalyFlag` exists only in memory.** The dataclass is constructed inside per-category indicator code (`q1/anomalies.py`, `q12_corporate_actions.py`, `qualitative_derived.py`, etc.) and aggregated in `distillation/aggregation.py`, but every flag is discarded at end-of-invocation. No persistence side effect, no archive write, no event emission.
+
+The story's own § Data sources clause anticipates the per-category-stories gap ("If the per-category stories (08*) are not yet implemented, the reporter prints 'no data — flag event types not yet registered' for the affected classes and exits 0") but that fallback assumes the activity-log substrate exists. With both data sources absent, there is no synthetic-fixture path that exercises the production code path — the script would have nothing to query.
+
+Resolution paths the orchestrator should pick from (operator picks):
+
+- **Add a precursor story** for `activity_log` + `invocations` SQL tables + a flag-emission hook in the per-category indicator output path, then re-dispatch 16 unchanged. This is the same precursor that unblocks 14a and 15.
+- **Sequence after story 12.** Once the orchestrator lands the file-archive writer, 16 can scan the file tree for flags. This requires the per-category indicators to also write their flag list into the archive (today they only return in-memory blocks).
+- **Defer 16** until the threshold-calibration review process is actually being run (paper-trading evaluation phase). The script is operator-side review tooling; it has no production-pipeline consumer.
+
+When this is resolved, set `status: not_started` and remove this section.
+
 ## Goal
 
 Implement the operator's empirical-rate measurement tool — step 2 of the threshold-calibration design doc's "Review procedure." Given a threshold class and a window, compute the actual flagging rate observed over that window (flags per ticker per day, or flags per cycle for global thresholds), so the operator can compare it against the expected rate at the configured value and decide whether the threshold needs tightening or loosening. Land the tool as a CLI script under `scripts/` matching the existing `verify_*.py` pattern.
