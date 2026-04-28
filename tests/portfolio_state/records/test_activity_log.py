@@ -30,6 +30,7 @@ from alphamind.portfolio_state.records.activity_log import (
     CommandAbandonedDetail,
     CorporateActionAppliedDetail,
     CorporateActionType,
+    DistillationConfigChange,
     EventGroup,
     EventSource,
     EventType,
@@ -110,14 +111,15 @@ class TestEnumMembers:
             "RISK_AND_GUARDRAIL",
             "PM_DECISION",
             "CORPORATE_ACTION",
+            "CONFIGURATION",
         }
         assert {m.name for m in EventGroup} == expected
 
     def test_event_type_is_str_enum(self) -> None:
         assert issubclass(EventType, StrEnum)
 
-    def test_event_type_has_exactly_35_members(self) -> None:
-        assert len(EventType) == 35
+    def test_event_type_has_exactly_36_members(self) -> None:
+        assert len(EventType) == 36
 
     def test_event_type_position_lifecycle_members(self) -> None:
         for name in ("POSITION_OPENED", "POSITION_CLOSED", "POSITION_ADDED", "POSITION_REDUCED"):
@@ -187,6 +189,8 @@ class TestEnumMembers:
             "MARGIN_MONITOR",
             "GUARDRAIL_LAYER",
             "CORPORATE_ACTION_PROCESSOR",
+            "CONFIG_RELOAD",
+            "OPERATOR_CONSOLE",
         }
         assert {m.name for m in EventSource} == expected
 
@@ -291,9 +295,9 @@ class TestMappingExhaustiveness:
 class TestAnyDetailTypeAlias:
     """AnyDetailType is exported and covers all 35 detail-payload classes."""
 
-    def test_any_detail_type_has_35_members(self) -> None:
+    def test_any_detail_type_has_36_members(self) -> None:
         members = get_args(AnyDetailType)
-        assert len(members) == 35
+        assert len(members) == 36
 
     def test_any_detail_type_covers_all_detail_classes(self) -> None:
         members = set(get_args(AnyDetailType))
@@ -1226,5 +1230,327 @@ class TestActivityLogEntryValidation:
                 order_id=None,
                 thesis_id=None,
                 source=EventSource.FILL_PROCESSOR,
+                detail=detail,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Configuration event additions (story 14a)
+# ---------------------------------------------------------------------------
+
+
+class TestConfigurationEventEnumMembers:
+    """The configuration-event enum additions are present (story 14a contract)."""
+
+    def test_event_group_configuration_member_exists(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import EventGroup
+
+        assert EventGroup.CONFIGURATION.value == "CONFIGURATION"
+
+    def test_event_type_distillation_config_change_exists(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import EventType
+
+        assert EventType.DISTILLATION_CONFIG_CHANGE.value == "DISTILLATION_CONFIG_CHANGE"
+
+    def test_event_source_config_reload_exists(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import EventSource
+
+        assert EventSource.CONFIG_RELOAD.value == "CONFIG_RELOAD"
+
+    def test_event_source_operator_console_exists(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import EventSource
+
+        assert EventSource.OPERATOR_CONSOLE.value == "OPERATOR_CONSOLE"
+
+
+class TestDistillationConfigChange:
+    """``DistillationConfigChange`` represents one entry in the ``changes`` array."""
+
+    def test_round_trip_through_pydantic(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import DistillationConfigChange
+
+        change = DistillationConfigChange(
+            key_path="anomaly_detection.volume_anomaly_sigma",
+            old_value=2.5,
+            new_value=3.0,
+        )
+        assert change.key_path == "anomaly_detection.volume_anomaly_sigma"
+        assert change.old_value == 2.5
+        assert change.new_value == 3.0
+        rebuilt = DistillationConfigChange.model_validate(change.model_dump())
+        assert rebuilt == change
+
+    def test_is_frozen(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import DistillationConfigChange
+
+        change = DistillationConfigChange(key_path="x", old_value=1, new_value=2)
+        with pytest.raises(ValidationError):
+            change.key_path = "y"
+
+    def test_empty_key_path_raises(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import DistillationConfigChange
+
+        with pytest.raises(ValidationError):
+            DistillationConfigChange(key_path="", old_value=1, new_value=2)
+
+
+_HASH_HEX_64 = "f" * 64
+_OTHER_HASH_HEX_64 = "a" * 64
+
+
+def _change(
+    key_path: str = "anomaly_detection.volume_anomaly_sigma",
+    old_value: object = 2.5,
+    new_value: object = 3.0,
+) -> DistillationConfigChange:
+    return DistillationConfigChange(key_path=key_path, old_value=old_value, new_value=new_value)
+
+
+class TestDistillationConfigChangeDetail:
+    """``DistillationConfigChangeDetail`` is the per-event-type detail payload."""
+
+    def test_round_trip_through_pydantic(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            DistillationConfigChangeDetail,
+        )
+
+        detail = DistillationConfigChangeDetail(
+            config_file="config/distillation.yaml",
+            prior_hash=_OTHER_HASH_HEX_64,
+            new_hash=_HASH_HEX_64,
+            changes=(_change(),),
+            git_sha="abc1234",
+        )
+        assert detail.config_file == "config/distillation.yaml"
+        rebuilt = DistillationConfigChangeDetail.model_validate(detail.model_dump())
+        assert rebuilt == detail
+
+    def test_default_config_file(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            DistillationConfigChangeDetail,
+        )
+
+        detail = DistillationConfigChangeDetail(
+            prior_hash=None,
+            new_hash=_HASH_HEX_64,
+            changes=(),
+            git_sha="abc1234",
+        )
+        assert detail.config_file == "config/distillation.yaml"
+
+    def test_prior_hash_none_allowed(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            DistillationConfigChangeDetail,
+        )
+
+        detail = DistillationConfigChangeDetail(
+            prior_hash=None,
+            new_hash=_HASH_HEX_64,
+            changes=(),
+            git_sha="abc1234",
+        )
+        assert detail.prior_hash is None
+
+    def test_is_frozen(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            DistillationConfigChangeDetail,
+        )
+
+        detail = DistillationConfigChangeDetail(
+            prior_hash=None,
+            new_hash=_HASH_HEX_64,
+            changes=(),
+            git_sha="abc1234",
+        )
+        with pytest.raises(ValidationError):
+            detail.git_sha = "deadbeef"
+
+    def test_empty_config_file_raises(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            DistillationConfigChangeDetail,
+        )
+
+        with pytest.raises(ValidationError):
+            DistillationConfigChangeDetail(
+                config_file="",
+                prior_hash=None,
+                new_hash=_HASH_HEX_64,
+                changes=(),
+                git_sha="abc1234",
+            )
+
+    def test_empty_new_hash_raises(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            DistillationConfigChangeDetail,
+        )
+
+        with pytest.raises(ValidationError):
+            DistillationConfigChangeDetail(
+                prior_hash=None,
+                new_hash="",
+                changes=(),
+                git_sha="abc1234",
+            )
+
+    def test_missing_new_hash_raises(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            DistillationConfigChangeDetail,
+        )
+
+        with pytest.raises(ValidationError):
+            DistillationConfigChangeDetail.model_validate(
+                {
+                    "prior_hash": None,
+                    "changes": (),
+                    "git_sha": "abc1234",
+                }
+            )
+
+    def test_empty_git_sha_raises(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            DistillationConfigChangeDetail,
+        )
+
+        with pytest.raises(ValidationError):
+            DistillationConfigChangeDetail(
+                prior_hash=None,
+                new_hash=_HASH_HEX_64,
+                changes=(),
+                git_sha="",
+            )
+
+    def test_unsorted_changes_raises_naming_offending_pair(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            DistillationConfigChangeDetail,
+        )
+
+        with pytest.raises(ValidationError) as exc_info:
+            DistillationConfigChangeDetail(
+                prior_hash=None,
+                new_hash=_HASH_HEX_64,
+                changes=(
+                    _change(key_path="b.x"),
+                    _change(key_path="a.y"),
+                ),
+                git_sha="abc1234",
+            )
+        msg = str(exc_info.value)
+        assert "b.x" in msg
+        assert "a.y" in msg
+
+    def test_duplicate_key_path_raises(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            DistillationConfigChangeDetail,
+        )
+
+        with pytest.raises(ValidationError):
+            DistillationConfigChangeDetail(
+                prior_hash=None,
+                new_hash=_HASH_HEX_64,
+                changes=(
+                    _change(key_path="a.x"),
+                    _change(key_path="a.x"),
+                ),
+                git_sha="abc1234",
+            )
+
+    def test_non_string_key_path_rejected(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            DistillationConfigChange,
+        )
+
+        with pytest.raises(ValidationError):
+            DistillationConfigChange.model_validate(
+                {"key_path": 123, "old_value": 1, "new_value": 2}
+            )
+
+
+class TestDistillationConfigChangeRegistration:
+    """The new event type is wired into the catalog mappings."""
+
+    def test_event_type_to_detail_class_lookup(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            EVENT_TYPE_TO_DETAIL_CLASS,
+            DistillationConfigChangeDetail,
+            EventType,
+        )
+
+        assert (
+            EVENT_TYPE_TO_DETAIL_CLASS[EventType.DISTILLATION_CONFIG_CHANGE]
+            is DistillationConfigChangeDetail
+        )
+
+    def test_event_type_to_group_lookup(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            EVENT_TYPE_TO_GROUP,
+            EventGroup,
+            EventType,
+        )
+
+        assert EVENT_TYPE_TO_GROUP[EventType.DISTILLATION_CONFIG_CHANGE] == EventGroup.CONFIGURATION
+
+    def test_any_detail_type_includes_distillation_detail(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            AnyDetailType,
+            DistillationConfigChangeDetail,
+        )
+
+        assert DistillationConfigChangeDetail in get_args(AnyDetailType)
+
+    def test_activity_log_entry_accepts_distillation_config_change(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            ActivityLogEntry,
+            DistillationConfigChangeDetail,
+            EventGroup,
+            EventSource,
+            EventType,
+        )
+
+        detail = DistillationConfigChangeDetail(
+            prior_hash=None,
+            new_hash=_HASH_HEX_64,
+            changes=(),
+            git_sha="abc1234",
+        )
+        entry = ActivityLogEntry(
+            entry_id="eid-001",
+            invocation_id="inv-001",
+            timestamp=_UTC_TS,
+            event_type=EventType.DISTILLATION_CONFIG_CHANGE,
+            event_group=EventGroup.CONFIGURATION,
+            position_id=None,
+            order_id=None,
+            thesis_id=None,
+            source=EventSource.CONFIG_RELOAD,
+            detail=detail,
+        )
+        assert entry.event_type == EventType.DISTILLATION_CONFIG_CHANGE
+
+    def test_activity_log_entry_rejects_wrong_group(self) -> None:
+        from alphamind.portfolio_state.records.activity_log import (
+            ActivityLogEntry,
+            DistillationConfigChangeDetail,
+            EventGroup,
+            EventSource,
+            EventType,
+        )
+
+        detail = DistillationConfigChangeDetail(
+            prior_hash=None,
+            new_hash=_HASH_HEX_64,
+            changes=(),
+            git_sha="abc1234",
+        )
+        with pytest.raises(ValidationError):
+            ActivityLogEntry(
+                entry_id="eid-001",
+                invocation_id="inv-001",
+                timestamp=_UTC_TS,
+                event_type=EventType.DISTILLATION_CONFIG_CHANGE,
+                event_group=EventGroup.PM_DECISION,
+                position_id=None,
+                order_id=None,
+                thesis_id=None,
+                source=EventSource.CONFIG_RELOAD,
                 detail=detail,
             )
