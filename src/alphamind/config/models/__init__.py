@@ -110,6 +110,12 @@ from alphamind.config.models.venue import (
     SessionWindow,
     VenueConfig,
 )
+from alphamind.config.resolver import (
+    LoadedConfig,
+    ResolvedConfig,
+    RuntimeDimensions,
+    compose_config,
+)
 
 # ---------------------------------------------------------------------------
 # .env.example helpers — kept here so monkeypatching
@@ -174,6 +180,7 @@ __all__ = [
     "GreeksRefresh",
     "GuardrailsConfig",
     "LLMFailureConfig",
+    "LoadedConfig",
     "LoosenOnExit",
     "MainConfig",
     "Mode",
@@ -198,6 +205,7 @@ __all__ = [
     "Regime",
     "RegimeChange",
     "RegimeConfig",
+    "ResolvedConfig",
     "RetryCondition",
     "RetryPolicy",
     "RetryShapeConfig",
@@ -206,6 +214,7 @@ __all__ = [
     "RuleEntry",
     "RunType",
     "RunTypeConfig",
+    "RuntimeDimensions",
     "SchedulerConfig",
     "SectorUnderperform",
     "SessionHours",
@@ -223,4 +232,5 @@ __all__ = [
     "ValidationSuperseded",
     "ValidationWindowEnd",
     "VenueConfig",
+    "compose_config",
 ]

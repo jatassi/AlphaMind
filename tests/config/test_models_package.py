@@ -42,6 +42,7 @@ _EXPECTED_PUBLIC_NAMES = {
     "GreeksRefresh",
     "GuardrailsConfig",
     "LLMFailureConfig",
+    "LoadedConfig",
     "LoosenOnExit",
     "MainConfig",
     "Mode",
@@ -66,6 +67,7 @@ _EXPECTED_PUBLIC_NAMES = {
     "Regime",
     "RegimeChange",
     "RegimeConfig",
+    "ResolvedConfig",
     "RetryCondition",
     "RetryPolicy",
     "RetryShapeConfig",
@@ -74,6 +76,7 @@ _EXPECTED_PUBLIC_NAMES = {
     "RuleEntry",
     "RunType",
     "RunTypeConfig",
+    "RuntimeDimensions",
     "SchedulerConfig",
     "SectorUnderperform",
     "SessionHours",
@@ -91,6 +94,7 @@ _EXPECTED_PUBLIC_NAMES = {
     "ValidationSuperseded",
     "ValidationWindowEnd",
     "VenueConfig",
+    "compose_config",
 }
 
 
