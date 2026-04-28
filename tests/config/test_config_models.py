@@ -549,3 +549,93 @@ def test_guardrails_models_are_frozen() -> None:
 
     with pytest.raises(ValidationError):
         config.emergency_invocation.__setattr__("cooldown_minutes", 0)
+
+
+# ---------------------------------------------------------------------------
+# main.yaml (story 03b)
+# ---------------------------------------------------------------------------
+
+
+def _valid_main_raw() -> dict[str, object]:
+    return {
+        "active_profile": "medium",
+        "execution_mode": "paper",
+        "paths": {
+            "database": "%USERPROFILE%\\AlphaMind\\data\\alphamind.db",
+            "logs": "%USERPROFILE%\\AlphaMind\\logs",
+            "archive": "%USERPROFILE%\\AlphaMind\\archive",
+            "prompts": "prompts/",
+        },
+    }
+
+
+def test_main_yaml_parses_cleanly_and_exposes_expected_fields() -> None:
+    from alphamind.config.models import ExecutionMode, MainConfig, Profile
+
+    data = load_yaml(CONFIG_DIR / "main.yaml")
+    config = MainConfig.model_validate(data)
+    assert config.active_profile == Profile.medium
+    assert config.execution_mode == ExecutionMode.paper
+    assert config.paths.database
+    assert config.paths.logs
+    assert config.paths.archive
+    assert config.paths.prompts
+
+
+def test_main_rejects_unknown_active_profile() -> None:
+    from alphamind.config.models import MainConfig
+
+    raw = _valid_main_raw()
+    raw["active_profile"] = "huge"
+    with pytest.raises(ValidationError):
+        MainConfig.model_validate(raw)
+
+
+def test_main_rejects_unknown_execution_mode() -> None:
+    from alphamind.config.models import MainConfig
+
+    raw = _valid_main_raw()
+    raw["execution_mode"] = "backtest"
+    with pytest.raises(ValidationError):
+        MainConfig.model_validate(raw)
+
+
+def test_main_rejects_missing_paths_database_key() -> None:
+    from alphamind.config.models import MainConfig
+
+    raw = _valid_main_raw()
+    raw["paths"] = {
+        "logs": "%USERPROFILE%\\AlphaMind\\logs",
+        "archive": "%USERPROFILE%\\AlphaMind\\archive",
+        "prompts": "prompts/",
+    }
+    with pytest.raises(ValidationError):
+        MainConfig.model_validate(raw)
+
+
+def test_main_preserves_userprofile_path_verbatim() -> None:
+    from alphamind.config.models import MainConfig
+
+    raw = _valid_main_raw()
+    literal_database = "%USERPROFILE%\\AlphaMind\\data\\alphamind.db"
+    raw["paths"] = {
+        "database": literal_database,
+        "logs": "%USERPROFILE%\\AlphaMind\\logs",
+        "archive": "%USERPROFILE%\\AlphaMind\\archive",
+        "prompts": "prompts/",
+    }
+    config = MainConfig.model_validate(raw)
+    assert config.paths.database == literal_database
+
+
+def test_main_models_are_frozen() -> None:
+    from alphamind.config.models import MainConfig, Paths
+
+    config = MainConfig.model_validate(_valid_main_raw())
+
+    with pytest.raises(ValidationError):
+        config.__setattr__("execution_mode", "live")
+
+    assert isinstance(config.paths, Paths)
+    with pytest.raises(ValidationError):
+        config.paths.__setattr__("database", "mutated")

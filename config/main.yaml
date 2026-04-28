@@ -1,0 +1,14 @@
+# Composition root for the configuration tree.
+# Pins operator-selected identity dimensions and declares filesystem paths.
+# See docs/design/configuration-management.md § main.yaml.
+#
+# Path values use Windows %USERPROFILE% expansions resolved at the OS boundary,
+# not at YAML parse — single-quoted scalars preserve the literal backslashes.
+
+active_profile: medium                       # micro | small | medium | large
+execution_mode: paper                        # paper | live
+paths:
+  database: '%USERPROFILE%\AlphaMind\data\alphamind.db'
+  logs:     '%USERPROFILE%\AlphaMind\logs'
+  archive:  '%USERPROFILE%\AlphaMind\archive'
+  prompts:  prompts/

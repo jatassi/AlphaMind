@@ -27,6 +27,7 @@ from alphamind.config.models.guardrails import (
     ProgressiveTier,
     RuleEntry,
 )
+from alphamind.config.models.main import ExecutionMode, MainConfig, Paths, Profile
 from alphamind.config.models.news_outlets import CredibilityTier, NewsOutletsConfig, OutletEntry
 from alphamind.config.models.scheduler import SchedulerConfig
 
@@ -70,9 +71,13 @@ __all__ = [
     "EmergencyInvocation",
     "EnforcementTier",
     "EscalationZones",
+    "ExecutionMode",
     "GuardrailsConfig",
+    "MainConfig",
     "NewsOutletsConfig",
     "OutletEntry",
+    "Paths",
+    "Profile",
     "ProgressiveTier",
     "ProviderConfig",
     "RetryShapeConfig",
