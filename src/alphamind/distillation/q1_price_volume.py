@@ -30,6 +30,11 @@ from alphamind.distillation.q1.anomalies import (
     detect_price_move_anomaly,
     detect_volume_anomaly,
 )
+from alphamind.distillation.q1.assemble import (
+    BLOCK_ID_PRICE_MOVE_ANOMALY,
+    BLOCK_ID_VOLUME_ANOMALY,
+    assemble_q1_blocks,
+)
 from alphamind.distillation.q1.divergence import (
     DivergenceFlag,
     detect_rsi_divergences,
@@ -121,9 +126,11 @@ __all__ = [
     "AUDIENCE_BY_SECTOR",
     "BLOCK_ID_DIVERGENCE_FLAGS",
     "BLOCK_ID_GAP",
+    "BLOCK_ID_PRICE_MOVE_ANOMALY",
     "BLOCK_ID_RELATIVE_PERFORMANCE",
     "BLOCK_ID_TECHNICALS",
     "BLOCK_ID_TREND_STATE",
+    "BLOCK_ID_VOLUME_ANOMALY",
     "BLOCK_ID_VOLUME_PROFILE",
     "GAP_KIND_FULL",
     "GAP_KIND_PARTIAL",
@@ -160,6 +167,7 @@ __all__ = [
     "StochasticResult",
     "VolumeProfileResult",
     "analyze_gap",
+    "assemble_q1_blocks",
     "audience_for_sector",
     "build_q1_block",
     "classify_atr_regime",
