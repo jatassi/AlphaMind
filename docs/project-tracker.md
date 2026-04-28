@@ -217,6 +217,10 @@ Outstanding work surfaced by the design audit on 2026-04-26. Active work is sort
 
 _Single-line spec edits, config additions, doc cross-references, or deferrals._
 
+#### Land analysis-layer prompt stubs to unblock story 03i _(Configuration management)_
+
+- [ ] Land minimal prompt-file stubs at `prompts/analysis/{tech_semis_researcher,financials_researcher,energy_researcher,portfolio_analyst,qualitative_researcher,adaptive_researcher,synthesizer}.md` so the path-existence validator in story 03i (`docs/implementation/foundation/configuration/03i-agents-yaml-model.md`) can pass. Currently only `prompts/decision/{analyst,strategist,pm}.md` exist. The stub bodies do not need to be the production prompts — single-line placeholders are sufficient for the validator. Authoritative prompt content is owned by each agent's own implementation track (domain-researchers, qualitative-research, adaptive-research, synthesizer); the stubs are scaffolding to let configuration management land first. Alternative: defer 03i and dispatch it after the analysis-layer prompt-bearing stories land. _Source: discovered while orchestrating the configuration-management implementation work tree on 2026-04-27._
+
 ### Moderate
 
 _Schema additions, well-scoped multi-file edits, or single-component contributions._
