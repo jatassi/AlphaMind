@@ -12,6 +12,7 @@ Booleans are stored as INTEGER (SQLite has no native BOOLEAN type).
 from __future__ import annotations
 
 from sqlalchemy import (
+    CheckConstraint,
     Float,
     ForeignKey,
     Index,
@@ -663,3 +664,259 @@ class CollectionRuns(Base):
     error_summary: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (Index("ix_collection_runs_collector_started", "collector", "started_at"),)
+
+
+# ---------------------------------------------------------------------------
+# Distillation state (Class B rolling baselines) — story 02-distillation/03
+# ---------------------------------------------------------------------------
+#
+# CHECK-constraint value sets used across the distillation tables.  Listed
+# centrally so the migration and tests reference the same source of truth.
+
+_CALIBRATION_STATES = ("calibrated", "bootstrap", "unavailable")
+_BASELINE_KINDS = ("volume", "atr", "spread", "sentiment")
+_EVENT_KINDS = ("gap", "extended_hours")
+_REGIME_LABELS = (
+    "low_vol_compression",
+    "vol_expansion",
+    "crisis_spike",
+    "vol_normalization",
+)
+_TRANSITION_STATES = ("stable", "early-weak", "early-strong", "confirmed")
+_COMPOSITE_KINDS = ("funding_stress", "market_liquidity")
+
+
+def _check_in(column: str, values: tuple[str, ...], name: str) -> CheckConstraint:
+    """Build a portable ``column IN (...)`` CHECK constraint."""
+    quoted = ", ".join(f"'{v}'" for v in values)
+    return CheckConstraint(f"{column} IN ({quoted})", name=name)
+
+
+class DistillationTickerBaseline(Base):
+    """Per-ticker rolling state for volume / ATR / spread / sentiment baselines.
+
+    Composite key ``(ticker, baseline_kind, as_of)``.  Read-modify-write per
+    Class B refresh (story 07).
+    """
+
+    __tablename__ = "distillation_ticker_baseline"
+
+    ticker: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("asset_universe.ticker", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    baseline_kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    as_of: Mapped[str] = mapped_column(Text, primary_key=True)
+    mean: Mapped[float] = mapped_column(Float)
+    stdev: Mapped[float] = mapped_column(Float)
+    n_observations: Mapped[int] = mapped_column(Integer)
+    window_days: Mapped[int] = mapped_column(Integer)
+    calibration_state: Mapped[str] = mapped_column(Text)
+    ingested_at: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (
+        _check_in(
+            "baseline_kind",
+            _BASELINE_KINDS,
+            "ck_distillation_ticker_baseline_baseline_kind",
+        ),
+        _check_in(
+            "calibration_state",
+            _CALIBRATION_STATES,
+            "ck_distillation_ticker_baseline_calibration_state",
+        ),
+        Index(
+            "ix_distillation_ticker_baseline_ticker_kind_as_of",
+            "ticker",
+            "baseline_kind",
+            "as_of",
+        ),
+    )
+
+
+class DistillationPairLag(Base):
+    """Per-pair lead-lag timing estimate.
+
+    Composite key ``(lead_ticker, lag_ticker, as_of)``.
+    """
+
+    __tablename__ = "distillation_pair_lag"
+
+    lead_ticker: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("asset_universe.ticker", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    lag_ticker: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("asset_universe.ticker", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    as_of: Mapped[str] = mapped_column(Text, primary_key=True)
+    lead_lag_days_estimate: Mapped[float] = mapped_column(Float)
+    n_pair_events: Mapped[int] = mapped_column(Integer)
+    last_overdue_flag: Mapped[int] = mapped_column(Integer)
+    calibration_state: Mapped[str] = mapped_column(Text)
+    ingested_at: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (
+        _check_in(
+            "calibration_state",
+            _CALIBRATION_STATES,
+            "ck_distillation_pair_lag_calibration_state",
+        ),
+        Index(
+            "ix_distillation_pair_lag_lead_lag_as_of",
+            "lead_ticker",
+            "lag_ticker",
+            "as_of",
+        ),
+    )
+
+
+class DistillationContractHistory(Base):
+    """Per-contract prediction-market trailing probability series.
+
+    Composite key ``(contract_id, snapshot_ts)``.
+    """
+
+    __tablename__ = "distillation_contract_history"
+
+    contract_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("prediction_market_contracts.contract_id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    snapshot_ts: Mapped[str] = mapped_column(Text, primary_key=True)
+    yes_probability: Mapped[float] = mapped_column(Float)
+    delta_pp_since_prior: Mapped[float] = mapped_column(Float)
+    liquidity_usd: Mapped[float] = mapped_column(Float)
+    calibration_state: Mapped[str] = mapped_column(Text)
+    ingested_at: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (
+        _check_in(
+            "calibration_state",
+            _CALIBRATION_STATES,
+            "ck_distillation_contract_history_calibration_state",
+        ),
+        Index(
+            "ix_distillation_contract_history_contract_ts",
+            "contract_id",
+            "snapshot_ts",
+        ),
+    )
+
+
+class DistillationEventHistory(Base):
+    """Per-ticker gap-event and extended-hours-event records with outcomes.
+
+    Composite key ``(ticker, event_kind, event_ts)``.  ``outcome_observed_at``
+    is nullable: gap-fill and extended-hours confirmation outcomes resolve
+    hours after the event row is first written.
+    """
+
+    __tablename__ = "distillation_event_history"
+
+    ticker: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey("asset_universe.ticker", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    event_kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    event_ts: Mapped[str] = mapped_column(Text, primary_key=True)
+    direction: Mapped[str] = mapped_column(Text)
+    magnitude_atr_multiple: Mapped[float] = mapped_column(Float)
+    outcome: Mapped[str] = mapped_column(Text)
+    outcome_observed_at: Mapped[str | None] = mapped_column(Text)
+    ingested_at: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (
+        _check_in(
+            "event_kind",
+            _EVENT_KINDS,
+            "ck_distillation_event_history_event_kind",
+        ),
+        Index(
+            "ix_distillation_event_history_ticker_kind_ts",
+            "ticker",
+            "event_kind",
+            "event_ts",
+        ),
+    )
+
+
+class DistillationRegimeState(Base):
+    """Forward-only volatility regime label per invocation.
+
+    Primary key ``as_of`` (UTC ISO datetime).  See [external.md § 4](
+    ../../../docs/design/02-distillation-layer/external.md#4-persistent-state-and-composites)
+    for the four-tier ladder semantics.
+    """
+
+    __tablename__ = "distillation_regime_state"
+
+    as_of: Mapped[str] = mapped_column(Text, primary_key=True)
+    regime_label: Mapped[str] = mapped_column(Text)
+    vix_level: Mapped[float] = mapped_column(Float)
+    term_structure_basis: Mapped[float] = mapped_column(Float)
+    vvix_percentile: Mapped[float] = mapped_column(Float)
+    realized_vol: Mapped[float] = mapped_column(Float)
+    indicator_agreement_count: Mapped[int] = mapped_column(Integer)
+    invocations_held: Mapped[int] = mapped_column(Integer)
+    transition_state: Mapped[str] = mapped_column(Text)
+    prior_label: Mapped[str] = mapped_column(Text)
+    ingested_at: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (
+        _check_in(
+            "regime_label",
+            _REGIME_LABELS,
+            "ck_distillation_regime_state_regime_label",
+        ),
+        _check_in(
+            "transition_state",
+            _TRANSITION_STATES,
+            "ck_distillation_regime_state_transition_state",
+        ),
+        Index("ix_distillation_regime_state_as_of", "as_of"),
+    )
+
+
+class DistillationCompositeState(Base):
+    """Funding-stress and market-liquidity composite trailing distributions.
+
+    Composite key ``(composite_kind, as_of)``.  ``component_breakdown_json``
+    is TEXT (JSON serialized) for audit, not query — component count differs
+    per composite.
+    """
+
+    __tablename__ = "distillation_composite_state"
+
+    composite_kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    as_of: Mapped[str] = mapped_column(Text, primary_key=True)
+    composite_value: Mapped[float] = mapped_column(Float)
+    component_breakdown_json: Mapped[str] = mapped_column(Text)
+    percentile_60d: Mapped[float] = mapped_column(Float)
+    alert_active: Mapped[int] = mapped_column(Integer)
+    calibration_state: Mapped[str] = mapped_column(Text)
+    ingested_at: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (
+        _check_in(
+            "composite_kind",
+            _COMPOSITE_KINDS,
+            "ck_distillation_composite_state_composite_kind",
+        ),
+        _check_in(
+            "calibration_state",
+            _CALIBRATION_STATES,
+            "ck_distillation_composite_state_calibration_state",
+        ),
+        Index(
+            "ix_distillation_composite_state_kind_as_of",
+            "composite_kind",
+            "as_of",
+        ),
+    )
