@@ -50,6 +50,13 @@ from alphamind.config.models.guardrails import (
     ProgressiveTier,
     RuleEntry,
 )
+from alphamind.config.models.llm_failure import (
+    FailureMode,
+    LLMFailureConfig,
+    RetryCondition,
+    RetryPolicy,
+    RetryStrategy,
+)
 from alphamind.config.models.main import ExecutionMode, MainConfig, Paths, Profile
 from alphamind.config.models.news_outlets import CredibilityTier, NewsOutletsConfig, OutletEntry
 from alphamind.config.models.scheduler import SchedulerConfig
@@ -113,8 +120,10 @@ __all__ = [
     "EscalationZones",
     "ExecutionConfig",
     "ExecutionMode",
+    "FailureMode",
     "GreeksRefresh",
     "GuardrailsConfig",
+    "LLMFailureConfig",
     "MainConfig",
     "NewsOutletsConfig",
     "OrderType",
@@ -125,7 +134,10 @@ __all__ = [
     "ProgressiveTier",
     "ProviderConfig",
     "RegimeChange",
+    "RetryCondition",
+    "RetryPolicy",
     "RetryShapeConfig",
+    "RetryStrategy",
     "RuleEntry",
     "SchedulerConfig",
     "SectorUnderperform",
