@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 476f855e1a9c1a0451e9e38095cc634eb67675eb
 ---
 
 # 11a — Sector-scoped output assembly
