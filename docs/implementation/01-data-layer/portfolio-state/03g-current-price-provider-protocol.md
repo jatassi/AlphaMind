@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-27
+commit_id: e6b82fa
 ---
 
 # 03g — Current price provider protocol
