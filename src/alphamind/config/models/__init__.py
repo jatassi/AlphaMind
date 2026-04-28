@@ -59,6 +59,12 @@ from alphamind.config.models.llm_failure import (
 )
 from alphamind.config.models.main import ExecutionMode, MainConfig, Paths, Profile
 from alphamind.config.models.news_outlets import CredibilityTier, NewsOutletsConfig, OutletEntry
+from alphamind.config.models.profiles import (
+    FeatureFlags,
+    ProfileConfig,
+    RiskPriority,
+    TokenBudgetRange,
+)
 from alphamind.config.models.scheduler import SchedulerConfig
 from alphamind.config.models.venue import (
     Alpaca,
@@ -121,6 +127,7 @@ __all__ = [
     "ExecutionConfig",
     "ExecutionMode",
     "FailureMode",
+    "FeatureFlags",
     "GreeksRefresh",
     "GuardrailsConfig",
     "LLMFailureConfig",
@@ -131,6 +138,7 @@ __all__ = [
     "PaperHarness",
     "Paths",
     "Profile",
+    "ProfileConfig",
     "ProgressiveTier",
     "ProviderConfig",
     "RegimeChange",
@@ -138,12 +146,14 @@ __all__ = [
     "RetryPolicy",
     "RetryShapeConfig",
     "RetryStrategy",
+    "RiskPriority",
     "RuleEntry",
     "SchedulerConfig",
     "SectorUnderperform",
     "SessionHours",
     "SessionWindow",
     "SourceSignalSurvivalDrop",
+    "TokenBudgetRange",
     "ValidationSuperseded",
     "ValidationWindowEnd",
     "VenueConfig",
