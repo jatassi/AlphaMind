@@ -851,11 +851,17 @@ class TestProjectAnalystViewEmpty:
 class TestProjectAnalystViewDeterminism:
     def test_identical_calls_produce_equal_output(self) -> None:
         snapshot = _make_snapshot()
-        kwargs: dict[str, object] = {
-            "sector_resolver": _simple_sector_resolver(),
-            "per_position_size_rule_id": _PER_POSITION_RULE_ID,
-            "total_portfolio_value_usd": _TOTAL_PORTFOLIO_VALUE,
-        }
-        view1 = project_analyst_view(snapshot, **kwargs)  # type: ignore[arg-type]
-        view2 = project_analyst_view(snapshot, **kwargs)  # type: ignore[arg-type]
+        sector_resolver = _simple_sector_resolver()
+        view1 = project_analyst_view(
+            snapshot,
+            sector_resolver=sector_resolver,
+            per_position_size_rule_id=_PER_POSITION_RULE_ID,
+            total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+        )
+        view2 = project_analyst_view(
+            snapshot,
+            sector_resolver=sector_resolver,
+            per_position_size_rule_id=_PER_POSITION_RULE_ID,
+            total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE,
+        )
         assert view1 == view2
