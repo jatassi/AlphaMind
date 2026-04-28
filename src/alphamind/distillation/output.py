@@ -1,0 +1,226 @@
+"""Per-block output envelope and structured-text formatter — story 02-distillation/05.
+
+Every distillation output is an :class:`OutputBlock` carrying a freshness
+timestamp, a calibration tag (story 04), zero or more anomaly flags, an
+optional regime annotation, and a free-shape payload. The envelope is
+partitioned by consumer (sector analyst agents, the synthesizer's
+correlation/regime brief, all agents) per
+``docs/design/02-distillation-layer/external.md`` § Output format.
+
+The :func:`format_block` renderer produces structured text deterministic to
+the byte: dictionaries iterate sorted, floats use a fixed precision, and the
+current wall clock is never embedded. The "byte-identical on repeated calls"
+property is what makes the invocation archive diffable per
+``docs/architecture/infrastructure.md`` § Invocation archive — operators
+reading historical archives expect the format to be stable.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from datetime import datetime
+from enum import StrEnum
+from typing import Any, Literal
+
+from alphamind.distillation.calibration import CalibrationState
+
+
+class OutputAudience(StrEnum):
+    """Partition targets for distillation output blocks.
+
+    The five members map 1:1 to the partition targets named in
+    ``docs/design/02-distillation-layer/external.md`` § Output format:
+    three sector analyst agent audiences, the synthesizer's correlation /
+    regime brief audience, and the universal broadcast that every analysis
+    agent receives.
+    """
+
+    SECTOR_TECH_SEMIS = "sector_tech_semis"
+    SECTOR_FINANCIALS = "sector_financials"
+    SECTOR_ENERGY = "sector_energy"
+    CORRELATION_REGIME_BRIEF = "correlation_regime_brief"
+    UNIVERSAL_BROADCAST = "universal_broadcast"
+
+
+# ---------------------------------------------------------------------------
+# Anomaly flag carried in the envelope
+# ---------------------------------------------------------------------------
+
+
+AnomalySeverity = Literal[
+    "investigate_now",
+    "investigate_if_persists",
+    "note_for_context",
+]
+"""Three-level severity taxonomy.
+
+Matches the analyst-side severity strings in
+``docs/design/03-analysis-layer/domain-researchers/tech-semis.md``
+§ Domain researcher output contract so domain researchers can pass the level
+through unchanged.
+"""
+
+
+@dataclass(frozen=True)
+class AnomalyFlag:
+    """A single anomaly attached to an :class:`OutputBlock`.
+
+    Anomaly flags travel inside the envelope rather than as a separate
+    output channel because
+    ``docs/design/02-distillation-layer/external.md`` § 3 explicitly groups
+    them inline with the indicator block they accompany — anomalies belong
+    with the data that triggered them.
+    """
+
+    name: str
+    magnitude: float
+    severity: AnomalySeverity
+
+
+# ---------------------------------------------------------------------------
+# Per-block envelope
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class OutputBlock:
+    """One distillation output with its envelope.
+
+    Field summary (see ``docs/implementation/02-distillation-layer/05-output-envelope.md``
+    § Scope for the full contract):
+
+    - ``block_id`` — ``<category>.<short_name>`` per the convention pinned in
+      this story; ``<category>`` mirrors the
+      ``docs/design/02-distillation-layer/external.md`` § 2 heading shorthand
+      (``q1``, ``q3``, ``q6``, ``q7``, ``q12``, ``qual``).
+    - ``audience`` — one or more partition targets; an indicator may broadcast
+      to multiple consumers (e.g. a regime-relevant flag goes to a sector
+      audience and to :attr:`OutputAudience.UNIVERSAL_BROADCAST`). Empty sets
+      are rejected in :meth:`__post_init__` because every block must declare
+      at least one consumer.
+    - ``freshness_ts`` — UTC timestamp of the most recent data point that fed
+      the block, **not** the invocation start. The renderer never embeds the
+      current wall clock so the invocation archive diffs cleanly across runs.
+    - ``calibration_state`` / ``bootstrap_reason`` — the story-04 tag pair.
+      ``bootstrap_reason`` is ``None`` when the state is
+      :attr:`CalibrationState.CALIBRATED` and a ``"<missing>: <observed> < <required>"``
+      string otherwise.
+    - ``payload`` — free-shape per-category content. The formatter renders it
+      deterministically (sorted keys, fixed float precision) so the envelope
+      contract holds regardless of payload shape.
+    - ``anomaly_flags`` — zero or more flags that travel with the block per
+      ``docs/design/02-distillation-layer/external.md`` § 3.
+    - ``regime_context`` — one-sentence label populated only when the regime
+      is load-bearing for interpreting this block. ``None`` otherwise; the
+      full regime payload is the universal broadcast (story 09), not
+      duplicated into every block.
+    """
+
+    block_id: str
+    audience: frozenset[OutputAudience]
+    freshness_ts: datetime
+    calibration_state: CalibrationState
+    bootstrap_reason: str | None
+    payload: Mapping[str, Any]
+    anomaly_flags: tuple[AnomalyFlag, ...]
+    regime_context: str | None
+
+    def __post_init__(self) -> None:
+        if not self.audience:
+            raise ValueError(
+                f"OutputBlock {self.block_id!r}: audience must declare at least one consumer"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Deterministic structured-text renderer
+# ---------------------------------------------------------------------------
+#
+# Float-precision rules live as named constants so the convention is visible
+# in one place rather than scattered through the formatter.
+
+GENERAL_FLOAT_FORMAT = ".4g"
+"""Format spec for general-purpose payload floats (``f"{x:.4g}"``)."""
+
+PERCENTAGE_FLOAT_FORMAT = ".2f"
+"""Format spec for percentage-style values such as anomaly magnitudes."""
+
+COUNT_FLOAT_FORMAT = ".0f"
+"""Format spec for share counts and other integer-valued floats.
+
+Reserved for per-category stories whose payloads carry counts; centralized
+here so future call sites use the named constant rather than inlining ``.0f``.
+"""
+
+
+_PAYLOAD_INDENT = "  "
+
+
+def _format_value(value: Any) -> str:
+    """Render a leaf payload value, applying the float-precision rule for floats."""
+    if isinstance(value, float):
+        return format(value, GENERAL_FLOAT_FORMAT)
+    return str(value)
+
+
+def _format_payload(payload: Mapping[str, Any], depth: int = 0) -> list[str]:
+    """Render a payload mapping as ``key: value`` lines, sorting keys."""
+    lines: list[str] = []
+    indent = _PAYLOAD_INDENT * depth
+    for key in sorted(payload):
+        value = payload[key]
+        if isinstance(value, Mapping):
+            lines.append(f"{indent}{key}:")
+            lines.extend(_format_payload(value, depth + 1))
+        else:
+            lines.append(f"{indent}{key}: {_format_value(value)}")
+    return lines
+
+
+def format_block(block: OutputBlock) -> str:
+    """Render one :class:`OutputBlock` as deterministic structured text.
+
+    The output shape follows
+    ``docs/implementation/02-distillation-layer/05-output-envelope.md`` § Scope
+    and is byte-identical on repeated calls — dictionaries iterate in
+    sorted-key order, floats use the named precision constants above, and
+    the current wall clock is never embedded. The "byte-identical on
+    repeated calls" property is what makes the invocation archive diffable
+    per ``docs/architecture/infrastructure.md`` § Invocation archive.
+    """
+    lines: list[str] = []
+    lines.append(f"### {block.block_id}")
+    lines.append(f"Freshness: {block.freshness_ts.isoformat()}")
+    calibration_line = f"Calibration: {block.calibration_state.value}"
+    if block.calibration_state is not CalibrationState.CALIBRATED:
+        calibration_line += f" — bootstrap_reason: {block.bootstrap_reason}"
+    lines.append(calibration_line)
+    if block.regime_context is not None:
+        lines.append(f"Regime: {block.regime_context}")
+    lines.append("")
+    lines.extend(_format_payload(block.payload))
+    lines.append("")
+    lines.append(f"Anomaly flags ({len(block.anomaly_flags)}):")
+    for flag in block.anomaly_flags:
+        magnitude = format(flag.magnitude, PERCENTAGE_FLOAT_FORMAT)
+        lines.append(f"  - {flag.name} | magnitude {magnitude} | severity {flag.severity}")
+    return "\n".join(lines) + "\n"
+
+
+def format_blocks_for_audience(
+    blocks: Iterable[OutputBlock],
+    audience: OutputAudience,
+) -> str:
+    """Filter blocks by audience membership and concatenate in deterministic order.
+
+    Blocks are sorted ascending by ``block_id`` before rendering so the
+    per-consumer assembly (story 11a/11b) sees a stable concatenation order
+    independent of producer-side iteration. Returns the empty string when no
+    blocks match.
+    """
+    matching = sorted(
+        (block for block in blocks if audience in block.audience),
+        key=lambda block: block.block_id,
+    )
+    return "".join(format_block(block) for block in matching)
