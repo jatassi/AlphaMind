@@ -484,6 +484,8 @@ class NewsArticleTickers(Base):
         primary_key=True,
     )
     is_primary: Mapped[int] = mapped_column(Integer)
+    vendor_sentiment_score: Mapped[float | None] = mapped_column(Float)
+    vendor_sentiment_label: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (Index("ix_news_article_tickers_ticker", "ticker", "article_id"),)
 

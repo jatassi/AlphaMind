@@ -290,6 +290,109 @@ class TestArticleTickers:
         # Only AAPL (which is in universe) should be inserted
         assert all(t.ticker == "AAPL" for t in tickers)
 
+    def test_ticker_row_carries_vendor_sentiment_score(
+        self, db_session, fake_repo, tmp_path
+    ) -> None:
+        """Each news_article_tickers row has vendor_sentiment_score from entities[]."""
+        article = _article(entities=[{"symbol": "AAPL", "sentiment_score": 0.55}])
+        client = MagicMock()
+        client.get_news.return_value = [article]
+
+        collect_news(
+            ticker_scope=["AAPL"],
+            since="2024-01-15T00:00:00Z",
+            _client=client,
+            _session_factory=db_session,
+            _repo=fake_repo,
+            _body_dir=str(tmp_path),
+        )
+
+        with db_session() as sess:
+            row = sess.query(NewsArticleTickers).first()
+        assert row.vendor_sentiment_score == pytest.approx(0.55)
+
+    def test_ticker_row_carries_vendor_sentiment_label_positive(
+        self, db_session, fake_repo, tmp_path
+    ) -> None:
+        article = _article(entities=[{"symbol": "AAPL", "sentiment_score": 0.55}])
+        client = MagicMock()
+        client.get_news.return_value = [article]
+
+        collect_news(
+            ticker_scope=["AAPL"],
+            since="2024-01-15T00:00:00Z",
+            _client=client,
+            _session_factory=db_session,
+            _repo=fake_repo,
+            _body_dir=str(tmp_path),
+        )
+
+        with db_session() as sess:
+            row = sess.query(NewsArticleTickers).first()
+        assert row.vendor_sentiment_label == "positive"
+
+    def test_ticker_row_vendor_sentiment_label_negative(
+        self, db_session, fake_repo, tmp_path
+    ) -> None:
+        article = _article(entities=[{"symbol": "AAPL", "sentiment_score": -0.20}])
+        client = MagicMock()
+        client.get_news.return_value = [article]
+
+        collect_news(
+            ticker_scope=["AAPL"],
+            since="2024-01-15T00:00:00Z",
+            _client=client,
+            _session_factory=db_session,
+            _repo=fake_repo,
+            _body_dir=str(tmp_path),
+        )
+
+        with db_session() as sess:
+            row = sess.query(NewsArticleTickers).first()
+        assert row.vendor_sentiment_label == "negative"
+
+    def test_ticker_row_vendor_sentiment_label_neutral(
+        self, db_session, fake_repo, tmp_path
+    ) -> None:
+        article = _article(entities=[{"symbol": "AAPL", "sentiment_score": 0.05}])
+        client = MagicMock()
+        client.get_news.return_value = [article]
+
+        collect_news(
+            ticker_scope=["AAPL"],
+            since="2024-01-15T00:00:00Z",
+            _client=client,
+            _session_factory=db_session,
+            _repo=fake_repo,
+            _body_dir=str(tmp_path),
+        )
+
+        with db_session() as sess:
+            row = sess.query(NewsArticleTickers).first()
+        assert row.vendor_sentiment_label == "neutral"
+
+    def test_ticker_row_null_sentiment_when_entity_has_no_score(
+        self, db_session, fake_repo, tmp_path
+    ) -> None:
+        """When entity lacks sentiment_score, both fields are None."""
+        article = _article(entities=[{"symbol": "AAPL"}])
+        client = MagicMock()
+        client.get_news.return_value = [article]
+
+        collect_news(
+            ticker_scope=["AAPL"],
+            since="2024-01-15T00:00:00Z",
+            _client=client,
+            _session_factory=db_session,
+            _repo=fake_repo,
+            _body_dir=str(tmp_path),
+        )
+
+        with db_session() as sess:
+            row = sess.query(NewsArticleTickers).first()
+        assert row.vendor_sentiment_score is None
+        assert row.vendor_sentiment_label is None
+
 
 # ---------------------------------------------------------------------------
 # AC: source_credibility_tier stamped from news_outlets.yaml

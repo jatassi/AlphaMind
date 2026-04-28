@@ -30,7 +30,6 @@ _TICKER_BATCH_SIZE = 5  # Marketaux free-tier max symbols per request
 
 _UNSET = object()  # sentinel for "caller did not supply ticker_scope"
 
-# Sentiment thresholds per story spec
 _SENTIMENT_POS_THRESHOLD = 0.15
 _SENTIMENT_NEG_THRESHOLD = -0.15
 
@@ -144,15 +143,21 @@ def _ingest_articles(
             topic_tags=topic_tags,
         )
 
-        ticker_rows = [
-            NewsArticleTickers(
-                article_id=article_id,
-                ticker=sym,
-                is_primary=1 if sym == query_ticker else 0,
+        ticker_rows = []
+        for entity in entities:
+            sym = entity.get("symbol")
+            if not sym or sym not in universe:
+                continue
+            entity_score = entity.get("sentiment_score")
+            ticker_rows.append(
+                NewsArticleTickers(
+                    article_id=article_id,
+                    ticker=sym,
+                    is_primary=1 if sym == query_ticker else 0,
+                    vendor_sentiment_score=entity_score,
+                    vendor_sentiment_label=_derive_sentiment_label(entity_score),
+                )
             )
-            for entity in entities
-            if (sym := entity.get("symbol")) and sym in universe
-        ]
 
         with session_factory() as sess:
             if sess.get(NewsArticles, article_id) is not None:
