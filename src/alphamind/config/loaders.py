@@ -40,7 +40,13 @@ _REGIME_FILENAME_STEM: dict[Regime, str] = {
 }
 
 
-def _read_yaml(path: Path) -> dict[str, Any]:
+def read_yaml_file(path: Path) -> dict[str, Any]:
+    """Read ``path`` and return the parsed YAML mapping.
+
+    Raises ``FileNotFoundError`` with a tagged message if the file is missing
+    so the loader fails closed at invocation start. Returns an empty dict if
+    the file is empty (matching ``yaml.safe_load`` semantics for empty input).
+    """
     if not path.exists():
         raise FileNotFoundError(f"Required configuration file not found: {path}")
     return cast(dict[str, Any], yaml.safe_load(path.read_text()) or {})
@@ -54,7 +60,9 @@ def load_profiles(config_dir: Path) -> Mapping[Profile, ProfileConfig]:
     """
     profiles_dir = config_dir / "profiles"
     loaded: dict[Profile, ProfileConfig] = {
-        profile: ProfileConfig.model_validate(_read_yaml(profiles_dir / f"{profile.value}.yaml"))
+        profile: ProfileConfig.model_validate(
+            read_yaml_file(profiles_dir / f"{profile.value}.yaml")
+        )
         for profile in Profile
     }
     return MappingProxyType(loaded)
@@ -71,7 +79,7 @@ def load_overlays(config_dir: Path) -> dict[Overlay, PreEventOverlay | StressOve
     overlays_dir = config_dir / "overlays"
     resolved: dict[Overlay, PreEventOverlay | StressOverlay] = {}
     for overlay, stem in _OVERLAY_FILENAME_STEM.items():
-        payload = _read_yaml(overlays_dir / f"{stem}.yaml")
+        payload = read_yaml_file(overlays_dir / f"{stem}.yaml")
         if overlay is Overlay.pre_event:
             resolved[overlay] = PreEventOverlay.model_validate(payload)
         else:
@@ -87,7 +95,7 @@ def load_modes(config_dir: Path) -> dict[Mode, ModeConfig]:
     """
     modes_dir = config_dir / "modes"
     return {
-        mode: ModeConfig.model_validate(_read_yaml(modes_dir / f"{mode.value}.yaml"))
+        mode: ModeConfig.model_validate(read_yaml_file(modes_dir / f"{mode.value}.yaml"))
         for mode in Mode
     }
 
@@ -104,7 +112,7 @@ def load_regimes(config_dir: Path) -> Mapping[Regime, RegimeConfig]:
     """
     regimes_dir = config_dir / "regimes"
     loaded: dict[Regime, RegimeConfig] = {
-        regime: RegimeConfig.model_validate(_read_yaml(regimes_dir / f"{stem}.yaml"))
+        regime: RegimeConfig.model_validate(read_yaml_file(regimes_dir / f"{stem}.yaml"))
         for regime, stem in _REGIME_FILENAME_STEM.items()
     }
     return MappingProxyType(loaded)
@@ -118,7 +126,7 @@ def load_run_types(config_dir: Path) -> Mapping[RunType, RunTypeConfig]:
     """
     run_types_dir = config_dir / "run_types"
     bundle: dict[RunType, RunTypeConfig] = {
-        member: RunTypeConfig.model_validate(_read_yaml(run_types_dir / f"{member.value}.yaml"))
+        member: RunTypeConfig.model_validate(read_yaml_file(run_types_dir / f"{member.value}.yaml"))
         for member in RunType
     }
     return MappingProxyType(bundle)
