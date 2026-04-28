@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: e245f01cd075fc854d3703926a4a6aa47834c70c
 ---
 
 # 17 — Calibration-state snapshot and command-center panel

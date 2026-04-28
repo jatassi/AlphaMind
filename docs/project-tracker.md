@@ -59,7 +59,7 @@ Cross-cutting policies and reference specs that constrain implementation but are
 ### Execution layer
 
 - [ ] **Position & thesis model** — _requirements pending_ — [position model](design/05-execution-layer/position-model.md), [thesis model](design/05-execution-layer/thesis-model.md), [orders & brackets](design/05-execution-layer/orders-and-brackets.md)
-- [ ] **State persistence** — _requirements pending_ — [design](design/05-execution-layer/state-persistence.md)
+- [ ] **State persistence** — _requirements pending_ — [design](design/05-execution-layer/state-persistence.md). _Distillation-track stories blocked on this substrate (the SQL `invocations` and `activity_log` tables and a transactional invocation context):_ [`14a-config-change-emission`](implementation/02-distillation-layer/14a-config-change-emission.md), [`15-emergency-invocation-review-report`](implementation/02-distillation-layer/15-emergency-invocation-review-report.md), [`16-flag-rate-empirical-reporter`](implementation/02-distillation-layer/16-flag-rate-empirical-reporter.md). When the substrate ships, set the three stories to `not_started` and dispatch.
 - [ ] **OMS commands** — _requirements pending_ — [design](design/05-execution-layer/oms-commands.md), [command schema](design/05-execution-layer/oms-command-schema.md), [engine envelope schema](design/05-execution-layer/engine-envelope-schema.md), [command IDs](design/oms-command-ids.md)
 - [ ] **Broker adapter** — _requirements pending_ — [design](design/05-execution-layer/broker-adapter.md), [venue configuration](design/05-execution-layer/venue-configuration.md)
 - [ ] **Guardrail enforcement layer** — _requirements pending_ — [design](design/05-execution-layer/architecture.md)

@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 076f35d7299e14f253c455dd746870ce8b8383cd
 ---
 
 # 06 — Normalization library

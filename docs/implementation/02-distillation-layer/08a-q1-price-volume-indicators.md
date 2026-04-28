@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 9f0a017d0ac9e50f457aad22cec336bf1ddc617c
 ---
 
 # 08a — Q1 price/volume indicators and anomalies

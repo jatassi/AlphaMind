@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: f4f0e9388ec6fd0ae82832bbccabb9e2b108c64e
 ---
 
 # 08d — Q7 cross-asset and correlation computations

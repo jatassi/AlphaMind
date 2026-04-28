@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class EventGroup(StrEnum):
-    """The eight catalog groups from state-persistence.md."""
+    """The catalog groups from state-persistence.md § Activity log entries."""
 
     POSITION_LIFECYCLE = "POSITION_LIFECYCLE"
     ORDER_LIFECYCLE = "ORDER_LIFECYCLE"
@@ -24,6 +24,7 @@ class EventGroup(StrEnum):
     RISK_AND_GUARDRAIL = "RISK_AND_GUARDRAIL"
     PM_DECISION = "PM_DECISION"
     CORPORATE_ACTION = "CORPORATE_ACTION"
+    CONFIGURATION = "CONFIGURATION"
 
 
 class EventType(StrEnum):
@@ -80,9 +81,19 @@ class EventType(StrEnum):
     # Corporate action events
     CORPORATE_ACTION_APPLIED = "CORPORATE_ACTION_APPLIED"
 
+    # Configuration events
+    DISTILLATION_CONFIG_CHANGE = "DISTILLATION_CONFIG_CHANGE"
+
 
 class EventSource(StrEnum):
-    """OMS subsystems that emit activity log entries."""
+    """Subsystems that emit activity log entries.
+
+    OMS subsystems are the original emitters; ``CONFIG_RELOAD`` is emitted by
+    the configuration loader at the start of each invocation when a reloaded
+    distillation config differs from the prior reload, and ``OPERATOR_CONSOLE``
+    is emitted by the [command center](docs/design/command-center.md) on
+    operator-driven mutations.
+    """
 
     FILL_PROCESSOR = "FILL_PROCESSOR"
     COMMAND_EXECUTOR = "COMMAND_EXECUTOR"
@@ -90,6 +101,8 @@ class EventSource(StrEnum):
     MARGIN_MONITOR = "MARGIN_MONITOR"
     GUARDRAIL_LAYER = "GUARDRAIL_LAYER"
     CORPORATE_ACTION_PROCESSOR = "CORPORATE_ACTION_PROCESSOR"
+    CONFIG_RELOAD = "CONFIG_RELOAD"
+    OPERATOR_CONSOLE = "OPERATOR_CONSOLE"
 
 
 class PositionExitMethod(StrEnum):
@@ -563,6 +576,57 @@ class CommandAbandonedDetail(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Per-event-type detail-payload classes — Configuration events
+# ---------------------------------------------------------------------------
+
+
+class DistillationConfigChange(BaseModel):
+    """One per-key change inside a ``DistillationConfigChangeDetail.changes`` tuple.
+
+    ``key_path`` is the dotted path matching the ``DistillationConfig`` field
+    structure (for example ``anomaly_detection.volume_anomaly_sigma``).
+    ``old_value`` and ``new_value`` carry whatever the Pydantic JSON dump
+    produced — scalars, ints, floats, bools, or string-valued enums.
+    """
+
+    model_config = {"frozen": True}
+
+    key_path: str = Field(min_length=1)
+    old_value: Any
+    new_value: Any
+
+
+class DistillationConfigChangeDetail(BaseModel):
+    """Detail payload for ``DISTILLATION_CONFIG_CHANGE`` events.
+
+    Emitted by the configuration loader at the start of an invocation when the
+    reloaded ``DistillationConfig`` differs from the prior reload, or when no
+    prior reload exists. Identical reloads produce no entry — see
+    ``build_distillation_config_change_entry`` in
+    ``alphamind.portfolio_state.computations.activity_log``.
+    """
+
+    model_config = {"frozen": True}
+
+    config_file: str = Field(default="config/distillation.yaml", min_length=1)
+    prior_hash: str | None
+    new_hash: str = Field(min_length=1)
+    changes: tuple[DistillationConfigChange, ...]
+    git_sha: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_changes_sorted(self) -> DistillationConfigChangeDetail:
+        for prev, curr in zip(self.changes, self.changes[1:], strict=False):
+            if prev.key_path >= curr.key_path:
+                msg = (
+                    "changes must be sorted by key_path ascending "
+                    f"(got {prev.key_path!r} then {curr.key_path!r})"
+                )
+                raise ValueError(msg)
+        return self
+
+
+# ---------------------------------------------------------------------------
 # Per-event-type detail-payload classes — Corporate action events
 # ---------------------------------------------------------------------------
 
@@ -626,6 +690,7 @@ AnyDetailType = (
     | PMDecisionDetail
     | CommandAbandonedDetail
     | CorporateActionAppliedDetail
+    | DistillationConfigChangeDetail
 )
 
 # ---------------------------------------------------------------------------
@@ -668,6 +733,7 @@ EVENT_TYPE_TO_DETAIL_CLASS: dict[EventType, type] = {
     EventType.PM_DECISION: PMDecisionDetail,
     EventType.COMMAND_ABANDONED: CommandAbandonedDetail,
     EventType.CORPORATE_ACTION_APPLIED: CorporateActionAppliedDetail,
+    EventType.DISTILLATION_CONFIG_CHANGE: DistillationConfigChangeDetail,
 }
 
 EVENT_TYPE_TO_GROUP: dict[EventType, EventGroup] = {
@@ -706,6 +772,7 @@ EVENT_TYPE_TO_GROUP: dict[EventType, EventGroup] = {
     EventType.PM_DECISION: EventGroup.PM_DECISION,
     EventType.COMMAND_ABANDONED: EventGroup.PM_DECISION,
     EventType.CORPORATE_ACTION_APPLIED: EventGroup.CORPORATE_ACTION,
+    EventType.DISTILLATION_CONFIG_CHANGE: EventGroup.CONFIGURATION,
 }
 
 # ---------------------------------------------------------------------------

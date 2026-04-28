@@ -176,7 +176,7 @@ Activity log entry:
 - Order ID (nullable)
 - Thesis ID (nullable)
 - Event detail: structured payload whose schema depends on event type
-- Source: which OMS subsystem generated this entry (fill-processor, command-executor, bracket-manager, margin-monitor, guardrail-layer)
+- Source: which subsystem generated this entry. OMS write paths emit one of `fill_processor`, `command_executor`, `bracket_manager`, `margin_monitor`, `guardrail_layer`, or `corporate_action_processor`. The operator-driven [command center](../command-center.md) emits `operator_console`. The configuration loader emits `config_reload` at the start of each invocation when a reloaded config differs from the prior reload (see Configuration events below).
 
 **Event type catalog:**
 
@@ -230,6 +230,9 @@ PM decision events:
 
 Corporate action events:
 - `corporate_action_applied`: an Alpaca-emitted corporate action was integrated into local position state. Detail: action type (split, reverse-split, stock-dividend, cash-dividend-long, cash-dividend-short, cash-merger, stock-merger, spin-off, symbol-change), Alpaca activity ID, ticker (and `new_ticker` for symbol changes and stock mergers), ratio or amount as reported by Alpaca, pre-action quantity, post-action quantity, pre-action cost basis, post-action cost basis, signed cash impact, parent position ID (spin-off only), resulting position status. This is the audit-trail single-source-of-truth event for the change; the standard lifecycle events (`position_closed`, `position_opened`, `cash_credited`, `cash_debited`, `bracket_cancelled_corporate_action`) are emitted alongside for downstream consumers that already process those generically. See [corporate-actions.md](corporate-actions.md) for the full per-action-type matrix.
+
+Configuration events:
+- `distillation_config_change`: the resolved `DistillationConfig` from `config/distillation.yaml` differs from the prior reload, or this is the first-ever reload. Detail: `config_file` (always `config/distillation.yaml` for this event type — future config files extend the same event type with their own filenames), `prior_hash` (SHA-256 of the resolved config object before this reload; `null` on the first-ever reload), `new_hash` (SHA-256 after this reload), `changes` (array sorted by `key_path` ascending; each entry carries `key_path` in dotted notation matching the Pydantic field structure plus `old_value` and `new_value`; empty array on the first-reload baseline entry), `git_sha` (HEAD commit SHA at reload time, binding the entry to the operator's calibration-log commit message per [threshold-calibration.md § Update process](../02-distillation-layer/threshold-calibration.md#update-process)). The entry's `source` is `config_reload`. The configuration loader emits the entry inside the same transaction that records the invocation row; failure to emit aborts the invocation per [configuration-management.md § Reload model](../configuration-management.md#reload-model). Identical reloads (matching `prior_hash` and `new_hash`) produce no entry.
 
 The activity log entries for a given invocation ID constitute the intra-invocation changelog ([raw state category 5a](../01-data-layer/internal/portfolio-state.md)). PM decision entries for the most recent N invocations constitute the PM decision log ([raw state category 5b](../01-data-layer/internal/portfolio-state.md)). Position-scoped entries for an open position constitute the position modification trail ([raw state category 5c](../01-data-layer/internal/portfolio-state.md)).
 

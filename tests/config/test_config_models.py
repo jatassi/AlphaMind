@@ -1127,6 +1127,336 @@ def test_digest_rejects_baseline_window_weeks_zero() -> None:
         DigestConfig.model_validate(raw)
 
 
+# ---------------------------------------------------------------------------
+# distillation.yaml (story 02 — distillation config schema)
+# ---------------------------------------------------------------------------
+
+
+_DISTILLATION_TOP_LEVEL_GROUPS = (
+    "anomaly_detection",
+    "regime_classification",
+    "regime_transition",
+    "lead_lag",
+    "narrative_lag",
+    "persistence_windows",
+    "prediction_market",
+)
+
+
+def _valid_distillation_raw() -> dict[str, Any]:
+    """Canonical happy-path payload mirroring the shipped distillation.yaml."""
+    return {
+        "anomaly_detection": {
+            "volume_anomaly_sigma": 2.5,
+            "price_move_atr_multiple": 1.5,
+            "options_low_oi_volume_multiple": 5.0,
+            "block_trade_min_shares": 10000,
+            "block_trade_min_notional_usd": 500000,
+            "dark_pool_one_sided_window_minutes": 60,
+            "earnings_revision_cluster_count": 3,
+            "earnings_revision_cluster_days": 5,
+            "macro_surprise_percentile": 90,
+            "funding_stress_component_alert_count": 2,
+            "funding_stress_component_percentile": 90,
+            "market_liquidity_alert_percentile": 10,
+            "news_price_divergence_window_hours": 12,
+            "news_price_divergence_min_articles": 5,
+        },
+        "regime_classification": {
+            "regime_low_vol_vix_max": 14.0,
+            "regime_normal_vix_min": 14.0,
+            "regime_normal_vix_max": 22.0,
+            "regime_elevated_vix_min": 22.0,
+            "regime_elevated_vix_max": 35.0,
+            "regime_crisis_vix_min": 35.0,
+            "regime_term_structure_backwardation_threshold": 0.0,
+            "regime_vvix_high_percentile": 80,
+            "regime_vvix_low_percentile": 30,
+        },
+        "regime_transition": {
+            "regime_transition_confirmed_invocations": 2,
+            "regime_transition_indicator_agreement_min": 3,
+            "regime_skip_emergency_trigger": True,
+        },
+        "lead_lag": {
+            "lead_lag_funding_to_credit_max_days": 3,
+            "lead_lag_credit_to_equity_max_days": 3,
+            "lead_lag_semis_to_tech_max_days": 2,
+            "lead_lag_financials_to_market_max_days": 1,
+            "lead_lag_commodity_to_energy_equity_max_days": 1,
+            "lead_lag_overdue_lead_sigma": 1.5,
+        },
+        "narrative_lag": {
+            "narrative_lag_correlation_shift_sigma": 1.5,
+            "narrative_lag_media_silence_hours": 12,
+        },
+        "persistence_windows": {
+            "volume_baseline_days": 20,
+            "atr_baseline_days": 14,
+            "spread_baseline_days": 20,
+            "correlation_short_days": 20,
+            "correlation_long_days": 60,
+            "sentiment_baseline_days": 60,
+            "sentiment_min_observations": 30,
+            "gap_fill_baseline_days": 252,
+            "gap_fill_min_events": 30,
+            "extended_hours_confirmation_days": 90,
+            "extended_hours_min_events": 20,
+            "prediction_market_history_days": 30,
+            "funding_stress_baseline_days": 60,
+            "market_liquidity_baseline_days": 60,
+        },
+        "prediction_market": {
+            "prediction_market_delta_pp_threshold": 5.0,
+            "prediction_market_low_liquidity_volume_min_usd": 10000,
+        },
+    }
+
+
+def test_distillation_yaml_parses_and_exposes_all_seven_groups() -> None:
+    from alphamind.config.models import DistillationConfig
+
+    data = load_yaml(CONFIG_DIR / "distillation.yaml")
+    config = DistillationConfig.model_validate(data)
+
+    for group in _DISTILLATION_TOP_LEVEL_GROUPS:
+        assert hasattr(config, group), f"DistillationConfig missing group {group!r}"
+
+
+def test_distillation_rejects_negative_sigma() -> None:
+    """Invariant: all `*_sigma` thresholds ≥ 0."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["anomaly_detection"]["volume_anomaly_sigma"] = -0.1
+    with pytest.raises(ValidationError, match="volume_anomaly_sigma"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_negative_multiple() -> None:
+    """Invariant: all `*_multiple` thresholds ≥ 0."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["anomaly_detection"]["price_move_atr_multiple"] = -0.5
+    with pytest.raises(ValidationError, match="price_move_atr_multiple"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_zero_baseline_days() -> None:
+    """Invariant: all `*_days` windows ≥ 1."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["persistence_windows"]["volume_baseline_days"] = 0
+    with pytest.raises(ValidationError, match="volume_baseline_days"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_zero_minutes_window() -> None:
+    """Invariant: all `*_minutes` windows ≥ 1."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["anomaly_detection"]["dark_pool_one_sided_window_minutes"] = 0
+    with pytest.raises(ValidationError, match="dark_pool_one_sided_window_minutes"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_zero_hours_window() -> None:
+    """Invariant: all `*_hours` windows ≥ 1."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["anomaly_detection"]["news_price_divergence_window_hours"] = 0
+    with pytest.raises(ValidationError, match="news_price_divergence_window_hours"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_sentiment_min_observations_above_baseline() -> None:
+    """Invariant: `sentiment_min_observations` ≤ `sentiment_baseline_days`."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["persistence_windows"]["sentiment_min_observations"] = 100
+    raw["persistence_windows"]["sentiment_baseline_days"] = 60
+    with pytest.raises(ValidationError, match="sentiment_min_observations"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_gap_fill_min_events_above_baseline() -> None:
+    """Invariant: `gap_fill_min_events` ≤ `gap_fill_baseline_days`."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["persistence_windows"]["gap_fill_min_events"] = 300
+    raw["persistence_windows"]["gap_fill_baseline_days"] = 252
+    with pytest.raises(ValidationError, match="gap_fill_min_events"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_extended_hours_min_events_above_confirmation() -> None:
+    """Invariant: `extended_hours_min_events` ≤ `extended_hours_confirmation_days`."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["persistence_windows"]["extended_hours_min_events"] = 100
+    raw["persistence_windows"]["extended_hours_confirmation_days"] = 90
+    with pytest.raises(ValidationError, match="extended_hours_min_events"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_low_vol_normal_boundary_mismatch() -> None:
+    """Invariant: `regime_low_vol_vix_max == regime_normal_vix_min`."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["regime_classification"]["regime_low_vol_vix_max"] = 14.0
+    raw["regime_classification"]["regime_normal_vix_min"] = 15.0
+    with pytest.raises(ValidationError, match=r"regime_low_vol_vix_max.*regime_normal_vix_min"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_normal_elevated_boundary_mismatch() -> None:
+    """Invariant: `regime_normal_vix_max == regime_elevated_vix_min`."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["regime_classification"]["regime_normal_vix_max"] = 22.0
+    raw["regime_classification"]["regime_elevated_vix_min"] = 23.0
+    with pytest.raises(ValidationError, match=r"regime_normal_vix_max.*regime_elevated_vix_min"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_elevated_crisis_boundary_mismatch() -> None:
+    """Invariant: `regime_elevated_vix_max == regime_crisis_vix_min`."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["regime_classification"]["regime_elevated_vix_max"] = 35.0
+    raw["regime_classification"]["regime_crisis_vix_min"] = 36.0
+    with pytest.raises(ValidationError, match=r"regime_elevated_vix_max.*regime_crisis_vix_min"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_non_monotonic_regime_ceilings() -> None:
+    """Invariant: low_vol_max < normal_max < elevated_max (strict)."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    # Make normal_max equal to low_vol_max — breaks strict monotonicity but
+    # leaves the equal-boundary invariants intact.
+    raw["regime_classification"]["regime_low_vol_vix_max"] = 22.0
+    raw["regime_classification"]["regime_normal_vix_min"] = 22.0
+    raw["regime_classification"]["regime_normal_vix_max"] = 22.0
+    raw["regime_classification"]["regime_elevated_vix_min"] = 22.0
+    with pytest.raises(ValidationError, match=r"strictly|monotonic|<"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_vvix_low_at_or_above_high() -> None:
+    """Invariant: `regime_vvix_low_percentile < regime_vvix_high_percentile`."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["regime_classification"]["regime_vvix_low_percentile"] = 80
+    raw["regime_classification"]["regime_vvix_high_percentile"] = 80
+    with pytest.raises(
+        ValidationError, match=r"regime_vvix_low_percentile.*regime_vvix_high_percentile"
+    ):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_funding_stress_alert_count_zero() -> None:
+    """Invariant: `funding_stress_component_alert_count` in [1, 4]."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["anomaly_detection"]["funding_stress_component_alert_count"] = 0
+    with pytest.raises(ValidationError, match="funding_stress_component_alert_count"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_funding_stress_alert_count_above_four() -> None:
+    """Invariant: `funding_stress_component_alert_count` in [1, 4]."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["anomaly_detection"]["funding_stress_component_alert_count"] = 5
+    with pytest.raises(ValidationError, match="funding_stress_component_alert_count"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_funding_stress_percentile_below_fifty() -> None:
+    """Invariant: `funding_stress_component_percentile` in [50, 100]."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["anomaly_detection"]["funding_stress_component_percentile"] = 49
+    with pytest.raises(ValidationError, match="funding_stress_component_percentile"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_market_liquidity_percentile_above_fifty() -> None:
+    """Invariant: `market_liquidity_alert_percentile` in [0, 50]."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["anomaly_detection"]["market_liquidity_alert_percentile"] = 51
+    with pytest.raises(ValidationError, match="market_liquidity_alert_percentile"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_prediction_market_delta_pp_zero() -> None:
+    """Invariant: `prediction_market_delta_pp_threshold` in (0, 100]."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["prediction_market"]["prediction_market_delta_pp_threshold"] = 0
+    with pytest.raises(ValidationError, match="prediction_market_delta_pp_threshold"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_prediction_market_delta_pp_above_hundred() -> None:
+    """Invariant: `prediction_market_delta_pp_threshold` in (0, 100]."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["prediction_market"]["prediction_market_delta_pp_threshold"] = 100.1
+    with pytest.raises(ValidationError, match="prediction_market_delta_pp_threshold"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_regime_transition_confirmed_invocations_zero() -> None:
+    """Invariant: `regime_transition_confirmed_invocations` ≥ 1."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["regime_transition"]["regime_transition_confirmed_invocations"] = 0
+    with pytest.raises(ValidationError, match="regime_transition_confirmed_invocations"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_non_numeric_sigma() -> None:
+    """Type-coercion: a string where a numeric is expected raises ValidationError."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["anomaly_detection"]["volume_anomaly_sigma"] = "two-and-a-half"
+    with pytest.raises(ValidationError, match="volume_anomaly_sigma"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_non_boolean_skip_emergency_trigger() -> None:
+    """Type-coercion: a non-boolean for the boolean flag raises ValidationError."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["regime_transition"]["regime_skip_emergency_trigger"] = "not-a-bool"
+    with pytest.raises(ValidationError, match="regime_skip_emergency_trigger"):
+        DistillationConfig.model_validate(raw)
+
+
 def test_digest_rejects_sector_underperform_median_offset_sigma_negative() -> None:
     from alphamind.config.models import DigestConfig
 

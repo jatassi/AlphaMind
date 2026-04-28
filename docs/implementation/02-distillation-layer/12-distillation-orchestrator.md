@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: d323f5eb452eaf0103395bfa1297ec8205263783
 ---
 
 # 12 — Distillation orchestrator entry point

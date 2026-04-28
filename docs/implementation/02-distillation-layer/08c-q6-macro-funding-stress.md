@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 57777bd6df154307e1affce8c4180e38c474a7b8
 ---
 
 # 08c — Q6 macro indicators and funding-stress composite

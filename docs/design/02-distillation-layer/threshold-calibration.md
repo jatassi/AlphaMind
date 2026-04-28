@@ -63,6 +63,7 @@ All values in `config/distillation.yaml`, universe-wide. Dual portfolio profiles
 | `funding_stress_component_percentile` | 90 | Per-component alert level — top 10% of trailing 60-day distribution. |
 | `market_liquidity_alert_percentile` | 10 | Market-wide liquidity composite alerts when in the bottom 10% of trailing 60-day distribution (lower percentile = worse liquidity). |
 | `news_price_divergence_window_hours` | 12 | Window for cross-referencing news sentiment against subsequent price action. Twelve hours captures the typical institutional digestion window without bleeding into the next trading day. |
+| `news_price_divergence_min_articles` | 5 | Minimum non-neutral article count inside the window for the divergence block to be tagged `calibrated`. Below this floor a dominant direction can be set by one or two outlier articles; the block still emits so downstream consumers see the signal, but the `bootstrap` tag conveys the thin-evidence caveat. |
 
 ### Regime classification boundaries
 
@@ -157,6 +158,56 @@ Each distillation output block carries a `calibration_state` field:
 
 Anomaly detections, regime classifications, and lead-lag flags carry the tag. Per-ticker sentiment percentiles, gap-fill rates, and extended-hours confirmation rates are most likely to surface in `bootstrap` state during the first months.
 
+### Calibration-state snapshot file
+
+The distillation orchestrator emits a per-invocation reduction of every `OutputBlock`'s `calibration_state` to JSON at `data/provenance/invocations/<invocation_id>/data_calibration_state.json`. The file is the deterministic-analytics-spine input the [feedback loop](feedback-loop.md) reads to condition outcome analysis on whether bootstrap fallback was active during the invocation; the [command center's calibration-mix panel](../command-center.md#e-risk-and-guardrails) renders the same file.
+
+Schema (`schema_version: "1"`):
+
+```json
+{
+  "schema_version": "1",
+  "invocation_id": "<uuid>",
+  "as_of": "<ISO8601 UTC>",
+  "summary": {
+    "total_blocks": 42,
+    "by_state": {
+      "calibrated": 34,
+      "bootstrap": 7,
+      "unavailable": 1
+    },
+    "by_audience": {
+      "sector_tech_semis": {"calibrated": 12, "bootstrap": 2, "unavailable": 0},
+      "sector_financials": {"calibrated": 10, "bootstrap": 1, "unavailable": 0},
+      "sector_energy": {"calibrated": 8, "bootstrap": 2, "unavailable": 1},
+      "correlation_regime_brief": {"calibrated": 3, "bootstrap": 1, "unavailable": 0},
+      "universal_broadcast": {"calibrated": 1, "bootstrap": 1, "unavailable": 0}
+    },
+    "by_block_kind": {
+      "q1.volume_anomaly": {"calibrated": 60, "bootstrap": 5, "unavailable": 0},
+      "q1.price_move_anomaly": {"calibrated": 65, "bootstrap": 0, "unavailable": 0},
+      "q3.options_flow": {"calibrated": 0, "bootstrap": 65, "unavailable": 0},
+      "regime.label": {"calibrated": 1, "bootstrap": 0, "unavailable": 0}
+    }
+  },
+  "bootstrap_reasons": {
+    "<block_id>": "<bootstrap_reason string from CalibratedValue>"
+  },
+  "unavailable_reasons": {
+    "<block_id>": "<unavailable_reason string from CalibratedValue>"
+  }
+}
+```
+
+Field semantics:
+
+- `total_blocks` and `by_state` count each `OutputBlock` instance once.
+- `by_audience` counts each (audience, block) pair: a multi-audience block contributes one count to every audience in its `audience` set, so the per-audience sums may exceed `total_blocks`.
+- `by_block_kind` keys mirror the `block_id` namespacing convention from [external.md § Output format](external.md) (`<category>.<short_name>`); per-ticker blocks aggregate under their block-kind key so the summary stays scannable.
+- `bootstrap_reasons` and `unavailable_reasons` record only blocks whose state is `bootstrap` or `unavailable`; calibrated blocks are absent from the maps to keep the file small.
+
+The writer emits deterministic JSON (sorted keys, fixed indentation) so two runs against the same `DistillationOutputs` produce byte-identical files; the determinism contract aligns with the structured-text envelope from [external.md § Output format](external.md) so the snapshot and the markdown archive cannot drift.
+
 ### Cross-sectional priors
 
 When per-ticker state is insufficient, the layer substitutes a universe-wide prior:
@@ -220,6 +271,24 @@ Default cadence: **monthly** during paper trading, **quarterly** once live, plus
 No automated tuning. The Phase 4 feedback loop is the natural source of empirical inputs at step 2 once it ships; the edit itself remains an operator action — the trade-off (flag rate vs. signal quality) depends on the system's current capacity to investigate.
 
 **No silent threshold mutation.** A threshold change is a config change with a config-change activity log entry. Motivating observation, old value, and new value live in the operator's calibration log — notes paired with the YAML diff in version control.
+
+**Calibration log convention.** Threshold-edit commits to `config/distillation.yaml` use a structured trailer block paired with the [`distillation_config_change`](../05-execution-layer/state-persistence.md) activity-log entry the configuration loader emits at reload. The activity-log entry carries the *what* and *when*; the trailer carries the *why*:
+
+```
+calib: <YAML key path> <old> -> <new>
+
+Motivating observation: <one-paragraph why>
+
+Empirical inputs: <flag-rate report or feedback-loop output the operator consulted>
+
+Replay-harness report: <report_id>          (required for regime-sensitive edits)
+```
+
+Multiple `calib:` trailers per commit are allowed. The git history paired with the activity-log entries forms the full audit trail.
+
+`Replay-harness report:` is required when the edited key path falls under `anomaly_detection.*`, `regime_classification.*`, `regime_transition.*`, `lead_lag.*`, `narrative_lag.*`, or `persistence_windows.*` — the regime-sensitive set named by step 4 above. The `<report_id>` is the directory name under `data/replay_reports/` produced by [`replay-harness.md`](replay-harness.md), and is the same identifier the operator cites in the corresponding [`/feedback-validate`](../../../.claude/skills/feedback-validate/SKILL.md) registration's `expected_magnitude` or `success_criterion` field, pairing the calibration-log commit and the validation registration on a single regime-grounded evidence anchor. When multiple `calib:` trailers in one commit touch the regime-sensitive set, one `Replay-harness report:` line covers all of them when the same harness run informed every edit; otherwise list one per evidence run. `prediction_market.*` edits do not require a `Replay-harness report:` line — the 5pp threshold is universe-wide, not regime-conditioned per [Prediction market delta](#prediction-market-delta).
+
+The convention is recommendation, not enforcement — no commit hook or linter.
 
 ---
 

@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 89e3edbae8eb3d079302c4f6a3ce93e4ef19f0c1
 ---
 
 # 07 — Rolling baseline refresh primitive

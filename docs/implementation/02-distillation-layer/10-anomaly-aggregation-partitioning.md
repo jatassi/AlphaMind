@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: a45cc870b7ce46f3994d8e2ef3451ba5824fde03
 ---
 
 # 10 — Anomaly aggregation and per-consumer partitioning

@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: e7294809c7a03de1d2b08c0198bf76cc7eb326a1
 ---
 
 # 04 — Calibration state and bootstrap fallback framework

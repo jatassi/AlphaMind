@@ -33,6 +33,7 @@ from sqlalchemy import func
 from alphamind.config.models import (
     CollectorScheduleConfig,
     DataSourcesConfig,
+    DistillationConfig,
     NewsOutletsConfig,
 )
 
@@ -46,10 +47,16 @@ R = TypeVar("R")
 
 @dataclass(frozen=True)
 class AlphaMindConfig:
-    """Immutable aggregate of the three YAML config sections."""
+    """Immutable aggregate of the YAML config sections.
 
-    data_sources: DataSourcesConfig
+    Sections are listed alphabetically — every load source the data layer
+    consumes appears once, the order matches the ``load_config`` reads, and
+    new sections are added by extending the alphabetic chain.
+    """
+
     collector_schedule: CollectorScheduleConfig
+    data_sources: DataSourcesConfig
+    distillation: DistillationConfig
     news_outlets: NewsOutletsConfig
 
 
@@ -58,13 +65,14 @@ def load_config(
     env_file: str | None = None,
 ) -> AlphaMindConfig:
     """
-    Load and validate all three YAML config files plus the ``.env`` file.
+    Load and validate every data-layer YAML config file plus the ``.env`` file.
 
     Parameters
     ----------
     config_dir:
-        Directory containing ``data_sources.yaml``, ``collector_schedule.yaml``,
-        and ``news_outlets.yaml``.  Defaults to ``<repo-root>/config/``.
+        Directory containing ``collector_schedule.yaml``, ``data_sources.yaml``,
+        ``distillation.yaml``, and ``news_outlets.yaml``. Defaults to
+        ``<repo-root>/config/``.
     env_file:
         Path to the ``.env`` file.  Defaults to ``<repo-root>/.env``.
 
@@ -88,8 +96,9 @@ def load_config(
         with path.open() as fh:
             return yaml.safe_load(fh) or {}
 
-    data_sources = DataSourcesConfig.model_validate(_read("data_sources.yaml"))
     collector_schedule = CollectorScheduleConfig.model_validate(_read("collector_schedule.yaml"))
+    data_sources = DataSourcesConfig.model_validate(_read("data_sources.yaml"))
+    distillation = DistillationConfig.model_validate(_read("distillation.yaml"))
     news_outlets = NewsOutletsConfig.model_validate(_read("news_outlets.yaml"))
 
     # Validate that every api_key_env reference resolves
@@ -103,8 +112,9 @@ def load_config(
             )
 
     return AlphaMindConfig(
-        data_sources=data_sources,
         collector_schedule=collector_schedule,
+        data_sources=data_sources,
+        distillation=distillation,
         news_outlets=news_outlets,
     )
 
