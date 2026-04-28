@@ -461,6 +461,12 @@ def _render_archive_section(report: VerificationReport) -> list[str]:
 
 
 def _render_placeholder_gaps_section(report: VerificationReport) -> list[str]:
+    if not report.placeholder_gaps:
+        return [
+            "",
+            "[ PLACEHOLDER GAPS ]",
+            "  None — all six Phase 2 categories integrated.",
+        ]
     lines: list[str] = [
         "",
         "[ PLACEHOLDER GAPS ]",

@@ -73,6 +73,13 @@ from alphamind.distillation.output import (
     OutputBlock,
     format_block,
 )
+from alphamind.distillation.q1 import assemble_q1_blocks
+from alphamind.distillation.q3_options import assemble_q3_blocks
+from alphamind.distillation.q6_macro import compute_q6_blocks
+from alphamind.distillation.q7_cross_asset import (
+    assemble_q7_blocks,
+    compute_pair_correlations,
+)
 from alphamind.distillation.q12_corporate_actions import detect_q12_signals
 from alphamind.distillation.qualitative_derived import (
     compute_news_price_divergence,
@@ -291,52 +298,98 @@ def _refresh_class_b_state(
 # synchronous DB-bound work runs through asyncio.to_thread so the event
 # loop never blocks waiting for SQLite.
 #
-# Categories with established public-surface entry points (q12,
-# qualitative_derived) wire up directly. The remaining four (q1, q3, q6,
-# q7) expose fine-grained per-indicator primitives whose integration into
-# per-sector blocks requires data plumbing the orchestrator does not
-# currently resolve generically — those wirings are deferred to follow-up
-# stories. Their placeholders below carry the gap-narration in the
-# :data:`_PHASE_2_PLACEHOLDER_GAPS` table so a reader sees every category
-# in one place rather than scattered across four near-identical helpers.
+# All six categories (q1, q3, q6, q7, q12, qualitative_derived) wire up
+# directly to their module-level entry points. The :data:`_PHASE_2_PLACEHOLDER_GAPS`
+# table is preserved as an empty tuple for the verification script in
+# story 13 (`scripts/verify_distillation.py`) so its summary section's
+# shape stays stable; it now reports "all categories integrated."
 
-_PHASE_2_PLACEHOLDER_GAPS: tuple[tuple[str, str], ...] = (
-    (
-        "q1",
-        "Q1 (story 08a) exposes per-indicator primitives plus build_q1_block. "
-        "Per-sector dispatch from price-series + baseline state is deferred to a "
-        "follow-up story; the orchestrator surfaces no Q1 blocks today.",
-    ),
-    (
-        "q3",
-        "Q3 (story 08b) requires preprocessed FlowZScore / sweep / IV-rank inputs "
-        "the orchestrator does not currently compute; integration is deferred.",
-    ),
-    (
-        "q6",
-        "Q6 (story 08c) requires preprocessed yield-curve / inflation / dollar / "
-        "funding-stress / market-liquidity inputs the orchestrator does not "
-        "currently compute (DGS series joins, breakeven trends, surprise "
-        "histories); integration is deferred.",
-    ),
-    (
-        "q7",
-        "Q7 (story 08d) has six independent compute functions, each requiring "
-        "its own sector roster / ETF roster / window inputs the orchestrator "
-        "does not currently resolve from configuration; integration is deferred.",
-    ),
-)
+_PHASE_2_PLACEHOLDER_GAPS: tuple[tuple[str, str], ...] = ()
 
 
-def _placeholder_blocks(_category: str) -> list[OutputBlock]:
-    """Return an empty block list for a not-yet-integrated Phase-2 category.
+def _compute_q1_blocks(
+    session: Session,
+    *,
+    config: DistillationConfig,
+    ticker_scope: Sequence[str],
+    as_of: datetime,
+) -> list[OutputBlock]:
+    """Q1 price/volume indicator blocks (story 08a).
 
-    The category names live in :data:`_PHASE_2_PLACEHOLDER_GAPS` so the
-    parallel fan-out keeps the documented six-way shape while the wiring
-    backlog is visible in one place. Once a category lands real
-    integration, it gets its own dispatcher and drops out of the table.
+    Delegates to :func:`assemble_q1_blocks`, the package's top-level
+    entry point that fans out per ``(sector_audience, indicator_group)``
+    and returns the six per-sector indicator blocks plus any anomaly
+    blocks that fired this invocation.
     """
-    return []
+    return assemble_q1_blocks(
+        session,
+        config=config,
+        as_of=as_of,
+        ticker_scope=ticker_scope,
+    )
+
+
+def _compute_q3_blocks(
+    session: Session,
+    *,
+    config: DistillationConfig,
+    ticker_scope: Sequence[str],
+    as_of: datetime,
+    pair_correlations: dict[tuple[str, str], float],
+) -> list[OutputBlock]:
+    """Q3 options-flow blocks (story 08b).
+
+    Delegates to :func:`assemble_q3_blocks`. The ``pair_correlations``
+    mapping is sourced from :func:`compute_pair_correlations` (Q7's
+    canonical helper) so pair-trade-signature detection sees the same
+    correlation matrix Q7 reports — the orchestrator computes it once
+    and threads it through to both consumers.
+    """
+    return assemble_q3_blocks(
+        session,
+        config=config,
+        as_of=as_of,
+        ticker_scope=ticker_scope,
+        pair_correlations=pair_correlations,
+    )
+
+
+def _compute_q6_blocks(
+    session: Session,
+    *,
+    config: DistillationConfig,
+    as_of: datetime,
+) -> list[OutputBlock]:
+    """Q6 macro / funding-stress blocks (story 08c).
+
+    Delegates to :func:`compute_q6_blocks`, the wrapper that handles
+    the FRED-series / breakeven / dollar / surprise data plumbing
+    before calling the per-classifier helpers and assembling.
+    """
+    return compute_q6_blocks(session, config=config, as_of=as_of)
+
+
+def _compute_q7_blocks(
+    session: Session,
+    *,
+    config: DistillationConfig,
+    ticker_scope: Sequence[str],
+    as_of: datetime,
+) -> list[OutputBlock]:
+    """Q7 cross-asset / correlation blocks (story 08d).
+
+    Delegates to :func:`assemble_q7_blocks`. The intra-sector pair
+    correlations Q7 also produces are computed once at phase-2 entry
+    via :func:`compute_pair_correlations` and passed independently to
+    Q3; Q7 recomputes them internally for its own block emissions —
+    accepted minor duplication for a thin orchestrator.
+    """
+    return assemble_q7_blocks(
+        session,
+        config=config,
+        as_of=as_of,
+        ticker_scope=ticker_scope,
+    )
 
 
 def _compute_q12_blocks(
@@ -640,32 +693,68 @@ async def run_external_distillation(
         time.monotonic() - phase_start,
     )
 
-    # Phase 2 — per-category indicator computations in parallel. The
-    # six dispatchers cover q1, q3, q6, q7, q12, qualitative_derived per
-    # external.md § Output format. Categories without an integrated
-    # entry point yet route through ``_placeholder_blocks`` per the
-    # gap-narration in :data:`_PHASE_2_PLACEHOLDER_GAPS`.
+    # Phase 2 — per-category indicator computations. Categories run
+    # sequentially because Q3 (via refresh_atm_iv_baselines) and Q6
+    # (via refresh_funding_stress_composite plus refresh_market_liquidity_composite)
+    # issue session.flush() calls; running them concurrently via
+    # asyncio.to_thread on a shared Session triggers
+    # "Session is already flushing" InvalidRequestError. Each call still
+    # wraps in asyncio.to_thread so the event loop remains free for
+    # surrounding pipeline work. Pair correlations are computed once
+    # before the per-category loop so Q3's pair-trade-signature
+    # detection sees the same matrix Q7 reports (Q7 recomputes
+    # internally; orchestrator-side pre-compute is the canonical source
+    # for Q3).
     phase_start = time.monotonic()
-    placeholder_tasks = [
-        asyncio.to_thread(_placeholder_blocks, name) for name, _gap in _PHASE_2_PLACEHOLDER_GAPS
-    ]
-    integrated_tasks = [
-        asyncio.to_thread(
+    pair_correlations = await asyncio.to_thread(
+        compute_pair_correlations,
+        session,
+        ticker_scope=ticker_scope,
+        as_of=as_of,
+        window_days=config.persistence_windows.correlation_short_days,
+    )
+    per_category_blocks: tuple[list[OutputBlock], ...] = (
+        await asyncio.to_thread(
+            _compute_q1_blocks,
+            session,
+            config=config,
+            ticker_scope=ticker_scope,
+            as_of=as_of,
+        ),
+        await asyncio.to_thread(
+            _compute_q3_blocks,
+            session,
+            config=config,
+            ticker_scope=ticker_scope,
+            as_of=as_of,
+            pair_correlations=pair_correlations,
+        ),
+        await asyncio.to_thread(
+            _compute_q6_blocks,
+            session,
+            config=config,
+            as_of=as_of,
+        ),
+        await asyncio.to_thread(
+            _compute_q7_blocks,
+            session,
+            config=config,
+            ticker_scope=ticker_scope,
+            as_of=as_of,
+        ),
+        await asyncio.to_thread(
             _compute_q12_blocks,
             session,
             config=config,
             as_of=as_of,
         ),
-        asyncio.to_thread(
+        await asyncio.to_thread(
             _compute_qualitative_blocks,
             session,
             config=config,
             ticker_scope=ticker_scope,
             as_of=as_of,
         ),
-    ]
-    per_category_blocks: list[list[OutputBlock]] = await asyncio.gather(
-        *placeholder_tasks, *integrated_tasks
     )
     indicator_blocks: list[OutputBlock] = []
     for category_blocks in per_category_blocks:

@@ -451,11 +451,11 @@ def test_format_report_renders_summary_table(
     assert "RESULT: PASS" in rendered
 
 
-def test_placeholder_gaps_section_lists_q1_q3_q6_q7(
+def test_placeholder_gaps_section_renders_all_integrated_when_table_empty(
     populated_session_factory: Any,
     tmp_path: Path,
 ) -> None:
-    """The PLACEHOLDER GAPS section names every category from the orchestrator's table."""
+    """With every Phase-2 category integrated, the section renders an "all integrated" line."""
     sess = populated_session_factory()
     _seed_state_tables(sess, now=_AS_OF)
     archive_dir = _write_archive(tmp_path / "archive")
@@ -469,12 +469,12 @@ def test_placeholder_gaps_section_lists_q1_q3_q6_q7(
     )
     rendered = format_report(report)
 
-    # Every category in the orchestrator's placeholder table is named in the
-    # rendered output. Pulling from the report's placeholder_gaps tuple keeps
-    # this test in sync with the orchestrator's source of truth.
-    assert {"q1", "q3", "q6", "q7"} == {cat for cat, _ in report.placeholder_gaps}
-    for category in ("q1", "q3", "q6", "q7"):
-        assert f"- {category}:" in rendered
+    # All four follow-up entry points landed (q1/q3/q6/q7), so the table
+    # is empty. The verification script renders an "all integrated"
+    # placeholder line in that case so the section shape stays stable.
+    assert report.placeholder_gaps == ()
+    assert "[ PLACEHOLDER GAPS ]" in rendered
+    assert "all six Phase 2 categories integrated" in rendered
 
 
 def test_format_report_failed_run_reports_failures(
