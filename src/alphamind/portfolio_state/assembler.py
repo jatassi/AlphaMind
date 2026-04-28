@@ -69,6 +69,11 @@ from alphamind.portfolio_state.computations.risk_budget import (
     compute_parameter_change_flag,
     compute_true_deployable_capital_usd,
 )
+from alphamind.portfolio_state.freshness import (
+    AssembledSnapshot,
+    PriceFetchOutcomes,
+    compute_snapshot_freshness,
+)
 from alphamind.portfolio_state.pricing import CurrentPriceProvider, PriceQuote
 from alphamind.portfolio_state.records.activity_log import ActivityLogEntry
 from alphamind.portfolio_state.records.capital import (
@@ -88,6 +93,102 @@ from alphamind.portfolio_state.repository import (
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
 
 log = logging.getLogger(__name__)
+
+
+def _classify_position_price_fetch(
+    pos: PositionRecord,
+    price_map: dict[str, PriceQuote],
+) -> tuple[str, datetime | None]:
+    """Classify a position's pricing outcome.
+
+    Returns:
+        A 2-tuple of (category, as_of_timestamp):
+        - category: "fresh" | "stale" | "unknown"
+        - as_of_timestamp: the quote's as_of_timestamp when category is "fresh", else None
+    """
+    ticker: str | None = None
+    if pos.instrument_type == InstrumentType.EQUITY:
+        assert pos.equity_details is not None
+        ticker = pos.equity_details.ticker
+    elif pos.instrument_type == InstrumentType.OPTIONS:
+        assert pos.options_details is not None
+        ticker = pos.options_details.underlying_ticker
+    else:  # STRATEGY — use first leg's underlying
+        assert pos.strategy_details is not None
+        ticker = (
+            pos.strategy_details.legs[0].options.underlying_ticker
+            if pos.strategy_details.legs
+            else None
+        )
+    quote = price_map.get(ticker or "")
+    if quote is None:
+        return "unknown", None
+    if quote.is_stale:
+        return "stale", None
+    return "fresh", quote.as_of_timestamp
+
+
+def _build_assembled_snapshot(
+    snapshot: PortfolioStateSnapshot,
+    ids_fresh: set[str],
+    ids_stale: set[str],
+    ids_unknown: set[str],
+    oldest_price_as_of: datetime | None,
+    config: PortfolioStateConfig,
+) -> AssembledSnapshot:
+    """Build and return the AssembledSnapshot; emit structured warnings when needed."""
+    fetch_outcomes = PriceFetchOutcomes(
+        position_ids_priced_fresh=frozenset(ids_fresh),
+        position_ids_priced_stale=frozenset(ids_stale),
+        position_ids_unknown_ticker=frozenset(ids_unknown),
+        oldest_price_as_of=oldest_price_as_of,
+    )
+    freshness = compute_snapshot_freshness(snapshot, fetch_outcomes=fetch_outcomes, config=config)
+    if not freshness.phase1_to_snapshot_within_threshold:
+        log.warning(
+            "phase1→snapshot latency exceeded threshold: %.3fs > %.3fs",
+            freshness.phase1_to_snapshot_seconds,
+            freshness.max_phase1_to_snapshot_seconds,
+        )
+    stale_count = freshness.count_priced_stale + freshness.count_unknown_ticker
+    if stale_count > 0:
+        log.warning(
+            "%d position(s) have stale or unknown-ticker prices: %s",
+            stale_count,
+            sorted(freshness.position_ids_priced_stale | freshness.position_ids_unknown_ticker),
+        )
+    return AssembledSnapshot(snapshot=snapshot, freshness=freshness)
+
+
+def _enrich_positions_with_price_classification(
+    positions: tuple[PositionRecord, ...],
+    price_map: dict[str, PriceQuote],
+    brackets_by_bracket_id: dict[str, BracketRecord],
+    now: datetime,
+    ids_fresh: set[str],
+    ids_stale: set[str],
+    ids_unknown: set[str],
+) -> tuple[list[PositionRecord], datetime | None]:
+    """Enrich positions (first pass) and accumulate price-fetch outcome classification.
+
+    Mutates *ids_fresh*, *ids_stale*, *ids_unknown* in place.
+    Returns (enriched_list, oldest_price_as_of).
+    """
+    enriched: list[PositionRecord] = []
+    oldest: datetime | None = None
+    for pos in positions:
+        category, as_of = _classify_position_price_fetch(pos, price_map)
+        if category == "fresh":
+            ids_fresh.add(pos.position_id)
+            if as_of is not None and (oldest is None or as_of < oldest):
+                oldest = as_of
+        elif category == "stale":
+            ids_stale.add(pos.position_id)
+        else:
+            ids_unknown.add(pos.position_id)
+        enriched.append(_enrich_position_first_pass(pos, price_map, brackets_by_bracket_id, now))
+    return enriched, oldest
+
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -319,8 +420,8 @@ async def assemble_snapshot(
     sector_resolver: SectorResolver,
     config: PortfolioStateConfig,
     now: datetime,
-) -> PortfolioStateSnapshot:
-    """Assemble a PortfolioStateSnapshot from repository records and live prices.
+) -> AssembledSnapshot:
+    """Assemble an AssembledSnapshot (snapshot + freshness sidecar) from repository and prices.
 
     All parameters are keyword-only. ``now`` is supplied by the caller so the
     assembler is testable without a clock fixture.
@@ -401,17 +502,37 @@ async def assemble_snapshot(
 
     # ------------------------------------------------------------------
     # Step 6 — Enrich each position (first pass — without weight)
+    #          and accumulate per-position price-fetch outcomes
     # ------------------------------------------------------------------
     brackets_by_bracket_id: dict[str, BracketRecord] = {b.bracket_id: b for b in brackets_tuple}
 
-    enriched_open: list[PositionRecord] = [
-        _enrich_position_first_pass(pos, price_map, brackets_by_bracket_id, now)
-        for pos in open_positions_raw
-    ]
-    enriched_pending: list[PositionRecord] = [
-        _enrich_position_first_pass(pos, price_map, brackets_by_bracket_id, now)
-        for pos in pending_positions_raw
-    ]
+    _ids_fresh: set[str] = set()
+    _ids_stale: set[str] = set()
+    _ids_unknown: set[str] = set()
+
+    enriched_open, oldest_open = _enrich_positions_with_price_classification(
+        open_positions_raw,
+        price_map,
+        brackets_by_bracket_id,
+        now,
+        _ids_fresh,
+        _ids_stale,
+        _ids_unknown,
+    )
+    enriched_pending, oldest_pending = _enrich_positions_with_price_classification(
+        pending_positions_raw,
+        price_map,
+        brackets_by_bracket_id,
+        now,
+        _ids_fresh,
+        _ids_stale,
+        _ids_unknown,
+    )
+    _oldest_price_as_of: datetime | None = (
+        min(t for t in (oldest_open, oldest_pending) if t is not None)
+        if (oldest_open is not None or oldest_pending is not None)
+        else None
+    )
 
     # ------------------------------------------------------------------
     # Step 7 — Compute total portfolio value
@@ -534,7 +655,7 @@ async def assemble_snapshot(
     # ------------------------------------------------------------------
     # Steps 15/16 — Normalise activity-log projections and construct snapshot
     # ------------------------------------------------------------------
-    return PortfolioStateSnapshot(
+    snapshot = PortfolioStateSnapshot(
         invocation_id=metadata.invocation_id,
         phase1_committed_at=metadata.phase1_committed_at,
         snapshot_assembled_at=now,
@@ -556,4 +677,11 @@ async def assemble_snapshot(
         position_modification_trail=position_modification_trail,
         thesis_quality_aggregates=thesis_quality_aggregates,
         brackets=brackets_tuple,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 17 — Compute freshness sidecar and emit structured warnings
+    # ------------------------------------------------------------------
+    return _build_assembled_snapshot(
+        snapshot, _ids_fresh, _ids_stale, _ids_unknown, _oldest_price_as_of, config
     )
