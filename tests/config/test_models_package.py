@@ -3,17 +3,20 @@
 import alphamind.config.models as models_mod
 
 _EXPECTED_PUBLIC_NAMES = {
+    "AntiPatternSpike",
     "AssetRole",
     "AssetsConfig",
     "BackoffStrategy",
     "Benchmark",
     "BreachResponse",
     "CategoryConfig",
+    "CitationChainShift",
     "CollectorEntry",
     "CollectorScheduleConfig",
     "CredibilityTier",
     "CriticalityTier",
     "DataSourcesConfig",
+    "DigestConfig",
     "DiscoverySource",
     "DiscoveryVendor",
     "EmergencyInvocation",
@@ -24,9 +27,14 @@ _EXPECTED_PUBLIC_NAMES = {
     "OutletEntry",
     "ProgressiveTier",
     "ProviderConfig",
+    "RegimeChange",
     "RetryShapeConfig",
     "RuleEntry",
     "SchedulerConfig",
+    "SectorUnderperform",
+    "SourceSignalSurvivalDrop",
+    "ValidationSuperseded",
+    "ValidationWindowEnd",
 }
 
 

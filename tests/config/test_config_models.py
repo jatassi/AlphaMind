@@ -549,3 +549,198 @@ def test_guardrails_models_are_frozen() -> None:
 
     with pytest.raises(ValidationError):
         config.emergency_invocation.__setattr__("cooldown_minutes", 0)
+
+
+# ---------------------------------------------------------------------------
+# digest.yaml (story 03h)
+# ---------------------------------------------------------------------------
+
+
+_DIGEST_SHIFT_BLOCKS = (
+    "anti_pattern_spike",
+    "regime_change",
+    "sector_underperform",
+    "citation_chain_shift",
+    "source_signal_survival_drop",
+    "validation_window_end",
+    "validation_superseded",
+)
+
+
+def _valid_digest_raw() -> dict[str, object]:
+    return {
+        "anti_pattern_spike": {
+            "baseline_window_weeks": 4,
+            "multiplier_vs_baseline": 2.0,
+            "min_occurrences_this_week": 5,
+        },
+        "regime_change": {"enabled": True},
+        "sector_underperform": {
+            "baseline_window_weeks": 4,
+            "median_offset_sigma": 1.5,
+        },
+        "citation_chain_shift": {
+            "baseline_window_weeks": 4,
+            "delta_pp_threshold": 20.0,
+        },
+        "source_signal_survival_drop": {
+            "baseline_window_weeks": 4,
+            "delta_pp_threshold": 20.0,
+        },
+        "validation_window_end": {"days_before_due": 7},
+        "validation_superseded": {"enabled": True},
+    }
+
+
+def test_digest_yaml_parses_and_exposes_all_seven_shift_blocks() -> None:
+    from alphamind.config.models import DigestConfig
+
+    data = load_yaml(CONFIG_DIR / "digest.yaml")
+    config = DigestConfig.model_validate(data)
+
+    for block in _DIGEST_SHIFT_BLOCKS:
+        assert hasattr(config, block), f"DigestConfig missing block {block!r}"
+
+
+def test_digest_rejects_missing_regime_change_block() -> None:
+    from alphamind.config.models import DigestConfig
+
+    raw = _valid_digest_raw()
+    del raw["regime_change"]
+    with pytest.raises(ValidationError):
+        DigestConfig.model_validate(raw)
+
+
+def test_digest_rejects_anti_pattern_multiplier_equal_to_one() -> None:
+    from alphamind.config.models import DigestConfig
+
+    raw = _valid_digest_raw()
+    raw["anti_pattern_spike"] = {
+        "baseline_window_weeks": 4,
+        "multiplier_vs_baseline": 1.0,
+        "min_occurrences_this_week": 5,
+    }
+    with pytest.raises(ValidationError):
+        DigestConfig.model_validate(raw)
+
+
+def test_digest_rejects_anti_pattern_multiplier_below_one() -> None:
+    from alphamind.config.models import DigestConfig
+
+    raw = _valid_digest_raw()
+    raw["anti_pattern_spike"] = {
+        "baseline_window_weeks": 4,
+        "multiplier_vs_baseline": 0.5,
+        "min_occurrences_this_week": 5,
+    }
+    with pytest.raises(ValidationError):
+        DigestConfig.model_validate(raw)
+
+
+def test_digest_rejects_citation_chain_delta_pp_zero() -> None:
+    from alphamind.config.models import DigestConfig
+
+    raw = _valid_digest_raw()
+    raw["citation_chain_shift"] = {"baseline_window_weeks": 4, "delta_pp_threshold": 0}
+    with pytest.raises(ValidationError):
+        DigestConfig.model_validate(raw)
+
+
+def test_digest_accepts_citation_chain_delta_pp_at_upper_bound() -> None:
+    from alphamind.config.models import DigestConfig
+
+    raw = _valid_digest_raw()
+    raw["citation_chain_shift"] = {"baseline_window_weeks": 4, "delta_pp_threshold": 100.0}
+    config = DigestConfig.model_validate(raw)
+    assert config.citation_chain_shift.delta_pp_threshold == 100.0
+
+
+def test_digest_rejects_citation_chain_delta_pp_above_upper_bound() -> None:
+    from alphamind.config.models import DigestConfig
+
+    raw = _valid_digest_raw()
+    raw["citation_chain_shift"] = {"baseline_window_weeks": 4, "delta_pp_threshold": 100.1}
+    with pytest.raises(ValidationError):
+        DigestConfig.model_validate(raw)
+
+
+def test_digest_rejects_sector_underperform_median_offset_sigma_zero() -> None:
+    from alphamind.config.models import DigestConfig
+
+    raw = _valid_digest_raw()
+    raw["sector_underperform"] = {"baseline_window_weeks": 4, "median_offset_sigma": 0}
+    with pytest.raises(ValidationError):
+        DigestConfig.model_validate(raw)
+
+
+def test_digest_accepts_validation_window_days_before_due_zero() -> None:
+    from alphamind.config.models import DigestConfig
+
+    raw = _valid_digest_raw()
+    raw["validation_window_end"] = {"days_before_due": 0}
+    config = DigestConfig.model_validate(raw)
+    assert config.validation_window_end.days_before_due == 0
+
+
+def test_digest_rejects_validation_window_days_before_due_negative() -> None:
+    from alphamind.config.models import DigestConfig
+
+    raw = _valid_digest_raw()
+    raw["validation_window_end"] = {"days_before_due": -1}
+    with pytest.raises(ValidationError):
+        DigestConfig.model_validate(raw)
+
+
+def test_digest_accepts_anti_pattern_min_occurrences_zero() -> None:
+    from alphamind.config.models import DigestConfig
+
+    raw = _valid_digest_raw()
+    raw["anti_pattern_spike"] = {
+        "baseline_window_weeks": 4,
+        "multiplier_vs_baseline": 2.0,
+        "min_occurrences_this_week": 0,
+    }
+    config = DigestConfig.model_validate(raw)
+    assert config.anti_pattern_spike.min_occurrences_this_week == 0
+
+
+def test_digest_rejects_baseline_window_weeks_zero() -> None:
+    from alphamind.config.models import DigestConfig
+
+    raw = _valid_digest_raw()
+    raw["sector_underperform"] = {"baseline_window_weeks": 0, "median_offset_sigma": 1.5}
+    with pytest.raises(ValidationError):
+        DigestConfig.model_validate(raw)
+
+
+def test_digest_rejects_sector_underperform_median_offset_sigma_negative() -> None:
+    from alphamind.config.models import DigestConfig
+
+    raw = _valid_digest_raw()
+    raw["sector_underperform"] = {"baseline_window_weeks": 4, "median_offset_sigma": -1.0}
+    with pytest.raises(ValidationError):
+        DigestConfig.model_validate(raw)
+
+
+def test_digest_models_are_frozen() -> None:
+    from alphamind.config.models import DigestConfig
+
+    data = load_yaml(CONFIG_DIR / "digest.yaml")
+    config = DigestConfig.model_validate(data)
+
+    with pytest.raises(ValidationError):
+        config.__setattr__("regime_change", config.regime_change)
+    with pytest.raises(ValidationError):
+        config.anti_pattern_spike.__setattr__("baseline_window_weeks", 99)
+    with pytest.raises(ValidationError):
+        config.regime_change.__setattr__("enabled", False)
+    with pytest.raises(ValidationError):
+        config.sector_underperform.__setattr__("median_offset_sigma", 99.0)
+    with pytest.raises(ValidationError):
+        config.citation_chain_shift.__setattr__("delta_pp_threshold", 99.0)
+    with pytest.raises(ValidationError):
+        config.source_signal_survival_drop.__setattr__("delta_pp_threshold", 99.0)
+    with pytest.raises(ValidationError):
+        config.validation_window_end.__setattr__("days_before_due", 99)
+    with pytest.raises(ValidationError):
+        config.validation_superseded.__setattr__("enabled", False)

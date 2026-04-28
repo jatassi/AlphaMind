@@ -18,6 +18,16 @@ from alphamind.config.models.data_sources import (
     ProviderConfig,
     RetryShapeConfig,
 )
+from alphamind.config.models.digest import (
+    AntiPatternSpike,
+    CitationChainShift,
+    DigestConfig,
+    RegimeChange,
+    SectorUnderperform,
+    SourceSignalSurvivalDrop,
+    ValidationSuperseded,
+    ValidationWindowEnd,
+)
 from alphamind.config.models.guardrails import (
     BreachResponse,
     EmergencyInvocation,
@@ -54,17 +64,20 @@ def _load_env_example_keys() -> frozenset[str]:
 _ENV_EXAMPLE_KEYS: frozenset[str] = _load_env_example_keys()
 
 __all__ = [
+    "AntiPatternSpike",
     "AssetRole",
     "AssetsConfig",
     "BackoffStrategy",
     "Benchmark",
     "BreachResponse",
     "CategoryConfig",
+    "CitationChainShift",
     "CollectorEntry",
     "CollectorScheduleConfig",
     "CredibilityTier",
     "CriticalityTier",
     "DataSourcesConfig",
+    "DigestConfig",
     "DiscoverySource",
     "DiscoveryVendor",
     "EmergencyInvocation",
@@ -75,7 +88,12 @@ __all__ = [
     "OutletEntry",
     "ProgressiveTier",
     "ProviderConfig",
+    "RegimeChange",
     "RetryShapeConfig",
     "RuleEntry",
     "SchedulerConfig",
+    "SectorUnderperform",
+    "SourceSignalSurvivalDrop",
+    "ValidationSuperseded",
+    "ValidationWindowEnd",
 ]
