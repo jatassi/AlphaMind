@@ -11,6 +11,15 @@ from alphamind.config.models.data_sources import (
     ProviderConfig,
     RetryShapeConfig,
 )
+from alphamind.config.models.guardrails import (
+    BreachResponse,
+    EmergencyInvocation,
+    EnforcementTier,
+    EscalationZones,
+    GuardrailsConfig,
+    ProgressiveTier,
+    RuleEntry,
+)
 from alphamind.config.models.news_outlets import CredibilityTier, NewsOutletsConfig, OutletEntry
 
 # ---------------------------------------------------------------------------
@@ -38,14 +47,21 @@ _ENV_EXAMPLE_KEYS: frozenset[str] = _load_env_example_keys()
 
 __all__ = [
     "BackoffStrategy",
+    "BreachResponse",
     "CategoryConfig",
     "CollectorEntry",
     "CollectorScheduleConfig",
     "CredibilityTier",
     "CriticalityTier",
     "DataSourcesConfig",
+    "EmergencyInvocation",
+    "EnforcementTier",
+    "EscalationZones",
+    "GuardrailsConfig",
     "NewsOutletsConfig",
     "OutletEntry",
+    "ProgressiveTier",
     "ProviderConfig",
     "RetryShapeConfig",
+    "RuleEntry",
 ]

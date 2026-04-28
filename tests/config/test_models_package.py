@@ -4,16 +4,23 @@ import alphamind.config.models as models_mod
 
 _EXPECTED_PUBLIC_NAMES = {
     "BackoffStrategy",
+    "BreachResponse",
     "CategoryConfig",
     "CollectorEntry",
     "CollectorScheduleConfig",
     "CredibilityTier",
     "CriticalityTier",
     "DataSourcesConfig",
+    "EmergencyInvocation",
+    "EnforcementTier",
+    "EscalationZones",
+    "GuardrailsConfig",
     "NewsOutletsConfig",
     "OutletEntry",
+    "ProgressiveTier",
     "ProviderConfig",
     "RetryShapeConfig",
+    "RuleEntry",
 }
 
 

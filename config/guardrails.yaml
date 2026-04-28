@@ -1,0 +1,145 @@
+# Guardrail rule registry — metadata only.
+#
+# Rule values live in profiles/<profile>.yaml; per-regime multipliers live in
+# regimes/<regime>.yaml. Both reference the rule IDs declared here.
+#
+# Per-rule enforcement tiers and `monitor_between_invocations` mirror the
+# per-rule enforcement summary in docs/design/06-risk-guardrails/rules-and-limits.md.
+# Breach-response classification (`immediate_engine` vs. `deferred_to_pm`) follows
+# docs/design/06-risk-guardrails/breach-behavior.md § Per-rule classification.
+# Escalation zones default to {70, 85, 95}; the two drawdown rules carry tighter
+# bands per the per-rule overrides in breach-behavior.md § Escalation model.
+
+rules:
+  # --- Position size ----------------------------------------------------------
+  - id: position_max_size_pct
+    enforcement_tiers: [T1, T2, T3]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: deferred_to_pm
+    monitor_between_invocations: false
+
+  - id: position_max_loss_equity_pct
+    enforcement_tiers: [T3]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: immediate_engine
+    monitor_between_invocations: true
+
+  - id: position_max_loss_options_pct
+    enforcement_tiers: [T3]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: immediate_engine
+    monitor_between_invocations: true
+
+  # --- Concentration & exposure ----------------------------------------------
+  - id: sector_concentration_pct
+    enforcement_tiers: [T1, T2, T3]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: deferred_to_pm
+    monitor_between_invocations: true
+
+  - id: net_long_pct
+    enforcement_tiers: [T1, T2, T3]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: deferred_to_pm
+    monitor_between_invocations: true
+
+  - id: net_short_pct
+    enforcement_tiers: [T1, T2, T3]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: deferred_to_pm
+    monitor_between_invocations: true
+
+  - id: gross_exposure_pct
+    enforcement_tiers: [T1, T2, T3]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: deferred_to_pm
+    monitor_between_invocations: true
+
+  # --- Drawdown ---------------------------------------------------------------
+  - id: daily_drawdown_pct
+    enforcement_tiers: [T2, T3]
+    escalation_zones: { warning: 60, critical: 80, hard_block: 90 }
+    breach_response: immediate_engine
+    monitor_between_invocations: true
+
+  - id: cumulative_drawdown_pct
+    enforcement_tiers: [T2, T3]
+    escalation_zones: { warning: 50, critical: 70, hard_block: 85 }
+    breach_response: immediate_engine
+    monitor_between_invocations: true
+    progressive_tiers:
+      - { trigger_pct: 8,  max_position_size_pct: 3, max_gross_pct: 80 }
+      - { trigger_pct: 10, max_position_size_pct: 2, max_gross_pct: 60 }
+      - { trigger_pct: 12, full_halt: true }
+
+  # --- Diversification quality -----------------------------------------------
+  - id: correlation_max
+    enforcement_tiers: [T1, T2]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: deferred_to_pm
+    monitor_between_invocations: false
+
+  - id: thesis_dependency_flag_pct
+    enforcement_tiers: [T1, T2]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: deferred_to_pm
+    monitor_between_invocations: false
+
+  # --- Options greeks --------------------------------------------------------
+  - id: options_delta_pct
+    enforcement_tiers: [T1, T2, T3]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: deferred_to_pm
+    monitor_between_invocations: true
+
+  - id: portfolio_theta_pct_per_day
+    enforcement_tiers: [T1, T2, T3]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: deferred_to_pm
+    monitor_between_invocations: false
+
+  - id: portfolio_vega_pct_per_iv_point
+    enforcement_tiers: [T1, T2, T3]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: deferred_to_pm
+    monitor_between_invocations: false
+
+  # --- Short book ------------------------------------------------------------
+  - id: total_short_pct
+    enforcement_tiers: [T1, T2, T3]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: deferred_to_pm
+    monitor_between_invocations: true
+
+  - id: single_short_max_pct
+    enforcement_tiers: [T1, T2, T3]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: immediate_engine
+    monitor_between_invocations: true
+
+  - id: borrow_cost_budget_pct_per_day
+    enforcement_tiers: [T1, T2, T3]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: deferred_to_pm
+    monitor_between_invocations: false
+
+  # --- Capital sufficiency ---------------------------------------------------
+  - id: min_cash_reserve_pct
+    enforcement_tiers: [T2, T3]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: deferred_to_pm
+    monitor_between_invocations: false
+
+  - id: pending_order_capital_pct
+    enforcement_tiers: [T3]
+    escalation_zones: { warning: 70, critical: 85, hard_block: 95 }
+    breach_response: deferred_to_pm
+    monitor_between_invocations: false
+
+emergency_invocation:
+  cooldown_minutes: 30
+  triggers:
+    - regime_jump
+    - multi_rule_breach_count_min: 3
+    - daily_drawdown_velocity_pct_in_minutes: { pct: 60, minutes: 30 }
+    - margin_call
