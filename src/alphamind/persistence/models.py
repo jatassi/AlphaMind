@@ -679,7 +679,7 @@ class CollectionRuns(Base):
 # upstream of the schema, so the schema imports the tuple it must accept.
 
 _CALIBRATION_STATES = CALIBRATION_STATE_VALUES
-_BASELINE_KINDS = ("volume", "atr", "spread", "sentiment")
+_BASELINE_KINDS = ("volume", "atr", "spread", "sentiment", "atm_iv")
 _EVENT_KINDS = ("gap", "extended_hours")
 _REGIME_LABELS = (
     "low_vol_compression",
