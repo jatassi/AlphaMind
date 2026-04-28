@@ -107,6 +107,7 @@ def _make_outputs(
         total_blocks=4,
         total_anomalies=1,
         bootstrap_block_count=1,
+        all_blocks=(),
     )
 
 
