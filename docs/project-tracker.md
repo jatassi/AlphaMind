@@ -26,7 +26,7 @@ Cross-cutting policies and reference specs that constrain implementation but are
 ### Data layer
 
 - [x] **Collector** — _done_ — [design](design/01-data-layer/collector/), [stories](implementation/01-data-layer/collector/)
-- [ ] **Portfolio state** — _requirements pending_ — [design](design/01-data-layer/internal/portfolio-state.md)
+- [ ] **Portfolio state** — _stories drafted_ — [design](design/01-data-layer/internal/portfolio-state.md), [stories](implementation/01-data-layer/portfolio-state/)
 
 ### Distillation layer
 
