@@ -1,0 +1,110 @@
+# Per-agent LLM configuration — single source of truth for the nine pipeline agents.
+#
+# Schema lives in src/alphamind/config/models/agents.py (story 03i). Tool names
+# follow the registered-tool naming convention from the analysis-layer specs.
+# Latency and token budgets reflect design-doc defaults
+# (docs/design/cost-and-rate-limit-modeling.md § Per-invocation token aggregate
+#  and § Latency budgets); per-profile overrides live in profiles/<profile>.yaml.
+#
+# Model assignments follow docs/design/cost-and-rate-limit-modeling.md
+# § Per-invocation agent surface — Opus for the decision layer, Sonnet for the
+# analysis layer. Haiku is unused but available for cap-pressure switchovers.
+
+agents:
+
+  # --- Decision layer (Opus) -------------------------------------------------
+
+  analyst:
+    model: claude-opus-4-7
+    prompt: prompts/decision/analyst.md
+    latency_budget_seconds: 180
+    context_token_budget: 8000
+    output_token_budget: 2000
+    tools: [retrieve_brief, validate_guardrail]
+
+  strategist:
+    model: claude-opus-4-7
+    prompt: prompts/decision/strategist.md
+    latency_budget_seconds: 180
+    context_token_budget: 8000
+    output_token_budget: 2000
+    tools: [retrieve_brief, validate_guardrail]
+
+  portfolio_manager:
+    model: claude-opus-4-7
+    prompt: prompts/decision/pm.md
+    latency_budget_seconds: 240
+    context_token_budget: 12000
+    output_token_budget: 3000
+    tools: [retrieve_brief, validate_guardrail, get_thesis_components, submit_envelope]
+
+  # --- Analysis layer (Sonnet) ----------------------------------------------
+
+  tech_semis_researcher:
+    model: claude-sonnet-4-6
+    prompt: prompts/analysis/tech_semis_researcher.md
+    latency_budget_seconds: 120
+    context_token_budget: 8000
+    output_token_budget: 2000
+    tools: []
+
+  financials_researcher:
+    model: claude-sonnet-4-6
+    prompt: prompts/analysis/financials_researcher.md
+    latency_budget_seconds: 120
+    context_token_budget: 8000
+    output_token_budget: 2000
+    tools: []
+
+  energy_researcher:
+    model: claude-sonnet-4-6
+    prompt: prompts/analysis/energy_researcher.md
+    latency_budget_seconds: 120
+    context_token_budget: 8000
+    output_token_budget: 2000
+    tools: []
+
+  qualitative_researcher:
+    model: claude-sonnet-4-6
+    prompt: prompts/analysis/qualitative_researcher.md
+    latency_budget_seconds: 180
+    context_token_budget: 8000
+    output_token_budget: 1000
+    tools: []
+
+  adaptive_researcher:
+    model: claude-sonnet-4-6
+    prompt: prompts/analysis/adaptive_researcher.md
+    latency_budget_seconds: 300
+    context_token_budget: 4000
+    output_token_budget: 1500
+    tools:
+      - news_search
+      - ticker_deep_pull
+      - social_sentiment
+      - prediction_markets
+      - options_flow
+      - sec_lending
+      - short_interest
+      - earnings_calendar
+      - macro_data
+    cumulative_tool_call_limit: 25
+    cumulative_tool_token_budget: 4000
+    tool_caps:
+      news_search: 10
+      ticker_deep_pull: 5
+      social_sentiment: 5
+      prediction_markets: 5
+      options_flow: 5
+      sec_lending: 3
+      short_interest: 3
+      earnings_calendar: 5
+      macro_data: 5
+
+  synthesizer:
+    model: claude-sonnet-4-6
+    prompt: prompts/analysis/synthesizer.md
+    latency_budget_seconds: 180
+    context_token_budget: 12000
+    output_token_budget: 2000
+    tools: []

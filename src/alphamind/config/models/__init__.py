@@ -2,6 +2,13 @@
 
 from pathlib import Path
 
+from alphamind.config.models.agents import (
+    AdaptiveAgentConfig,
+    AgentName,
+    AgentsConfig,
+    AllowedModel,
+    BaseAgentConfig,
+)
 from alphamind.config.models.assets import (
     AssetRole,
     AssetsConfig,
@@ -54,9 +61,14 @@ def _load_env_example_keys() -> frozenset[str]:
 _ENV_EXAMPLE_KEYS: frozenset[str] = _load_env_example_keys()
 
 __all__ = [
+    "AdaptiveAgentConfig",
+    "AgentName",
+    "AgentsConfig",
+    "AllowedModel",
     "AssetRole",
     "AssetsConfig",
     "BackoffStrategy",
+    "BaseAgentConfig",
     "Benchmark",
     "BreachResponse",
     "CategoryConfig",

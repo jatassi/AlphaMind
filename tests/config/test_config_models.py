@@ -549,3 +549,213 @@ def test_guardrails_models_are_frozen() -> None:
 
     with pytest.raises(ValidationError):
         config.emergency_invocation.__setattr__("cooldown_minutes", 0)
+
+
+# ---------------------------------------------------------------------------
+# agents.yaml (story 03i)
+# ---------------------------------------------------------------------------
+
+
+CANONICAL_AGENT_NAMES = {
+    "analyst",
+    "strategist",
+    "portfolio_manager",
+    "tech_semis_researcher",
+    "financials_researcher",
+    "energy_researcher",
+    "qualitative_researcher",
+    "adaptive_researcher",
+    "synthesizer",
+}
+
+
+def _valid_base_agent(
+    *,
+    model: str = "claude-opus-4-7",
+    prompt: str = "prompts/decision/analyst.md",
+    tools: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "model": model,
+        "prompt": prompt,
+        "latency_budget_seconds": 180,
+        "context_token_budget": 8000,
+        "output_token_budget": 2000,
+        "tools": tools if tools is not None else [],
+    }
+
+
+def _valid_adaptive_agent(
+    *,
+    prompt: str = "prompts/analysis/adaptive_researcher.md",
+) -> dict[str, object]:
+    return {
+        "model": "claude-sonnet-4-6",
+        "prompt": prompt,
+        "latency_budget_seconds": 300,
+        "context_token_budget": 8000,
+        "output_token_budget": 2000,
+        "tools": [],
+        "cumulative_tool_call_limit": 25,
+        "cumulative_tool_token_budget": 4000,
+        "tool_caps": {"news_search": 10},
+    }
+
+
+def _valid_agents_raw() -> dict[str, object]:
+    """Build a minimal raw payload that includes one entry per canonical agent name."""
+    decision_prompts = {
+        "analyst": "prompts/decision/analyst.md",
+        "strategist": "prompts/decision/strategist.md",
+        "portfolio_manager": "prompts/decision/pm.md",
+    }
+    sonnet_prompts = {
+        "tech_semis_researcher": "prompts/analysis/tech_semis_researcher.md",
+        "financials_researcher": "prompts/analysis/financials_researcher.md",
+        "energy_researcher": "prompts/analysis/energy_researcher.md",
+        "qualitative_researcher": "prompts/analysis/qualitative_researcher.md",
+        "synthesizer": "prompts/analysis/synthesizer.md",
+    }
+    agents: dict[str, object] = {}
+    for name, prompt in decision_prompts.items():
+        agents[name] = _valid_base_agent(model="claude-opus-4-7", prompt=prompt)
+    for name, prompt in sonnet_prompts.items():
+        agents[name] = _valid_base_agent(model="claude-sonnet-4-6", prompt=prompt)
+    agents["adaptive_researcher"] = _valid_adaptive_agent()
+    return {"agents": agents}
+
+
+def test_agents_yaml_parses_cleanly_and_exposes_all_nine_agents() -> None:
+    from alphamind.config.models import AgentsConfig
+
+    data = load_yaml(CONFIG_DIR / "agents.yaml")
+    config = AgentsConfig.model_validate(data)
+    assert {agent.value for agent in config.agents} == CANONICAL_AGENT_NAMES
+
+
+def test_agents_rejects_yaml_missing_an_agent() -> None:
+    from alphamind.config.models import AgentsConfig
+
+    raw = _valid_agents_raw()
+    agents_map = raw["agents"]
+    assert isinstance(agents_map, dict)
+    del agents_map["synthesizer"]
+    with pytest.raises(ValidationError, match="synthesizer"):
+        AgentsConfig.model_validate(raw)
+
+
+def test_agents_rejects_yaml_with_extra_agent_name() -> None:
+    from alphamind.config.models import AgentsConfig
+
+    raw = _valid_agents_raw()
+    agents_map = raw["agents"]
+    assert isinstance(agents_map, dict)
+    agents_map["portfolio_analyst"] = _valid_base_agent()
+    with pytest.raises(ValidationError):
+        AgentsConfig.model_validate(raw)
+
+
+def test_agents_rejects_nonexistent_prompt_path() -> None:
+    from alphamind.config.models import AgentsConfig
+
+    raw = _valid_agents_raw()
+    agents_map = raw["agents"]
+    assert isinstance(agents_map, dict)
+    analyst_entry = agents_map["analyst"]
+    assert isinstance(analyst_entry, dict)
+    analyst_entry["prompt"] = "prompts/decision/does_not_exist.md"
+    with pytest.raises(ValidationError, match="does_not_exist"):
+        AgentsConfig.model_validate(raw)
+
+
+def test_agents_rejects_unknown_model() -> None:
+    from alphamind.config.models import AgentsConfig
+
+    raw = _valid_agents_raw()
+    agents_map = raw["agents"]
+    assert isinstance(agents_map, dict)
+    analyst_entry = agents_map["analyst"]
+    assert isinstance(analyst_entry, dict)
+    analyst_entry["model"] = "claude-haiku-3-5"
+    with pytest.raises(ValidationError):
+        AgentsConfig.model_validate(raw)
+
+
+def test_agents_rejects_analyst_carrying_adaptive_only_fields() -> None:
+    from alphamind.config.models import AgentsConfig
+
+    raw = _valid_agents_raw()
+    agents_map = raw["agents"]
+    assert isinstance(agents_map, dict)
+    analyst_entry = agents_map["analyst"]
+    assert isinstance(analyst_entry, dict)
+    analyst_entry["cumulative_tool_call_limit"] = 25
+    analyst_entry["cumulative_tool_token_budget"] = 4000
+    analyst_entry["tool_caps"] = {"news_search": 10}
+    with pytest.raises(ValidationError, match="must not declare"):
+        AgentsConfig.model_validate(raw)
+
+
+def test_agents_rejects_adaptive_missing_cumulative_tool_call_limit() -> None:
+    from alphamind.config.models import AgentsConfig
+
+    raw = _valid_agents_raw()
+    agents_map = raw["agents"]
+    assert isinstance(agents_map, dict)
+    adaptive_entry = agents_map["adaptive_researcher"]
+    assert isinstance(adaptive_entry, dict)
+    del adaptive_entry["cumulative_tool_call_limit"]
+    with pytest.raises(ValidationError, match="must declare"):
+        AgentsConfig.model_validate(raw)
+
+
+def test_agents_rejects_tool_name_with_capital_letter() -> None:
+    from alphamind.config.models import AgentsConfig
+
+    raw = _valid_agents_raw()
+    agents_map = raw["agents"]
+    assert isinstance(agents_map, dict)
+    analyst_entry = agents_map["analyst"]
+    assert isinstance(analyst_entry, dict)
+    analyst_entry["tools"] = ["Retrieve_Brief"]
+    with pytest.raises(ValidationError, match="Retrieve_Brief"):
+        AgentsConfig.model_validate(raw)
+
+
+def test_agents_rejects_tool_caps_key_with_capital_letter() -> None:
+    from alphamind.config.models import AgentsConfig
+
+    raw = _valid_agents_raw()
+    agents_map = raw["agents"]
+    assert isinstance(agents_map, dict)
+    adaptive_entry = agents_map["adaptive_researcher"]
+    assert isinstance(adaptive_entry, dict)
+    adaptive_entry["tool_caps"] = {"News_Search": 5}
+    with pytest.raises(ValidationError, match="News_Search"):
+        AgentsConfig.model_validate(raw)
+
+
+def test_agents_yaml_adaptive_researcher_carries_three_extra_fields() -> None:
+    from alphamind.config.models import AdaptiveAgentConfig, AgentName, AgentsConfig
+
+    data = load_yaml(CONFIG_DIR / "agents.yaml")
+    config = AgentsConfig.model_validate(data)
+    adaptive = config.agents[AgentName.adaptive_researcher]
+    assert isinstance(adaptive, AdaptiveAgentConfig)
+    assert adaptive.cumulative_tool_call_limit >= 1
+    assert adaptive.cumulative_tool_token_budget >= 1
+    assert adaptive.tool_caps  # non-empty
+
+
+def test_agents_models_are_frozen() -> None:
+    from alphamind.config.models import AgentName, AgentsConfig
+
+    data = load_yaml(CONFIG_DIR / "agents.yaml")
+    config = AgentsConfig.model_validate(data)
+
+    with pytest.raises(ValidationError):
+        config.__setattr__("agents", {})
+
+    entry = config.agents[AgentName.analyst]
+    with pytest.raises(ValidationError):
+        entry.__setattr__("model", "claude-sonnet-4-6")
