@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: e09369de10b16cc91f3af7b5405dcb7e2efa845d
 ---
 
 # 11b — Correlation/regime brief assembly (CR brief)
