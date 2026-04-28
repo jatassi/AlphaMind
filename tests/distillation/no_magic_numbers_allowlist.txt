@@ -14,3 +14,4 @@
 # erosion. See tests/distillation/README.md for full guidance.
 
 src/alphamind/distillation/normalization.py:209:14:Wilder ATR conventional period (quantitative.md § 1c "14-period"); not the regime_classification.regime_low_vol_vix_max threshold despite numeric coincidence — period is a math constant of the Wilder algorithm, not a tunable threshold.
+src/alphamind/distillation/q6_macro.py:175:1.5:Deflation-risk breakeven cutoff per external.md § 2 quant 6c (sustained < 1.5% over 30 days); definitional rather than tunable per story 08c Notes (not Class A — tightening risks producing labels analysts and PM aren't trained to read). Numeric coincidence with anomaly_detection.price_move_atr_multiple — different unit (pp vs ATR multiple) and different semantic.
