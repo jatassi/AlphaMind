@@ -1,0 +1,69 @@
+# Distillation-layer thresholds and persistence windows.
+#
+# Universe-wide — does not compose with profile, regime, mode, or overlay.
+# Per-threshold rationale: docs/design/02-distillation-layer/threshold-calibration.md
+# § Static configuration thresholds. Validation invariants enforced at load:
+# docs/design/02-distillation-layer/threshold-calibration.md § Validation invariants.
+
+anomaly_detection:
+  volume_anomaly_sigma:                 2.5
+  price_move_atr_multiple:              1.5
+  options_low_oi_volume_multiple:       5.0
+  block_trade_min_shares:               10000
+  block_trade_min_notional_usd:         500000
+  dark_pool_one_sided_window_minutes:   60
+  earnings_revision_cluster_count:      3
+  earnings_revision_cluster_days:       5
+  macro_surprise_percentile:            90
+  funding_stress_component_alert_count: 2
+  funding_stress_component_percentile:  90
+  market_liquidity_alert_percentile:    10
+  news_price_divergence_window_hours:   12
+
+regime_classification:
+  regime_low_vol_vix_max:                        14.0
+  regime_normal_vix_min:                         14.0
+  regime_normal_vix_max:                         22.0
+  regime_elevated_vix_min:                       22.0
+  regime_elevated_vix_max:                       35.0
+  regime_crisis_vix_min:                         35.0
+  regime_term_structure_backwardation_threshold: 0.0
+  regime_vvix_high_percentile:                   80
+  regime_vvix_low_percentile:                    30
+
+regime_transition:
+  regime_transition_confirmed_invocations:   2
+  regime_transition_indicator_agreement_min: 3
+  regime_skip_emergency_trigger:             true
+
+lead_lag:
+  lead_lag_funding_to_credit_max_days:          3
+  lead_lag_credit_to_equity_max_days:           3
+  lead_lag_semis_to_tech_max_days:              2
+  lead_lag_financials_to_market_max_days:       1
+  lead_lag_commodity_to_energy_equity_max_days: 1
+  lead_lag_overdue_lead_sigma:                  1.5
+
+narrative_lag:
+  narrative_lag_correlation_shift_sigma: 1.5
+  narrative_lag_media_silence_hours:     12
+
+persistence_windows:
+  volume_baseline_days:             20
+  atr_baseline_days:                14
+  spread_baseline_days:             20
+  correlation_short_days:           20
+  correlation_long_days:            60
+  sentiment_baseline_days:          60
+  sentiment_min_observations:       30
+  gap_fill_baseline_days:           252
+  gap_fill_min_events:              30
+  extended_hours_confirmation_days: 90
+  extended_hours_min_events:        20
+  prediction_market_history_days:   30
+  funding_stress_baseline_days:     60
+  market_liquidity_baseline_days:   60
+
+prediction_market:
+  prediction_market_delta_pp_threshold:           5.0
+  prediction_market_low_liquidity_volume_min_usd: 10000
