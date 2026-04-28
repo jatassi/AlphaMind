@@ -1,0 +1,19 @@
+# Stress overlay.
+#
+# Activates when the distillation layer reports that the funding-stress
+# composite or the market-wide liquidity score breach their alert thresholds.
+# Tightens exposure-related limits by an additional 15% (multiplier 0.85) for
+# the alert duration. Catches stress visible in credit spreads, funding, or
+# liquidity before it manifests as a VIX-level regime change.
+#
+# Authoritative spec: docs/design/06-risk-guardrails/regime-adaptation.md
+#                     § Distillation layer anomaly alerts
+
+activation:
+  triggers: [funding_stress_composite, market_liquidity_score]
+
+multipliers:
+  sector_concentration_pct: 0.85
+  net_long_pct:             0.85
+  net_short_pct:            0.85
+  gross_exposure_pct:       0.85
