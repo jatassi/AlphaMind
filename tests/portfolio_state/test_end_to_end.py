@@ -18,7 +18,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Coroutine
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -624,110 +624,110 @@ class TestSectionFEdgeCases:
 class _RaisingRepositoryReadError:
     """Raises RepositoryReadError on every method call."""
 
-    async def get_open_positions(self) -> None:
+    async def get_open_positions(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_pending_positions(self) -> None:
+    async def get_pending_positions(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_drawdown_state(self) -> None:
+    async def get_drawdown_state(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_portfolio_pnl_inputs(self) -> None:
+    async def get_portfolio_pnl_inputs(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_active_theses(self) -> None:
+    async def get_active_theses(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_recent_thesis_resolutions(self, *, lookback_trading_days: int) -> None:
+    async def get_recent_thesis_resolutions(self, *, lookback_trading_days: int) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_cash_ledger(self) -> None:
+    async def get_cash_ledger(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_pending_orders(self) -> None:
+    async def get_pending_orders(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_risk_budget_consumption(self) -> None:
+    async def get_risk_budget_consumption(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_active_risk_parameters(self) -> None:
+    async def get_active_risk_parameters(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_intra_invocation_changelog(self, *, invocation_id: str) -> None:
+    async def get_intra_invocation_changelog(self, *, invocation_id: str) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_recent_pm_decision_log(self, *, sliding_window_invocations: int) -> None:
+    async def get_recent_pm_decision_log(self, *, sliding_window_invocations: int) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_position_modification_trail(self, *, position_ids: tuple[str, ...]) -> None:
+    async def get_position_modification_trail(self, *, position_ids: tuple[str, ...]) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_thesis_quality_aggregates(self) -> None:
+    async def get_thesis_quality_aggregates(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_brackets_for_positions(self, *, position_ids: tuple[str, ...]) -> None:
+    async def get_brackets_for_positions(self, *, position_ids: tuple[str, ...]) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_current_invocation_metadata(self) -> None:
+    async def get_current_invocation_metadata(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
-    async def get_prior_invocation_context(self) -> None:
+    async def get_prior_invocation_context(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
 
 class _RaisingRepositoryConsistencyError:
     """Raises RepositoryConsistencyError on every method call."""
 
-    async def get_open_positions(self) -> None:
+    async def get_open_positions(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_pending_positions(self) -> None:
+    async def get_pending_positions(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_drawdown_state(self) -> None:
+    async def get_drawdown_state(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_portfolio_pnl_inputs(self) -> None:
+    async def get_portfolio_pnl_inputs(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_active_theses(self) -> None:
+    async def get_active_theses(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_recent_thesis_resolutions(self, *, lookback_trading_days: int) -> None:
+    async def get_recent_thesis_resolutions(self, *, lookback_trading_days: int) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_cash_ledger(self) -> None:
+    async def get_cash_ledger(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_pending_orders(self) -> None:
+    async def get_pending_orders(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_risk_budget_consumption(self) -> None:
+    async def get_risk_budget_consumption(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_active_risk_parameters(self) -> None:
+    async def get_active_risk_parameters(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_intra_invocation_changelog(self, *, invocation_id: str) -> None:
+    async def get_intra_invocation_changelog(self, *, invocation_id: str) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_recent_pm_decision_log(self, *, sliding_window_invocations: int) -> None:
+    async def get_recent_pm_decision_log(self, *, sliding_window_invocations: int) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_position_modification_trail(self, *, position_ids: tuple[str, ...]) -> None:
+    async def get_position_modification_trail(self, *, position_ids: tuple[str, ...]) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_thesis_quality_aggregates(self) -> None:
+    async def get_thesis_quality_aggregates(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_brackets_for_positions(self, *, position_ids: tuple[str, ...]) -> None:
+    async def get_brackets_for_positions(self, *, position_ids: tuple[str, ...]) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_current_invocation_metadata(self) -> None:
+    async def get_current_invocation_metadata(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
-    async def get_prior_invocation_context(self) -> None:
+    async def get_prior_invocation_context(self) -> NoReturn:
         raise RepositoryConsistencyError("simulated consistency violation")
 
 
