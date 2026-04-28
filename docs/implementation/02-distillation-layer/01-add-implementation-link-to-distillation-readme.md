@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 6fae525a0e12f083d443de2ca3bb613a87a5ba39
 ---
 
 # 01 — Add implementation link to distillation README
