@@ -117,6 +117,11 @@ from alphamind.config.resolver import (
     compose_config,
 )
 from alphamind.config.snapshot import SnapshotResult, persist_snapshot
+from alphamind.config.tools import REGISTERED_TOOLS
+from alphamind.config.validation.cross_reference import (
+    CrossReferenceError,
+    validate_cross_references,
+)
 from alphamind.config.validation.semantic import (
     SemanticInvariantError,
     enumerate_compositions,
@@ -147,6 +152,7 @@ def _load_env_example_keys() -> frozenset[str]:
 _ENV_EXAMPLE_KEYS: frozenset[str] = _load_env_example_keys()
 
 __all__ = [
+    "REGISTERED_TOOLS",
     "AdaptiveAgentConfig",
     "AgentName",
     "AgentsConfig",
@@ -170,6 +176,7 @@ __all__ = [
     "CommandType",
     "CredibilityTier",
     "CriticalityTier",
+    "CrossReferenceError",
     "DataSourcesConfig",
     "DigestConfig",
     "DiscoverySource",
@@ -243,5 +250,6 @@ __all__ = [
     "compose_config",
     "enumerate_compositions",
     "persist_snapshot",
+    "validate_cross_references",
     "validate_semantic_invariants",
 ]

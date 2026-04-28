@@ -26,6 +26,7 @@ _EXPECTED_PUBLIC_NAMES = {
     "CommandType",
     "CredibilityTier",
     "CriticalityTier",
+    "CrossReferenceError",
     "DataSourcesConfig",
     "DigestConfig",
     "DiscoverySource",
@@ -64,6 +65,7 @@ _EXPECTED_PUBLIC_NAMES = {
     "ProgressiveTier",
     "ProviderConfig",
     "QualitativeResearcherSection",
+    "REGISTERED_TOOLS",
     "Regime",
     "RegimeChange",
     "RegimeConfig",
@@ -99,6 +101,7 @@ _EXPECTED_PUBLIC_NAMES = {
     "compose_config",
     "enumerate_compositions",
     "persist_snapshot",
+    "validate_cross_references",
     "validate_semantic_invariants",
 }
 

@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import Any, cast
 
 import yaml
+from dotenv import dotenv_values
 
 from alphamind.config.models.main import Profile
 from alphamind.config.models.modes import Mode, ModeConfig
@@ -121,3 +122,19 @@ def load_run_types(config_dir: Path) -> Mapping[RunType, RunTypeConfig]:
         for member in RunType
     }
     return MappingProxyType(bundle)
+
+
+def read_env_keys(env_path: Path) -> frozenset[str]:
+    """Return the set of environment-variable keys declared in ``env_path``.
+
+    Reads via ``dotenv.dotenv_values`` so comments, blank lines, and quoted
+    values are handled identically to runtime ``.env`` consumption. Values are
+    discarded — cross-reference validation cares about key presence, not
+    contents (per story 06a's ``env_keys`` parameter contract).
+
+    Raises ``FileNotFoundError`` if ``env_path`` does not exist so the loader
+    fails closed at invocation start, matching the bundle loaders above.
+    """
+    if not env_path.exists():
+        raise FileNotFoundError(f"Required .env file not found: {env_path}")
+    return frozenset(key for key in dotenv_values(env_path) if key)
