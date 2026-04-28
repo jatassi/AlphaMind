@@ -884,7 +884,7 @@ def test_two_pass_weight_enrichment() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_stale_price_does_not_abort_assembly(caplog) -> None:  # type: ignore[no-untyped-def]
+def test_stale_price_does_not_abort_assembly(caplog: pytest.LogCaptureFixture) -> None:
     """Provider returns is_stale=True; position has MV=0.0 but snapshot constructs."""
     pos = _make_open_equity_position()
     fixture = _make_fixture(
@@ -915,7 +915,7 @@ def test_stale_price_does_not_abort_assembly(caplog) -> None:  # type: ignore[no
 # ---------------------------------------------------------------------------
 
 
-def test_missing_ticker_from_get_quotes_treated_as_stale(caplog) -> None:  # type: ignore[no-untyped-def]
+def test_missing_ticker_from_get_quotes_treated_as_stale(caplog: pytest.LogCaptureFixture) -> None:
     """Ticker absent from get_quotes result → warning logged, MV=0.0, snapshot constructs."""
     pos = _make_open_equity_position(ticker="UNKNOWN")
     fixture = _make_fixture(
