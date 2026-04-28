@@ -115,7 +115,7 @@ max-statements = 50
 python_version = "3.13"
 strict = true
 warn_unused_ignores = true
-files = ["scripts"]
+files = ["src", "tests", "scripts"]
 
 [[tool.mypy.overrides]]
 module = [
