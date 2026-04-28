@@ -268,9 +268,7 @@ class TestNewsPriceDivergencePricedIn:
         assert per_ticker["direction"] == "hidden_problem"
         assert per_ticker["dominant_label"] == "positive"
 
-    def test_dominant_negative_news_with_flat_price_emits_priced_in(
-        self, session: Session
-    ) -> None:
+    def test_dominant_negative_news_with_flat_price_emits_priced_in(self, session: Session) -> None:
         """A halt-resume open or illiquid name producing exact-zero price change.
 
         Per the docstring, the boundary of "flat or rising" includes
