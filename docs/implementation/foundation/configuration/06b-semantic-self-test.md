@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-27
+commit_id: bac9b7a
 ---
 
 # 06b — Semantic self-test invariants
