@@ -14,3 +14,5 @@
 # erosion. See tests/distillation/README.md for full guidance.
 
 src/alphamind/distillation/normalization.py:209:14:Wilder ATR conventional period (quantitative.md § 1c "14-period"); not the regime_classification.regime_low_vol_vix_max threshold despite numeric coincidence — period is a math constant of the Wilder algorithm, not a tunable threshold.
+src/alphamind/distillation/q7_cross_asset.py:610:20:Conventional 20-day EMA window from the standard TA 20/50/200 trio (external.md § quant 7c "Percentage of universe names above 20/50/200-day EMA"); not the persistence_windows.volume_baseline_days threshold despite numeric coincidence — the 20/50/200 EMA trio is a structural TA convention, not a tunable threshold.
+src/alphamind/distillation/q7_cross_asset.py:627:2.0:EMA-recurrence math constant in the standard ``alpha = 2/(N+1)`` formula; not the anomaly_detection.funding_stress_component_alert_count threshold despite numeric coincidence — the literal 2.0 is part of the EMA mathematical definition, not a tunable threshold.

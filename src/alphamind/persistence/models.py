@@ -680,7 +680,7 @@ class CollectionRuns(Base):
 
 _CALIBRATION_STATES = CALIBRATION_STATE_VALUES
 _BASELINE_KINDS = ("volume", "atr", "spread", "sentiment")
-_EVENT_KINDS = ("gap", "extended_hours")
+_EVENT_KINDS = ("gap", "extended_hours", "correlation_divergence")
 _REGIME_LABELS = (
     "low_vol_compression",
     "vol_expansion",
