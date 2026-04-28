@@ -549,3 +549,116 @@ def test_guardrails_models_are_frozen() -> None:
 
     with pytest.raises(ValidationError):
         config.emergency_invocation.__setattr__("cooldown_minutes", 0)
+
+
+# ---------------------------------------------------------------------------
+# execution.yaml (story 03e)
+# ---------------------------------------------------------------------------
+
+
+def _valid_execution_raw() -> dict[str, object]:
+    return {
+        "greeks_refresh": {
+            "scheduled_interval_minutes": 15,
+            "move_trigger_pct": 2.0,
+        },
+        "conservative_delta_buffer_pct": 10,
+        "submission_retry_window_seconds": 30,
+        "paper_harness": {
+            "spread_buffer_pct": 10,
+            "impact_coefficients": {"market": 0.5, "limit": 0.25, "stop": 0.75},
+        },
+        "pl_target_margin_pct": 5,
+    }
+
+
+def test_execution_yaml_parses_and_exposes_scheduled_interval() -> None:
+    from alphamind.config.models import ExecutionConfig
+
+    data = load_yaml(CONFIG_DIR / "execution.yaml")
+    config = ExecutionConfig.model_validate(data)
+    assert config.greeks_refresh.scheduled_interval_minutes == 15
+
+
+def test_execution_rejects_missing_stop_in_impact_coefficients() -> None:
+    from alphamind.config.models import ExecutionConfig
+
+    raw = _valid_execution_raw()
+    raw["paper_harness"] = {
+        "spread_buffer_pct": 10,
+        "impact_coefficients": {"market": 0.5, "limit": 0.25},
+    }
+    with pytest.raises(ValidationError, match="missing"):
+        ExecutionConfig.model_validate(raw)
+
+
+def test_execution_rejects_unknown_order_type_in_impact_coefficients() -> None:
+    from alphamind.config.models import ExecutionConfig
+
+    raw = _valid_execution_raw()
+    raw["paper_harness"] = {
+        "spread_buffer_pct": 10,
+        "impact_coefficients": {
+            "market": 0.5,
+            "limit": 0.25,
+            "stop": 0.75,
+            "trailing_stop": 1.0,
+        },
+    }
+    with pytest.raises(ValidationError):
+        ExecutionConfig.model_validate(raw)
+
+
+def test_execution_rejects_zero_market_impact_coefficient() -> None:
+    from alphamind.config.models import ExecutionConfig
+
+    raw = _valid_execution_raw()
+    raw["paper_harness"] = {
+        "spread_buffer_pct": 10,
+        "impact_coefficients": {"market": 0, "limit": 0.25, "stop": 0.75},
+    }
+    with pytest.raises(ValidationError, match="market"):
+        ExecutionConfig.model_validate(raw)
+
+
+def test_execution_rejects_negative_conservative_delta_buffer() -> None:
+    from alphamind.config.models import ExecutionConfig
+
+    raw = _valid_execution_raw()
+    raw["conservative_delta_buffer_pct"] = -1
+    with pytest.raises(ValidationError):
+        ExecutionConfig.model_validate(raw)
+
+
+def test_execution_rejects_zero_move_trigger_pct() -> None:
+    from alphamind.config.models import ExecutionConfig
+
+    raw = _valid_execution_raw()
+    raw["greeks_refresh"] = {"scheduled_interval_minutes": 15, "move_trigger_pct": 0}
+    with pytest.raises(ValidationError):
+        ExecutionConfig.model_validate(raw)
+
+
+def test_execution_rejects_missing_pl_target_margin_pct() -> None:
+    from alphamind.config.models import ExecutionConfig
+
+    raw = _valid_execution_raw()
+    raw.pop("pl_target_margin_pct")
+    with pytest.raises(ValidationError):
+        ExecutionConfig.model_validate(raw)
+
+
+def test_execution_models_are_frozen() -> None:
+    from alphamind.config.models import ExecutionConfig
+
+    data = load_yaml(CONFIG_DIR / "execution.yaml")
+    config = ExecutionConfig.model_validate(data)
+
+    with pytest.raises(ValidationError):
+        config.__setattr__("conservative_delta_buffer_pct", 0)
+
+    with pytest.raises(ValidationError):
+        config.greeks_refresh.__setattr__("scheduled_interval_minutes", 1)
+
+    with pytest.raises(ValidationError):
+        config.paper_harness.__setattr__("spread_buffer_pct", 0)
