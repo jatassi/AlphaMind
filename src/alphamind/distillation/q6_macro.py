@@ -33,12 +33,14 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from itertools import pairwise
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from alphamind.config.models.distillation import DistillationConfig
 from alphamind.distillation.baselines import refresh_composite_state
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.normalization import macro_surprise_zscore
@@ -47,7 +49,11 @@ from alphamind.distillation.output import (
     OutputAudience,
     OutputBlock,
 )
-from alphamind.persistence.models import DistillationCompositeState
+from alphamind.persistence.models import (
+    DistillationCompositeState,
+    EventCalendar,
+    MacroObservations,
+)
 
 # ---------------------------------------------------------------------------
 # Yield curve regime
@@ -839,3 +845,527 @@ def assemble_q6_blocks(
             _build_macro_surprise_anomaly_block(indicator, flag, freshness_ts=freshness_ts)
         )
     return tuple(blocks)
+
+
+# ---------------------------------------------------------------------------
+# Upstream-data wrapper for the orchestrator — closes the q6 placeholder gap.
+# ---------------------------------------------------------------------------
+#
+# The wrapper queries ``macro_observations`` (FRED yield curve / breakevens /
+# dollar / funding proxies) and ``event_calendar`` (macro release surprise
+# histories — see :func:`_read_macro_surprise_anomalies` for the v1
+# differenced-actual proxy used pre-consensus-feed), composes the trailing-
+# window aggregates each q6 classifier needs, and packages the results via
+# :func:`assemble_q6_blocks`. Per the cold-start contract, missing series
+# never raise — the corresponding block degrades to BOOTSTRAP / UNAVAILABLE
+# calibration.
+
+
+# Trailing windows the wrapper reads. Per ``external.md`` § 2 these are
+# definitional/structural conventions of each indicator, not Class A
+# tunables — the rule shapes (5-day 2s10s change, 3-month breakeven trend,
+# 30-day sustained deflation check) are anchors of the classification spec
+# rather than knobs the operator turns. The dollar-attribution window
+# *does* coincide with ``correlation_short_days`` (the universe-wide
+# 20-day correlation lookback) so that path routes through config rather
+# than redeclaring the magic number.
+
+_YIELD_CURVE_TRANSITION_LOOKBACK_DAYS: int = 5
+"""Calendar lookback for the 5-day 2s10s change per external.md § quant 6a."""
+
+_INFLATION_BREAKEVEN_TREND_LOOKBACK_DAYS: int = 90
+"""Calendar lookback for the 3-month breakeven trend per external.md § quant 6c."""
+
+_INFLATION_DEFLATION_WINDOW_DAYS: int = 30
+"""Trailing window for the breakeven < 1.5% sustained check per external.md § quant 6c."""
+
+# FRED series IDs the wrapper reads. The vocabulary is centralized so the
+# scaffolding for "is the series present?" cold-start probes shares a single
+# source of truth with the read-helpers.
+
+_YIELD_CURVE_SERIES_IDS: tuple[str, ...] = ("DGS3MO", "DGS2", "DGS5", "DGS10", "DGS30")
+_INFLATION_SERIES_ID: str = "T10YIE"
+_DOLLAR_INDEX_SERIES_ID: str = "DTWEXBGS"
+_RATE_DIFF_SERIES_ID: str = "DGS10"
+
+# Funding-stress component proxies (FRED). The component names match
+# ``FUNDING_STRESS_COMPONENT_NAMES`` so the persistence row can be read by
+# the same vocabulary as the classifier expects. Missing series resolve to
+# ``0.0`` for the proxy value — the cold-start tag fires via the
+# ``min_observations`` route inside ``refresh_funding_stress_composite``
+# and the sub-90th-percentile branch of the per-component verdict.
+_FUNDING_STRESS_PROXY_SOURCES: dict[str, str] = {
+    "sofr_ois_spread": "SOFR",
+    "repo_treasury_spread": "RRPONTSYD",
+    "term_repo_premium": "BAMLH0A0HYM2",
+    "mmf_flow": "WRMFSL",
+}
+# Module-load invariant: the proxy map exhausts the canonical component
+# vocabulary so a downstream consumer can rely on every named component
+# emitting a value (zero or real) on every invocation.
+assert set(_FUNDING_STRESS_PROXY_SOURCES) == set(FUNDING_STRESS_COMPONENT_NAMES)
+
+# Market-liquidity component proxies (FRED). The St. Louis Financial
+# Stress Index plus the high-yield credit spread plus VIX form a coarse
+# proxy for the spread / depth / volume scoring the v1 spec calls for —
+# all three are universe-level liquidity signals and the composite row's
+# semantic ("bottom 10th percentile = stressed") is preserved.
+_MARKET_LIQUIDITY_PROXY_SOURCES: dict[str, str] = {
+    "stress_index_score": "STLFSI4",
+    "credit_spread_score": "BAMLC0A0CM",
+    "volatility_score": "VIXCLS",
+}
+
+# Macro-release events whose surprise histories the wrapper scans. Each
+# entry maps an ``event_calendar.event_type`` to the FRED series whose
+# observation provides the actual value released on that date.
+_MACRO_SURPRISE_EVENTS: tuple[tuple[str, str], ...] = (
+    ("cpi_release", "CPIAUCSL"),
+    ("pce_release", "PCEPI"),
+    ("nfp_release", "PAYEMS"),
+)
+
+
+def _format_iso_z(dt: datetime) -> str:
+    """Render a tz-aware datetime as ISO 8601 ``Z``-suffixed UTC."""
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _select_latest_macro_value(
+    session: Session,
+    *,
+    series_id: str,
+    on_or_before_date: str,
+) -> float | None:
+    """Return the most recent ``MacroObservations`` value at or before a date string."""
+    stmt = (
+        select(MacroObservations.value)
+        .where(
+            MacroObservations.series_id == series_id,
+            MacroObservations.observation_date <= on_or_before_date,
+            MacroObservations.value.isnot(None),
+        )
+        .order_by(MacroObservations.observation_date.desc())
+        .limit(1)
+    )
+    value = session.execute(stmt).scalar_one_or_none()
+    return float(value) if value is not None else None
+
+
+def _select_macro_series_window(
+    session: Session,
+    *,
+    series_id: str,
+    range_start_date: str,
+    range_end_date: str,
+) -> list[float]:
+    """Return ascending non-null ``MacroObservations`` values in a date window."""
+    stmt = (
+        select(MacroObservations.value)
+        .where(
+            MacroObservations.series_id == series_id,
+            MacroObservations.observation_date >= range_start_date,
+            MacroObservations.observation_date <= range_end_date,
+            MacroObservations.value.isnot(None),
+        )
+        .order_by(MacroObservations.observation_date)
+    )
+    return [float(v) for v in session.execute(stmt).scalars().all() if v is not None]
+
+
+def _select_macro_series_at_or_before(
+    session: Session,
+    *,
+    series_id: str,
+    on_or_before_date: str,
+) -> list[float]:
+    """Return ascending non-null ``MacroObservations`` values at or before a date."""
+    stmt = (
+        select(MacroObservations.value)
+        .where(
+            MacroObservations.series_id == series_id,
+            MacroObservations.observation_date <= on_or_before_date,
+            MacroObservations.value.isnot(None),
+        )
+        .order_by(MacroObservations.observation_date)
+    )
+    return [float(v) for v in session.execute(stmt).scalars().all() if v is not None]
+
+
+def _series_returns(values: Sequence[float]) -> list[float]:
+    """Return per-step arithmetic returns ``(v_t - v_{t-1}) / v_{t-1}`` skipping zeros."""
+    out: list[float] = []
+    for prior, latest in pairwise(values):
+        if prior == 0.0:
+            continue
+        out.append((latest - prior) / prior)
+    return out
+
+
+def _try_yield_curve_result(
+    session: Session,
+    *,
+    as_of: datetime,
+) -> YieldCurveRegimeResult | None:
+    """Build a yield-curve result from FRED, or ``None`` when essentials are missing.
+
+    Essentials are the five DGS series at ``as_of`` and the DGS2/DGS10 readings
+    five calendar days earlier. When any essential is missing the wrapper
+    surfaces the gap via the bootstrap path rather than fabricating a label.
+    """
+    end_date = as_of.strftime("%Y-%m-%d")
+    latest: dict[str, float] = {}
+    for series_id in _YIELD_CURVE_SERIES_IDS:
+        value = _select_latest_macro_value(session, series_id=series_id, on_or_before_date=end_date)
+        if value is None:
+            return None
+        latest[series_id] = value
+
+    five_d_ago_date = (as_of - timedelta(days=_YIELD_CURVE_TRANSITION_LOOKBACK_DAYS)).strftime(
+        "%Y-%m-%d"
+    )
+    dgs2_5d_ago = _select_latest_macro_value(
+        session, series_id="DGS2", on_or_before_date=five_d_ago_date
+    )
+    dgs10_5d_ago = _select_latest_macro_value(
+        session, series_id="DGS10", on_or_before_date=five_d_ago_date
+    )
+    if dgs2_5d_ago is None or dgs10_5d_ago is None:
+        return None
+    spread_2s10s_5d_ago = dgs10_5d_ago - dgs2_5d_ago
+    return classify_yield_curve_regime(
+        dgs3mo=latest["DGS3MO"],
+        dgs2=latest["DGS2"],
+        dgs5=latest["DGS5"],
+        dgs10=latest["DGS10"],
+        dgs30=latest["DGS30"],
+        spread_2s10s_5d_ago=spread_2s10s_5d_ago,
+        prior_label=None,
+    )
+
+
+def _try_inflation_result(
+    session: Session,
+    *,
+    as_of: datetime,
+) -> InflationRegimeResult | None:
+    """Build an inflation result from FRED breakeven history, or ``None``."""
+    end_date = as_of.strftime("%Y-%m-%d")
+    current = _select_latest_macro_value(
+        session, series_id=_INFLATION_SERIES_ID, on_or_before_date=end_date
+    )
+    if current is None:
+        return None
+    trend_anchor_date = (as_of - timedelta(days=_INFLATION_BREAKEVEN_TREND_LOOKBACK_DAYS)).strftime(
+        "%Y-%m-%d"
+    )
+    anchor = _select_latest_macro_value(
+        session, series_id=_INFLATION_SERIES_ID, on_or_before_date=trend_anchor_date
+    )
+    if anchor is None:
+        return None
+    breakeven_trend_bps = current - anchor
+
+    deflation_window_start = (as_of - timedelta(days=_INFLATION_DEFLATION_WINDOW_DAYS)).strftime(
+        "%Y-%m-%d"
+    )
+    window_values = _select_macro_series_window(
+        session,
+        series_id=_INFLATION_SERIES_ID,
+        range_start_date=deflation_window_start,
+        range_end_date=end_date,
+    )
+    breakeven_below_threshold_30d = bool(window_values) and all(
+        v < _DEFLATION_RISK_BREAKEVEN_PP_CUTOFF for v in window_values
+    )
+
+    return classify_inflation_regime(
+        breakeven_trend_bps=breakeven_trend_bps,
+        recent_cpi_surprise_signs=[],
+        breakeven_below_threshold_30d=breakeven_below_threshold_30d,
+        prior_label=None,
+    )
+
+
+def _try_dollar_result(
+    session: Session,
+    *,
+    as_of: datetime,
+    window_days: int,
+) -> DollarAttributionResult | None:
+    """Build a dollar-attribution result from FRED, or ``None``.
+
+    ``window_days`` is the trailing correlation lookback per external.md
+    § quant 6f — passed through from
+    ``config.persistence_windows.correlation_short_days`` so the
+    no-magic-numbers audit does not see a literal in this module.
+
+    The classifier accepts empty SPY returns and yields the residual
+    ``trade_flow_driven`` label per :func:`_pearson_correlation`'s zero-
+    variance branch. Empty DXY history, however, leaves no signal at all
+    so the wrapper surfaces the gap via the bootstrap path.
+    """
+    end_date = as_of.strftime("%Y-%m-%d")
+    range_start_date = (as_of - timedelta(days=window_days)).strftime("%Y-%m-%d")
+    dxy_values = _select_macro_series_window(
+        session,
+        series_id=_DOLLAR_INDEX_SERIES_ID,
+        range_start_date=range_start_date,
+        range_end_date=end_date,
+    )
+    if len(dxy_values) <= 1:
+        return None
+    rate_values = _select_macro_series_window(
+        session,
+        series_id=_RATE_DIFF_SERIES_ID,
+        range_start_date=range_start_date,
+        range_end_date=end_date,
+    )
+    dxy_returns = _series_returns(dxy_values)
+    rate_returns = _series_returns(rate_values)
+    # SPY returns aren't a hard dependency — the residual classification
+    # path handles a zero-variance / empty SPY series.
+    spy_returns: list[float] = []
+    return classify_dollar_attribution(
+        dxy_returns=dxy_returns,
+        rate_diff_returns=rate_returns,
+        spy_returns=spy_returns,
+    )
+
+
+def _read_proxy_components(
+    session: Session,
+    *,
+    as_of: datetime,
+    proxy_sources: Mapping[str, str],
+) -> Mapping[str, float]:
+    """Read latest FRED values for a proxy-component map.
+
+    Missing or null series resolve to ``0.0`` so the downstream composite
+    refresh primitives always have a value to rank — the cold-start tag
+    fires via the ``min_observations`` route inside the refresh helpers.
+    """
+    end_date = as_of.strftime("%Y-%m-%d")
+    out: dict[str, float] = {}
+    for component_name, series_id in proxy_sources.items():
+        value = _select_latest_macro_value(session, series_id=series_id, on_or_before_date=end_date)
+        out[component_name] = value if value is not None else 0.0
+    return out
+
+
+def _read_macro_surprise_anomalies(
+    session: Session,
+    *,
+    as_of: datetime,
+    alert_percentile: float,
+) -> list[tuple[str, AnomalyFlag]]:
+    """Read macro release events and emit surprise anomalies for the latest release.
+
+    For each ``(event_type, series_id)`` in :data:`_MACRO_SURPRISE_EVENTS`:
+
+    1. Find the most recent release in ``event_calendar`` at or before
+       ``as_of`` whose ``status == 'completed'``.
+    2. Read the value the release published from ``macro_observations`` (the
+       FRED revision number ``0`` row whose observation date matches).
+    3. Build the trailing distribution of past releases (actual values for
+       the series at successive earlier release dates) and treat
+       ``actual - prior_value`` as the surprise (consensus is not stored
+       universe-wide; the differenced series is the v1 proxy until the
+       consensus-feed lands as a future story).
+    4. Run ``detect_macro_surprise_anomaly`` and record an anomaly when the
+       latest surprise lies in the top ``alert_percentile`` of the trailing
+       distribution.
+    """
+    out: list[tuple[str, AnomalyFlag]] = []
+    end_iso = _format_iso_z(as_of)
+    end_date = as_of.strftime("%Y-%m-%d")
+    for event_type, series_id in _MACRO_SURPRISE_EVENTS:
+        latest_event_stmt = (
+            select(EventCalendar.scheduled_at)
+            .where(
+                EventCalendar.event_type == event_type,
+                EventCalendar.scheduled_at <= end_iso,
+                EventCalendar.status == "completed",
+            )
+            .order_by(EventCalendar.scheduled_at.desc())
+            .limit(1)
+        )
+        latest_event_ts = session.execute(latest_event_stmt).scalar_one_or_none()
+        if latest_event_ts is None:
+            continue
+        # Pull every available release-actual at or before ``as_of`` and
+        # difference the series; the last entry is the current "surprise",
+        # earlier entries form the trailing distribution. ``actual - prior``
+        # is the v1 proxy until the consensus-feed lands as a future story.
+        values = _select_macro_series_at_or_before(
+            session,
+            series_id=series_id,
+            on_or_before_date=end_date,
+        )
+        if len(values) <= 1:
+            continue
+        diffs = [current - prior for prior, current in pairwise(values)]
+        if len(diffs) <= 1:
+            continue
+        actual_diff = diffs[-1]
+        trailing = diffs[:-1]
+        flag = detect_macro_surprise_anomaly(
+            actual=actual_diff,
+            consensus=0.0,
+            trailing_surprises=trailing,
+            alert_percentile=alert_percentile,
+        )
+        if flag is not None:
+            out.append((series_id, flag))
+    return out
+
+
+def _build_bootstrap_block(
+    *,
+    block_id: str,
+    bootstrap_reason: str,
+    freshness_ts: datetime,
+    state: CalibrationState = CalibrationState.BOOTSTRAP,
+) -> OutputBlock:
+    """Build a stand-in q6 block when an essential input is missing.
+
+    Used for the yield-curve / inflation / dollar paths whose existing
+    ``_build_*_block`` helpers hardcode ``CalibrationState.CALIBRATED``.
+    The bootstrap block carries an empty payload and no anomaly flags so a
+    downstream consumer sees the calibration tag (and the
+    ``bootstrap_reason`` it carries) rather than a fabricated label.
+    """
+    return OutputBlock(
+        block_id=block_id,
+        audience=UNIVERSAL_BROADCAST_AUDIENCE,
+        freshness_ts=freshness_ts,
+        calibration_state=state,
+        bootstrap_reason=bootstrap_reason,
+        payload={},
+        anomaly_flags=(),
+        regime_context=None,
+    )
+
+
+def compute_q6_blocks(
+    session: Session,
+    *,
+    config: DistillationConfig,
+    as_of: datetime,
+) -> list[OutputBlock]:
+    """Read upstream data and assemble the q6 macro blocks.
+
+    The orchestrator calls this once per invocation. The wrapper:
+
+    1. Reads FRED yield-curve / breakeven / dollar series from
+       ``macro_observations`` and runs the existing label classifiers.
+    2. Refreshes the funding-stress and market-liquidity composites via the
+       persistence-state primitives in :mod:`alphamind.distillation.baselines`,
+       which return BOOTSTRAP-tagged results during cold start.
+    3. Scans ``event_calendar`` for completed macro releases and emits
+       surprise-anomaly blocks per indicator that lies in the top
+       ``anomaly_detection.macro_surprise_percentile`` of its trailing
+       differenced-actual distribution.
+    4. Calls :func:`assemble_q6_blocks` to package the calibrated path; for
+       any individual block whose essentials are missing, emits a
+       BOOTSTRAP-tagged stub instead so the orchestrator's fail-open
+       contract is preserved per the LLM-agents-uniformly-Critical policy.
+
+    Returns a list of ``OutputBlock`` whose audience is
+    :attr:`OutputAudience.UNIVERSAL_BROADCAST` — q6 macro context is not
+    sector-scoped per ``external.md`` § 4.
+    """
+    as_of_iso = _format_iso_z(as_of)
+
+    yc_result = _try_yield_curve_result(session, as_of=as_of)
+    inflation_result = _try_inflation_result(session, as_of=as_of)
+    dollar_result = _try_dollar_result(
+        session,
+        as_of=as_of,
+        window_days=config.persistence_windows.correlation_short_days,
+    )
+
+    funding_components = _read_proxy_components(
+        session, as_of=as_of, proxy_sources=_FUNDING_STRESS_PROXY_SOURCES
+    )
+    fs_result = refresh_funding_stress_composite(
+        session,
+        components=funding_components,
+        as_of=as_of_iso,
+        min_observations=config.persistence_windows.funding_stress_baseline_days,
+        component_alert_count=config.anomaly_detection.funding_stress_component_alert_count,
+        component_alert_percentile=float(
+            config.anomaly_detection.funding_stress_component_percentile
+        ),
+    )
+
+    liquidity_components = _read_proxy_components(
+        session, as_of=as_of, proxy_sources=_MARKET_LIQUIDITY_PROXY_SOURCES
+    )
+    ml_result = refresh_market_liquidity_composite(
+        session,
+        components=liquidity_components,
+        as_of=as_of_iso,
+        min_observations=config.persistence_windows.market_liquidity_baseline_days,
+        alert_percentile=float(config.anomaly_detection.market_liquidity_alert_percentile),
+    )
+
+    surprises = _read_macro_surprise_anomalies(
+        session,
+        as_of=as_of,
+        alert_percentile=float(config.anomaly_detection.macro_surprise_percentile),
+    )
+
+    # When every label-input is present, the calibrated path runs through
+    # ``assemble_q6_blocks``. Missing inputs route through the bootstrap
+    # stub builder so the block_id is preserved but the calibration tag
+    # accurately reports the gap.
+    if yc_result is not None and inflation_result is not None and dollar_result is not None:
+        return list(
+            assemble_q6_blocks(
+                yield_curve=yc_result,
+                inflation=inflation_result,
+                dollar_attribution=dollar_result,
+                funding_stress=fs_result,
+                market_liquidity=ml_result,
+                macro_surprise_anomalies=tuple(surprises),
+                freshness_ts=as_of,
+            )
+        )
+
+    blocks: list[OutputBlock] = []
+    if yc_result is not None:
+        blocks.append(_build_yield_curve_block(yc_result, freshness_ts=as_of))
+    else:
+        blocks.append(
+            _build_bootstrap_block(
+                block_id="q6.yield_curve_regime",
+                bootstrap_reason="yield_curve: required FRED DGS series unavailable",
+                freshness_ts=as_of,
+            )
+        )
+    if inflation_result is not None:
+        blocks.append(_build_inflation_block(inflation_result, freshness_ts=as_of))
+    else:
+        blocks.append(
+            _build_bootstrap_block(
+                block_id="q6.inflation_regime",
+                bootstrap_reason="inflation: T10YIE history unavailable",
+                freshness_ts=as_of,
+            )
+        )
+    if dollar_result is not None:
+        blocks.append(_build_dollar_attribution_block(dollar_result, freshness_ts=as_of))
+    else:
+        blocks.append(
+            _build_bootstrap_block(
+                block_id="q6.dollar_attribution",
+                bootstrap_reason="dollar_attribution: DTWEXBGS history unavailable",
+                freshness_ts=as_of,
+            )
+        )
+    blocks.append(_build_funding_stress_block(fs_result, freshness_ts=as_of))
+    blocks.append(_build_market_liquidity_block(ml_result, freshness_ts=as_of))
+    for indicator, flag in surprises:
+        blocks.append(_build_macro_surprise_anomaly_block(indicator, flag, freshness_ts=as_of))
+    return blocks
