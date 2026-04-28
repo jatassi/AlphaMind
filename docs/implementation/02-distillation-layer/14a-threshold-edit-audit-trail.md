@@ -6,6 +6,26 @@ commit_id:
 
 # 14a — Threshold-edit activity-log entry and config-reload diff emission
 
+## Blocker (2026-04-28)
+
+This story is blocked on missing infrastructure that the spec implicitly assumes. A subagent dispatched against the spec verified the gap and stopped before improvising. Concrete preconditions absent from the codebase:
+
+1. **No `activity_log` SQL table** in `src/alphamind/persistence/models.py`. The file has 28 tables (data-layer collector + the six distillation-state tables from story 03) but no cross-cutting persisted activity log. The portfolio-state `activity_log.py` is in-memory `EventSource` records for fills/brackets/margin events — wrong vocabulary, not SQL-backed.
+2. **No `invocations` SQL table.** The story's atomic-emission test requires a transaction wrapping both an invocation row and the activity-log entry. Neither table exists, and there is no transactional structure around `load_config()` (the loader is pure YAML I/O with no DB session).
+3. **No canonical `source` enum or CHECK constraint** to extend with `config_reload`. Three different vocabularies coexist: design-doc prose names `pipeline` / `monitor` / `operator_console`; the in-memory `EventSource` enum in `src/alphamind/portfolio_state/records/activity_log.py` uses a totally different set (`FILL_PROCESSOR`, `BRACKET_MANAGER`, `MARGIN_MONITOR`, etc.); nothing in SQL.
+
+The two doc-only deliverables in this story (the event-type catalog entry in `state-persistence.md`, and the calibration-log convention in `threshold-calibration.md § Update process`) are tractable in isolation but premature without the substrate.
+
+Resolution paths the orchestrator surfaced (operator picks one):
+
+- **Split 14a** into a doc-only sub-story that lands now (catalog entry + calibration-log convention) plus a deferred emission sub-story that runs after the SQL substrate exists.
+- **Add a precursor story** for `activity_log` + `invocations` SQL tables and a transactional invocation-context object, then re-dispatch 14a unchanged.
+- **Expand 14a's scope** to include all three substrates itself — much larger than the spec describes; the dispatch prompt's "reuse the same path" framing would be misleading.
+
+Story 15 (emergency-invocation review report) is blocked on the same substrate gap — its CLI reads `invocations.trigger_type` / `trigger_reason` and post-invocation activity-log entries to classify downstream consequence.
+
+When this is resolved, set `status: not_started` and remove this section.
+
 ## Goal
 
 Implement the audit trail that enforces "no silent threshold mutation" from the threshold-calibration design doc. Add a `distillation_config_change` event type to the activity log catalog, and emit one entry every time `config/distillation.yaml` reloads with values that differ from the prior reload. Pair the activity log entry with a documented commit-message convention so the operator's calibration log (motivating observation, old value, new value) lives in version control alongside the YAML diff.
