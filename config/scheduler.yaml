@@ -1,0 +1,15 @@
+# APScheduler cron triggers — fires the analysis pipeline on the schedule
+# defined per design/configuration-management.md § scheduler.yaml.
+# Trigger keys are stems for run_types/<key>.yaml overlays.
+
+timezone: US/Eastern
+max_instances: 1
+overlap_dedup_lookback_minutes: 30
+
+triggers:
+  market_hours_rolling: "30 9,11,13,15 * * mon-fri"
+  off_hours_rolling:    "0 0,4,8,20 * * mon-fri"
+  pre_open:             "0 9 * * mon-fri"
+  pre_close:            "30 15 * * mon-fri"
+  weekend_saturday:     "0 10 * * sat"
+  weekend_sunday:       "0 18 * * sun"

@@ -14,6 +14,7 @@ _EXPECTED_PUBLIC_NAMES = {
     "OutletEntry",
     "ProviderConfig",
     "RetryShapeConfig",
+    "SchedulerConfig",
 }
 
 
