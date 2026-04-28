@@ -1,0 +1,17 @@
+# Per-failure-mode retry policy applied to every LLM agent invocation.
+#
+# Five failure modes from docs/design/llm-agent-failure-handling.md. Every
+# mode must appear; the model validator rejects any missing entry. Per-mode
+# field constraints encode the design doc's retry shapes:
+#   model_api_error   — multiple retries, exponential backoff
+#   timeout           — one retry with doubled latency budget
+#   malformed_output  — one same-context corrective retry (schema repair)
+#   context_overflow  — no retry (hard fail-closed)
+#   tool_use_error    — one retry for idempotent tools only
+
+retries:
+  model_api_error:   { attempts: 3, backoff: exponential }
+  timeout:           { attempts: 1, strategy: doubled_latency_budget }
+  malformed_output:  { attempts: 1, strategy: same_context_corrective }
+  context_overflow:  { attempts: 0 }
+  tool_use_error:    { attempts: 1, condition: idempotent_only }

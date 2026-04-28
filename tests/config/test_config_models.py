@@ -549,3 +549,98 @@ def test_guardrails_models_are_frozen() -> None:
 
     with pytest.raises(ValidationError):
         config.emergency_invocation.__setattr__("cooldown_minutes", 0)
+
+
+# ---------------------------------------------------------------------------
+# llm_failure.yaml (story 03g)
+# ---------------------------------------------------------------------------
+
+CANONICAL_FAILURE_MODES = {
+    "model_api_error",
+    "timeout",
+    "malformed_output",
+    "context_overflow",
+    "tool_use_error",
+}
+
+
+def _valid_llm_failure_retries() -> dict[str, dict[str, object]]:
+    return {
+        "model_api_error": {"attempts": 3, "backoff": "exponential"},
+        "timeout": {"attempts": 1, "strategy": "doubled_latency_budget"},
+        "malformed_output": {"attempts": 1, "strategy": "same_context_corrective"},
+        "context_overflow": {"attempts": 0},
+        "tool_use_error": {"attempts": 1, "condition": "idempotent_only"},
+    }
+
+
+def test_llm_failure_yaml_parses_cleanly_and_exposes_all_modes() -> None:
+    from alphamind.config.models import FailureMode, LLMFailureConfig
+
+    data = load_yaml(CONFIG_DIR / "llm_failure.yaml")
+    config = LLMFailureConfig.model_validate(data)
+    assert {mode.value for mode in config.retries} == CANONICAL_FAILURE_MODES
+    assert set(FailureMode) == {FailureMode(m) for m in CANONICAL_FAILURE_MODES}
+
+
+def test_llm_failure_rejects_missing_tool_use_error_entry() -> None:
+    from alphamind.config.models import LLMFailureConfig
+
+    retries = _valid_llm_failure_retries()
+    del retries["tool_use_error"]
+    with pytest.raises(ValidationError, match="tool_use_error"):
+        LLMFailureConfig.model_validate({"retries": retries})
+
+
+def test_llm_failure_rejects_context_overflow_with_positive_attempts() -> None:
+    from alphamind.config.models import LLMFailureConfig
+
+    retries = _valid_llm_failure_retries()
+    retries["context_overflow"] = {"attempts": 1}
+    with pytest.raises(ValidationError, match="context_overflow"):
+        LLMFailureConfig.model_validate({"retries": retries})
+
+
+def test_llm_failure_rejects_model_api_error_without_backoff() -> None:
+    from alphamind.config.models import LLMFailureConfig
+
+    retries = _valid_llm_failure_retries()
+    retries["model_api_error"] = {"attempts": 3}
+    with pytest.raises(ValidationError, match="model_api_error"):
+        LLMFailureConfig.model_validate({"retries": retries})
+
+
+def test_llm_failure_rejects_tool_use_error_with_backoff() -> None:
+    from alphamind.config.models import LLMFailureConfig
+
+    retries = _valid_llm_failure_retries()
+    retries["tool_use_error"] = {
+        "attempts": 1,
+        "condition": "idempotent_only",
+        "backoff": "exponential",
+    }
+    with pytest.raises(ValidationError, match="tool_use_error"):
+        LLMFailureConfig.model_validate({"retries": retries})
+
+
+def test_llm_failure_accepts_timeout_with_alternate_known_strategy() -> None:
+    from alphamind.config.models import FailureMode, LLMFailureConfig, RetryStrategy
+
+    retries = _valid_llm_failure_retries()
+    retries["timeout"] = {"attempts": 1, "strategy": "same_context_corrective"}
+    config = LLMFailureConfig.model_validate({"retries": retries})
+    assert config.retries[FailureMode.timeout].strategy is RetryStrategy.same_context_corrective
+
+
+def test_llm_failure_models_are_frozen() -> None:
+    from alphamind.config.models import FailureMode, LLMFailureConfig
+
+    data = load_yaml(CONFIG_DIR / "llm_failure.yaml")
+    config = LLMFailureConfig.model_validate(data)
+
+    with pytest.raises(ValidationError):
+        config.__setattr__("retries", {})
+
+    policy = config.retries[FailureMode.model_api_error]
+    with pytest.raises(ValidationError):
+        policy.__setattr__("attempts", 99)
