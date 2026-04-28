@@ -12,6 +12,18 @@ uv run mypy
 
 Alert the user before disabling the linter or any rule in any form — including `ignore`, `per-file-ignores`, `# noqa`, and `# type: ignore`.
 
+## Testing
+
+Always run the test suite parallelized via pytest-xdist:
+
+```bash
+uv run pytest -n auto
+```
+
+`-n auto` allocates one worker per CPU core. Never invoke `pytest` without `-n auto` — including from subagents and worktree verification. When verifying a narrow slice, scope to the relevant path: `uv run pytest tests/config/ -n auto`.
+
+If a test passes serially but fails under xdist, the cause is test-order dependence (typically `sys.modules` mutation or shared filesystem state). Fix the test — do not fall back to serial.
+
 ## Spawning Subagents
 
 - For mechanical changes, use Sonnet

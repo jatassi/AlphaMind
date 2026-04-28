@@ -27,6 +27,11 @@ _VENDOR_PATCHES = {
     "bls": "alphamind.collector.bootstrap.bls_bootstrap_series",
     "finnhub_earnings": "alphamind.collector.bootstrap.bootstrap_earnings_calendar",
     "finnhub_economic": "alphamind.collector.bootstrap.bootstrap_economic_calendar",
+    "finnhub_ipo": "alphamind.collector.bootstrap.collect_ipo_calendar",
+    "finnhub_fda": "alphamind.collector.bootstrap.collect_fda_calendar",
+    "finnhub_estimate_revisions": "alphamind.collector.bootstrap.bootstrap_estimate_revisions",
+    "finra_short_volume": "alphamind.collector.bootstrap.bootstrap_short_volume",
+    "finra_short_interest": "alphamind.collector.bootstrap.bootstrap_short_interest",
 }
 
 
@@ -71,6 +76,11 @@ def test_run_all_calls_all_vendors():
         patch("alphamind.collector.bootstrap.bls_bootstrap_series") as mock_bls,
         patch("alphamind.collector.bootstrap.bootstrap_earnings_calendar") as mock_earnings,
         patch("alphamind.collector.bootstrap.bootstrap_economic_calendar") as mock_econ,
+        patch("alphamind.collector.bootstrap.collect_ipo_calendar") as mock_ipo,
+        patch("alphamind.collector.bootstrap.collect_fda_calendar") as mock_fda,
+        patch("alphamind.collector.bootstrap.bootstrap_estimate_revisions") as mock_est_rev,
+        patch("alphamind.collector.bootstrap.bootstrap_short_volume") as mock_short_vol,
+        patch("alphamind.collector.bootstrap.bootstrap_short_interest") as mock_short_int,
     ):
         from alphamind.collector.bootstrap import run_all
 
@@ -87,6 +97,11 @@ def test_run_all_calls_all_vendors():
     mock_bls.assert_called_once()
     mock_earnings.assert_called_once()
     mock_econ.assert_called_once()
+    mock_ipo.assert_called_once()
+    mock_fda.assert_called_once()
+    mock_est_rev.assert_called_once()
+    mock_short_vol.assert_called_once()
+    mock_short_int.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +164,11 @@ def test_run_all_lifecycle_order():
             "alphamind.collector.bootstrap.bootstrap_economic_calendar",
             side_effect=_make_side("finnhub.economic"),
         ),
+        patch("alphamind.collector.bootstrap.collect_ipo_calendar"),
+        patch("alphamind.collector.bootstrap.collect_fda_calendar"),
+        patch("alphamind.collector.bootstrap.bootstrap_estimate_revisions"),
+        patch("alphamind.collector.bootstrap.bootstrap_short_volume"),
+        patch("alphamind.collector.bootstrap.bootstrap_short_interest"),
     ):
         from alphamind.collector.bootstrap import run_all
 
@@ -205,6 +225,11 @@ def test_seed_runs_before_vendor_api():
         patch("alphamind.collector.bootstrap.bls_bootstrap_series"),
         patch("alphamind.collector.bootstrap.bootstrap_earnings_calendar"),
         patch("alphamind.collector.bootstrap.bootstrap_economic_calendar"),
+        patch("alphamind.collector.bootstrap.collect_ipo_calendar"),
+        patch("alphamind.collector.bootstrap.collect_fda_calendar"),
+        patch("alphamind.collector.bootstrap.bootstrap_estimate_revisions"),
+        patch("alphamind.collector.bootstrap.bootstrap_short_volume"),
+        patch("alphamind.collector.bootstrap.bootstrap_short_interest"),
     ):
         from alphamind.collector.bootstrap import run_all
 
@@ -235,6 +260,11 @@ def test_exception_in_vendor_does_not_abort(caplog):
         patch("alphamind.collector.bootstrap.bls_bootstrap_series"),
         patch("alphamind.collector.bootstrap.bootstrap_earnings_calendar"),
         patch("alphamind.collector.bootstrap.bootstrap_economic_calendar"),
+        patch("alphamind.collector.bootstrap.collect_ipo_calendar"),
+        patch("alphamind.collector.bootstrap.collect_fda_calendar"),
+        patch("alphamind.collector.bootstrap.bootstrap_estimate_revisions"),
+        patch("alphamind.collector.bootstrap.bootstrap_short_volume"),
+        patch("alphamind.collector.bootstrap.bootstrap_short_interest"),
     ):
         from alphamind.collector.bootstrap import run_all
 
@@ -374,6 +404,11 @@ def test_progress_logging_emits_start_and_end(caplog):
         patch("alphamind.collector.bootstrap.bls_bootstrap_series"),
         patch("alphamind.collector.bootstrap.bootstrap_earnings_calendar"),
         patch("alphamind.collector.bootstrap.bootstrap_economic_calendar"),
+        patch("alphamind.collector.bootstrap.collect_ipo_calendar"),
+        patch("alphamind.collector.bootstrap.collect_fda_calendar"),
+        patch("alphamind.collector.bootstrap.bootstrap_estimate_revisions"),
+        patch("alphamind.collector.bootstrap.bootstrap_short_volume"),
+        patch("alphamind.collector.bootstrap.bootstrap_short_interest"),
     ):
         from alphamind.collector.bootstrap import run_all
 
