@@ -1,0 +1,33 @@
+# Notable-shift thresholds for the weekly feedback-loop digest.
+# See docs/design/configuration-management.md § digest.yaml and
+# docs/design/feedback-loop.md § Section 5 — Notable shifts for the
+# narrative description of each shift detector.
+#
+# Each block keys a deterministic shift detector. The substructure of each
+# block is exactly what that detector needs — no shared shape across blocks.
+
+anti_pattern_spike:
+  baseline_window_weeks:     4         # rolling window the current week is compared against
+  multiplier_vs_baseline:    2.0       # current-week count must exceed baseline mean × this multiple
+  min_occurrences_this_week: 5         # AND raw weekly count must be at least this floor
+
+regime_change:
+  enabled: true                        # fire on any classification change from the prior week's regime label
+
+sector_underperform:
+  baseline_window_weeks: 4             # window over which each sector's rolling P/L is computed
+  median_offset_sigma:   1.5           # fire when a sector's rolling P/L falls below (median of other sectors − this many σ)
+
+citation_chain_shift:
+  baseline_window_weeks: 4
+  delta_pp_threshold:    20.0          # fire when synthesizer citation rate per source changes by more than this many percentage points
+
+source_signal_survival_drop:
+  baseline_window_weeks: 4
+  delta_pp_threshold:    20.0          # fire when a per-source signal survival rate drops by more than this many percentage points
+
+validation_window_end:
+  days_before_due: 7                   # fire when an active validation is within this many days of evaluation-due, or already overdue
+
+validation_superseded:
+  enabled: true                        # fire when an active validation was auto-superseded during the week
