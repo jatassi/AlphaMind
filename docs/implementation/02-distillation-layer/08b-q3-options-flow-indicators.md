@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: c93fba8eef2e4a4533888f6e6acb02a3b09b1863
 ---
 
 # 08b — Q3 options flow indicators and cross-ticker signals
