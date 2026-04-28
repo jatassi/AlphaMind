@@ -6,6 +6,16 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from alphamind.config.models.distillation import (
+    AnomalyDetection,
+    DistillationConfig,
+    LeadLag,
+    NarrativeLag,
+    PersistenceWindows,
+    PredictionMarket,
+    RegimeClassification,
+    RegimeTransition,
+)
 from alphamind.portfolio_state.records.activity_log import (
     ActivityLogEntry,
     EventGroup,
@@ -769,3 +779,330 @@ def test_all_functions_deterministic() -> None:
     ) == recent_pm_decisions_for_position(entries, "pos-1", 1)
     assert partition_by_event_group(entries) == partition_by_event_group(entries)
     assert chronological_sort(entries) == chronological_sort(entries)
+
+
+# ---------------------------------------------------------------------------
+# Distillation config-change helpers (story 14a contract)
+# ---------------------------------------------------------------------------
+
+
+def _build_distillation_config(**overrides: object) -> DistillationConfig:
+    """Return a fully-populated :class:`DistillationConfig` for tests.
+
+    Per-section overrides are applied via Pydantic's ``model_copy(update=...)``
+    on the relevant section.
+    """
+    config = DistillationConfig(
+        anomaly_detection=AnomalyDetection(
+            volume_anomaly_sigma=2.0,
+            price_move_atr_multiple=2.5,
+            options_low_oi_volume_multiple=5.0,
+            block_trade_min_shares=10_000,
+            block_trade_min_notional_usd=1_000_000,
+            dark_pool_one_sided_window_minutes=60,
+            earnings_revision_cluster_count=3,
+            earnings_revision_cluster_days=5,
+            macro_surprise_percentile=90,
+            funding_stress_component_alert_count=2,
+            funding_stress_component_percentile=80,
+            market_liquidity_alert_percentile=10,
+            news_price_divergence_window_hours=12,
+        ),
+        regime_classification=RegimeClassification(
+            regime_low_vol_vix_max=15.0,
+            regime_normal_vix_min=15.0,
+            regime_normal_vix_max=20.0,
+            regime_elevated_vix_min=20.0,
+            regime_elevated_vix_max=28.0,
+            regime_crisis_vix_min=28.0,
+            regime_term_structure_backwardation_threshold=0.0,
+            regime_vvix_high_percentile=80,
+            regime_vvix_low_percentile=20,
+        ),
+        regime_transition=RegimeTransition(
+            regime_transition_confirmed_invocations=3,
+            regime_transition_indicator_agreement_min=3,
+            regime_skip_emergency_trigger=True,
+        ),
+        lead_lag=LeadLag(
+            lead_lag_funding_to_credit_max_days=4,
+            lead_lag_credit_to_equity_max_days=4,
+            lead_lag_semis_to_tech_max_days=3,
+            lead_lag_financials_to_market_max_days=4,
+            lead_lag_commodity_to_energy_equity_max_days=4,
+            lead_lag_overdue_lead_sigma=2.0,
+        ),
+        narrative_lag=NarrativeLag(
+            narrative_lag_correlation_shift_sigma=2.0,
+            narrative_lag_media_silence_hours=24,
+        ),
+        persistence_windows=PersistenceWindows(
+            volume_baseline_days=20,
+            atr_baseline_days=14,
+            spread_baseline_days=20,
+            correlation_short_days=20,
+            correlation_long_days=60,
+            sentiment_baseline_days=30,
+            sentiment_min_observations=5,
+            gap_fill_baseline_days=60,
+            gap_fill_min_events=3,
+            extended_hours_confirmation_days=30,
+            extended_hours_min_events=3,
+            prediction_market_history_days=30,
+            funding_stress_baseline_days=60,
+            market_liquidity_baseline_days=60,
+        ),
+        prediction_market=PredictionMarket(
+            prediction_market_delta_pp_threshold=10.0,
+            prediction_market_low_liquidity_volume_min_usd=10_000,
+        ),
+    )
+    return config.model_copy(update=overrides) if overrides else config
+
+
+def _swap_section(
+    config: DistillationConfig, section: str, **updates: object
+) -> DistillationConfig:
+    """Return a copy of ``config`` with one section updated via ``model_copy``."""
+    section_obj = getattr(config, section).model_copy(update=updates)
+    return config.model_copy(update={section: section_obj})
+
+
+class TestComputeDistillationConfigHash:
+    """``compute_distillation_config_hash`` is deterministic SHA-256 hex."""
+
+    def test_returns_64_hex_chars(self) -> None:
+        from alphamind.portfolio_state.computations.activity_log import (
+            compute_distillation_config_hash,
+        )
+
+        digest = compute_distillation_config_hash(_build_distillation_config())
+        assert len(digest) == 64
+        assert all(c in "0123456789abcdef" for c in digest)
+
+    def test_byte_identical_inputs_produce_identical_digest(self) -> None:
+        from alphamind.portfolio_state.computations.activity_log import (
+            compute_distillation_config_hash,
+        )
+
+        a = _build_distillation_config()
+        b = _build_distillation_config()
+        assert compute_distillation_config_hash(a) == compute_distillation_config_hash(b)
+
+    def test_single_field_perturbation_changes_digest(self) -> None:
+        from alphamind.portfolio_state.computations.activity_log import (
+            compute_distillation_config_hash,
+        )
+
+        a = _build_distillation_config()
+        b = _swap_section(a, "anomaly_detection", volume_anomaly_sigma=3.0)
+        assert compute_distillation_config_hash(a) != compute_distillation_config_hash(b)
+
+
+class TestComputeDistillationConfigDiff:
+    """``compute_distillation_config_diff`` walks the Pydantic tree per-key."""
+
+    def test_identical_configs_produce_empty_tuple(self) -> None:
+        from alphamind.portfolio_state.computations.activity_log import (
+            compute_distillation_config_diff,
+        )
+
+        a = _build_distillation_config()
+        b = _build_distillation_config()
+        assert compute_distillation_config_diff(a, b) == ()
+
+    def test_single_scalar_change_produces_single_entry(self) -> None:
+        from alphamind.portfolio_state.computations.activity_log import (
+            compute_distillation_config_diff,
+        )
+
+        a = _build_distillation_config()
+        b = _swap_section(a, "anomaly_detection", volume_anomaly_sigma=3.5)
+        diff = compute_distillation_config_diff(a, b)
+        assert len(diff) == 1
+        assert diff[0].key_path == "anomaly_detection.volume_anomaly_sigma"
+        assert diff[0].old_value == 2.0
+        assert diff[0].new_value == 3.5
+
+    def test_nested_change_produces_dotted_key_path(self) -> None:
+        from alphamind.portfolio_state.computations.activity_log import (
+            compute_distillation_config_diff,
+        )
+
+        a = _build_distillation_config()
+        b = _swap_section(
+            a,
+            "regime_classification",
+            regime_low_vol_vix_max=14.0,
+            regime_normal_vix_min=14.0,
+        )
+        diff = compute_distillation_config_diff(a, b)
+        paths = [c.key_path for c in diff]
+        assert "regime_classification.regime_low_vol_vix_max" in paths
+        assert "regime_classification.regime_normal_vix_min" in paths
+
+    def test_multi_field_change_returns_sorted_entries(self) -> None:
+        from alphamind.portfolio_state.computations.activity_log import (
+            compute_distillation_config_diff,
+        )
+
+        a = _build_distillation_config()
+        b_anom = _swap_section(a, "anomaly_detection", volume_anomaly_sigma=3.5)
+        # Apply a second change on a different section
+        narrative_obj = b_anom.narrative_lag.model_copy(
+            update={"narrative_lag_media_silence_hours": 36}
+        )
+        b = b_anom.model_copy(update={"narrative_lag": narrative_obj})
+
+        diff = compute_distillation_config_diff(a, b)
+        paths = [c.key_path for c in diff]
+        assert paths == sorted(paths)
+        assert "anomaly_detection.volume_anomaly_sigma" in paths
+        assert "narrative_lag.narrative_lag_media_silence_hours" in paths
+
+    def test_prior_none_returns_empty_tuple(self) -> None:
+        from alphamind.portfolio_state.computations.activity_log import (
+            compute_distillation_config_diff,
+        )
+
+        new = _build_distillation_config()
+        assert compute_distillation_config_diff(None, new) == ()
+
+    def test_returns_tuple_of_distillation_config_change(self) -> None:
+        from alphamind.portfolio_state.computations.activity_log import (
+            compute_distillation_config_diff,
+        )
+        from alphamind.portfolio_state.records.activity_log import (
+            DistillationConfigChange,
+        )
+
+        a = _build_distillation_config()
+        b = _swap_section(a, "anomaly_detection", volume_anomaly_sigma=3.5)
+        diff = compute_distillation_config_diff(a, b)
+        assert isinstance(diff, tuple)
+        assert all(isinstance(c, DistillationConfigChange) for c in diff)
+
+
+_FIXED_TS = datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC)
+
+
+class TestBuildDistillationConfigChangeEntry:
+    """``build_distillation_config_change_entry`` composes hash + diff into an entry."""
+
+    def test_first_reload_returns_baseline_entry(self) -> None:
+        from alphamind.portfolio_state.computations.activity_log import (
+            build_distillation_config_change_entry,
+            compute_distillation_config_hash,
+        )
+        from alphamind.portfolio_state.records.activity_log import (
+            DistillationConfigChangeDetail,
+            EventGroup,
+            EventSource,
+            EventType,
+        )
+
+        new = _build_distillation_config()
+        entry = build_distillation_config_change_entry(
+            prior=None,
+            new=new,
+            invocation_id="inv-001",
+            timestamp=_FIXED_TS,
+            git_sha="abc1234",
+            entry_id="eid-001",
+        )
+        assert entry is not None
+        assert entry.event_type == EventType.DISTILLATION_CONFIG_CHANGE
+        assert entry.event_group == EventGroup.CONFIGURATION
+        assert entry.source == EventSource.CONFIG_RELOAD
+        assert entry.position_id is None
+        assert entry.order_id is None
+        assert entry.thesis_id is None
+        assert entry.invocation_id == "inv-001"
+        assert entry.entry_id == "eid-001"
+        assert entry.timestamp == _FIXED_TS
+
+        assert isinstance(entry.detail, DistillationConfigChangeDetail)
+        assert entry.detail.prior_hash is None
+        assert entry.detail.new_hash == compute_distillation_config_hash(new)
+        assert entry.detail.changes == ()
+        assert entry.detail.git_sha == "abc1234"
+        assert entry.detail.config_file == "config/distillation.yaml"
+
+    def test_no_change_suppressed(self) -> None:
+        from alphamind.portfolio_state.computations.activity_log import (
+            build_distillation_config_change_entry,
+        )
+
+        config = _build_distillation_config()
+        result = build_distillation_config_change_entry(
+            prior=config,
+            new=config,
+            invocation_id="inv-002",
+            timestamp=_FIXED_TS,
+            git_sha="abc1234",
+            entry_id="eid-002",
+        )
+        assert result is None
+
+    def test_no_change_with_distinct_but_equal_configs_suppressed(self) -> None:
+        from alphamind.portfolio_state.computations.activity_log import (
+            build_distillation_config_change_entry,
+        )
+
+        prior = _build_distillation_config()
+        new = _build_distillation_config()
+        assert prior is not new
+        result = build_distillation_config_change_entry(
+            prior=prior,
+            new=new,
+            invocation_id="inv-002",
+            timestamp=_FIXED_TS,
+            git_sha="abc1234",
+            entry_id="eid-002",
+        )
+        assert result is None
+
+    def test_change_returns_populated_entry(self) -> None:
+        from alphamind.portfolio_state.computations.activity_log import (
+            build_distillation_config_change_entry,
+            compute_distillation_config_hash,
+        )
+
+        prior = _build_distillation_config()
+        new = _swap_section(prior, "anomaly_detection", volume_anomaly_sigma=3.5)
+        entry = build_distillation_config_change_entry(
+            prior=prior,
+            new=new,
+            invocation_id="inv-003",
+            timestamp=_FIXED_TS,
+            git_sha="cafe5678",
+            entry_id="eid-003",
+        )
+        assert entry is not None
+        assert entry.detail.prior_hash == compute_distillation_config_hash(prior)
+        assert entry.detail.new_hash == compute_distillation_config_hash(new)
+        assert entry.detail.git_sha == "cafe5678"
+        assert len(entry.detail.changes) == 1
+        change = entry.detail.changes[0]
+        assert change.key_path == "anomaly_detection.volume_anomaly_sigma"
+        assert change.old_value == 2.0
+        assert change.new_value == 3.5
+
+    def test_timestamp_independent_of_wall_clock(self) -> None:
+        from alphamind.portfolio_state.computations.activity_log import (
+            build_distillation_config_change_entry,
+        )
+
+        prior = _build_distillation_config()
+        new = _swap_section(prior, "anomaly_detection", volume_anomaly_sigma=3.5)
+        custom_ts = datetime(1999, 12, 31, 23, 59, 59, tzinfo=UTC)
+        entry = build_distillation_config_change_entry(
+            prior=prior,
+            new=new,
+            invocation_id="inv-004",
+            timestamp=custom_ts,
+            git_sha="abc1234",
+            entry_id="eid-004",
+        )
+        assert entry is not None
+        assert entry.timestamp == custom_ts
