@@ -731,12 +731,6 @@ class DistillationTickerBaseline(Base):
             _CALIBRATION_STATES,
             "ck_distillation_ticker_baseline_calibration_state",
         ),
-        Index(
-            "ix_distillation_ticker_baseline_ticker_kind_as_of",
-            "ticker",
-            "baseline_kind",
-            "as_of",
-        ),
     )
 
 
@@ -771,12 +765,6 @@ class DistillationPairLag(Base):
             _CALIBRATION_STATES,
             "ck_distillation_pair_lag_calibration_state",
         ),
-        Index(
-            "ix_distillation_pair_lag_lead_lag_as_of",
-            "lead_ticker",
-            "lag_ticker",
-            "as_of",
-        ),
     )
 
 
@@ -805,11 +793,6 @@ class DistillationContractHistory(Base):
             "calibration_state",
             _CALIBRATION_STATES,
             "ck_distillation_contract_history_calibration_state",
-        ),
-        Index(
-            "ix_distillation_contract_history_contract_ts",
-            "contract_id",
-            "snapshot_ts",
         ),
     )
 
@@ -842,12 +825,6 @@ class DistillationEventHistory(Base):
             "event_kind",
             _EVENT_KINDS,
             "ck_distillation_event_history_event_kind",
-        ),
-        Index(
-            "ix_distillation_event_history_ticker_kind_ts",
-            "ticker",
-            "event_kind",
-            "event_ts",
         ),
     )
 
@@ -885,7 +862,6 @@ class DistillationRegimeState(Base):
             _TRANSITION_STATES,
             "ck_distillation_regime_state_transition_state",
         ),
-        Index("ix_distillation_regime_state_as_of", "as_of"),
     )
 
 
@@ -918,10 +894,5 @@ class DistillationCompositeState(Base):
             "calibration_state",
             _CALIBRATION_STATES,
             "ck_distillation_composite_state_calibration_state",
-        ),
-        Index(
-            "ix_distillation_composite_state_kind_as_of",
-            "composite_kind",
-            "as_of",
         ),
     )

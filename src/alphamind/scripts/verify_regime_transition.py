@@ -219,8 +219,15 @@ def _load_regime_rows(
     now: datetime,
     lookback_days: int,
 ) -> tuple[RegimeRow, ...]:
-    """Read regime-state rows from the lookback window, ordered oldest first."""
-    cutoff = (now - timedelta(days=lookback_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """Read regime-state rows from the lookback window, ordered oldest first.
+
+    The lookback filter parses each row's ``as_of`` and compares it as a
+    proper datetime rather than a lexicographic prefix string. SQL
+    string comparison only works correctly when every writer emits the
+    same suffix (``Z`` vs. ``+00:00``); parsing post-fetch keeps the
+    filter robust to mixed timezone-suffix conventions across writers.
+    """
+    cutoff = now - timedelta(days=lookback_days)
     stmt = (
         select(
             DistillationRegimeState.as_of,
@@ -230,21 +237,38 @@ def _load_regime_rows(
             DistillationRegimeState.indicator_agreement_count,
             DistillationRegimeState.invocations_held,
         )
-        .where(DistillationRegimeState.as_of >= cutoff)
         .order_by(DistillationRegimeState.as_of.asc())
     )
     rows = session.execute(stmt).all()
-    return tuple(
-        RegimeRow(
-            as_of=as_of,
-            regime_label=label,
-            transition_state=state,
-            prior_label=prior or "",
-            indicator_agreement_count=agreement,
-            invocations_held=held,
+    selected: list[RegimeRow] = []
+    for as_of, label, state, prior, agreement, held in rows:
+        if _parse_as_of(as_of) < cutoff:
+            continue
+        selected.append(
+            RegimeRow(
+                as_of=as_of,
+                regime_label=label,
+                transition_state=state,
+                prior_label=prior or "",
+                indicator_agreement_count=agreement,
+                invocations_held=held,
+            )
         )
-        for as_of, label, state, prior, agreement, held in rows
-    )
+    return tuple(selected)
+
+
+def _parse_as_of(as_of: str) -> datetime:
+    """Parse a regime-row ``as_of`` ISO 8601 string into a tz-aware datetime.
+
+    Accepts the canonical ``Z`` suffix as well as offset suffixes
+    (``+00:00``, ``-05:00``) so the verification script does not silently
+    drop rows when a writer's serialization changes.
+    """
+    text = as_of[:-1] + "+00:00" if as_of.endswith("Z") else as_of
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 def compute_regime_transition_report(

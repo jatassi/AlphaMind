@@ -1160,6 +1160,7 @@ def _valid_distillation_raw() -> dict[str, Any]:
             "funding_stress_component_percentile": 90,
             "market_liquidity_alert_percentile": 10,
             "news_price_divergence_window_hours": 12,
+            "news_price_divergence_min_articles": 5,
         },
         "regime_classification": {
             "regime_low_vol_vix_max": 14.0,

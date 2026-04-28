@@ -51,14 +51,29 @@ def downgrade() -> None:
     """Revert the event_kind CHECK constraint to the original two values.
 
     Rows whose ``event_kind`` is ``correlation_divergence`` would violate
-    the older constraint; the downgrade deletes them first so the
-    constraint-recreate succeeds.
+    the older constraint. Rather than silently deleting accumulated
+    correlation-divergence history, refuse to downgrade and require the
+    operator to clear them explicitly — a routine ``alembic downgrade -1``
+    on a long-running database otherwise would obliterate weeks of
+    detected events without warning.
     """
-    op.execute(
+    bind = op.get_bind()
+    surviving = bind.execute(
         sa.text(
-            "DELETE FROM distillation_event_history WHERE event_kind = 'correlation_divergence'"
+            "SELECT COUNT(*) FROM distillation_event_history "
+            "WHERE event_kind = 'correlation_divergence'"
         )
-    )
+    ).scalar_one()
+    if surviving:
+        raise RuntimeError(
+            f"refusing to downgrade revision 8a8d4e44b305: "
+            f"{surviving} 'correlation_divergence' row(s) in "
+            "distillation_event_history would be invalidated by the older "
+            "CHECK constraint. Clear them manually before re-running the "
+            "downgrade: "
+            "DELETE FROM distillation_event_history "
+            "WHERE event_kind = 'correlation_divergence';"
+        )
     with op.batch_alter_table("distillation_event_history") as batch_op:
         batch_op.drop_constraint(
             "ck_distillation_event_history_event_kind",

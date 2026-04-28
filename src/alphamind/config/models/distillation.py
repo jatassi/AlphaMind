@@ -28,6 +28,7 @@ class AnomalyDetection(BaseModel):
     funding_stress_component_percentile: int = Field(ge=50, le=100)
     market_liquidity_alert_percentile: int = Field(ge=0, le=50)
     news_price_divergence_window_hours: int = Field(ge=1)
+    news_price_divergence_min_articles: int = Field(ge=1)
 
 
 class RegimeClassification(BaseModel):

@@ -287,10 +287,15 @@ def _classify_divergence(
     - ``priced_in``: dominant negative news AND price flat or rising.
     - ``hidden_problem``: dominant positive news AND price flat or falling.
     - Returns ``None`` when news and price agree.
+
+    The boundary is inclusive of zero on both sides — an exact-zero
+    price move on a halt-resume open or an illiquid name still
+    represents a "flat" reaction that diverges from the dominant
+    sentiment direction.
     """
-    if dominant == "negative" and price_change > 0:
+    if dominant == "negative" and price_change >= 0:
         return "priced_in"
-    if dominant == "positive" and price_change < 0:
+    if dominant == "positive" and price_change <= 0:
         return "hidden_problem"
     return None
 
@@ -322,6 +327,7 @@ def compute_news_price_divergence(
     ticker_scope: Sequence[str],
     as_of: str,
     window_hours: int,
+    min_articles: int,
 ) -> list[OutputBlock]:
     """Emit ``qual.news_price_divergence`` blocks per sector audience.
 
@@ -336,6 +342,13 @@ def compute_news_price_divergence(
     4. Emit a divergence flag when news and price disagree (``priced_in`` /
        ``hidden_problem``).
 
+    Per-block calibration: when the dominant direction is set by fewer
+    than ``min_articles`` non-neutral articles, the block is tagged
+    ``bootstrap`` with the thin-evidence reason. The block still emits
+    so downstream consumers see the signal, but the calibration tag
+    weights the conviction accordingly per
+    ``threshold-calibration.md`` § Bootstrap policy.
+
     Returns one :class:`OutputBlock` per sector audience that has at least
     one diverging ticker, with ``payload["per_ticker"]`` keyed by ticker
     sorted ascending.
@@ -345,6 +358,7 @@ def compute_news_price_divergence(
 
     per_audience: dict[OutputAudience, dict[str, dict[str, Any]]] = defaultdict(dict)
     per_audience_magnitudes: dict[OutputAudience, list[tuple[str, float]]] = defaultdict(list)
+    per_audience_min_evidence: dict[OutputAudience, int] = {}
 
     for ticker in ticker_scope:
         audience = sector_audience.get(ticker)
@@ -383,6 +397,9 @@ def compute_news_price_divergence(
             "magnitude": magnitude,
         }
         per_audience_magnitudes[audience].append((ticker, magnitude))
+        prior_min = per_audience_min_evidence.get(audience)
+        if prior_min is None or counts.non_neutral_total < prior_min:
+            per_audience_min_evidence[audience] = counts.non_neutral_total
 
     freshness_ts = _parse_iso_utc(as_of)
     blocks: list[OutputBlock] = []
@@ -397,13 +414,27 @@ def compute_news_price_divergence(
             )
             for ticker, magnitude in sorted(per_audience_magnitudes[audience])
         )
+        # Block-level calibration is the worst (thinnest) ticker evidence
+        # in the audience — one thin ticker drags the whole block to
+        # bootstrap so downstream consumers see the caveat without
+        # having to inspect every per-ticker entry.
+        worst_evidence = per_audience_min_evidence[audience]
+        if worst_evidence < min_articles:
+            calibration_state = CalibrationState.BOOTSTRAP
+            bootstrap_reason: str | None = (
+                f"news_price_divergence_min_articles: "
+                f"{worst_evidence} < {min_articles}"
+            )
+        else:
+            calibration_state = CalibrationState.CALIBRATED
+            bootstrap_reason = None
         blocks.append(
             OutputBlock(
                 block_id="qual.news_price_divergence",
                 audience=frozenset({audience}),
                 freshness_ts=freshness_ts,
-                calibration_state=CalibrationState.CALIBRATED,
-                bootstrap_reason=None,
+                calibration_state=calibration_state,
+                bootstrap_reason=bootstrap_reason,
                 payload={"per_ticker": sorted_payload},
                 anomaly_flags=flags,
                 regime_context=None,

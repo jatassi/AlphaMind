@@ -50,7 +50,7 @@ GAP_TREND_COUNTER: str = "counter_trend"
 """Gap direction opposes the prior trend."""
 
 
-GapDirection = Literal["up", "down"]
+GapDirection = Literal["up", "down", "flat"]
 TrendDirection = Literal["up", "down", "flat"]
 
 
@@ -97,14 +97,21 @@ def analyze_gap(
     """
     gap_absolute = today_open - prior_close
     gap_atr_ratio = atr_normalize(gap_absolute, atr_14d)
-    direction: GapDirection = "up" if gap_absolute > 0.0 else "down"
-
-    if direction == "up":
+    direction: GapDirection
+    if gap_absolute > 0.0:
+        direction = "up"
         kind = GAP_KIND_FULL if today_open > prior_high else GAP_KIND_PARTIAL
         trend_match = trend_direction == "up"
-    else:
+    elif gap_absolute < 0.0:
+        direction = "down"
         kind = GAP_KIND_FULL if today_open < prior_low else GAP_KIND_PARTIAL
         trend_match = trend_direction == "down"
+    else:
+        # Halt-resume opens or illiquid names can produce an open exactly
+        # equal to the prior close — there is no gap to direction-label.
+        direction = "flat"
+        kind = GAP_KIND_PARTIAL
+        trend_match = trend_direction == "flat"
     trend_classification = GAP_TREND_WITH if trend_match else GAP_TREND_COUNTER
 
     return GapAnalysisResult(
@@ -158,6 +165,8 @@ def detect_session_gap(
         return None
     magnitude = abs(gap_absolute) / atr_14d
     if magnitude < min_atr_multiple:
+        # ``min_atr_multiple > 0`` means an exact-zero gap is filtered
+        # here as well — the detection threshold subsumes the flat case.
         return None
     direction: GapDirection = "up" if gap_absolute > 0.0 else "down"
     return DetectedGap(

@@ -41,7 +41,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from alphamind.config.models.distillation import DistillationConfig
-from alphamind.distillation.baselines import refresh_composite_state
+from alphamind.distillation.baselines import _refresh_transaction, refresh_composite_state
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.normalization import macro_surprise_zscore
 from alphamind.distillation.output import (
@@ -501,14 +501,16 @@ def refresh_funding_stress_composite(
 
     # Override the alert column on the row that refresh_composite_state just
     # wrote so the persisted alert flag matches the per-component verdict.
-    row = session.execute(
-        select(DistillationCompositeState).where(
-            DistillationCompositeState.composite_kind == FUNDING_STRESS_COMPOSITE_KIND,
-            DistillationCompositeState.as_of == as_of,
-        )
-    ).scalar_one()
-    row.alert_active = int(alert_active)
-    session.commit()
+    # Wrapped in the framework's fail-closed transaction wrapper so a partial
+    # write rolls back rather than persisting.
+    with _refresh_transaction(session):
+        row = session.execute(
+            select(DistillationCompositeState).where(
+                DistillationCompositeState.composite_kind == FUNDING_STRESS_COMPOSITE_KIND,
+                DistillationCompositeState.as_of == as_of,
+            )
+        ).scalar_one()
+        row.alert_active = int(alert_active)
 
     composite_value = float(persistence_result.value["composite_value"])
     return FundingStressResult(
@@ -902,8 +904,15 @@ _FUNDING_STRESS_PROXY_SOURCES: dict[str, str] = {
 }
 # Module-load invariant: the proxy map exhausts the canonical component
 # vocabulary so a downstream consumer can rely on every named component
-# emitting a value (zero or real) on every invocation.
-assert set(_FUNDING_STRESS_PROXY_SOURCES) == set(FUNDING_STRESS_COMPONENT_NAMES)
+# emitting a value (zero or real) on every invocation. Raised eagerly
+# (not asserted) so the check survives ``python -O``.
+if set(_FUNDING_STRESS_PROXY_SOURCES) != set(FUNDING_STRESS_COMPONENT_NAMES):
+    raise RuntimeError(
+        "funding-stress proxy-source vocabulary drifted from the canonical "
+        "component-name set: "
+        f"proxies={sorted(_FUNDING_STRESS_PROXY_SOURCES)}, "
+        f"canonical={sorted(FUNDING_STRESS_COMPONENT_NAMES)}"
+    )
 
 # Market-liquidity component proxies (FRED). The St. Louis Financial
 # Stress Index plus the high-yield credit spread plus VIX form a coarse

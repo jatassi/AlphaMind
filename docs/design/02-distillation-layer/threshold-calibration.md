@@ -63,6 +63,7 @@ All values in `config/distillation.yaml`, universe-wide. Dual portfolio profiles
 | `funding_stress_component_percentile` | 90 | Per-component alert level — top 10% of trailing 60-day distribution. |
 | `market_liquidity_alert_percentile` | 10 | Market-wide liquidity composite alerts when in the bottom 10% of trailing 60-day distribution (lower percentile = worse liquidity). |
 | `news_price_divergence_window_hours` | 12 | Window for cross-referencing news sentiment against subsequent price action. Twelve hours captures the typical institutional digestion window without bleeding into the next trading day. |
+| `news_price_divergence_min_articles` | 5 | Minimum non-neutral article count inside the window for the divergence block to be tagged `calibrated`. Below this floor a dominant direction can be set by one or two outlier articles; the block still emits so downstream consumers see the signal, but the `bootstrap` tag conveys the thin-evidence caveat. |
 
 ### Regime classification boundaries
 

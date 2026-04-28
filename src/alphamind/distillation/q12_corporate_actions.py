@@ -52,17 +52,13 @@ from alphamind.persistence.models import (
 # ---------------------------------------------------------------------------
 # Definitional constants (per 08e § Notes — not Class A configuration)
 # ---------------------------------------------------------------------------
-
-# Definitional constants are computed via arithmetic from the
-# audit-allowlisted base ``1`` so the literal value never appears
-# verbatim in source — the no-magic-numbers audit
-# (``tests/distillation/test_no_magic_numbers.py``) flags any literal
-# whose value matches a ``config/distillation.yaml`` key, even when the
-# constant's purpose is unrelated. Q12 has no Class A thresholds at all
-# per ``threshold-calibration.md``; every constant below is definitional
-# to the signal.
-
-_DEFINITIONAL_BASE: int = 1
+#
+# Several values below numerically coincide with unrelated keys in
+# ``config/distillation.yaml`` (e.g. ``30`` with ``regime_vvix_low_percentile``,
+# ``5`` with ``options_low_oi_volume_multiple``). The no-magic-numbers audit
+# (``tests/distillation/test_no_magic_numbers.py``) treats those collisions as
+# Class A bypass attempts; ``tests/distillation/no_magic_numbers_allowlist.txt``
+# carries one entry per collision naming the unrelated YAML key.
 
 UNUSUAL_EVENT_CADENCE_LOOKBACK_DAYS: int = 730
 """Two-year lookback for the unusual-event-cadence flag.
@@ -70,29 +66,18 @@ UNUSUAL_EVENT_CADENCE_LOOKBACK_DAYS: int = 730
 ``quant 12d`` documents the example ("a company that hasn't held an
 investor day in two years"). Encoded as a constant rather than a Class A
 threshold per the story-08e Notes — the value is definitional to the
-signal, not a tunable knob. ``730`` does not collide with any YAML key.
+signal, not a tunable knob.
 """
 
-CLUSTERING_WINDOW_DAYS: int = (_DEFINITIONAL_BASE * 6) ** _DEFINITIONAL_BASE * (
-    _DEFINITIONAL_BASE + 4
-)
+CLUSTERING_WINDOW_DAYS: int = 30
 """Forward-window length for sector event clustering.
 
 08e § Scope: ``≥ 3 events ... scheduled by universe names within the
-same sector inside a 30-day forward window``. Computed as ``6 * 5`` so
-no literal ``30`` appears in source — the audit's value index treats
-``30`` as a Class A bypass match against ``regime_vvix_low_percentile``
-even though the two thresholds are unrelated. The ``5`` factor itself
-is expressed as ``1 + 4`` to avoid colliding with
-``options_low_oi_volume_multiple``.
+same sector inside a 30-day forward window``.
 """
 
-CLUSTERING_MIN_EVENTS: int = _DEFINITIONAL_BASE + _DEFINITIONAL_BASE + _DEFINITIONAL_BASE
-"""Minimum events inside ``CLUSTERING_WINDOW_DAYS`` to trigger clustering.
-
-Three. Computed via the definitional-base sum so the literal ``3`` does
-not collide with ``earnings_revision_cluster_count`` in the YAML.
-"""
+CLUSTERING_MIN_EVENTS: int = 3
+"""Minimum events inside ``CLUSTERING_WINDOW_DAYS`` to trigger clustering."""
 
 CLUSTERING_EVENT_TYPES: frozenset[str] = frozenset(
     {"investor_day", "conference", "product_launch", "regulatory_decision"}
@@ -112,53 +97,38 @@ UNUSUAL_CADENCE_EVENT_TYPES: frozenset[str] = frozenset(
 Per 08e § Scope: ``investor_day`` / ``conference`` / ``product_launch``.
 """
 
-RECENT_ACTIONS_WINDOW_TRADING_DAYS: int = CLUSTERING_MIN_EVENTS + (
-    _DEFINITIONAL_BASE + _DEFINITIONAL_BASE
-)
-"""Half-window for the recent-corporate-actions pass-through block (±5 trading days).
+RECENT_ACTIONS_WINDOW_TRADING_DAYS: int = 5
+"""Half-window for the recent-corporate-actions pass-through block (±5 trading days)."""
 
-Computed as ``3 + 2`` so the literal ``5`` never appears as an integer
-constant — would collide with ``options_low_oi_volume_multiple = 5.0``.
-"""
-
-ETF_FLOW_WINDOW_DAYS: int = RECENT_ACTIONS_WINDOW_TRADING_DAYS
+ETF_FLOW_WINDOW_DAYS: int = 5
 """Trailing window for ETF flow proxy.
 
 08e § Scope: ``change in etf_membership.weight_pct over the trailing
 5-day window for the ETF as a whole, plus volume comparison vs. its
 20-day baseline``. The 20-day baseline window itself reaches the
 function via a Class A configuration argument
-(``persistence_windows.volume_baseline_days``) per the no-magic-numbers
-audit; only the 5-day proxy window lives as a constant.
+(``persistence_windows.volume_baseline_days``); only the 5-day proxy
+window lives as a constant.
 """
 
-DIVERGENCE_FLOW_SIGMA_THRESHOLD: float = float(_DEFINITIONAL_BASE)
+DIVERGENCE_FLOW_SIGMA_THRESHOLD: float = 1.0
 """Z-score boundary for both legs of the ETF/single-name divergence test.
 
-08e § Scope writes "below 1-sigma" / "> 1-sigma" as the threshold. ``1.0`` is in
-the no-magic-numbers PERVASIVE_VALUES set; the named constant exists
-for self-documentation.
+08e § Scope writes "below 1-sigma" / "> 1-sigma" as the threshold.
 """
 
-DIVERGENCE_BTO_MIN_CONSTITUENTS: int = _DEFINITIONAL_BASE + _DEFINITIONAL_BASE
+DIVERGENCE_BTO_MIN_CONSTITUENTS: int = 2
 """Minimum top-10 constituents that must show BTO flow > 1-sigma.
 
 08e § Scope: ``BTO call flow > 1-sigma on ≥ 2 of the top-10 constituents``.
-Computed as ``1 + 1`` so the literal ``2`` does not collide with
-``funding_stress_component_alert_count``.
 """
 
-# Variance estimates require at least two observations to be meaningful;
-# the threshold is a definitional pre-condition for ``pstdev``, not a
-# Class A knob.
-_MIN_VARIANCE_SAMPLES: int = DIVERGENCE_BTO_MIN_CONSTITUENTS
+# Variance estimates require at least two observations to be meaningful.
+_MIN_VARIANCE_SAMPLES: int = 2
 
-# An ISO date is the leading 10 characters of a UTC timestamp. The
-# constant exists so the audit does not flag the slice index against
-# ``market_liquidity_alert_percentile``.
-_ISO_DATE_PREFIX_LENGTH: int = (DIVERGENCE_BTO_MIN_CONSTITUENTS + CLUSTERING_MIN_EVENTS) * (
-    _DEFINITIONAL_BASE + _DEFINITIONAL_BASE
-)
+# Leading 10 characters of an ISO 8601 UTC timestamp form the ``YYYY-MM-DD``
+# date prefix used to bucket events by day.
+_ISO_DATE_PREFIX_LENGTH: int = 10
 
 ETF_FLOW_ATTRIBUTION_METHOD: str = "weight_volume_proxy"
 """Documents the ETF flow proxy simplification.

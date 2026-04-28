@@ -435,6 +435,7 @@ def _compute_qualitative_blocks(
             ticker_scope=ticker_scope,
             as_of=as_of_iso,
             window_hours=config.anomaly_detection.news_price_divergence_window_hours,
+            min_articles=config.anomaly_detection.news_price_divergence_min_articles,
         )
     )
     blocks.extend(
@@ -511,26 +512,36 @@ def _latest_macro_value(session: Session, series_id: str) -> float | None:
 _VVIX_PERCENTILE_PLACEHOLDER: float = 50.0
 
 
-def _build_regime_snapshot(session: Session) -> RegimeSnapshot:
-    """Build a :class:`RegimeSnapshot` from the most recent macro observations.
+def _build_regime_snapshot(session: Session) -> tuple[RegimeSnapshot, str | None]:
+    """Build a :class:`RegimeSnapshot` plus an optional bootstrap reason.
 
     Reads VIX (``VIXCLS``) directly. The remaining series (VX1 future,
-    VVIX percentile, realized vol) carry conservative bootstrap
-    placeholders when the underlying series are missing — per story 09's
-    dispatch instruction the regime block emits with ``BOOTSTRAP``
-    calibration in that case rather than blocking the orchestrator.
+    VVIX percentile, realized vol) carry conservative placeholders when
+    the underlying series are missing — per story 09's dispatch
+    instruction the regime block emits with ``BOOTSTRAP`` calibration in
+    that case rather than blocking the orchestrator.
 
-    The bootstrap path keeps the orchestrator's regime phase fail-open at
-    the data layer (a missing underlying series is a known data-coverage
-    gap, not a layer failure) while still propagating the calibration
-    tag downstream.
+    Returns ``(snapshot, None)`` when VIX is observed and
+    ``(snapshot, "regime: VIXCLS observation missing")`` when it is not.
+    Carrying the bootstrap reason out alongside the snapshot avoids
+    encoding the bootstrap signal as a magic ``vix == 0.0`` sentinel —
+    a real VIX print of exactly zero would otherwise mis-tag.
     """
     vix = _latest_macro_value(session, "VIXCLS")
     if vix is None:
-        # No VIX series available — emit a deeply bootstrap snapshot so
-        # the regime block surfaces with the right calibration tag.
-        vix = 0.0
-    return RegimeSnapshot(
+        # No VIX series available — emit a placeholder snapshot tagged as
+        # bootstrap so the regime block surfaces with the right state.
+        snapshot = RegimeSnapshot(
+            vix_level=0.0,
+            vx1_minus_vix=0.0,
+            vvix_percentile=_VVIX_PERCENTILE_PLACEHOLDER,
+            realized_vol_5d=0.0,
+            realized_vol_20d=0.0,
+            vix_trailing_20d_mean=None,
+            prior_term_structure_backwardation=False,
+        )
+        return snapshot, "regime: VIXCLS observation missing"
+    snapshot = RegimeSnapshot(
         vix_level=vix,
         vx1_minus_vix=0.0,
         vvix_percentile=_VVIX_PERCENTILE_PLACEHOLDER,
@@ -539,6 +550,7 @@ def _build_regime_snapshot(session: Session) -> RegimeSnapshot:
         vix_trailing_20d_mean=None,
         prior_term_structure_backwardation=False,
     )
+    return snapshot, None
 
 
 def _refresh_regime(
@@ -549,14 +561,10 @@ def _refresh_regime(
 ) -> tuple[RegimeRefreshResult, OutputBlock]:
     """Phase 3 — refresh the regime row and assemble the universal block."""
     classification, transition = _build_regime_thresholds(config)
-    snapshot = _build_regime_snapshot(session)
-    # When VIX is unavailable the snapshot carries zero — surface the
-    # gap as a calibration tag on the block per the story-09 contract.
-    bootstrap_reason: str | None = None
-    calibration_state = CalibrationState.CALIBRATED
-    if snapshot.vix_level == 0.0:
-        bootstrap_reason = "regime: VIXCLS observation missing"
-        calibration_state = CalibrationState.BOOTSTRAP
+    snapshot, bootstrap_reason = _build_regime_snapshot(session)
+    calibration_state = (
+        CalibrationState.BOOTSTRAP if bootstrap_reason is not None else CalibrationState.CALIBRATED
+    )
     result = refresh_regime_state(
         session,
         as_of=_format_as_of(as_of),

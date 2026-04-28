@@ -40,6 +40,7 @@ from enum import StrEnum
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from alphamind.distillation.baselines import _refresh_transaction
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience, OutputBlock
 from alphamind.persistence.models import (
@@ -209,12 +210,11 @@ def detect_regime_skip_emergency(
     new_vix_band: VixBand,
     prior_vix_band: VixBand | None,
 ) -> bool:
-    """Return ``True`` when the VIX band has skipped ≥ 1 band.
+    """Return ``True`` when the VIX band has skipped ≥ 2 bands.
 
     A skip is a band-distance ≥
-    :data:`_REGIME_SKIP_BAND_DISTANCE_THRESHOLD` (2) in the ladder
-    LOW_VOL → NORMAL → ELEVATED → CRISIS. Adjacent transitions
-    (distance 1) are not skips per
+    :data:`_REGIME_SKIP_BAND_DISTANCE_THRESHOLD` in the ladder
+    LOW_VOL → NORMAL → ELEVATED → CRISIS, per
     ``threshold-calibration.md`` § Regime transition confidence
     ("skips a level"). Returns ``False`` on bootstrap (no prior band
     means no transition to evaluate).
@@ -632,22 +632,25 @@ def refresh_regime_state(
     # genuine same-label held state.
     persisted_prior_label = prior_label_enum.value if prior_label_enum is not None else label.value
     ingested_at = datetime.now(UTC).isoformat()
-    session.add(
-        DistillationRegimeState(
-            as_of=as_of,
-            regime_label=label.value,
-            vix_level=float(snapshot.vix_level),
-            term_structure_basis=float(snapshot.vx1_minus_vix),
-            vvix_percentile=float(snapshot.vvix_percentile),
-            realized_vol=float(snapshot.realized_vol_5d),
-            indicator_agreement_count=int(agreement),
-            invocations_held=int(invocations_held),
-            transition_state=transition_state.value,
-            prior_label=persisted_prior_label,
-            ingested_at=ingested_at,
+    # Wrap the row write in the framework's fail-closed transaction wrapper
+    # so any error during the add/commit rolls back rather than leaving the
+    # session in a partially-mutated state.
+    with _refresh_transaction(session):
+        session.add(
+            DistillationRegimeState(
+                as_of=as_of,
+                regime_label=label.value,
+                vix_level=float(snapshot.vix_level),
+                term_structure_basis=float(snapshot.vx1_minus_vix),
+                vvix_percentile=float(snapshot.vvix_percentile),
+                realized_vol=float(snapshot.realized_vol_5d),
+                indicator_agreement_count=int(agreement),
+                invocations_held=int(invocations_held),
+                transition_state=transition_state.value,
+                prior_label=persisted_prior_label,
+                ingested_at=ingested_at,
+            )
         )
-    )
-    session.commit()
 
     return RegimeRefreshResult(
         regime_label=label,

@@ -142,6 +142,41 @@ def _welford_extend(
     return n, mean, m2
 
 
+def _welford_evict(
+    *,
+    prior_n: int,
+    prior_mean: float,
+    prior_m2: float,
+    evicted_values: Sequence[float],
+) -> tuple[int, float, float]:
+    """Reverse-update a running ``(n, mean, M2)`` triple by removing observations.
+
+    Inverse of :func:`_welford_extend`. Drops each value in ``evicted_values``
+    from the running statistics by inverting the Welford recurrence:
+
+        mean_{k-1} = (k * mean_k - x) / (k - 1)
+        M2_{k-1}   = M2_k - (x - mean_{k-1}) * (x - mean_k)
+
+    Returns ``(0, 0.0, 0.0)`` if the eviction empties the running state. Used
+    by the rolling-baseline refresh to drop observations that have fallen
+    outside the new window — the design contract is "append the newest point,
+    drop the oldest" (threshold-calibration.md § Update process), so the
+    incremental Welford state must shrink as well as grow.
+    """
+    n = prior_n
+    mean = prior_mean
+    m2 = prior_m2
+    for value in evicted_values:
+        if n <= 1:
+            return 0, 0.0, 0.0
+        new_n = n - 1
+        new_mean = (n * mean - value) / new_n
+        m2 -= (value - new_mean) * (value - mean)
+        n = new_n
+        mean = new_mean
+    return n, mean, m2
+
+
 def _stdev_from_m2(*, n: int, m2: float) -> float:
     """Population standard deviation derived from Welford's M2 accumulator."""
     if n <= 0:
@@ -162,6 +197,7 @@ def _select_ohlcv_observations(
     range_start: str,
     range_end: str,
     inclusive_start: bool,
+    inclusive_end: bool = True,
 ) -> list[float]:
     """Return per-day observations of ``kind`` inside the time range ascending.
 
@@ -175,12 +211,18 @@ def _select_ohlcv_observations(
 
     ``inclusive_start = True`` is the full-window recompute path; ``False``
     is the Welford incremental path where ``range_start`` is the prior
-    refresh's ``as_of`` and only strictly-newer bars are fetched.
+    refresh's ``as_of`` and only strictly-newer bars are fetched. The
+    eviction path uses ``inclusive_end = False`` to scan ``[old_window_start,
+    new_window_start)`` — bars that were inside the prior window but fall
+    outside the new one.
     """
     start_clause = (
         OhlcvBars.period_start >= range_start
         if inclusive_start
         else OhlcvBars.period_start > range_start
+    )
+    end_clause = (
+        OhlcvBars.period_start <= range_end if inclusive_end else OhlcvBars.period_start < range_end
     )
     if kind == "volume":
         volume_stmt = (
@@ -189,7 +231,7 @@ def _select_ohlcv_observations(
                 OhlcvBars.ticker == ticker,
                 OhlcvBars.timeframe == "1d",
                 start_clause,
-                OhlcvBars.period_start <= range_end,
+                end_clause,
             )
             .order_by(OhlcvBars.period_start)
         )
@@ -201,7 +243,7 @@ def _select_ohlcv_observations(
             OhlcvBars.ticker == ticker,
             OhlcvBars.timeframe == "1d",
             start_clause,
-            OhlcvBars.period_start <= range_end,
+            end_clause,
         )
         .order_by(OhlcvBars.period_start)
     )
@@ -224,6 +266,7 @@ def _select_sentiment_observations(
     range_start: str,
     range_end: str,
     inclusive_start: bool,
+    inclusive_end: bool = True,
 ) -> list[float]:
     """Return per-article vendor sentiment scores for ``ticker`` ascending.
 
@@ -237,6 +280,11 @@ def _select_sentiment_observations(
         if inclusive_start
         else NewsArticles.published_at > range_start
     )
+    end_clause = (
+        NewsArticles.published_at <= range_end
+        if inclusive_end
+        else NewsArticles.published_at < range_end
+    )
     stmt = (
         select(NewsArticleTickers.vendor_sentiment_score)
         .join(
@@ -247,7 +295,7 @@ def _select_sentiment_observations(
             NewsArticleTickers.ticker == ticker,
             NewsArticleTickers.vendor_sentiment_score.isnot(None),
             start_clause,
-            NewsArticles.published_at <= range_end,
+            end_clause,
         )
         .order_by(NewsArticles.published_at)
     )
@@ -262,6 +310,7 @@ def _select_kind_observations(
     range_start: str,
     range_end: str,
     inclusive_start: bool,
+    inclusive_end: bool = True,
 ) -> list[float]:
     """Dispatch to the source-table reader matching ``kind``."""
     if kind == "sentiment":
@@ -271,6 +320,7 @@ def _select_kind_observations(
             range_start=range_start,
             range_end=range_end,
             inclusive_start=inclusive_start,
+            inclusive_end=inclusive_end,
         )
     return _select_ohlcv_observations(
         session,
@@ -279,6 +329,7 @@ def _select_kind_observations(
         range_start=range_start,
         range_end=range_end,
         inclusive_start=inclusive_start,
+        inclusive_end=inclusive_end,
     )
 
 
@@ -353,6 +404,28 @@ def _upsert_ticker_baseline(session: Session, row: _TickerBaselineRow) -> None:
         existing.ingested_at = row.as_of
 
 
+def _full_recompute_required(
+    *,
+    prior: DistillationTickerBaseline,
+    as_of_dt: datetime,
+    window_days: int,
+) -> bool:
+    """Return ``True`` when the incremental Welford path cannot be reused.
+
+    Two conditions force a full-window recompute over the new window:
+
+    1. The configured ``window_days`` differs from the prior row's
+       ``window_days`` (operator changed the Class A window).
+    2. The refresh gap meets or exceeds the window — every observation in
+       the prior window has fallen out, so there is nothing to extend from
+       and scanning the eviction range would cost more than a fresh scan.
+    """
+    if prior.window_days != window_days:
+        return True
+    prior_as_of_dt = _parse_iso_utc(prior.as_of)
+    return as_of_dt - prior_as_of_dt >= timedelta(days=window_days)
+
+
 def refresh_ticker_baselines(
     session: Session,
     *,
@@ -367,49 +440,82 @@ def refresh_ticker_baselines(
     For each ticker in ``ticker_scope``:
 
     1. Look up the prior baseline row for ``(ticker, kind)``.
-    2. Pull the new observation(s) covering ``[as_of - window_days, as_of]``.
-    3. Update the running mean / stdev incrementally via Welford's algorithm;
-       fall back to a full-window recompute when no prior row exists.
-    4. Compute the calibration state from ``min_observations``.
-    5. UPSERT a new row keyed ``(ticker, kind, as_of)``.
-    6. Return a dict of :class:`CalibratedValue` keyed by ticker.
+    2. On the incremental path, append observations newer than the prior
+       refresh and evict observations that have fallen outside the new
+       window — the design contract is "append the newest point, drop the
+       oldest" (threshold-calibration.md § Update process), so the running
+       Welford state always reflects ``[as_of - window_days, as_of]``.
+       On the full-recompute path (no prior row, window changed, or refresh
+       gap ≥ window), scan the entire new window from cold state.
+    3. Compute the calibration state from ``min_observations``.
+    4. UPSERT a new row keyed ``(ticker, kind, as_of)``.
+    5. Return a dict of :class:`CalibratedValue` keyed by ticker.
+
+    Per-call cost is O(|inflow| + |outflow|) on the incremental path — for a
+    daily refresh cadence that's two observations regardless of window size.
 
     The whole loop runs inside a single transaction. An uncaught exception
     rolls back any partial writes and propagates.
     """
     out: dict[str, CalibratedValue] = {}
+    as_of_dt = _parse_iso_utc(as_of)
     with _refresh_transaction(session):
         for ticker in ticker_scope:
             prior = _load_prior_baseline(session, ticker=ticker, kind=kind, as_of=as_of)
-            if prior is None:
-                # First-time deployment: full-window recompute fallback.
+            if prior is None or _full_recompute_required(
+                prior=prior, as_of_dt=as_of_dt, window_days=window_days
+            ):
+                # Full-window recompute: first deployment, window changed,
+                # or the prior window has rolled entirely off.
                 range_start = _window_start(as_of=as_of, window_days=window_days)
-                inclusive = True
-                prior_n = 0
-                prior_mean = 0.0
-                prior_m2 = 0.0
+                window_values = _select_kind_observations(
+                    session,
+                    kind=kind,
+                    ticker=ticker,
+                    range_start=range_start,
+                    range_end=as_of,
+                    inclusive_start=True,
+                )
+                n, mean, m2 = _welford_extend(
+                    prior_n=0,
+                    prior_mean=0.0,
+                    prior_m2=0.0,
+                    new_values=window_values,
+                )
             else:
-                # Welford incremental path: only bars newer than the prior
-                # ``as_of`` are scanned, regardless of window size.
-                range_start = prior.as_of
-                inclusive = False
-                prior_n = prior.n_observations
-                prior_mean = prior.mean
+                # Welford incremental path: extend with inflow, evict outflow.
+                inflow_values = _select_kind_observations(
+                    session,
+                    kind=kind,
+                    ticker=ticker,
+                    range_start=prior.as_of,
+                    range_end=as_of,
+                    inclusive_start=False,
+                )
+                prior_window_start = _window_start(as_of=prior.as_of, window_days=prior.window_days)
+                new_window_start = _window_start(as_of=as_of, window_days=window_days)
+                outflow_values = _select_kind_observations(
+                    session,
+                    kind=kind,
+                    ticker=ticker,
+                    range_start=prior_window_start,
+                    range_end=new_window_start,
+                    inclusive_start=True,
+                    inclusive_end=False,
+                )
                 prior_m2 = prior.stdev * prior.stdev * prior.n_observations
-            values = _select_kind_observations(
-                session,
-                kind=kind,
-                ticker=ticker,
-                range_start=range_start,
-                range_end=as_of,
-                inclusive_start=inclusive,
-            )
-            n, mean, m2 = _welford_extend(
-                prior_n=prior_n,
-                prior_mean=prior_mean,
-                prior_m2=prior_m2,
-                new_values=values,
-            )
+                n, mean, m2 = _welford_extend(
+                    prior_n=prior.n_observations,
+                    prior_mean=prior.mean,
+                    prior_m2=prior_m2,
+                    new_values=inflow_values,
+                )
+                n, mean, m2 = _welford_evict(
+                    prior_n=n,
+                    prior_mean=mean,
+                    prior_m2=m2,
+                    evicted_values=outflow_values,
+                )
             stdev = _stdev_from_m2(n=n, m2=m2)
             state = (
                 CalibrationState.CALIBRATED if n >= min_observations else CalibrationState.BOOTSTRAP
@@ -519,22 +625,25 @@ def _estimate_lag_days(
 
     For each candidate lag ``d`` in ``1..max_lag_days``, line up
     ``lead_returns[i]`` with ``lag_returns[i + d]``. The candidate with the
-    highest correlation wins; ties go to the smallest lag.
+    highest correlation wins; ties go to the smallest lag. The reported
+    ``n_pair_events`` is the aligned-pair count for the *winning* lag —
+    short lags yield more pairs but only the winning lag's count is
+    persisted, so consumers see the true sample size behind the estimate.
     """
     best_lag = 1
     best_corr: float | None = None
-    n_aligned = 0
+    best_n_aligned = 0
     for d in range(1, max_lag_days + 1):
         lead_window = lead_returns[: len(lag_returns) - d]
         lag_window = lag_returns[d:]
         if not lead_window:
             continue
-        n_aligned = max(n_aligned, len(lead_window))
         corr = _correlation(lead_window, lag_window)
         if best_corr is None or corr > best_corr:
             best_corr = corr
             best_lag = d
-    return float(best_lag), n_aligned
+            best_n_aligned = len(lead_window)
+    return float(best_lag), best_n_aligned
 
 
 def _upsert_pair_lag(

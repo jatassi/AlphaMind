@@ -109,6 +109,7 @@ def _build_distillation_config(
             funding_stress_component_percentile=80,
             market_liquidity_alert_percentile=10,
             news_price_divergence_window_hours=12,
+            news_price_divergence_min_articles=5,
         ),
         regime_classification=RegimeClassification(
             regime_low_vol_vix_max=15.0,

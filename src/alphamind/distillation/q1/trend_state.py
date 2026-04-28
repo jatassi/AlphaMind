@@ -14,6 +14,7 @@ Per ``docs/design/01-data-layer/external/quantitative.md`` § 1f:
 
 from __future__ import annotations
 
+import statistics
 from collections.abc import Mapping
 
 from alphamind.distillation.normalization import atr_normalize
@@ -35,16 +36,14 @@ constant of the ADX indicator, not a tunable Class A threshold.
 """
 
 
-# Multi-timeframe trend score weights — daily and 4h dominate per the
-# "structure of price matters" principle. Weights sum to 1.0 so the score
-# is naturally normalized to [-1, 1].
-_TIMEFRAME_WEIGHTS: dict[str, float] = {
-    "15min": 0.05,
-    "1h": 0.15,
-    "4h": 0.30,
-    "1d": 0.35,
-    "1w": 0.15,
-}
+# Multi-timeframe trend score tiers. The score is the unweighted mean of
+# two tier means — the longer timeframes (4h, 1d) carry the structural
+# trend signal, the shorter and weekly timeframes corroborate. Equal
+# representation between tiers gives the longer timeframes implicit
+# dominance: each long timeframe is one of two, while each secondary is
+# one of three, per the design's "structure of price matters" principle.
+_PRIMARY_TIMEFRAMES: frozenset[str] = frozenset({"4h", "1d"})
+_SECONDARY_TIMEFRAMES: frozenset[str] = frozenset({"15min", "1h", "1w"})
 
 
 # ---------------------------------------------------------------------------
@@ -108,19 +107,27 @@ def _trend_state_to_signed_value(label: str) -> float:
 def compute_multi_timeframe_trend_score(per_timeframe: Mapping[str, str]) -> float:
     """Aggregate per-timeframe trend states into a single signed score.
 
-    Score in [-1, 1] — saturates to ±1 when every timeframe agrees,
-    weighted toward the daily and 4h timeframes per the "structure of
-    price matters" principle.
+    Score in [-1, 1] — saturates to ±1 when every timeframe agrees, with
+    the daily/4h tier carrying the structural signal and the
+    15min/1h/1w tier corroborating. Computed as the unweighted mean of
+    the two tier means so the dominance arises structurally from tier
+    membership rather than from per-timeframe numeric anchors.
 
     Missing timeframes are treated as range-bound (zero contribution) so
     a partial input does not blow up the score; the caller may decide to
     raise instead.
     """
-    score = 0.0
-    for tf, weight in _TIMEFRAME_WEIGHTS.items():
-        state = per_timeframe.get(tf, TREND_RANGE_BOUND)
-        score += weight * _trend_state_to_signed_value(state)
-    return score
+    primary_values = [
+        _trend_state_to_signed_value(per_timeframe.get(tf, TREND_RANGE_BOUND))
+        for tf in _PRIMARY_TIMEFRAMES
+    ]
+    secondary_values = [
+        _trend_state_to_signed_value(per_timeframe.get(tf, TREND_RANGE_BOUND))
+        for tf in _SECONDARY_TIMEFRAMES
+    ]
+    primary_mean = statistics.fmean(primary_values) if primary_values else 0.0
+    secondary_mean = statistics.fmean(secondary_values) if secondary_values else 0.0
+    return statistics.fmean([primary_mean, secondary_mean])
 
 
 # ---------------------------------------------------------------------------

@@ -34,6 +34,7 @@ from alphamind.persistence.session import make_engine, make_session_factory
 # orchestrator (story 12) has resolved them, so the test file is the right
 # place to anchor the fixtures.
 NEWS_PRICE_WINDOW_HOURS = 12
+NEWS_PRICE_MIN_ARTICLES = 5
 
 
 @pytest.fixture()
@@ -193,6 +194,7 @@ class TestNewsPriceDivergencePricedIn:
             ticker_scope=("AAPL",),
             as_of="2026-04-26T02:00:00Z",
             window_hours=NEWS_PRICE_WINDOW_HOURS,
+            min_articles=NEWS_PRICE_MIN_ARTICLES,
         )
         assert len(blocks) == 1
         block = blocks[0]
@@ -259,11 +261,66 @@ class TestNewsPriceDivergencePricedIn:
             ticker_scope=("AAPL",),
             as_of="2026-04-26T02:00:00Z",
             window_hours=NEWS_PRICE_WINDOW_HOURS,
+            min_articles=NEWS_PRICE_MIN_ARTICLES,
         )
         assert len(blocks) == 1
         per_ticker = blocks[0].payload["per_ticker"]["AAPL"]
         assert per_ticker["direction"] == "hidden_problem"
         assert per_ticker["dominant_label"] == "positive"
+
+    def test_dominant_negative_news_with_flat_price_emits_priced_in(
+        self, session: Session
+    ) -> None:
+        """A halt-resume open or illiquid name producing exact-zero price change.
+
+        Per the docstring, the boundary of "flat or rising" includes
+        exact-zero. The classifier must not silently drop the divergence
+        on the corner case.
+        """
+        _add_ticker(session, "AAPL")
+        for i in range(8):
+            _add_news(
+                session,
+                article_id=f"art-neg-{i}",
+                ticker="AAPL",
+                published_at=f"2026-04-25T{14 + (i % 6):02d}:00:00Z",
+                label="negative",
+            )
+        for i in range(2):
+            _add_news(
+                session,
+                article_id=f"art-pos-{i}",
+                ticker="AAPL",
+                published_at=f"2026-04-25T{16 + i:02d}:00:00Z",
+                label="positive",
+            )
+        # First-bar open and last-bar close are identical → price_change == 0.0
+        _add_hour_bar(
+            session,
+            ticker="AAPL",
+            period_start="2026-04-25T14:00:00Z",
+            open_=100.0,
+            close=101.0,
+        )
+        _add_hour_bar(
+            session,
+            ticker="AAPL",
+            period_start="2026-04-25T22:00:00Z",
+            open_=99.0,
+            close=100.0,
+        )
+        session.commit()
+
+        blocks = compute_news_price_divergence(
+            session,
+            ticker_scope=("AAPL",),
+            as_of="2026-04-26T02:00:00Z",
+            window_hours=NEWS_PRICE_WINDOW_HOURS,
+            min_articles=NEWS_PRICE_MIN_ARTICLES,
+        )
+        assert len(blocks) == 1
+        per_ticker = blocks[0].payload["per_ticker"]["AAPL"]
+        assert per_ticker["direction"] == "priced_in"
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +361,7 @@ class TestNewsPriceDivergenceAgreement:
             ticker_scope=("AAPL",),
             as_of="2026-04-26T02:00:00Z",
             window_hours=NEWS_PRICE_WINDOW_HOURS,
+            min_articles=NEWS_PRICE_MIN_ARTICLES,
         )
         # No divergence → no block emitted for this ticker
         assert blocks == []
@@ -339,8 +397,72 @@ class TestNewsPriceDivergenceAgreement:
             ticker_scope=("AAPL",),
             as_of="2026-04-26T02:00:00Z",
             window_hours=NEWS_PRICE_WINDOW_HOURS,
+            min_articles=NEWS_PRICE_MIN_ARTICLES,
         )
         assert blocks == []
+
+
+# ---------------------------------------------------------------------------
+# Calibration gating — bootstrap when evidence is thin
+# ---------------------------------------------------------------------------
+
+
+class TestNewsPriceDivergenceCalibrationGating:
+    def test_thin_evidence_emits_bootstrap_tagged_block(self, session: Session) -> None:
+        """Two negative articles + rising price still emit, but tagged BOOTSTRAP.
+
+        The dominant direction is set by a thin sample; per
+        ``threshold-calibration.md`` § Bootstrap policy the layer
+        produces with tag rather than aborting, so the divergence block
+        emits with ``calibration_state == BOOTSTRAP`` and a reason
+        string naming the article-count gap. Downstream consumers
+        weight the conviction accordingly.
+        """
+        _add_ticker(session, "AAPL")
+        # Two negative articles (below NEWS_PRICE_MIN_ARTICLES = 5).
+        for i in range(2):
+            _add_news(
+                session,
+                article_id=f"art-neg-{i}",
+                ticker="AAPL",
+                published_at=f"2026-04-25T{14 + i:02d}:00:00Z",
+                label="negative",
+            )
+        # Rising price → divergence direction is priced_in.
+        _add_hour_bar(
+            session,
+            ticker="AAPL",
+            period_start="2026-04-25T14:00:00Z",
+            open_=100.0,
+            close=101.0,
+        )
+        _add_hour_bar(
+            session,
+            ticker="AAPL",
+            period_start="2026-04-25T22:00:00Z",
+            open_=104.0,
+            close=105.0,
+        )
+        session.commit()
+
+        blocks = compute_news_price_divergence(
+            session,
+            ticker_scope=("AAPL",),
+            as_of="2026-04-26T02:00:00Z",
+            window_hours=NEWS_PRICE_WINDOW_HOURS,
+            min_articles=NEWS_PRICE_MIN_ARTICLES,
+        )
+        assert len(blocks) == 1
+        block = blocks[0]
+        assert block.calibration_state is CalibrationState.BOOTSTRAP
+        assert block.bootstrap_reason is not None
+        assert "news_price_divergence_min_articles" in block.bootstrap_reason
+        assert "2 < 5" in block.bootstrap_reason
+        # The block payload still surfaces the divergence so downstream
+        # consumers can read the thin signal — the calibration tag
+        # carries the caveat.
+        per_ticker = block.payload["per_ticker"]["AAPL"]
+        assert per_ticker["direction"] == "priced_in"
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +512,7 @@ class TestDominantDirectionThreshold:
             ticker_scope=("AAPL",),
             as_of="2026-04-26T02:00:00Z",
             window_hours=NEWS_PRICE_WINDOW_HOURS,
+            min_articles=NEWS_PRICE_MIN_ARTICLES,
         )
         assert len(blocks) == 1
         per_ticker = blocks[0].payload["per_ticker"]["AAPL"]
@@ -438,6 +561,7 @@ class TestDominantDirectionThreshold:
             ticker_scope=("AAPL",),
             as_of="2026-04-26T02:00:00Z",
             window_hours=NEWS_PRICE_WINDOW_HOURS,
+            min_articles=NEWS_PRICE_MIN_ARTICLES,
         )
         # No dominant direction → no divergence block
         assert blocks == []

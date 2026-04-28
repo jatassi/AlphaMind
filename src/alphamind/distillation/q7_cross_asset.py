@@ -1251,6 +1251,34 @@ def _select_recent_returns_window(
     return [(later - earlier) / earlier for earlier, later in pairwise(closes) if earlier > 0.0]
 
 
+def _max_lagged_correlation(
+    *,
+    leading_returns: Sequence[float],
+    following_returns: Sequence[float],
+    max_lag_days: int,
+) -> float:
+    """Maximum lagged Pearson correlation across ``d`` in ``1..max_lag_days``.
+
+    Returns ``corr(leading[:n-d], following[d:])`` maximized over candidate
+    lags. A high value means the leading series predicts the following
+    series after a lag of ``d`` days. Returns ``0.0`` when the windows are
+    too short to align even the smallest candidate lag.
+    """
+    n = len(following_returns)
+    if n < 2 or max_lag_days < 1:
+        return 0.0
+    best = 0.0
+    for d in range(1, min(max_lag_days, n - 1) + 1):
+        leading_window = leading_returns[: n - d]
+        following_window = following_returns[d:]
+        if len(leading_window) < 2:
+            continue
+        corr = _pearson_correlation(leading_window, following_window)
+        if corr > best:
+            best = corr
+    return best
+
+
 def _detect_overdue_and_inversion(
     *,
     pair: LeadLagPair,
@@ -1260,12 +1288,19 @@ def _detect_overdue_and_inversion(
 ) -> list[AnomalyFlag]:
     """Emit overdue and inversion flags for one lead-lag pair.
 
-    Overdue: the most recent lead return has z-score (against its trailing
-    distribution) at or above ``overdue_lead_sigma`` AND the lag has not
-    tracked within the pair's ``max_days`` window.
+    Per ``external.md`` § quant 7f and story 08d:
 
-    Inversion: the lag asset moved first (the lag's max-magnitude return in
-    the recent window precedes the lead's max-magnitude return).
+    - **Overdue lag**: the most recent lead return has z-score (against its
+      trailing distribution) at or above ``overdue_lead_sigma`` AND the
+      lag has not tracked within the pair's ``max_days`` window.
+    - **Inversion (regime-shift)**: the named "lag" asset moves first —
+      the normal leader/follower has flipped. Detected by comparing
+      forward-direction (lead→lag) and reverse-direction (lag→lead)
+      lagged correlation across the recent window; the structural
+      comparison uses every observation rather than a single argmax bar
+      so transient noise does not flip the verdict. Magnitude gates on
+      both legs require both sides to clear ``overdue_lead_sigma`` so
+      the inversion is meaningful, not noise.
     """
     flags: list[AnomalyFlag] = []
     if not lead_returns or not lag_returns:
@@ -1292,19 +1327,29 @@ def _detect_overdue_and_inversion(
             )
         )
 
-    # Inversion: did the lag's max-magnitude bar precede the lead's?
-    if lead_returns and lag_returns:
-        n = min(len(lead_returns), len(lag_returns), pair.max_days + 1)
-        lead_window = lead_returns[-n:]
+    # Inversion: forward (lead→lag) vs. reverse (lag→lead) lagged
+    # correlation across the recent window. When the reverse direction
+    # strictly dominates, the named "lag" leads the named "lead". The
+    # magnitude gate on both legs keeps single-bar coincidences from
+    # firing the regime-shift signal.
+    n = min(len(lead_returns), len(lag_returns), pair.max_days + 1)
+    if n >= 2:
+        lead_recent = lead_returns[-n:]
         lag_recent = lag_returns[-n:]
-        lead_idx_max = max(range(len(lead_window)), key=lambda i: abs(lead_window[i]))
-        lag_idx_max = max(range(len(lag_recent)), key=lambda i: abs(lag_recent[i]))
-        # Both moves must be substantial (z-score at threshold) to count as
-        # an inversion; otherwise small noise dominates.
-        lag_max = lag_recent[lag_idx_max]
+        forward_corr = _max_lagged_correlation(
+            leading_returns=lead_recent,
+            following_returns=lag_recent,
+            max_lag_days=pair.max_days,
+        )
+        reverse_corr = _max_lagged_correlation(
+            leading_returns=lag_recent,
+            following_returns=lead_recent,
+            max_lag_days=pair.max_days,
+        )
+        lag_max = max(lag_recent, key=lambda r: abs(r))
         lag_zscore = abs(_zscore(lag_max, lag_returns[:-1]))
         if (
-            lag_idx_max < lead_idx_max
+            reverse_corr > forward_corr
             and lag_zscore >= overdue_lead_sigma
             and lead_zscore >= overdue_lead_sigma
         ):

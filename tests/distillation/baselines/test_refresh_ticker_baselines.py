@@ -355,14 +355,16 @@ class TestRefreshTickerBaselinesWelfordIncremental:
         # window (days 5..25 inclusive = 21 obs).
         assert result["AAPL"].value["n_observations"] == 21
 
-    def test_incremental_update_scans_only_new_bars(self, session: Session) -> None:
-        """Prior row exists → only bars newer than the prior ``as_of`` are scanned.
+    def test_incremental_update_scans_only_window_delta(self, session: Session) -> None:
+        """Prior row exists → only the inflow + outflow window-delta is scanned.
 
         Counts source-table SELECTs against ``ohlcv_bars`` during the
-        second refresh. The Welford incremental path scans the delta only —
-        not the full window. The assertion is on the *number of OHLCV rows
-        returned by the underlying scan*, which is the spec's "rows scanned"
-        metric.
+        second refresh. The Welford incremental path scans only the bars
+        added to the window (inflow) and the bars falling out of it
+        (outflow); the rest of the window is carried forward via the
+        ``(n, mean, M2)`` triple. Each individual scan is bounded by the
+        per-day refresh delta, regardless of window size — that is the
+        spec's "O(1) per ticker per kind regardless of window" contract.
         """
         _add_ticker(session, "AAPL")
         # 25 bars, days 1..25.
@@ -442,13 +444,182 @@ class TestRefreshTickerBaselinesWelfordIncremental:
         finally:
             sa_event.remove(bind, "after_cursor_execute", _after_cursor_execute)
 
-        # The OHLCV scan returned only the two new bars — the prior 21 are
-        # rolled into the carried Welford ``(n, mean, M2)`` state.
+        # Each OHLCV scan returns at most the two-bar window delta — the
+        # 19 unchanged middle bars are carried forward via the Welford
+        # ``(n, mean, M2)`` state. Two scans run on the incremental path:
+        # one for inflow (new bars) and one for outflow (bars falling out
+        # of the window).
         assert scan_counts, "expected an OHLCV select during the second refresh"
         assert max(scan_counts) == 2
 
-        # The carried statistics extend the prior, so n grows by exactly 2.
-        assert second["AAPL"].value["n_observations"] == prior_n + 2
+        # Two days advanced, two new bars added, two oldest bars evicted —
+        # the rolling window is still the same size, so ``n_observations``
+        # is unchanged. This is the "drop the oldest" half of the
+        # threshold-calibration.md contract.
+        assert second["AAPL"].value["n_observations"] == prior_n
+
+    def test_eviction_math_matches_full_recompute(self, session: Session) -> None:
+        """Incremental add+evict produces the same mean/stdev as a fresh recompute.
+
+        Math-correctness check: the Welford-evict reverse update must be
+        the exact inverse of Welford-extend, so the running statistics
+        after slide-the-window arithmetic equal what a from-scratch
+        recompute over the new window would produce.
+        """
+        _add_ticker(session, "AAPL")
+        # 25 distinct daily volumes, days 1..25.
+        for day in range(1, 26):
+            _add_ohlcv(
+                session,
+                ticker="AAPL",
+                period_start=f"2026-04-{day:02d}T00:00:00Z",
+                volume=day * 100_000,
+            )
+        session.commit()
+
+        # Incremental path: anchor at day 25, advance to day 27.
+        refresh_ticker_baselines(
+            session,
+            kind="volume",
+            ticker_scope=("AAPL",),
+            as_of="2026-04-25T00:00:00Z",
+            window_days=VOLUME_WINDOW_DAYS,
+            min_observations=VOLUME_MIN_OBSERVATIONS,
+        )
+        for day in (26, 27):
+            _add_ohlcv(
+                session,
+                ticker="AAPL",
+                period_start=f"2026-04-{day:02d}T00:00:00Z",
+                volume=day * 100_000,
+            )
+        session.commit()
+        incremental = refresh_ticker_baselines(
+            session,
+            kind="volume",
+            ticker_scope=("AAPL",),
+            as_of="2026-04-27T00:00:00Z",
+            window_days=VOLUME_WINDOW_DAYS,
+            min_observations=VOLUME_MIN_OBSERVATIONS,
+        )
+
+        # Full-recompute baseline: same data, second ticker, refresh once
+        # at day 27 with no prior row.
+        _add_ticker(session, "MSFT")
+        for day in range(1, 28):
+            _add_ohlcv(
+                session,
+                ticker="MSFT",
+                period_start=f"2026-04-{day:02d}T00:00:00Z",
+                volume=day * 100_000,
+            )
+        session.commit()
+        full = refresh_ticker_baselines(
+            session,
+            kind="volume",
+            ticker_scope=("MSFT",),
+            as_of="2026-04-27T00:00:00Z",
+            window_days=VOLUME_WINDOW_DAYS,
+            min_observations=VOLUME_MIN_OBSERVATIONS,
+        )
+
+        assert incremental["AAPL"].value["n_observations"] == full["MSFT"].value["n_observations"]
+        assert incremental["AAPL"].value["mean"] == pytest.approx(full["MSFT"].value["mean"])
+        assert incremental["AAPL"].value["stdev"] == pytest.approx(full["MSFT"].value["stdev"])
+
+    def test_window_days_change_triggers_full_recompute(self, session: Session) -> None:
+        """Changing the configured window forces a full recompute over the new window.
+
+        The persisted ``n``/``mean``/``M2`` triple is anchored to a specific
+        window length; reusing it under a different window would corrupt
+        the running statistics. The refresh detects the mismatch and
+        rescans the new window from cold.
+        """
+        _add_ticker(session, "AAPL")
+        for day in range(1, 26):
+            _add_ohlcv(
+                session,
+                ticker="AAPL",
+                period_start=f"2026-04-{day:02d}T00:00:00Z",
+                volume=day * 100_000,
+            )
+        session.commit()
+
+        # Anchor at day 25 with a 20-day window — n = 21 (days 5..25).
+        refresh_ticker_baselines(
+            session,
+            kind="volume",
+            ticker_scope=("AAPL",),
+            as_of="2026-04-25T00:00:00Z",
+            window_days=20,
+            min_observations=VOLUME_MIN_OBSERVATIONS,
+        )
+
+        # Reload the baseline with a 10-day window — n must drop to 11
+        # (days 15..25), which is only achievable via full recompute.
+        result = refresh_ticker_baselines(
+            session,
+            kind="volume",
+            ticker_scope=("AAPL",),
+            as_of="2026-04-25T00:00:00Z",
+            window_days=10,
+            min_observations=10,
+        )
+        assert result["AAPL"].value["n_observations"] == 11
+        assert result["AAPL"].value["window_days"] == 10
+
+    def test_refresh_gap_exceeding_window_triggers_full_recompute(self, session: Session) -> None:
+        """A refresh gap ≥ window_days drops the entire prior state.
+
+        When the time between refreshes meets or exceeds the window, every
+        observation in the prior window has fallen out. Scanning the
+        eviction range would cost as much as a fresh recompute, and the
+        carried Welford state has nothing useful left.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        _add_ticker(session, "AAPL")
+        # Seed 50 consecutive daily bars starting 2026-03-15.
+        first_day = datetime(2026, 3, 15, tzinfo=UTC)
+        for day_offset in range(50):
+            current_dt = first_day + timedelta(days=day_offset)
+            _add_ohlcv(
+                session,
+                ticker="AAPL",
+                period_start=current_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                volume=(day_offset + 1) * 100_000,
+            )
+        session.commit()
+
+        # Anchor at offset 9 (10th bar) with W=20.
+        first_as_of = (first_day + timedelta(days=9)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        first = refresh_ticker_baselines(
+            session,
+            kind="volume",
+            ticker_scope=("AAPL",),
+            as_of=first_as_of,
+            window_days=20,
+            min_observations=VOLUME_MIN_OBSERVATIONS,
+        )
+
+        # Refresh 25 days later — gap exceeds W=20, so the prior window
+        # has rolled entirely off. The new window covers 21 daily bars
+        # ending at offset 34.
+        second_as_of = (first_day + timedelta(days=34)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        second = refresh_ticker_baselines(
+            session,
+            kind="volume",
+            ticker_scope=("AAPL",),
+            as_of=second_as_of,
+            window_days=20,
+            min_observations=VOLUME_MIN_OBSERVATIONS,
+        )
+
+        # The carried mean from offset 9 is nowhere near the offset-14..34
+        # mean; the divergence confirms a full recompute landed.
+        assert second["AAPL"].value["mean"] != first["AAPL"].value["mean"]
+        # New window covers exactly 21 daily bars (offsets 14..34 inclusive).
+        assert second["AAPL"].value["n_observations"] == 21
 
 
 # ---------------------------------------------------------------------------

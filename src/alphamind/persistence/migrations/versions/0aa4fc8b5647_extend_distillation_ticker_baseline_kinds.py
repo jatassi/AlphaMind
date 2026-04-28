@@ -37,11 +37,13 @@ _CONSTRAINT_NAME = "ck_distillation_ticker_baseline_baseline_kind"
 
 
 def upgrade() -> None:
-    """Replace the CHECK constraint to admit ``atm_iv``."""
-    with op.batch_alter_table(
-        "distillation_ticker_baseline",
-        recreate="always",
-    ) as batch_op:
+    """Replace the CHECK constraint to admit ``atm_iv``.
+
+    ``batch_alter_table`` selects ``recreate`` automatically — letting
+    alembic introspect the live table preserves the existing FK on
+    ``ticker`` without an explicit re-declaration here.
+    """
+    with op.batch_alter_table("distillation_ticker_baseline") as batch_op:
         batch_op.drop_constraint(_CONSTRAINT_NAME, type_="check")
         batch_op.create_check_constraint(
             _CONSTRAINT_NAME,
@@ -51,10 +53,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Restore the CHECK constraint to the original four kinds."""
-    with op.batch_alter_table(
-        "distillation_ticker_baseline",
-        recreate="always",
-    ) as batch_op:
+    with op.batch_alter_table("distillation_ticker_baseline") as batch_op:
         batch_op.drop_constraint(_CONSTRAINT_NAME, type_="check")
         batch_op.create_check_constraint(
             _CONSTRAINT_NAME,

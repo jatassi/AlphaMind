@@ -611,6 +611,110 @@ def _alembic_config(db_path: Path) -> Config:
     )
 
 
+def _exec_sql(db_path: Path, sql: str) -> None:
+    """Run a single SQL statement against the migrated SQLite file."""
+    eng = make_engine(str(db_path))
+    try:
+        with eng.begin() as conn:
+            conn.execute(text(sql))
+    finally:
+        eng.dispose()
+
+
+def _scalar_sql(db_path: Path, sql: str) -> object:
+    """Run a single SELECT and return the scalar result."""
+    eng = make_engine(str(db_path))
+    try:
+        with eng.connect() as conn:
+            return conn.execute(text(sql)).scalar_one()
+    finally:
+        eng.dispose()
+
+
+def _expect_integrity_error(db_path: Path, sql: str) -> None:
+    """Assert that running ``sql`` against the migrated DB raises ``IntegrityError``."""
+    eng = make_engine(str(db_path))
+    try:
+        with pytest.raises(IntegrityError), eng.begin() as conn:
+            conn.execute(text(sql))
+    finally:
+        eng.dispose()
+
+
+def _seed_asset_universe_aapl(db_path: Path) -> None:
+    _exec_sql(
+        db_path,
+        "INSERT INTO asset_universe (asset_id, ticker, full_name, asset_class, "
+        "asset_role, exchange, is_active, added_date, last_updated) VALUES ("
+        "'asset-aapl', 'AAPL', 'Apple', 'equity', 'universe', 'NASDAQ', 1, "
+        "'2020-01-01', '2026-04-27T00:00:00Z')",
+    )
+
+
+_INSERT_VOLUME_BASELINE = (
+    "INSERT INTO distillation_ticker_baseline (ticker, baseline_kind, as_of, "
+    "mean, stdev, n_observations, window_days, calibration_state, ingested_at) "
+    "VALUES ('AAPL', 'volume', '2026-04-27T00:00:00Z', 1.0, 0.1, 20, 20, "
+    "'calibrated', '2026-04-27T00:00:00Z')"
+)
+_INSERT_ATM_IV_BASELINE = (
+    "INSERT INTO distillation_ticker_baseline (ticker, baseline_kind, as_of, "
+    "mean, stdev, n_observations, window_days, calibration_state, ingested_at) "
+    "VALUES ('AAPL', 'atm_iv', '2026-04-27T00:01:00Z', 0.3, 0.05, 252, 252, "
+    "'calibrated', '2026-04-27T00:01:00Z')"
+)
+_INSERT_CORRELATION_DIVERGENCE_EVENT = (
+    "INSERT INTO distillation_event_history (ticker, event_kind, event_ts, "
+    "direction, magnitude_atr_multiple, outcome, ingested_at) VALUES ("
+    "'AAPL', 'correlation_divergence', '2026-04-27T00:02:00Z', 'up', 1.5, "
+    "'pending', '2026-04-27T00:02:00Z')"
+)
+
+
+def _insert_volume_baseline(db_path: Path) -> None:
+    _exec_sql(db_path, _INSERT_VOLUME_BASELINE)
+
+
+def _expect_atm_iv_rejected(db_path: Path) -> None:
+    _expect_integrity_error(db_path, _INSERT_ATM_IV_BASELINE)
+
+
+def _assert_volume_baseline_preserved(db_path: Path) -> None:
+    rebuilt = _scalar_sql(
+        db_path,
+        "SELECT mean FROM distillation_ticker_baseline WHERE "
+        "ticker = 'AAPL' AND baseline_kind = 'volume'",
+    )
+    assert rebuilt == pytest.approx(1.0)
+
+
+def _insert_atm_iv_baseline(db_path: Path) -> None:
+    _exec_sql(db_path, _INSERT_ATM_IV_BASELINE)
+
+
+def _expect_correlation_divergence_rejected(db_path: Path) -> None:
+    _expect_integrity_error(db_path, _INSERT_CORRELATION_DIVERGENCE_EVENT)
+
+
+def _insert_correlation_divergence_event(db_path: Path) -> None:
+    _exec_sql(db_path, _INSERT_CORRELATION_DIVERGENCE_EVENT)
+
+
+def _delete_correlation_divergence_rows(db_path: Path) -> None:
+    _exec_sql(
+        db_path,
+        "DELETE FROM distillation_event_history "
+        "WHERE event_kind = 'correlation_divergence'",
+    )
+
+
+def _delete_atm_iv_rows(db_path: Path) -> None:
+    _exec_sql(
+        db_path,
+        "DELETE FROM distillation_ticker_baseline WHERE baseline_kind = 'atm_iv'",
+    )
+
+
 class TestAlembicMigration:
     def test_upgrade_head_creates_distillation_tables(self, tmp_path: Path) -> None:
         db_path = tmp_path / "alembic.db"
@@ -684,5 +788,118 @@ class TestAlembicMigration:
                 ).one()
             assert result.regime_label == "vol_expansion"
             assert result.transition_state == "early-strong"
+        finally:
+            eng.dispose()
+
+    def test_intermediate_revisions_round_trip(self, tmp_path: Path) -> None:
+        """Each distillation revision upgrades, accepts a row, and downgrades cleanly.
+
+        Walks the chain ``71d9125161ee → 0aa4fc8b5647 → 8a8d4e44b305``:
+
+        - At ``71d9125161ee`` the four base baseline kinds + two base event
+          kinds are accepted.
+        - At ``0aa4fc8b5647`` the new ``atm_iv`` baseline kind is accepted
+          (and would have been rejected under the prior CHECK).
+        - At ``8a8d4e44b305`` the new ``correlation_divergence`` event
+          kind is accepted (and would have been rejected under the prior
+          CHECK).
+
+        Each upgrade preserves the FK on ``ticker`` to ``asset_universe``;
+        each downgrade walks back to the previous revision without raising.
+        """
+        db_path = tmp_path / "alembic.db"
+        cfg = _alembic_config(db_path)
+
+        # Stage 1 — base distillation tables.
+        command.upgrade(cfg, "71d9125161ee")
+        _seed_asset_universe_aapl(db_path)
+        _insert_volume_baseline(db_path)
+        _expect_atm_iv_rejected(db_path)
+
+        # Stage 2 — atm_iv kind is admitted.
+        command.upgrade(cfg, "0aa4fc8b5647")
+        _assert_volume_baseline_preserved(db_path)
+        _insert_atm_iv_baseline(db_path)
+        _expect_correlation_divergence_rejected(db_path)
+
+        # Stage 3 — correlation_divergence event kind is admitted.
+        command.upgrade(cfg, "8a8d4e44b305")
+        _insert_correlation_divergence_event(db_path)
+
+        # Walk the chain backwards. Each pre-extension constraint would
+        # invalidate rows written under its successor; the rows are
+        # cleared so the round-trip completes — Fix 4 enforces this on
+        # the divergence revision via the loud-refusal downgrade.
+        _delete_correlation_divergence_rows(db_path)
+        command.downgrade(cfg, "0aa4fc8b5647")
+        _delete_atm_iv_rows(db_path)
+        command.downgrade(cfg, "71d9125161ee")
+        command.downgrade(cfg, "base")
+
+    def test_downgrade_correlation_divergence_revision_errors_with_rows(
+        self, tmp_path: Path
+    ) -> None:
+        """The 8a8d4e44b305 downgrade refuses to delete accumulated rows.
+
+        Routine ``alembic downgrade -1`` on a populated production
+        database would otherwise wipe weeks of correlation-divergence
+        events; the downgrade now raises and instructs the operator to
+        clear the rows explicitly first (Fix 4).
+        """
+        db_path = tmp_path / "alembic.db"
+        cfg = _alembic_config(db_path)
+        command.upgrade(cfg, "head")
+
+        eng = make_engine(str(db_path))
+        try:
+            with eng.begin() as conn:
+                conn.execute(
+                    text(
+                        "INSERT INTO asset_universe (asset_id, ticker, full_name, "
+                        "asset_class, asset_role, exchange, is_active, added_date, "
+                        "last_updated) VALUES ('asset-aapl', 'AAPL', 'Apple', "
+                        "'equity', 'universe', 'NASDAQ', 1, '2020-01-01', "
+                        "'2026-04-27T00:00:00Z')"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "INSERT INTO distillation_event_history (ticker, "
+                        "event_kind, event_ts, direction, "
+                        "magnitude_atr_multiple, outcome, ingested_at) VALUES ("
+                        "'AAPL', 'correlation_divergence', "
+                        "'2026-04-27T00:02:00Z', 'up', 1.5, 'pending', "
+                        "'2026-04-27T00:02:00Z')"
+                    )
+                )
+        finally:
+            eng.dispose()
+
+        with pytest.raises(RuntimeError, match="correlation_divergence"):
+            command.downgrade(cfg, "0aa4fc8b5647")
+
+    def test_no_redundant_indexes_on_distillation_state_tables(
+        self, tmp_path: Path
+    ) -> None:
+        """No ``ix_distillation_*`` index duplicates the composite PK.
+
+        SQLite already builds a B-tree for the primary key, so the
+        previously-shipped per-table indexes covering the same columns
+        wasted write throughput on every state insert with no read
+        benefit. After the cleanup, the only indexes the migration
+        creates are the implicit PK ones.
+        """
+        db_path = tmp_path / "alembic.db"
+        command.upgrade(_alembic_config(db_path), "head")
+
+        eng = make_engine(str(db_path))
+        try:
+            insp = inspect(eng)
+            for tbl in _DISTILLATION_TABLES:
+                indexes = insp.get_indexes(tbl)
+                offenders = [
+                    ix for ix in indexes if (ix["name"] or "").startswith("ix_distillation_")
+                ]
+                assert not offenders, f"unexpected redundant index(es) on {tbl}: {indexes}"
         finally:
             eng.dispose()

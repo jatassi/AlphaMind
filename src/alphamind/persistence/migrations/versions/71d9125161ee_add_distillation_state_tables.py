@@ -13,6 +13,11 @@ distillation computation (story 02-distillation-layer/03):
 - ``distillation_event_history``
 - ``distillation_regime_state``
 - ``distillation_composite_state``
+
+Each table relies on the composite primary key for ordered-prefix scans —
+SQLite already creates a B-tree for the PK, so no separate ``ix_*`` index
+is needed. Add narrower indexes only when a hot-path query stops using a
+PK-prefix.
 """
 
 from collections.abc import Sequence
@@ -51,12 +56,6 @@ def upgrade() -> None:
             name="ck_distillation_ticker_baseline_calibration_state",
         ),
     )
-    op.create_index(
-        "ix_distillation_ticker_baseline_ticker_kind_as_of",
-        "distillation_ticker_baseline",
-        ["ticker", "baseline_kind", "as_of"],
-        unique=False,
-    )
 
     op.create_table(
         "distillation_pair_lag",
@@ -75,12 +74,6 @@ def upgrade() -> None:
             "calibration_state IN ('calibrated', 'bootstrap', 'unavailable')",
             name="ck_distillation_pair_lag_calibration_state",
         ),
-    )
-    op.create_index(
-        "ix_distillation_pair_lag_lead_lag_as_of",
-        "distillation_pair_lag",
-        ["lead_ticker", "lag_ticker", "as_of"],
-        unique=False,
     )
 
     op.create_table(
@@ -103,12 +96,6 @@ def upgrade() -> None:
             name="ck_distillation_contract_history_calibration_state",
         ),
     )
-    op.create_index(
-        "ix_distillation_contract_history_contract_ts",
-        "distillation_contract_history",
-        ["contract_id", "snapshot_ts"],
-        unique=False,
-    )
 
     op.create_table(
         "distillation_event_history",
@@ -126,12 +113,6 @@ def upgrade() -> None:
             "event_kind IN ('gap', 'extended_hours')",
             name="ck_distillation_event_history_event_kind",
         ),
-    )
-    op.create_index(
-        "ix_distillation_event_history_ticker_kind_ts",
-        "distillation_event_history",
-        ["ticker", "event_kind", "event_ts"],
-        unique=False,
     )
 
     op.create_table(
@@ -158,12 +139,6 @@ def upgrade() -> None:
             name="ck_distillation_regime_state_transition_state",
         ),
     )
-    op.create_index(
-        "ix_distillation_regime_state_as_of",
-        "distillation_regime_state",
-        ["as_of"],
-        unique=False,
-    )
 
     op.create_table(
         "distillation_composite_state",
@@ -185,43 +160,13 @@ def upgrade() -> None:
             name="ck_distillation_composite_state_calibration_state",
         ),
     )
-    op.create_index(
-        "ix_distillation_composite_state_kind_as_of",
-        "distillation_composite_state",
-        ["composite_kind", "as_of"],
-        unique=False,
-    )
 
 
 def downgrade() -> None:
     """Drop the six distillation state tables."""
-    op.drop_index(
-        "ix_distillation_composite_state_kind_as_of",
-        table_name="distillation_composite_state",
-    )
     op.drop_table("distillation_composite_state")
-    op.drop_index(
-        "ix_distillation_regime_state_as_of",
-        table_name="distillation_regime_state",
-    )
     op.drop_table("distillation_regime_state")
-    op.drop_index(
-        "ix_distillation_event_history_ticker_kind_ts",
-        table_name="distillation_event_history",
-    )
     op.drop_table("distillation_event_history")
-    op.drop_index(
-        "ix_distillation_contract_history_contract_ts",
-        table_name="distillation_contract_history",
-    )
     op.drop_table("distillation_contract_history")
-    op.drop_index(
-        "ix_distillation_pair_lag_lead_lag_as_of",
-        table_name="distillation_pair_lag",
-    )
     op.drop_table("distillation_pair_lag")
-    op.drop_index(
-        "ix_distillation_ticker_baseline_ticker_kind_as_of",
-        table_name="distillation_ticker_baseline",
-    )
     op.drop_table("distillation_ticker_baseline")
