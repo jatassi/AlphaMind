@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: ec4ad008c6d3f09f264577d4483856fa0d827a45
 ---
 
 # 13 — End-to-end verification
