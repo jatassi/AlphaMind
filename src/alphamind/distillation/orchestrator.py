@@ -61,6 +61,9 @@ from alphamind.distillation.baselines import (
     refresh_ticker_baselines,
 )
 from alphamind.distillation.calibration import CalibrationState
+from alphamind.distillation.calibration_snapshot import (
+    write_calibration_state_snapshot,
+)
 from alphamind.distillation.correlation_brief import (
     CorrelationRegimeBrief,
     assemble_correlation_brief,
@@ -108,6 +111,13 @@ class DistillationOutputs:
     regime label payload (a convenience accessor for analysis-layer agents
     that need the regime as universal context but not the full structured
     text).
+
+    ``all_blocks`` carries every :class:`OutputBlock` the orchestrator
+    emitted in this invocation, in deterministic order. The per-consumer
+    assemblers (:class:`SectorOutput`, :class:`CorrelationRegimeBrief`)
+    discard the underlying blocks during rendering, so this list is the
+    single source the calibration-state snapshot writer (story 17) reads
+    to produce the per-invocation reduction.
     """
 
     sector_outputs: dict[OutputAudience, SectorOutput]
@@ -118,6 +128,7 @@ class DistillationOutputs:
     total_blocks: int
     total_anomalies: int
     bootstrap_block_count: int
+    all_blocks: tuple[OutputBlock, ...]
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +149,21 @@ def _default_archive_root() -> Path:
     """
     userprofile = os.environ.get("USERPROFILE") or str(Path.home())
     return Path(userprofile) / "AlphaMind" / "archive"
+
+
+def _default_provenance_root() -> Path:
+    """Resolve the platform-default provenance-snapshot root.
+
+    Mirrors the layout pinned by
+    ``docs/design/05-execution-layer/state-persistence.md`` § Tier 2:
+    ``data/provenance/invocations/{invocation_id}/...``. The orchestrator
+    resolves the ``data/provenance`` portion under
+    ``%USERPROFILE%/AlphaMind/`` on Windows and ``~/AlphaMind/`` elsewhere
+    so the snapshot lives alongside the rest of AlphaMind's per-invocation
+    state.
+    """
+    userprofile = os.environ.get("USERPROFILE") or str(Path.home())
+    return Path(userprofile) / "AlphaMind" / "data" / "provenance"
 
 
 def _invocation_archive_dir(*, archive_root: Path, as_of: datetime, invocation_id: str) -> Path:
@@ -576,6 +602,7 @@ async def run_external_distillation(
     invocation_id: str,
     *,
     archive_root: Path | None = None,
+    provenance_root: Path | None = None,
 ) -> DistillationOutputs:
     """The single ``async`` entry point the pipeline process calls.
 
@@ -585,10 +612,16 @@ async def run_external_distillation(
 
     ``archive_root`` defaults to the platform-default location
     (``%USERPROFILE%/AlphaMind/archive`` on Windows;
-    ``~/AlphaMind/archive`` elsewhere). Tests pass an explicit path.
+    ``~/AlphaMind/archive`` elsewhere). ``provenance_root`` defaults to
+    ``%USERPROFILE%/AlphaMind/data/provenance`` (or its POSIX equivalent),
+    where the per-invocation calibration-state snapshot lands per
+    ``docs/design/05-execution-layer/state-persistence.md`` § Tier 2.
+    Tests pass explicit paths.
     """
     if archive_root is None:
         archive_root = _default_archive_root()
+    if provenance_root is None:
+        provenance_root = _default_provenance_root()
 
     overall_start = time.monotonic()
 
@@ -704,7 +737,26 @@ async def run_external_distillation(
         time.monotonic() - phase_start,
     )
 
-    # Phase 6 — invocation-archive write.
+    # Build the universal regime label payload from the regime block.
+    universal_regime_label: dict[str, Any] = dict(regime_block.payload)
+
+    outputs = DistillationOutputs(
+        sector_outputs=sector_outputs,
+        correlation_regime_brief=correlation_regime_brief,
+        universal_regime_label=universal_regime_label,
+        invocation_id=invocation_id,
+        as_of=as_of,
+        total_blocks=len(all_blocks),
+        total_anomalies=sum(len(items) for items in grouped_anomalies.values()),
+        bootstrap_block_count=_count_bootstrap_blocks(all_blocks),
+        all_blocks=tuple(all_blocks),
+    )
+
+    # Phase 6 — invocation-archive write plus calibration-state snapshot.
+    # The archive write emits the markdown documents; the snapshot write
+    # emits the deterministic JSON the feedback loop and command center
+    # consume per story 17. Both writes share phase 6's fail-closed
+    # semantics — any failure aborts the invocation.
     phase_start = time.monotonic()
     archive_dir = _invocation_archive_dir(
         archive_root=archive_root, as_of=as_of, invocation_id=invocation_id
@@ -715,6 +767,12 @@ async def run_external_distillation(
         sector_outputs=sector_outputs,
         correlation_regime_brief=correlation_regime_brief,
         regime_block=regime_block,
+    )
+    await asyncio.to_thread(
+        write_calibration_state_snapshot,
+        outputs,
+        invocation_id,
+        provenance_root,
     )
     logger.info(
         "phase 6 (archive write) complete: dir=%s elapsed=%.3fs",
@@ -733,20 +791,6 @@ async def run_external_distillation(
     logger.info(
         "phase 7 (brief-store population) complete: elapsed=%.3fs",
         time.monotonic() - phase_start,
-    )
-
-    # Build the universal regime label payload from the regime block.
-    universal_regime_label: dict[str, Any] = dict(regime_block.payload)
-
-    outputs = DistillationOutputs(
-        sector_outputs=sector_outputs,
-        correlation_regime_brief=correlation_regime_brief,
-        universal_regime_label=universal_regime_label,
-        invocation_id=invocation_id,
-        as_of=as_of,
-        total_blocks=len(all_blocks),
-        total_anomalies=sum(len(items) for items in grouped_anomalies.values()),
-        bootstrap_block_count=_count_bootstrap_blocks(all_blocks),
     )
     logger.info(
         "run_external_distillation complete: total_blocks=%d total_anomalies=%d "

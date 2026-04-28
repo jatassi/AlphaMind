@@ -1,0 +1,473 @@
+"""Tests for the calibration-state snapshot writer — story 02-distillation/17.
+
+These tests exercise :func:`write_calibration_state_snapshot` against
+hand-built :class:`DistillationOutputs` fixtures. The writer reduces every
+:class:`OutputBlock` carried by the orchestrator's outputs into the per-
+invocation JSON file documented in
+``docs/design/02-distillation-layer/threshold-calibration.md``
+§ Calibration-state snapshot file.
+
+Coverage map per the story scope:
+
+- End-to-end: a fixture with mixed states across audiences and block kinds
+  produces a JSON file matching the documented schema.
+- Determinism: two writer invocations on the same fixture produce
+  byte-identical files.
+- Empty-input: zero-block fixture produces ``total_blocks = 0`` and empty
+  by-* dicts.
+- Bootstrap-reason capture and unavailable-reason capture.
+- ``schema_version`` field is present and equal to ``"1"``.
+- Directory creation: the writer creates missing parents.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from alphamind.distillation.calibration import CalibrationState
+from alphamind.distillation.calibration_snapshot import (
+    write_calibration_state_snapshot,
+)
+from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
+from alphamind.distillation.orchestrator import DistillationOutputs
+from alphamind.distillation.output import OutputAudience, OutputBlock
+from alphamind.distillation.sector_assembly import SectorOutput
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_AS_OF = datetime(2026, 4, 25, 12, 0, 0, tzinfo=UTC)
+
+
+def _block(
+    *,
+    block_id: str,
+    audience: frozenset[OutputAudience],
+    state: CalibrationState,
+    bootstrap_reason: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> OutputBlock:
+    return OutputBlock(
+        block_id=block_id,
+        audience=audience,
+        freshness_ts=_AS_OF,
+        calibration_state=state,
+        bootstrap_reason=bootstrap_reason,
+        payload=payload or {},
+        anomaly_flags=(),
+        regime_context=None,
+    )
+
+
+def _empty_sector_output(audience: OutputAudience, label: str) -> SectorOutput:
+    return SectorOutput(
+        audience=audience,
+        sector_label=label,
+        text="",
+        tickers=(),
+        block_ids=(),
+        freshness_min=_AS_OF,
+    )
+
+
+def _empty_brief() -> CorrelationRegimeBrief:
+    return CorrelationRegimeBrief(
+        text="",
+        reference_index={},
+        freshness_min=_AS_OF,
+    )
+
+
+def _build_outputs(
+    *,
+    invocation_id: str = "20260425T120000Z-test",
+    blocks: tuple[OutputBlock, ...] = (),
+) -> DistillationOutputs:
+    """Build a minimal :class:`DistillationOutputs` carrying ``blocks``.
+
+    The other fields are populated with empty placeholders sufficient for
+    the snapshot writer; the writer only inspects the block list.
+    """
+    sector_outputs = {
+        OutputAudience.SECTOR_TECH_SEMIS: _empty_sector_output(
+            OutputAudience.SECTOR_TECH_SEMIS, "Tech / Semis"
+        ),
+        OutputAudience.SECTOR_FINANCIALS: _empty_sector_output(
+            OutputAudience.SECTOR_FINANCIALS, "Financials"
+        ),
+        OutputAudience.SECTOR_ENERGY: _empty_sector_output(OutputAudience.SECTOR_ENERGY, "Energy"),
+    }
+    return DistillationOutputs(
+        sector_outputs=sector_outputs,
+        correlation_regime_brief=_empty_brief(),
+        universal_regime_label={},
+        invocation_id=invocation_id,
+        as_of=_AS_OF,
+        total_blocks=len(blocks),
+        total_anomalies=0,
+        bootstrap_block_count=sum(
+            1 for block in blocks if block.calibration_state is not CalibrationState.CALIBRATED
+        ),
+        all_blocks=blocks,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+
+def test_writer_emits_schema_version_one(tmp_path: Path) -> None:
+    """Tracer bullet — the writer produces a JSON file whose ``schema_version`` equals ``"1"``."""
+    outputs = _build_outputs(blocks=())
+    path = write_calibration_state_snapshot(
+        outputs=outputs,
+        invocation_id="20260425T120000Z-test",
+        base_path=tmp_path,
+    )
+
+    expected_path = (
+        tmp_path / "invocations" / "20260425T120000Z-test" / "data_calibration_state.json"
+    )
+    assert path == expected_path
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "1"
+
+
+def test_writer_creates_invocation_directory(tmp_path: Path) -> None:
+    """Directory creation: the writer mkdirs the per-invocation subdirectory if missing."""
+    base_path = tmp_path / "fresh"
+    assert not base_path.exists()
+
+    outputs = _build_outputs(blocks=())
+    path = write_calibration_state_snapshot(
+        outputs=outputs,
+        invocation_id="inv-id",
+        base_path=base_path,
+    )
+
+    assert path.exists()
+    assert path.parent.is_dir()
+
+
+def test_writer_empty_input_produces_zero_counts(tmp_path: Path) -> None:
+    """A fixture with no blocks produces ``total_blocks = 0`` and empty by-* dicts."""
+    outputs = _build_outputs(blocks=())
+    path = write_calibration_state_snapshot(
+        outputs=outputs,
+        invocation_id="inv-id",
+        base_path=tmp_path,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["summary"]["total_blocks"] == 0
+    assert payload["summary"]["by_state"] == {
+        "calibrated": 0,
+        "bootstrap": 0,
+        "unavailable": 0,
+    }
+    assert payload["summary"]["by_audience"] == {}
+    assert payload["summary"]["by_block_kind"] == {}
+    assert payload["bootstrap_reasons"] == {}
+    assert payload["unavailable_reasons"] == {}
+
+
+def test_writer_aggregates_per_state_counts(tmp_path: Path) -> None:
+    """``by_state`` counts every block once, partitioned by ``calibration_state``."""
+    blocks = (
+        _block(
+            block_id="q1.volume_anomaly",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.CALIBRATED,
+        ),
+        _block(
+            block_id="q1.price_move_anomaly",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.CALIBRATED,
+        ),
+        _block(
+            block_id="q3.options_flow",
+            audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
+            state=CalibrationState.BOOTSTRAP,
+            bootstrap_reason="iv_rank: 4 < 30",
+        ),
+        _block(
+            block_id="q12.recent_corporate_actions",
+            audience=frozenset({OutputAudience.SECTOR_ENERGY}),
+            state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason="event_history: 0 < 3 (cross-sectional pool empty)",
+        ),
+    )
+    outputs = _build_outputs(blocks=blocks)
+    path = write_calibration_state_snapshot(
+        outputs=outputs,
+        invocation_id="inv-id",
+        base_path=tmp_path,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["summary"]["total_blocks"] == 4
+    assert payload["summary"]["by_state"] == {
+        "calibrated": 2,
+        "bootstrap": 1,
+        "unavailable": 1,
+    }
+
+
+def test_writer_aggregates_per_audience_counts(tmp_path: Path) -> None:
+    """``by_audience`` counts each (audience, block) pair; multi-audience blocks count twice."""
+    blocks = (
+        _block(
+            block_id="q1.volume_anomaly",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.CALIBRATED,
+        ),
+        _block(
+            block_id="qual.sentiment_percentile",
+            audience=frozenset(
+                {OutputAudience.SECTOR_TECH_SEMIS, OutputAudience.UNIVERSAL_BROADCAST}
+            ),
+            state=CalibrationState.BOOTSTRAP,
+            bootstrap_reason="sentiment: 2 < 5",
+        ),
+    )
+    outputs = _build_outputs(blocks=blocks)
+    path = write_calibration_state_snapshot(
+        outputs=outputs,
+        invocation_id="inv-id",
+        base_path=tmp_path,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["summary"]["by_audience"] == {
+        "sector_tech_semis": {"calibrated": 1, "bootstrap": 1, "unavailable": 0},
+        "universal_broadcast": {"calibrated": 0, "bootstrap": 1, "unavailable": 0},
+    }
+
+
+def test_writer_aggregates_per_block_kind_counts(tmp_path: Path) -> None:
+    """``by_block_kind`` keys are block_ids; counts span the calibration states."""
+    blocks = (
+        _block(
+            block_id="q1.volume_anomaly",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.CALIBRATED,
+        ),
+        _block(
+            block_id="q1.volume_anomaly",
+            audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
+            state=CalibrationState.BOOTSTRAP,
+            bootstrap_reason="volume_baseline: 12 < 20",
+        ),
+        _block(
+            block_id="regime.label",
+            audience=frozenset({OutputAudience.UNIVERSAL_BROADCAST}),
+            state=CalibrationState.CALIBRATED,
+        ),
+    )
+    outputs = _build_outputs(blocks=blocks)
+    path = write_calibration_state_snapshot(
+        outputs=outputs,
+        invocation_id="inv-id",
+        base_path=tmp_path,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["summary"]["by_block_kind"] == {
+        "q1.volume_anomaly": {"calibrated": 1, "bootstrap": 1, "unavailable": 0},
+        "regime.label": {"calibrated": 1, "bootstrap": 0, "unavailable": 0},
+    }
+
+
+def test_writer_captures_bootstrap_reasons(tmp_path: Path) -> None:
+    """Bootstrap blocks produce a ``bootstrap_reasons`` map keyed by ``block_id``."""
+    blocks = (
+        _block(
+            block_id="q1.volume_anomaly",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.BOOTSTRAP,
+            bootstrap_reason="volume_baseline: 12 < 20",
+        ),
+        _block(
+            block_id="qual.sentiment_percentile",
+            audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
+            state=CalibrationState.BOOTSTRAP,
+            bootstrap_reason="sentiment: 2 < 5",
+        ),
+        _block(
+            block_id="q3.options_flow",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.CALIBRATED,
+        ),
+    )
+    outputs = _build_outputs(blocks=blocks)
+    path = write_calibration_state_snapshot(
+        outputs=outputs,
+        invocation_id="inv-id",
+        base_path=tmp_path,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["bootstrap_reasons"] == {
+        "q1.volume_anomaly": "volume_baseline: 12 < 20",
+        "qual.sentiment_percentile": "sentiment: 2 < 5",
+    }
+    # Calibrated blocks must not appear.
+    assert "q3.options_flow" not in payload["bootstrap_reasons"]
+    assert payload["unavailable_reasons"] == {}
+
+
+def test_writer_captures_unavailable_reasons(tmp_path: Path) -> None:
+    """Unavailable blocks produce an ``unavailable_reasons`` map; bootstrap blocks stay separate."""
+    blocks = (
+        _block(
+            block_id="q12.event_novelty",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason="event_history: 0 < 3 (cross-sectional pool empty)",
+        ),
+        _block(
+            block_id="q1.volume_anomaly",
+            audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
+            state=CalibrationState.BOOTSTRAP,
+            bootstrap_reason="volume_baseline: 12 < 20",
+        ),
+    )
+    outputs = _build_outputs(blocks=blocks)
+    path = write_calibration_state_snapshot(
+        outputs=outputs,
+        invocation_id="inv-id",
+        base_path=tmp_path,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["unavailable_reasons"] == {
+        "q12.event_novelty": "event_history: 0 < 3 (cross-sectional pool empty)",
+    }
+    assert payload["bootstrap_reasons"] == {
+        "q1.volume_anomaly": "volume_baseline: 12 < 20",
+    }
+
+
+def test_writer_records_invocation_metadata(tmp_path: Path) -> None:
+    """The snapshot records the invocation id and as-of timestamp from ``DistillationOutputs``."""
+    outputs = _build_outputs(invocation_id="20260425T120000Z-real", blocks=())
+    path = write_calibration_state_snapshot(
+        outputs=outputs,
+        invocation_id="20260425T120000Z-real",
+        base_path=tmp_path,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["invocation_id"] == "20260425T120000Z-real"
+    # ``as_of`` is the ISO-8601 UTC formatted timestamp from outputs.as_of.
+    assert payload["as_of"] == "2026-04-25T12:00:00Z"
+
+
+def test_writer_is_deterministic(tmp_path: Path) -> None:
+    """Two writer calls on the same fixture produce byte-identical files."""
+    blocks = (
+        _block(
+            block_id="q1.volume_anomaly",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.CALIBRATED,
+        ),
+        _block(
+            block_id="q3.options_flow",
+            audience=frozenset(
+                {OutputAudience.SECTOR_FINANCIALS, OutputAudience.UNIVERSAL_BROADCAST}
+            ),
+            state=CalibrationState.BOOTSTRAP,
+            bootstrap_reason="iv_rank: 4 < 30",
+        ),
+        _block(
+            block_id="qual.sentiment_percentile",
+            audience=frozenset({OutputAudience.SECTOR_ENERGY}),
+            state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason="sentiment: 0 < 5 (cross-sectional pool empty)",
+        ),
+    )
+    outputs = _build_outputs(blocks=blocks)
+
+    path_a = write_calibration_state_snapshot(
+        outputs=outputs,
+        invocation_id="inv-a",
+        base_path=tmp_path / "run_a",
+    )
+    path_b = write_calibration_state_snapshot(
+        outputs=outputs,
+        invocation_id="inv-a",
+        base_path=tmp_path / "run_b",
+    )
+
+    assert path_a.read_bytes() == path_b.read_bytes()
+
+
+def test_writer_end_to_end_schema_shape(tmp_path: Path) -> None:
+    """End-to-end: a mixed fixture produces a JSON document matching the documented schema."""
+    blocks = (
+        _block(
+            block_id="q1.volume_anomaly",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.CALIBRATED,
+        ),
+        _block(
+            block_id="q1.volume_anomaly",
+            audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
+            state=CalibrationState.BOOTSTRAP,
+            bootstrap_reason="volume_baseline: 12 < 20",
+        ),
+        _block(
+            block_id="q3.options_flow",
+            audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+            state=CalibrationState.UNAVAILABLE,
+            bootstrap_reason="iv_rank: 0 < 30 (cross-sectional pool empty)",
+        ),
+        _block(
+            block_id="regime.label",
+            audience=frozenset({OutputAudience.UNIVERSAL_BROADCAST}),
+            state=CalibrationState.CALIBRATED,
+        ),
+    )
+    outputs = _build_outputs(blocks=blocks)
+    path = write_calibration_state_snapshot(
+        outputs=outputs,
+        invocation_id="20260425T120000Z-test",
+        base_path=tmp_path,
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    # Top-level keys match the documented schema.
+    assert set(payload) == {
+        "schema_version",
+        "invocation_id",
+        "as_of",
+        "summary",
+        "bootstrap_reasons",
+        "unavailable_reasons",
+    }
+    # Summary structure.
+    assert set(payload["summary"]) == {
+        "total_blocks",
+        "by_state",
+        "by_audience",
+        "by_block_kind",
+    }
+    assert payload["summary"]["total_blocks"] == 4
+    # Per-state vocabulary matches the CalibrationState enum.
+    assert set(payload["summary"]["by_state"]) == {
+        "calibrated",
+        "bootstrap",
+        "unavailable",
+    }
+    # Reason maps populated for non-calibrated blocks only.
+    assert payload["bootstrap_reasons"] == {
+        "q1.volume_anomaly": "volume_baseline: 12 < 20",
+    }
+    assert payload["unavailable_reasons"] == {
+        "q3.options_flow": "iv_rank: 0 < 30 (cross-sectional pool empty)",
+    }

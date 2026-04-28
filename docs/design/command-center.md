@@ -209,6 +209,7 @@ The command center reads exclusively from sources specified by other docs. Any n
 | `positions`, `orders`, `brackets`, `theses`, `cash_ledger`, `fills`, `corporate_action_ledger` tables | OMS | Live core state |
 | `portfolio_summary`, `thesis_quality_aggregates` tables | OMS | Derived aggregates refreshed at mutation time |
 | `%USERPROFILE%\AlphaMind\archive\<date>\<time>_<run_type>\` | Pipeline | Per-invocation markdown archive: distillation outputs, analysis briefs (sector, qualitative, adaptive, synthesis), decision-layer outputs (analyst, strategist, PM), final OMS commands |
+| `data/provenance/invocations/<id>/data_calibration_state.json` | Pipeline (distillation orchestrator) | Per-invocation reduction of every distillation `OutputBlock`'s `calibration_state` to summary counts and reason maps. Schema and field semantics in [threshold-calibration.md § Calibration-state snapshot file](02-distillation-layer/threshold-calibration.md#calibration-state-snapshot-file). |
 | Source-brief retrieval store | Pipeline (synthesizer) | Sections of upstream briefs indexed by reference ID (`SA-TECH-N`, `QR-N`, `AR-N`, etc.) |
 | `%USERPROFILE%\AlphaMind\logs\pipeline.log`, `%USERPROFILE%\AlphaMind\logs\monitor.log` | Both processes | Operational logs for raw error inspection |
 | `config/` YAML tree | Operator | Configuration files, presented as structured forms |
@@ -368,6 +369,18 @@ Click any rule row → drill-down showing per-position contribution, breach resp
 #### Regime and overlay timeline
 
 Chronological view of regime classifications, regime transitions (immediate-tightening up, gradual loosening over three invocations down), pre-event overlay activations, stress overlay activations. P/L drawdown and breach event markers overlay on the same timeline. Sourced from `risk_parameter_changed` activity log entries plus per-invocation resolved-config snapshots.
+
+#### Calibration mix
+
+Renders the per-invocation distillation calibration-state reduction so the operator can spot at a glance when bootstrap fallback is masking missing per-key state. Shares visual grammar with the throughput panel — stacked-segment bar per invocation plus a trend line plus an alert callout — so operators reading both panels in this view group benefit from a consistent layout.
+
+| Pane | Content | Source |
+|---|---|---|
+| Per-invocation mix bar | Stacked-segment bar; one segment per `calibration_state` (`calibrated` / `bootstrap` / `unavailable`); segment width proportional to the block count in that state. Hover or tap reveals the underlying counts plus the `by_audience` and `by_block_kind` breakdowns. | `data/provenance/invocations/<id>/data_calibration_state.json` |
+| Trailing 7-day mix trend | Stacked area chart of percent-of-blocks in each state per invocation across the trailing 7-day window. | Snapshot files for the trailing 7 invocations |
+| Stuck-in-bootstrap alert | Panel-level warning lists every `<block_id>` that has been continuously `bootstrap` or `unavailable` across the trailing 30-day window, alongside its last `calibrated` invocation (or "never" for the cold-start case). Cross-references the [warm-up duration estimate](02-distillation-layer/threshold-calibration.md#warm-up-duration-estimate) so the operator interprets persistent bootstrap state against the expected calibration horizon. | Snapshot files for the trailing 30 invocations |
+
+Click any block-kind row in the mix breakdown → drill-in side panel renders the per-ticker / per-pair / per-contract breakdown for that kind's most-recent invocation, with the matching `bootstrap_reasons` / `unavailable_reasons` strings inline.
 
 ### F. Quality and feedback
 
