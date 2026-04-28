@@ -25,6 +25,7 @@ multipliers:
   min_cash_reserve_pct:            1.50
   correlation_max:                 0.86    # 0.60 / 0.70
   thesis_dependency_flag_pct:      0.80
+  pending_order_capital_pct:       1.00
 transition:
   tighten_on_entry: immediate
   loosen_on_exit:   linear_over_invocations_3

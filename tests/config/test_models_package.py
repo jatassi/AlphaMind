@@ -79,6 +79,7 @@ _EXPECTED_PUBLIC_NAMES = {
     "RuntimeDimensions",
     "SchedulerConfig",
     "SectorUnderperform",
+    "SemanticInvariantError",
     "SessionHours",
     "SessionWindow",
     "SourceSignalSurvivalDrop",
@@ -95,6 +96,8 @@ _EXPECTED_PUBLIC_NAMES = {
     "ValidationWindowEnd",
     "VenueConfig",
     "compose_config",
+    "enumerate_compositions",
+    "validate_semantic_invariants",
 }
 
 

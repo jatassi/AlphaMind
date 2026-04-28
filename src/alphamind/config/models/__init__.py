@@ -116,6 +116,11 @@ from alphamind.config.resolver import (
     RuntimeDimensions,
     compose_config,
 )
+from alphamind.config.validation.semantic import (
+    SemanticInvariantError,
+    enumerate_compositions,
+    validate_semantic_invariants,
+)
 
 # ---------------------------------------------------------------------------
 # .env.example helpers — kept here so monkeypatching
@@ -217,6 +222,7 @@ __all__ = [
     "RuntimeDimensions",
     "SchedulerConfig",
     "SectorUnderperform",
+    "SemanticInvariantError",
     "SessionHours",
     "SessionWindow",
     "SourceSignalSurvivalDrop",
@@ -233,4 +239,6 @@ __all__ = [
     "ValidationWindowEnd",
     "VenueConfig",
     "compose_config",
+    "enumerate_compositions",
+    "validate_semantic_invariants",
 ]
