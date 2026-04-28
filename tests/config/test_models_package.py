@@ -81,6 +81,7 @@ _EXPECTED_PUBLIC_NAMES = {
     "SectorUnderperform",
     "SessionHours",
     "SessionWindow",
+    "SnapshotResult",
     "SourceSignalSurvivalDrop",
     "StrategistAction",
     "StrategistMode",
@@ -95,6 +96,7 @@ _EXPECTED_PUBLIC_NAMES = {
     "ValidationWindowEnd",
     "VenueConfig",
     "compose_config",
+    "persist_snapshot",
 }
 
 
