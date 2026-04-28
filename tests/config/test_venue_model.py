@@ -1,6 +1,7 @@
 """Tests for src/alphamind/config/models/venue.py — venue.yaml model (story 03d)."""
 
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -10,8 +11,8 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 CONFIG_DIR = REPO_ROOT / "config"
 
 
-def load_yaml(path: Path) -> dict:  # type: ignore[type-arg]
-    return yaml.safe_load(path.read_text())
+def load_yaml(path: Path) -> dict[str, Any]:
+    return cast(dict[str, Any], yaml.safe_load(path.read_text()))
 
 
 def _valid_credentials_raw() -> dict[str, str]:
@@ -23,7 +24,7 @@ def _valid_credentials_raw() -> dict[str, str]:
     }
 
 
-def _valid_venue_raw() -> dict[str, object]:
+def _valid_venue_raw() -> dict[str, Any]:
     return {
         "alpaca": {
             "paper": _valid_credentials_raw(),
@@ -56,7 +57,7 @@ def test_venue_rejects_non_https_rest_url() -> None:
     from alphamind.config.models import VenueConfig
 
     raw = _valid_venue_raw()
-    raw["alpaca"]["paper"]["rest_url"] = "http://paper-api.alpaca.markets"  # type: ignore[index]
+    raw["alpaca"]["paper"]["rest_url"] = "http://paper-api.alpaca.markets"
     with pytest.raises(ValidationError):
         VenueConfig.model_validate(raw)
 
@@ -65,7 +66,7 @@ def test_venue_rejects_non_wss_ws_url() -> None:
     from alphamind.config.models import VenueConfig
 
     raw = _valid_venue_raw()
-    raw["alpaca"]["paper"]["ws_url"] = "ws://paper-api.alpaca.markets/stream"  # type: ignore[index]
+    raw["alpaca"]["paper"]["ws_url"] = "ws://paper-api.alpaca.markets/stream"
     with pytest.raises(ValidationError):
         VenueConfig.model_validate(raw)
 
@@ -74,7 +75,7 @@ def test_venue_rejects_lowercase_api_key_env() -> None:
     from alphamind.config.models import VenueConfig
 
     raw = _valid_venue_raw()
-    raw["alpaca"]["paper"]["api_key_env"] = "alpaca_paper_key"  # type: ignore[index]
+    raw["alpaca"]["paper"]["api_key_env"] = "alpaca_paper_key"
     with pytest.raises(ValidationError):
         VenueConfig.model_validate(raw)
 
@@ -83,7 +84,7 @@ def test_venue_rejects_session_hour_25() -> None:
     from alphamind.config.models import VenueConfig
 
     raw = _valid_venue_raw()
-    raw["session_hours"]["regular"]["open"] = "25:00"  # type: ignore[index]
+    raw["session_hours"]["regular"]["open"] = "25:00"
     with pytest.raises(ValidationError):
         VenueConfig.model_validate(raw)
 
@@ -92,7 +93,7 @@ def test_venue_rejects_missing_live_block() -> None:
     from alphamind.config.models import VenueConfig
 
     raw = _valid_venue_raw()
-    del raw["alpaca"]["live"]  # type: ignore[attr-defined]
+    del raw["alpaca"]["live"]
     with pytest.raises(ValidationError):
         VenueConfig.model_validate(raw)
 
@@ -101,7 +102,7 @@ def test_venue_rejects_missing_pre_market_block() -> None:
     from alphamind.config.models import VenueConfig
 
     raw = _valid_venue_raw()
-    del raw["session_hours"]["pre_market"]  # type: ignore[attr-defined]
+    del raw["session_hours"]["pre_market"]
     with pytest.raises(ValidationError):
         VenueConfig.model_validate(raw)
 
@@ -110,7 +111,7 @@ def test_venue_rejects_single_digit_hour() -> None:
     from alphamind.config.models import VenueConfig
 
     raw = _valid_venue_raw()
-    raw["session_hours"]["regular"]["open"] = "9:30"  # type: ignore[index]
+    raw["session_hours"]["regular"]["open"] = "9:30"
     with pytest.raises(ValidationError):
         VenueConfig.model_validate(raw)
 
@@ -156,6 +157,6 @@ def test_venue_rejects_zero_rate_limit() -> None:
     from alphamind.config.models import VenueConfig
 
     raw = _valid_venue_raw()
-    raw["alpaca"]["rate_limit_per_minute"] = 0  # type: ignore[index]
+    raw["alpaca"]["rate_limit_per_minute"] = 0
     with pytest.raises(ValidationError):
         VenueConfig.model_validate(raw)
