@@ -1,94 +1,8 @@
-"""Pydantic configuration models for AlphaMind YAML config files (story 03a)."""
+"""Pydantic models for data_sources.yaml."""
 
-import re
 from enum import StrEnum
-from pathlib import Path
 
-from pydantic import BaseModel, field_validator, model_validator
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-# .env.example lives at repo root: src/alphamind/config/ -> src/alphamind/ -> src/ -> root
-_ENV_EXAMPLE_PATH = Path(__file__).parent.parent.parent.parent / ".env.example"
-
-# 5-field cron: each field is digits/commas/dashes/slashes/stars, or day-of-week abbrevs
-_CRON_FIELD_RE = re.compile(
-    r"^[0-9,\-*/]+$"
-    r"|^[a-zA-Z]{3}(-[a-zA-Z]{3})?(,[a-zA-Z]{3}(-[a-zA-Z]{3})?)*$"
-)
-
-
-def _load_env_example_keys() -> frozenset[str]:
-    keys: set[str] = set()
-    if not _ENV_EXAMPLE_PATH.exists():
-        return frozenset()
-    for line in _ENV_EXAMPLE_PATH.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, _, _ = line.partition("=")
-            keys.add(key.strip())
-    return frozenset(keys)
-
-
-# Cached at import time; .env.example is a static deployment artifact.
-_ENV_EXAMPLE_KEYS: frozenset[str] = _load_env_example_keys()
-
-
-def _validate_cron(cron: str) -> str:
-    fields = cron.split()
-    if len(fields) != 5:
-        msg = f"Cron expression must have exactly 5 fields, got {len(fields)}: {cron!r}"
-        raise ValueError(msg)
-    for field in fields:
-        if not _CRON_FIELD_RE.match(field):
-            msg = f"Invalid cron field {field!r} in expression {cron!r}"
-            raise ValueError(msg)
-    return cron
-
-
-# ---------------------------------------------------------------------------
-# news_outlets.yaml
-# ---------------------------------------------------------------------------
-
-
-class CredibilityTier(StrEnum):
-    tier_1 = "tier_1"
-    tier_2 = "tier_2"
-    tier_3 = "tier_3"
-
-
-class OutletEntry(BaseModel):
-    tier: CredibilityTier
-
-
-class NewsOutletsConfig(BaseModel):
-    outlets: dict[str, OutletEntry]
-
-
-# ---------------------------------------------------------------------------
-# collector_schedule.yaml
-# ---------------------------------------------------------------------------
-
-
-class CollectorEntry(BaseModel):
-    cron: str
-
-    @field_validator("cron")
-    @classmethod
-    def cron_is_valid(cls, v: str) -> str:
-        return _validate_cron(v)
-
-
-class CollectorScheduleConfig(BaseModel):
-    timezone: str
-    collectors: dict[str, CollectorEntry]
-
-
-# ---------------------------------------------------------------------------
-# data_sources.yaml
-# ---------------------------------------------------------------------------
+from pydantic import BaseModel, model_validator
 
 
 class CriticalityTier(StrEnum):
@@ -162,6 +76,10 @@ class DataSourcesConfig(BaseModel):
 
     @model_validator(mode="after")
     def api_key_envs_in_env_example(self) -> "DataSourcesConfig":
+        # Lazy import so monkeypatching alphamind.config.models._ENV_EXAMPLE_KEYS is observed.
+        # (Top-level import would be circular: __init__.py imports this module.)
+        from alphamind.config.models import _ENV_EXAMPLE_KEYS
+
         # Skip when .env.example is absent (e.g. CI without the file)
         if not _ENV_EXAMPLE_KEYS:
             return self
