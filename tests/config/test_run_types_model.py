@@ -267,7 +267,7 @@ def test_load_run_types_returns_immutable_mapping() -> None:
 
     bundle = load_run_types(CONFIG_DIR)
     with pytest.raises(TypeError):
-        bundle["pre_open"] = None  # type: ignore[index]
+        cast(Any, bundle)["pre_open"] = None
 
 
 def test_load_run_types_raises_when_file_missing(tmp_path: Path) -> None:
