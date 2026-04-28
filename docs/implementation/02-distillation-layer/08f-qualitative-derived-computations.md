@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 3a40c27011ae5dbe25a16b977ef65704e3837239
 ---
 
 # 08f — Qualitative-derived deterministic computations
