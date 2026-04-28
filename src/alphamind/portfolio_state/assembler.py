@@ -1,0 +1,559 @@
+"""Snapshot assembler — orchestrates production of a PortfolioStateSnapshot (story 06).
+
+``assemble_snapshot`` is the single public entry point. It fetches raw records
+from the repository, enriches per-position and per-order computed fields using
+market prices and the computation modules, and seals the snapshot.
+
+Assembly sequence (16 steps — see function body for inline step labels):
+
+  1.  Fetch invocation metadata and prior context (concurrent).
+  2.  Fetch all raw OMS records (concurrent).
+  3.  Fetch brackets for known positions.
+  4.  Fetch position-modification trail.
+  5.  Fetch current prices for all positions.
+  6.  Enrich each position (first pass — without weight).
+  7.  Compute total portfolio value.
+  8.  Enrich positions with weight (second pass).
+  9.  Enrich pending orders with age.
+  10. Compute portfolio P/L rollup.
+  11. Enrich CashLedger with computed fields.
+  12. Enrich DrawdownState with drawdown_by_source_pct if empty.
+  13. Compute sector and directional exposure.
+  14. Compute parameter change flag.
+  15. Normalise activity-log projections (already supplied by repository).
+  16. Construct and return the snapshot.
+
+Known limitation — option pricing (Steps 5/6):
+  Option-contract mark-to-market uses ``premium_paid_per_contract`` as a
+  stand-in price rather than a live option quote.  The resulting
+  ``current_market_value_usd`` lags premium drift.  A future story can
+  introduce an OptionPriceProvider Protocol to close this gap.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import datetime
+from typing import cast
+
+from alphamind.portfolio_state import PortfolioStateConfig
+from alphamind.portfolio_state.computations.exposure import (
+    SectorResolver,
+    compute_directional_exposure,
+    compute_sector_exposure,
+)
+from alphamind.portfolio_state.computations.pnl import (
+    compute_drawdown_by_source_pct,
+    compute_portfolio_pnl,
+    compute_total_portfolio_value_usd,
+)
+from alphamind.portfolio_state.computations.positions import (
+    compute_delta_adjusted_exposure_usd,
+    compute_distance_to_stop_usd,
+    compute_distance_to_target_usd,
+    compute_market_value_usd,
+    compute_notional_exposure_usd,
+    compute_position_age_hours,
+    compute_position_weight_pct,
+    compute_risk_reward_at_current,
+    compute_strategy_delta_adjusted_exposure_usd,
+    compute_strategy_market_value_usd,
+    compute_strategy_notional_exposure_usd,
+    compute_unrealized_pnl_pct,
+    compute_unrealized_pnl_usd,
+)
+from alphamind.portfolio_state.computations.risk_budget import (
+    compute_cash_pct_of_portfolio,
+    compute_order_age_hours,
+    compute_parameter_change_flag,
+    compute_true_deployable_capital_usd,
+)
+from alphamind.portfolio_state.pricing import CurrentPriceProvider, PriceQuote
+from alphamind.portfolio_state.records.activity_log import ActivityLogEntry
+from alphamind.portfolio_state.records.capital import (
+    ActiveRiskParameterSet,
+    CashLedger,
+    DrawdownState,
+    RiskBudgetConsumption,
+)
+from alphamind.portfolio_state.records.orders import BracketRecord, OrderRecord
+from alphamind.portfolio_state.records.positions import InstrumentType, PositionRecord
+from alphamind.portfolio_state.records.theses import RecentThesisResolution, ThesisRecord
+from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
+from alphamind.portfolio_state.repository import (
+    PortfolioPnLInputs,
+    PortfolioStateRepository,
+)
+from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
+
+log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_pricing_tickers(
+    positions: tuple[PositionRecord, ...],
+) -> tuple[str, ...]:
+    """Return a deduplicated, ordered tuple of tickers needed to price *positions*.
+
+    Equity   → equity_details.ticker
+    Options  → options_details.underlying_ticker (underlying for delta-adjusted
+               exposure; option premium is handled via premium_paid_per_contract)
+    Strategy → each leg's options.underlying_ticker
+    """
+    seen: dict[str, None] = {}  # preserves insertion order
+    for pos in positions:
+        if pos.instrument_type == InstrumentType.EQUITY:
+            assert pos.equity_details is not None
+            seen[pos.equity_details.ticker] = None
+        elif pos.instrument_type == InstrumentType.OPTIONS:
+            assert pos.options_details is not None
+            seen[pos.options_details.underlying_ticker] = None
+        else:  # STRATEGY
+            assert pos.strategy_details is not None
+            for leg in pos.strategy_details.legs:
+                seen[leg.options.underlying_ticker] = None
+    return tuple(seen)
+
+
+class _PriceFields:
+    """Value object carrying the five price-derived fields for one position."""
+
+    __slots__ = (
+        "cost_basis",
+        "current_market_value_usd",
+        "current_price_usd",
+        "delta_adjusted_exposure_usd",
+        "notional_exposure_usd",
+    )
+
+    def __init__(
+        self,
+        current_market_value_usd: float,
+        notional_exposure_usd: float,
+        delta_adjusted_exposure_usd: float,
+        cost_basis: float,
+        current_price_usd: float,
+    ) -> None:
+        self.current_market_value_usd = current_market_value_usd
+        self.notional_exposure_usd = notional_exposure_usd
+        self.delta_adjusted_exposure_usd = delta_adjusted_exposure_usd
+        self.cost_basis = cost_basis
+        self.current_price_usd = current_price_usd
+
+
+_ZERO_PRICE_FIELDS = _PriceFields(0.0, 0.0, 0.0, 0.0, 0.0)
+
+
+def _price_fields_equity(
+    position: PositionRecord,
+    price_map: dict[str, PriceQuote],
+) -> _PriceFields:
+    assert position.equity_details is not None
+    ticker = position.equity_details.ticker
+    raw_quote = price_map.get(ticker)
+    if raw_quote is None:
+        log.warning(
+            "price missing for position %s ticker %s; using stale sentinel",
+            position.position_id,
+            ticker,
+        )
+        return _ZERO_PRICE_FIELDS
+    if raw_quote.is_stale:
+        return _ZERO_PRICE_FIELDS
+    cost_basis = (
+        position.equity_details.share_count * position.equity_details.average_cost_basis_per_share
+    )
+    return _PriceFields(
+        current_market_value_usd=compute_market_value_usd(position, raw_quote),
+        notional_exposure_usd=compute_notional_exposure_usd(position, raw_quote),
+        delta_adjusted_exposure_usd=compute_delta_adjusted_exposure_usd(position, raw_quote),
+        cost_basis=cost_basis,
+        current_price_usd=raw_quote.price_usd,
+    )
+
+
+def _price_fields_options(
+    position: PositionRecord,
+    price_map: dict[str, PriceQuote],
+) -> _PriceFields:
+    assert position.options_details is not None
+    underlying_ticker = position.options_details.underlying_ticker
+    raw_underlying = price_map.get(underlying_ticker)
+    if raw_underlying is None:
+        log.warning(
+            "price missing for options position %s underlying %s; using stale sentinel",
+            position.position_id,
+            underlying_ticker,
+        )
+        return _ZERO_PRICE_FIELDS
+    if raw_underlying.is_stale:
+        return _ZERO_PRICE_FIELDS
+    premium = position.options_details.premium_paid_per_contract
+    mv_quote = raw_underlying.model_copy(update={"price_usd": premium})
+    cost_basis = (
+        position.options_details.contract_count
+        * position.options_details.contract_multiplier
+        * premium
+    )
+    return _PriceFields(
+        current_market_value_usd=compute_market_value_usd(position, mv_quote),
+        notional_exposure_usd=compute_notional_exposure_usd(position, raw_underlying),
+        delta_adjusted_exposure_usd=compute_delta_adjusted_exposure_usd(position, raw_underlying),
+        cost_basis=cost_basis,
+        current_price_usd=raw_underlying.price_usd,
+    )
+
+
+def _price_fields_strategy(
+    position: PositionRecord,
+    price_map: dict[str, PriceQuote],
+) -> _PriceFields:
+    assert position.strategy_details is not None
+    leg_prices: dict[str, PriceQuote] = {}
+    for leg in position.strategy_details.legs:
+        underlying_ticker = leg.options.underlying_ticker
+        raw_leg = price_map.get(underlying_ticker)
+        if raw_leg is None:
+            log.warning(
+                "price missing for strategy position %s leg %s underlying %s; stale",
+                position.position_id,
+                leg.leg_id,
+                underlying_ticker,
+            )
+            return _ZERO_PRICE_FIELDS
+        leg_prices[leg.leg_id] = raw_leg
+
+    premium_prices: dict[str, PriceQuote] = {
+        leg.leg_id: leg_prices[leg.leg_id].model_copy(
+            update={"price_usd": leg.options.premium_paid_per_contract}
+        )
+        for leg in position.strategy_details.legs
+    }
+    first_leg = position.strategy_details.legs[0] if position.strategy_details.legs else None
+    return _PriceFields(
+        current_market_value_usd=compute_strategy_market_value_usd(position, premium_prices),
+        notional_exposure_usd=compute_strategy_notional_exposure_usd(position, leg_prices),
+        delta_adjusted_exposure_usd=compute_strategy_delta_adjusted_exposure_usd(
+            position, leg_prices
+        ),
+        cost_basis=position.strategy_details.net_premium_usd,
+        current_price_usd=leg_prices[first_leg.leg_id].price_usd if first_leg else 0.0,
+    )
+
+
+_PRICE_FIELD_DISPATCH = {
+    InstrumentType.EQUITY: _price_fields_equity,
+    InstrumentType.OPTIONS: _price_fields_options,
+    InstrumentType.STRATEGY: _price_fields_strategy,
+}
+
+
+def _enrich_position_first_pass(
+    position: PositionRecord,
+    price_map: dict[str, PriceQuote],
+    brackets_by_bracket_id: dict[str, BracketRecord],
+    now: datetime,
+) -> PositionRecord:
+    """Compute all per-position enrichment fields except position_weight_pct.
+
+    Missing-price / stale-price handling: when the pricing ticker is absent
+    from *price_map*, or the returned quote has ``is_stale=True``, all
+    market-value / exposure fields are set to 0.0 and assembly continues.
+    """
+    pf = _PRICE_FIELD_DISPATCH[position.instrument_type](position, price_map)
+    bracket = brackets_by_bracket_id.get(position.bracket_id or "")
+
+    unrealized_pnl_usd = compute_unrealized_pnl_usd(
+        pf.current_market_value_usd, pf.cost_basis, position.direction
+    )
+    unrealized_pnl_pct = compute_unrealized_pnl_pct(unrealized_pnl_usd, pf.cost_basis)
+
+    position_age_hours = (
+        compute_position_age_hours(position.entry_timestamp, now)
+        if position.entry_timestamp is not None
+        else 0.0
+    )
+
+    distance_to_target_usd: float | None = None
+    distance_to_stop_usd: float | None = None
+    risk_reward_at_current: float | None = None
+    if bracket is not None:
+        distance_to_target_usd = compute_distance_to_target_usd(
+            pf.current_price_usd, bracket, position.direction
+        )
+        distance_to_stop_usd = compute_distance_to_stop_usd(
+            pf.current_price_usd, bracket, position.direction
+        )
+        risk_reward_at_current = compute_risk_reward_at_current(
+            distance_to_target_usd, distance_to_stop_usd
+        )
+
+    return position.model_copy(
+        update={
+            "current_market_value_usd": pf.current_market_value_usd,
+            "unrealized_pnl_usd": unrealized_pnl_usd,
+            "unrealized_pnl_pct": unrealized_pnl_pct,
+            "position_age_hours": position_age_hours,
+            "notional_exposure_usd": pf.notional_exposure_usd,
+            "delta_adjusted_exposure_usd": pf.delta_adjusted_exposure_usd,
+            "distance_to_target_usd": distance_to_target_usd,
+            "distance_to_stop_usd": distance_to_stop_usd,
+            "risk_reward_at_current": risk_reward_at_current,
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public function
+# ---------------------------------------------------------------------------
+
+
+async def assemble_snapshot(
+    *,
+    repository: PortfolioStateRepository,
+    price_provider: CurrentPriceProvider,
+    sector_resolver: SectorResolver,
+    config: PortfolioStateConfig,
+    now: datetime,
+) -> PortfolioStateSnapshot:
+    """Assemble a PortfolioStateSnapshot from repository records and live prices.
+
+    All parameters are keyword-only. ``now`` is supplied by the caller so the
+    assembler is testable without a clock fixture.
+
+    Raises:
+        RepositoryReadError / RepositoryConsistencyError: propagated without
+            modification.
+        MissingLegPriceError: propagated when a strategy leg's underlying ticker
+            is absent from the price map (setup error; not in-band staleness).
+        ValueError: from computation modules.
+    """
+    # ------------------------------------------------------------------
+    # Step 1 — Fetch invocation metadata and prior context (concurrent)
+    # ------------------------------------------------------------------
+    metadata, prior_context = await asyncio.gather(
+        repository.get_current_invocation_metadata(),
+        repository.get_prior_invocation_context(),
+    )
+
+    # ------------------------------------------------------------------
+    # Step 2 — Fetch raw OMS records (concurrent, 13 calls)
+    # ------------------------------------------------------------------
+    _step2 = await asyncio.gather(
+        repository.get_open_positions(),
+        repository.get_pending_positions(),
+        repository.get_drawdown_state(),
+        repository.get_portfolio_pnl_inputs(),
+        repository.get_active_theses(),
+        repository.get_recent_thesis_resolutions(
+            lookback_trading_days=config.thesis_resolutions_lookback_trading_days
+        ),
+        repository.get_cash_ledger(),
+        repository.get_pending_orders(),
+        repository.get_risk_budget_consumption(),
+        repository.get_active_risk_parameters(),
+        repository.get_intra_invocation_changelog(invocation_id=metadata.invocation_id),
+        repository.get_recent_pm_decision_log(
+            sliding_window_invocations=config.pm_decision_log_sliding_window_invocations
+        ),
+        repository.get_thesis_quality_aggregates(),
+    )
+    open_positions_raw = cast(tuple[PositionRecord, ...], _step2[0])
+    pending_positions_raw = cast(tuple[PositionRecord, ...], _step2[1])
+    drawdown_state_raw = cast(DrawdownState, _step2[2])
+    portfolio_pnl_inputs = cast(PortfolioPnLInputs, _step2[3])
+    active_theses = cast(tuple[ThesisRecord, ...], _step2[4])
+    recent_thesis_resolutions = cast(tuple[RecentThesisResolution, ...], _step2[5])
+    cash_ledger_raw = cast(CashLedger, _step2[6])
+    pending_orders_raw = cast(tuple[OrderRecord, ...], _step2[7])
+    risk_budget = cast(RiskBudgetConsumption, _step2[8])
+    active_risk_parameters_raw = cast(ActiveRiskParameterSet, _step2[9])
+    intra_invocation_changelog = cast(tuple[ActivityLogEntry, ...], _step2[10])
+    recent_pm_decision_log = cast(tuple[ActivityLogEntry, ...], _step2[11])
+    thesis_quality_aggregates = cast(ThesisQualityAggregate, _step2[12])
+
+    # ------------------------------------------------------------------
+    # Step 3 — Fetch brackets for known positions
+    # ------------------------------------------------------------------
+    position_ids = tuple(p.position_id for p in (*open_positions_raw, *pending_positions_raw))
+    brackets_tuple = await repository.get_brackets_for_positions(position_ids=position_ids)
+
+    # ------------------------------------------------------------------
+    # Step 4 — Fetch position-modification trail
+    # ------------------------------------------------------------------
+    position_modification_trail = await repository.get_position_modification_trail(
+        position_ids=position_ids
+    )
+
+    # ------------------------------------------------------------------
+    # Step 5 — Fetch current prices
+    # ------------------------------------------------------------------
+    all_positions: tuple[PositionRecord, ...] = (*open_positions_raw, *pending_positions_raw)
+    pricing_tickers = _resolve_pricing_tickers(all_positions)
+    price_map = await price_provider.get_quotes(
+        tickers=pricing_tickers,
+        freshness_threshold_seconds=config.snapshot_freshness_max_price_age_seconds,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 6 — Enrich each position (first pass — without weight)
+    # ------------------------------------------------------------------
+    brackets_by_bracket_id: dict[str, BracketRecord] = {b.bracket_id: b for b in brackets_tuple}
+
+    enriched_open: list[PositionRecord] = [
+        _enrich_position_first_pass(pos, price_map, brackets_by_bracket_id, now)
+        for pos in open_positions_raw
+    ]
+    enriched_pending: list[PositionRecord] = [
+        _enrich_position_first_pass(pos, price_map, brackets_by_bracket_id, now)
+        for pos in pending_positions_raw
+    ]
+
+    # ------------------------------------------------------------------
+    # Step 7 — Compute total portfolio value
+    # ------------------------------------------------------------------
+    total_portfolio_value = compute_total_portfolio_value_usd(
+        open_positions=tuple(enriched_open),
+        pending_positions=tuple(enriched_pending),
+        cash_ledger=cash_ledger_raw,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 8 — Enrich positions with weight (second pass) + sort
+    # ------------------------------------------------------------------
+    final_open: list[PositionRecord] = sorted(
+        (
+            pos.model_copy(
+                update={
+                    "position_weight_pct": compute_position_weight_pct(
+                        pos.current_market_value_usd, total_portfolio_value
+                    )
+                }
+            )
+            for pos in enriched_open
+        ),
+        key=lambda p: p.position_id,
+    )
+
+    final_pending: list[PositionRecord] = sorted(
+        (
+            pos.model_copy(
+                update={
+                    "position_weight_pct": compute_position_weight_pct(
+                        pos.current_market_value_usd, total_portfolio_value
+                    )
+                }
+            )
+            for pos in enriched_pending
+        ),
+        key=lambda p: p.position_id,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 9 — Enrich pending orders with age, sort by submission_timestamp
+    # ------------------------------------------------------------------
+    enriched_orders: list[OrderRecord] = sorted(
+        (
+            order.model_copy(
+                update={"age_hours": compute_order_age_hours(order.submission_timestamp, now)}
+            )
+            for order in pending_orders_raw
+        ),
+        key=lambda o: o.submission_timestamp,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 10 — Compute portfolio P/L rollup
+    # ------------------------------------------------------------------
+    portfolio_pnl = compute_portfolio_pnl(
+        open_positions=tuple(final_open),
+        inputs=portfolio_pnl_inputs,
+        total_portfolio_value_usd=total_portfolio_value,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 11 — Enrich CashLedger with computed fields
+    # ------------------------------------------------------------------
+    enriched_cash: CashLedger = cash_ledger_raw.model_copy(
+        update={
+            "cash_pct_of_portfolio": compute_cash_pct_of_portfolio(
+                cash_ledger_raw.current_cash_usd, total_portfolio_value
+            ),
+            "true_deployable_capital_usd": compute_true_deployable_capital_usd(cash_ledger_raw),
+        }
+    )
+
+    # ------------------------------------------------------------------
+    # Step 12 — Enrich DrawdownState with drawdown_by_source_pct if empty
+    # ------------------------------------------------------------------
+    enriched_drawdown: DrawdownState
+    if (
+        drawdown_state_raw.drawdown_by_source_pct == {}
+        and drawdown_state_raw.current_drawdown_pct > 0
+    ):
+        enriched_drawdown = drawdown_state_raw.model_copy(
+            update={
+                "drawdown_by_source_pct": compute_drawdown_by_source_pct(
+                    open_positions=tuple(final_open),
+                    current_drawdown_pct=drawdown_state_raw.current_drawdown_pct,
+                )
+            }
+        )
+    else:
+        enriched_drawdown = drawdown_state_raw
+
+    # ------------------------------------------------------------------
+    # Step 13 — Compute sector and directional exposure
+    # ------------------------------------------------------------------
+    sector_exposure = compute_sector_exposure(
+        open_positions=tuple(final_open),
+        resolver=sector_resolver,
+        total_portfolio_value_usd=total_portfolio_value,
+    )
+    directional_exposure = compute_directional_exposure(
+        open_positions=tuple(final_open),
+        total_portfolio_value_usd=total_portfolio_value,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 14 — Compute parameter change flag
+    # ------------------------------------------------------------------
+    enriched_risk_parameters = active_risk_parameters_raw.model_copy(
+        update={
+            "parameter_change_flag": compute_parameter_change_flag(
+                current=active_risk_parameters_raw,
+                prior=prior_context.prior_active_risk_parameters,
+            )
+        }
+    )
+
+    # ------------------------------------------------------------------
+    # Steps 15/16 — Normalise activity-log projections and construct snapshot
+    # ------------------------------------------------------------------
+    return PortfolioStateSnapshot(
+        invocation_id=metadata.invocation_id,
+        phase1_committed_at=metadata.phase1_committed_at,
+        snapshot_assembled_at=now,
+        pipeline_invocation_started_at=metadata.pipeline_invocation_started_at,
+        open_positions=tuple(final_open),
+        pending_positions=tuple(final_pending),
+        sector_exposure=sector_exposure,
+        directional_exposure=directional_exposure,
+        portfolio_pnl=portfolio_pnl,
+        drawdown=enriched_drawdown,
+        active_theses=active_theses,
+        recent_thesis_resolutions=recent_thesis_resolutions,
+        cash_ledger=enriched_cash,
+        pending_orders=tuple(enriched_orders),
+        risk_budget=risk_budget,
+        active_risk_parameters=enriched_risk_parameters,
+        intra_invocation_changelog=intra_invocation_changelog,
+        recent_pm_decision_log=recent_pm_decision_log,
+        position_modification_trail=position_modification_trail,
+        thesis_quality_aggregates=thesis_quality_aggregates,
+        brackets=brackets_tuple,
+    )
