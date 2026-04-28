@@ -703,8 +703,7 @@ def _insert_correlation_divergence_event(db_path: Path) -> None:
 def _delete_correlation_divergence_rows(db_path: Path) -> None:
     _exec_sql(
         db_path,
-        "DELETE FROM distillation_event_history "
-        "WHERE event_kind = 'correlation_divergence'",
+        "DELETE FROM distillation_event_history WHERE event_kind = 'correlation_divergence'",
     )
 
 
@@ -878,9 +877,7 @@ class TestAlembicMigration:
         with pytest.raises(RuntimeError, match="correlation_divergence"):
             command.downgrade(cfg, "0aa4fc8b5647")
 
-    def test_no_redundant_indexes_on_distillation_state_tables(
-        self, tmp_path: Path
-    ) -> None:
+    def test_no_redundant_indexes_on_distillation_state_tables(self, tmp_path: Path) -> None:
         """No ``ix_distillation_*`` index duplicates the composite PK.
 
         SQLite already builds a B-tree for the primary key, so the
