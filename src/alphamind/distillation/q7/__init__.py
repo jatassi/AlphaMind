@@ -1,24 +1,16 @@
 """Q7 cross-asset and correlation computations — story 02-distillation-layer/08d.
 
-Authoritative scope: ``docs/design/02-distillation-layer/external.md``
-§ 2 From cross-asset and correlation (quant 7). The deterministic
-computations cover intra-sector pairwise correlation matrices and divergence
-detection, cross-sector rotation classification with narrative tagging,
-breadth and market internals, intermarket regime signals, lead-lag
-relationships with overdue and inversion flags, and correlation regime change
-detection with the narrative-lag indicator.
-
-The implementation is split across the :mod:`alphamind.distillation.q7`
-sub-package so each indicator family lives in its own module. This file is
-the import shim the orchestrator (story 12) and tests reach for: it
-re-exports the public API from each sub-module so call sites do not need
-to know the internal layout.
+The implementation is split across this sub-package so each concern lives in
+its own module. The top-level entry point
+:mod:`alphamind.distillation.q7_cross_asset` re-exports the public API from
+each sub-module so call sites do not need to know the internal layout.
 
 Structure:
 
-- :mod:`alphamind.distillation.q7._helpers` — shared math primitives.
+- :mod:`alphamind.distillation.q7._helpers` — shared math primitives
+  (Pearson correlation, log returns, z-score, window queries).
 - :mod:`alphamind.distillation.q7.intra_sector_correlation` — intra-sector
-  correlation matrices and divergence detection.
+  pairwise correlation matrices and divergence detection.
 - :mod:`alphamind.distillation.q7.cross_sector_rotation` — cross-sector
   rotation classification with narrative tagging.
 - :mod:`alphamind.distillation.q7.breadth_internals` — breadth and market
@@ -35,39 +27,53 @@ Structure:
 
 from __future__ import annotations
 
-from alphamind.distillation.q7 import (
+from alphamind.distillation.q7.assemble import (
+    assemble_q7_blocks,
+    compute_pair_correlations,
+)
+from alphamind.distillation.q7.breadth_internals import (
     EMA_WINDOWS_DAYS,
-    GLD_TICKER,
+    compute_breadth_internals,
+)
+from alphamind.distillation.q7.correlation_regime_change import (
     NARRATIVE_LAG_REGIME_TAGS,
+    CorrelationRegimeChangeConfig,
+    compute_correlation_regime_change,
+)
+from alphamind.distillation.q7.cross_sector_rotation import (
+    ROTATION_NARRATIVE_GROWTH_DRIVEN,
+    ROTATION_NARRATIVE_RATE_DRIVEN,
+    ROTATION_NARRATIVE_RISK_APPETITE_DRIVEN,
+    VELOCITY_SHARP,
+    VELOCITY_SLOW,
+    compute_cross_sector_rotation,
+)
+from alphamind.distillation.q7.intermarket_regime import (
+    GLD_TICKER,
     OIL_SERIES,
     OIL_SOURCE,
     REAL_YIELD_SERIES,
     REAL_YIELD_SOURCE,
-    ROTATION_NARRATIVE_GROWTH_DRIVEN,
-    ROTATION_NARRATIVE_RATE_DRIVEN,
-    ROTATION_NARRATIVE_RISK_APPETITE_DRIVEN,
     SPY_TICKER,
     TLT_TICKER,
-    VELOCITY_SHARP,
-    VELOCITY_SLOW,
     VIX_SERIES,
     VIX_SOURCE,
     XLE_TICKER,
-    CorrelationRegimeChangeConfig,
-    LeadLagPair,
-    assemble_q7_blocks,
-    compute_breadth_internals,
-    compute_correlation_regime_change,
-    compute_cross_sector_rotation,
     compute_intermarket_regime,
+)
+from alphamind.distillation.q7.intra_sector_correlation import (
     compute_intra_sector_correlation,
+)
+from alphamind.distillation.q7.lead_lag import (
+    LEAD_LAG_LOOKBACK_DEFAULT_DAYS,
+    LeadLagPair,
     compute_lead_lag,
-    compute_pair_correlations,
 )
 
 __all__ = [
     "EMA_WINDOWS_DAYS",
     "GLD_TICKER",
+    "LEAD_LAG_LOOKBACK_DEFAULT_DAYS",
     "NARRATIVE_LAG_REGIME_TAGS",
     "OIL_SERIES",
     "OIL_SOURCE",
