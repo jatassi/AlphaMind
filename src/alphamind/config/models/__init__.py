@@ -116,6 +116,7 @@ from alphamind.config.resolver import (
     RuntimeDimensions,
     compose_config,
 )
+from alphamind.config.snapshot import SnapshotResult, persist_snapshot
 
 # ---------------------------------------------------------------------------
 # .env.example helpers — kept here so monkeypatching
@@ -219,6 +220,7 @@ __all__ = [
     "SectorUnderperform",
     "SessionHours",
     "SessionWindow",
+    "SnapshotResult",
     "SourceSignalSurvivalDrop",
     "StrategistAction",
     "StrategistMode",
@@ -233,4 +235,5 @@ __all__ = [
     "ValidationWindowEnd",
     "VenueConfig",
     "compose_config",
+    "persist_snapshot",
 ]
