@@ -422,8 +422,7 @@ def compute_news_price_divergence(
         if worst_evidence < min_articles:
             calibration_state = CalibrationState.BOOTSTRAP
             bootstrap_reason: str | None = (
-                f"news_price_divergence_min_articles: "
-                f"{worst_evidence} < {min_articles}"
+                f"news_price_divergence_min_articles: {worst_evidence} < {min_articles}"
             )
         else:
             calibration_state = CalibrationState.CALIBRATED
