@@ -132,9 +132,7 @@ def _build_rows(
                 gamma=float(greeks.gamma) if greeks and greeks.gamma is not None else None,
                 theta=float(greeks.theta) if greeks and greeks.theta is not None else None,
                 vega=float(greeks.vega) if greeks and greeks.vega is not None else None,
-                rho=float(getattr(snap, "rho", None))
-                if getattr(snap, "rho", None) is not None
-                else None,
+                rho=float(rho_val) if (rho_val := getattr(snap, "rho", None)) is not None else None,
                 underlying_price=float(ua.price) if ua and ua.price is not None else None,
                 source="polygon",
                 ingested_at=ingested_at,

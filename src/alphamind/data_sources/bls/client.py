@@ -133,4 +133,5 @@ class BLSClient:
         if body.get("status") != "REQUEST_SUCCEEDED":
             messages = body.get("message", [])
             raise RuntimeError(f"BLS API error: {messages}")
-        return body["Results"]["series"]
+        series: list[dict[str, Any]] = body["Results"]["series"]
+        return series

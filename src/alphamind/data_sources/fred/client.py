@@ -9,6 +9,7 @@ Wraps the ``fredapi`` SDK with:
 
 from __future__ import annotations
 
+import pandas as pd
 from fredapi import Fred
 
 from alphamind.data_sources._common import RateLimiter, RetryShape, with_retries
@@ -73,7 +74,7 @@ class FredClient:
         return self._fred.get_series(series_id, **kwargs)
 
     @with_retries(RetryShape.critical)
-    def get_series_info(self, series_id: str) -> object:
+    def get_series_info(self, series_id: str) -> pd.Series:
         """Fetch series metadata from FRED with retries and rate limiting."""
         self._rl.acquire("fred")
         return self._fred.get_series_info(series_id)

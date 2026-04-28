@@ -73,7 +73,7 @@ def load_config(
         If a provider's ``api_key_env`` reference names an environment variable
         that is not present in the resolved ``.env``.
     """
-    import yaml  # type: ignore[import-untyped]
+    import yaml
 
     root = Path(__file__).parents[3]
     cfg_dir = Path(config_dir) if config_dir is not None else root / "config"

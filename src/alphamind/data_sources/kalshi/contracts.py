@@ -122,7 +122,7 @@ def collect_snapshots(
 
     with track_run("kalshi.contracts", _repo=_repo) as run:
         events_payload = client.get("/events")
-        events: list[dict] = events_payload.get("events", [])
+        events: list[dict[str, Any]] = events_payload.get("events", [])
 
         rows_written = 0
 
@@ -135,7 +135,7 @@ def collect_snapshots(
             category = _derive_category(series_ticker)
 
             markets_payload = client.get("/markets", series_ticker=series_ticker)
-            markets: list[dict] = markets_payload.get("markets", [])
+            markets: list[dict[str, Any]] = markets_payload.get("markets", [])
 
             with session_factory() as session:
                 for market in markets:

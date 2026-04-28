@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 
 from alphamind.data_sources.bls.macro import bootstrap_series as bls_bootstrap_series
 from alphamind.data_sources.eia.energy import bootstrap_series as eia_bootstrap_series

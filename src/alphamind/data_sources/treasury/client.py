@@ -5,6 +5,8 @@ No authentication required — the API is public.
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 
 from alphamind.data_sources._common import RateLimiter, RetryShape, with_retries
@@ -44,7 +46,7 @@ class TreasuryClient:
             return True
 
     @with_retries(RetryShape.critical)
-    def get(self, path: str, params: dict[str, object] | None = None) -> dict[str, object]:
+    def get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Make a GET request to the API with rate limiting and critical-tier retries."""
         _rate_limiter.acquire("treasury")
         response = httpx.get(
@@ -53,4 +55,5 @@ class TreasuryClient:
             timeout=30.0,
         )
         response.raise_for_status()
-        return response.json()  # type: ignore[no-any-return]
+        result: dict[str, Any] = response.json()
+        return result
