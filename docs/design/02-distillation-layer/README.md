@@ -15,7 +15,11 @@ Threshold values gating every anomaly flag, regime boundary, and persistence bas
 
 ## External distillation
 
-Raw quantitative and qualitative data into LLM-ready signals. See [external.md](external.md). Key operations:
+Raw quantitative and qualitative data into LLM-ready signals. See [external.md](external.md).
+
+[Implementation plan](../../implementation/02-distillation-layer/)
+
+Key operations:
 
 - **Normalization:** Unit standardization, time alignment, volatility normalization, extended-hours discounting, macro surprise framing
 - **Technical indicators & derived metrics:** Computed from each data category (price/volume, order flow, derivatives, short, fundamental, macro, cross-asset, commodities, corporate actions, qualitative)
