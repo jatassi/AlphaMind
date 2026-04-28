@@ -221,6 +221,24 @@ No automated tuning. The Phase 4 feedback loop is the natural source of empirica
 
 **No silent threshold mutation.** A threshold change is a config change with a config-change activity log entry. Motivating observation, old value, and new value live in the operator's calibration log — notes paired with the YAML diff in version control.
 
+**Calibration log convention.** Threshold-edit commits to `config/distillation.yaml` use a structured trailer block paired with the [`distillation_config_change`](../05-execution-layer/state-persistence.md) activity-log entry the configuration loader emits at reload. The activity-log entry carries the *what* and *when*; the trailer carries the *why*:
+
+```
+calib: <YAML key path> <old> -> <new>
+
+Motivating observation: <one-paragraph why>
+
+Empirical inputs: <flag-rate report or feedback-loop output the operator consulted>
+
+Replay-harness report: <report_id>          (required for regime-sensitive edits)
+```
+
+Multiple `calib:` trailers per commit are allowed. The git history paired with the activity-log entries forms the full audit trail.
+
+`Replay-harness report:` is required when the edited key path falls under `anomaly_detection.*`, `regime_classification.*`, `regime_transition.*`, `lead_lag.*`, `narrative_lag.*`, or `persistence_windows.*` — the regime-sensitive set named by step 4 above. The `<report_id>` is the directory name under `data/replay_reports/` produced by [`replay-harness.md`](replay-harness.md), and is the same identifier the operator cites in the corresponding [`/feedback-validate`](../../../.claude/skills/feedback-validate/SKILL.md) registration's `expected_magnitude` or `success_criterion` field, pairing the calibration-log commit and the validation registration on a single regime-grounded evidence anchor. When multiple `calib:` trailers in one commit touch the regime-sensitive set, one `Replay-harness report:` line covers all of them when the same harness run informed every edit; otherwise list one per evidence run. `prediction_market.*` edits do not require a `Replay-harness report:` line — the 5pp threshold is universe-wide, not regime-conditioned per [Prediction market delta](#prediction-market-delta).
+
+The convention is recommendation, not enforcement — no commit hook or linter.
+
 ---
 
 ## Validation invariants

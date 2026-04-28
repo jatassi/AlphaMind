@@ -1,4 +1,6 @@
-You are orchestrating completion of the AlphaMind distillation layer. Twenty-four user stories live at `docs/implementation/02-distillation-layer/` (files `01-...md` through `17-...md`, with letter suffixes for parallel-eligible groups). Stories 01–13 implement the external distillation pipeline (config schema, state persistence, calibration framework, normalization, refresh, per-category indicators, regime classification, aggregation, assembly, orchestrator, verification). Stories 14–17 add the threshold-calibration audit and operator-tooling surface that wraps the framework. Each story is self-contained — read it before you act on it.
+You are orchestrating completion of the AlphaMind distillation layer. Twenty-five user stories live at `docs/implementation/02-distillation-layer/` (files `01-...md` through `17-...md`, with letter suffixes for parallel-eligible groups, plus a contract/emission split inside `14a`). Stories 01–13 implement the external distillation pipeline (config schema, state persistence, calibration framework, normalization, refresh, per-category indicators, regime classification, aggregation, assembly, orchestrator, verification). Stories 14–17 add the threshold-calibration audit and operator-tooling surface that wraps the framework. Each story is self-contained — read it before you act on it.
+
+Two stories are presently `blocked` on the execution-layer state-persistence substrate (no `invocations` or `activity_log` SQL tables yet): `14a-config-change-emission` and `15-emergency-invocation-review-report`. Their contracts and design-doc edits land via `14a-config-change-contract` and the existing 15 spec respectively; emission/CLI wiring waits for the substrate. Do not dispatch them while `status: blocked` — the substrate work is the proper subject of an execution-layer track and is not in this orchestrator's scope.
 
 ## Operating posture
 
@@ -79,8 +81,9 @@ The dependency graph for this work tree:
                           ↓
                      04 ← 02, 03
                      05 ← 03
-                14a ← 02         (audit-trail, operator tooling)
-                14b ← 02         (no-magic-numbers audit, operator tooling)
+                14a-contract ← 02   (config-change activity-log contract; doc + in-memory)
+                14a-emit     ← blocked on execution-layer state-persistence substrate
+                14b          ← 02   (no-magic-numbers audit, operator tooling)
                           ↓
                      06 ← 04, 05
                      07 ← 03, 04
@@ -89,7 +92,7 @@ The dependency graph for this work tree:
        08a 08b 08c 08d 08e 08f               09
         └─────────────────┼─────────────────┘
                           ↓                   ↓
-                          10                  15 ← 09 (emergency-invocation review, operator tooling)
+                          10                  15 ← blocked on execution-layer state-persistence substrate
                           ↓
                        11a  11b
                   16 ← 04, 05, 10            (flag-rate reporter, operator tooling)
@@ -100,7 +103,9 @@ The dependency graph for this work tree:
                           13
 ```
 
-01, 02, and 03 can dispatch immediately in parallel. 04 and 05 unblock once their deps land. 14a / 14b unblock once 02 lands and run in parallel — they're operator-tooling work that doesn't extend the critical path. 06, 07 follow the 04/05 wave. The 08* + 09 group is the widest parallelism point — six per-category stories plus the regime story all dispatchable simultaneously. 10 collects; 15 dispatches alongside once 09 is done. 11a/11b assemble in parallel; 16 dispatches alongside once 04/05/10 are done. 12 orchestrates; 17 dispatches once 12 is done. 13 verifies.
+01, 02, and 03 can dispatch immediately in parallel. 04 and 05 unblock once their deps land. `14a-contract` and `14b` unblock once 02 lands and run in parallel — they're operator-tooling / contract work that doesn't extend the critical path. 06, 07 follow the 04/05 wave. The 08* + 09 group is the widest parallelism point — six per-category stories plus the regime story all dispatchable simultaneously. 10 collects. 11a/11b assemble in parallel; 16 dispatches alongside once 04/05/10 are done. 12 orchestrates; 17 dispatches once 12 is done. 13 verifies.
+
+`14a-emit` and `15` stay blocked on the execution-layer state-persistence substrate (no `invocations` / `activity_log` SQL tables yet); they unblock when that substrate ships and are tracked in `docs/project-tracker.md` under the State persistence item.
 
 The longest path is 03 → 04 → 06 → 08a → 10 → 11a → 12 → 13 (8 stories) — unchanged by the threshold-audit additions, which all branch off existing waves. Parallelism collapses it; expect total wall-clock to land around 5–7 sequential agent runs if the parallel groups dispatch cleanly.
 
@@ -109,6 +114,7 @@ The longest path is 03 → 04 → 06 → 08a → 10 → 11a → 12 → 13 (8 sto
 Terse. After each batch dispatch returns: one line per story — ID, status, commit SHA prefix, any blockers. After the full critical path completes: a single summary message naming the final state.
 
 Surface blockers immediately, do not work around them:
+- Substrate gaps discovered when a story implicitly assumes infrastructure that doesn't exist (e.g., the original 14a expected an `activity_log` SQL table that lives in the unbuilt execution-layer state-persistence track). Report; if a doc-only / contract slice is tractable in isolation, propose the split rather than expanding scope.
 - Schema gaps discovered when a per-category story needs a state-table column the schema (story 03) doesn't carry. Report; coordinate a follow-up Alembic migration story rather than ad-hoc extending.
 - Design-doc ambiguities (e.g., the "regime skip" definition discussed in story 09's Notes — VIX-band skip vs. four-label-ladder skip). Surface the resolution choice, do not silently pick.
 - Test failures the subagent could not resolve.
