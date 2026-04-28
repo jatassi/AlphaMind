@@ -1,5 +1,5 @@
 ---
-status: not_started
+status: blocked
 completed_date:
 commit_id:
 ---
