@@ -73,6 +73,7 @@ Trigger → Data Layer → Distillation Layer → Analysis Layer → Decision La
 | [Command center](command-center.md) | Operator-facing webapp: monitoring, alerting, configuration editing, manual control, authentication |
 | [Cost and rate-limit modeling](cost-and-rate-limit-modeling.md) | Workload fit against the Claude Max 5x subscription envelope; operating posture under cap pressure |
 | [Feedback loop](feedback-loop.md) | Discovery, Prescription, Validation: how the system gets better month over month. Metric inventory across all layers, citation-chain flagship, counterfactual replay role, confounder management |
+| [Configuration management](configuration-management.md) | YAML configuration tree, composition model, validation layers, snapshot persistence |
 
 ### 01 — Data layer
 
