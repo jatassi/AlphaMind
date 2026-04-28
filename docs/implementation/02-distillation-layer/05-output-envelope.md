@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: bba3717e4e6184926b901a0a5dadf6d41f201aaa
 ---
 
 # 05 — Output envelope and structured-text formatter
