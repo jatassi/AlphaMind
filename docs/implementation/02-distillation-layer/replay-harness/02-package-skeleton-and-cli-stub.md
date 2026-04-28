@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 4ff944f3fadde37f720129c8b31320b21942ef82
 ---
 
 # 02 — Package skeleton & CLI stub
