@@ -91,7 +91,7 @@ class TestOptionGreeks:
 
     def test_required_fields_enforced(self) -> None:
         with pytest.raises(ValidationError):
-            OptionGreeks(delta=0.5)  # type: ignore[call-arg]
+            OptionGreeks.model_validate({"delta": 0.5})
 
 
 class TestPositionFill:
@@ -123,7 +123,7 @@ class TestPositionFill:
 
     def test_required_fields_enforced(self) -> None:
         with pytest.raises(ValidationError):
-            PositionFill(fill_price=100.0)  # type: ignore[call-arg]
+            PositionFill.model_validate({"fill_price": 100.0})
 
 
 class TestEquityPositionDetails:
@@ -162,7 +162,7 @@ class TestEquityPositionDetails:
 
     def test_required_fields_enforced(self) -> None:
         with pytest.raises(ValidationError):
-            EquityPositionDetails(ticker="AAPL")  # type: ignore[call-arg]
+            EquityPositionDetails.model_validate({"ticker": "AAPL"})
 
 
 _GREEKS = OptionGreeks(delta=0.5, gamma=0.05, theta=-0.01, vega=0.2)
@@ -181,7 +181,7 @@ def _make_options_details(**overrides: object) -> OptionsPositionDetails:
         "greeks": _GREEKS,
     }
     kwargs.update(overrides)
-    return OptionsPositionDetails(**kwargs)  # type: ignore[arg-type]
+    return OptionsPositionDetails.model_validate(kwargs)
 
 
 class TestOptionsPositionDetails:
@@ -198,7 +198,7 @@ class TestOptionsPositionDetails:
 
     def test_required_fields_enforced(self) -> None:
         with pytest.raises(ValidationError):
-            OptionsPositionDetails(underlying_ticker="AAPL")  # type: ignore[call-arg]
+            OptionsPositionDetails.model_validate({"underlying_ticker": "AAPL"})
 
 
 def _make_strategy_leg(**overrides: object) -> StrategyLeg:
@@ -207,7 +207,7 @@ def _make_strategy_leg(**overrides: object) -> StrategyLeg:
         "options": _make_options_details(),
     }
     kwargs.update(overrides)
-    return StrategyLeg(**kwargs)  # type: ignore[arg-type]
+    return StrategyLeg.model_validate(kwargs)
 
 
 class TestStrategyLeg:
@@ -310,7 +310,7 @@ def _make_position(**overrides: object) -> PositionRecord:
         "origin": None,
     }
     kwargs.update(overrides)
-    return PositionRecord(**kwargs)  # type: ignore[arg-type]
+    return PositionRecord.model_validate(kwargs)
 
 
 # ---------------------------------------------------------------------------
