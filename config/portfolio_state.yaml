@@ -1,0 +1,10 @@
+portfolio_state:
+  pm_decision_log:
+    sliding_window_invocations: 3        # category 5b — recent N invocations
+  thesis_resolutions:
+    lookback_trading_days: 20            # category 3c — rolling resolution window
+  thesis_quality_aggregates:
+    trailing_windows_days: [5, 20]       # category 6 — windows for aggregate computation
+  snapshot_freshness:
+    max_phase1_to_snapshot_seconds: 30   # above this, log warning
+    max_price_age_seconds: 900           # current price freshness threshold
