@@ -11,7 +11,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.persistence.models import Base, PredictionMarketContracts, PredictionMarketSnapshots
 from alphamind.persistence.session import make_engine, make_session_factory
@@ -22,11 +22,11 @@ from alphamind.persistence.session import make_engine, make_session_factory
 
 
 @pytest.fixture()
-def session_factory() -> type[Session]:
+def session_factory() -> sessionmaker[Session]:
     """Provide an in-memory SQLite session factory pre-populated with schema."""
     engine = make_engine(":memory:")
     Base.metadata.create_all(engine)
-    sf: type[Session] = make_session_factory(engine)
+    sf: sessionmaker[Session] = make_session_factory(engine)
     return sf
 
 
@@ -96,7 +96,9 @@ def _make_mock_client(
 
 
 class TestCollectSnapshots:
-    def test_contracts_upserted_for_known_series(self, session_factory: type[Session]) -> None:
+    def test_contracts_upserted_for_known_series(
+        self, session_factory: sessionmaker[Session]
+    ) -> None:
         """Contracts for known series tickers are inserted into prediction_market_contracts."""
         from alphamind.data_sources.kalshi.contracts import collect_snapshots
 
@@ -119,14 +121,16 @@ class TestCollectSnapshots:
             assert contracts[0].platform == "kalshi"
             assert contracts[0].category in ("monetary_policy", "fed", "other")
 
-    def test_contracts_have_correct_category_for_fed(self, session_factory: type[Session]) -> None:
+    def test_contracts_have_correct_category_for_fed(
+        self, session_factory: sessionmaker[Session]
+    ) -> None:
         """FED series_ticker maps to monetary_policy category."""
         from alphamind.data_sources.kalshi.contracts import SERIES_CATEGORY_MAP
 
         assert "FED" in SERIES_CATEGORY_MAP
         assert SERIES_CATEGORY_MAP["FED"] == "monetary_policy"
 
-    def test_unknown_series_defaults_to_other(self, session_factory: type[Session]) -> None:
+    def test_unknown_series_defaults_to_other(self, session_factory: sessionmaker[Session]) -> None:
         """Unknown series_ticker maps to 'other' with a warning."""
         from alphamind.data_sources.kalshi.contracts import collect_snapshots
 
@@ -151,7 +155,7 @@ class TestCollectSnapshots:
     # ------------------------------------------------------------------
 
     def test_snapshot_yes_probability_derived_correctly(
-        self, session_factory: type[Session]
+        self, session_factory: sessionmaker[Session]
     ) -> None:
         """yes_probability = (yes_bid + yes_ask) / 200."""
         from alphamind.data_sources.kalshi.contracts import collect_snapshots
@@ -172,7 +176,7 @@ class TestCollectSnapshots:
             assert snap is not None
             assert abs(snap.yes_probability - 0.65) < 1e-9  # (60+70)/200
 
-    def test_snapshot_bid_ask_in_dollars(self, session_factory: type[Session]) -> None:
+    def test_snapshot_bid_ask_in_dollars(self, session_factory: sessionmaker[Session]) -> None:
         """bid = yes_bid/100, ask = yes_ask/100 (dollars)."""
         from alphamind.data_sources.kalshi.contracts import collect_snapshots
 
@@ -190,6 +194,8 @@ class TestCollectSnapshots:
         with session_factory() as sess:
             snap = sess.query(PredictionMarketSnapshots).first()
             assert snap is not None
+            assert snap.bid is not None
+            assert snap.ask is not None
             assert abs(snap.bid - 0.60) < 1e-9
             assert abs(snap.ask - 0.70) < 1e-9
 
@@ -198,7 +204,7 @@ class TestCollectSnapshots:
     # ------------------------------------------------------------------
 
     def test_closed_market_sets_resolution_outcome_yes(
-        self, session_factory: type[Session]
+        self, session_factory: sessionmaker[Session]
     ) -> None:
         """Closed market with result='yes' sets resolution_outcome on the contract."""
         from alphamind.data_sources.kalshi.contracts import collect_snapshots
@@ -219,7 +225,9 @@ class TestCollectSnapshots:
             assert contract is not None
             assert contract.resolution_outcome == "yes"
 
-    def test_closed_market_sets_resolution_outcome_no(self, session_factory: type[Session]) -> None:
+    def test_closed_market_sets_resolution_outcome_no(
+        self, session_factory: sessionmaker[Session]
+    ) -> None:
         from alphamind.data_sources.kalshi.contracts import collect_snapshots
 
         client = _make_mock_client(
@@ -246,7 +254,7 @@ class TestCollectSnapshots:
     # No duplicate snapshot rows on re-run
     # ------------------------------------------------------------------
 
-    def test_no_duplicate_snapshots_on_rerun(self, session_factory: type[Session]) -> None:
+    def test_no_duplicate_snapshots_on_rerun(self, session_factory: sessionmaker[Session]) -> None:
         """Running collect_snapshots twice with the same window adds no duplicate rows."""
         from alphamind.data_sources.kalshi.contracts import collect_snapshots
 
@@ -284,7 +292,7 @@ class TestCollectSnapshots:
     # ------------------------------------------------------------------
 
     def test_failure_records_failed_in_collection_runs(
-        self, session_factory: type[Session]
+        self, session_factory: sessionmaker[Session]
     ) -> None:
         """When collection fails, the repo records failed and no data rows are written."""
         from alphamind.data_sources.kalshi.contracts import collect_snapshots

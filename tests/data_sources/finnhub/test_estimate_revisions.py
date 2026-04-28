@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.persistence.models import Base, EarningsEstimateRevisions
 from alphamind.persistence.session import make_engine, make_session_factory
@@ -32,13 +32,13 @@ def engine() -> Iterator[Engine]:
 
 
 @pytest.fixture()
-def session_factory(engine: Engine) -> type[Session]:
-    sf: type[Session] = make_session_factory(engine)
+def session_factory(engine: Engine) -> sessionmaker[Session]:
+    sf: sessionmaker[Session] = make_session_factory(engine)
     return sf
 
 
 @pytest.fixture()
-def session(session_factory: type[Session]) -> Iterator[Session]:
+def session(session_factory: sessionmaker[Session]) -> Iterator[Session]:
     with session_factory() as sess:
         yield sess
 
@@ -131,7 +131,7 @@ def _make_revenue_response(
 
 def _run_collect(
     engine: Engine,
-    session_factory: type[Session],
+    session_factory: sessionmaker[Session],
     fake_repo: Any,
     ticker_scope: list[str] | None,
     eps_response_map: dict[str, dict[str, Any]],
@@ -220,7 +220,7 @@ class TestFirstObservation:
     def test_seed_inserts_eps_row_with_null_prior(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -243,7 +243,7 @@ class TestFirstObservation:
     def test_seed_inserts_revenue_row_with_null_prior(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -272,7 +272,7 @@ class TestFirstObservation:
     def test_num_analysts_populated_when_present(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -296,7 +296,7 @@ class TestFirstObservation:
     def test_num_analysts_null_when_omitted(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -327,7 +327,7 @@ class TestChangedConsensus:
     def test_changed_consensus_inserts_new_row_with_prior_value(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -377,7 +377,7 @@ class TestUnchangedConsensus:
     def test_unchanged_consensus_produces_no_new_row(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -416,7 +416,11 @@ class TestUnchangedConsensus:
 
 class TestUniverseFilter:
     def test_inactive_ticker_not_processed(
-        self, engine: Engine, session_factory: type[Session], session: Session, fake_repo: Any
+        self,
+        engine: Engine,
+        session_factory: sessionmaker[Session],
+        session: Session,
+        fake_repo: Any,
     ) -> None:
         """Tickers with is_active=0 are excluded from collection."""
         from alphamind.persistence.models import AssetUniverse
@@ -465,7 +469,7 @@ class TestUniverseFilter:
     def test_active_ticker_is_processed(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -540,7 +544,7 @@ class TestFiscalPeriodMapping:
     def test_fiscal_period_mapping_uses_event_details_when_available(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -569,7 +573,7 @@ class TestFiscalPeriodMapping:
     def test_fiscal_period_fallback_to_calendar_quarter(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -603,7 +607,7 @@ class TestBootstrapEstimateRevisions:
     def test_bootstrap_seeds_with_null_prior(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -636,7 +640,7 @@ class TestBootstrapEstimateRevisions:
     def test_bootstrap_is_idempotent(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -679,7 +683,7 @@ class TestBootstrapEstimateRevisions:
 
 class TestFailureRecording:
     def test_sdk_failure_records_failed_run(
-        self, engine: Engine, session_factory: type[Session], fake_repo: Any
+        self, engine: Engine, session_factory: sessionmaker[Session], fake_repo: Any
     ) -> None:
         """When the SDK raises, collection_runs records 'failed' and no rows are written."""
         with patch("finnhub.Client") as mock_client:
@@ -701,7 +705,11 @@ class TestFailureRecording:
         assert run["status"] == "failed"
 
     def test_sdk_failure_writes_no_data_rows(
-        self, engine: Engine, session_factory: type[Session], session: Session, fake_repo: Any
+        self,
+        engine: Engine,
+        session_factory: sessionmaker[Session],
+        session: Session,
+        fake_repo: Any,
     ) -> None:
         """On failure, no EarningsEstimateRevisions rows are written."""
         with patch("finnhub.Client") as mock_client:
