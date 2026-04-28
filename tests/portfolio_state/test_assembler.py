@@ -11,6 +11,7 @@ import pytest
 
 from alphamind.portfolio_state import PortfolioStateConfig
 from alphamind.portfolio_state.assembler import assemble_snapshot
+from alphamind.portfolio_state.freshness import AssembledSnapshot, SnapshotFreshness
 from alphamind.portfolio_state.pricing import (
     PriceQuote,
     PriceSource,
@@ -75,6 +76,7 @@ from alphamind.portfolio_state.repository import (
     RepositoryReadError,
     StubPortfolioStateRepository,
 )
+from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
 
 # ---------------------------------------------------------------------------
 # Shared timestamps
@@ -670,7 +672,7 @@ def test_empty_portfolio_returns_valid_snapshot() -> None:
     provider = StubCurrentPriceProvider({}, _NOW)
     config = _make_config()
 
-    snapshot = _run(
+    assembled = _run(
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
@@ -679,6 +681,7 @@ def test_empty_portfolio_returns_valid_snapshot() -> None:
             now=_NOW,
         )
     )
+    snapshot = assembled.snapshot
 
     assert snapshot.open_positions == ()
     assert snapshot.pending_positions == ()
@@ -717,7 +720,7 @@ def test_single_equity_position_enrichment() -> None:
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 520.0)}, _NOW)
 
-    snapshot = _run(
+    assembled = _run(
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
@@ -726,6 +729,7 @@ def test_single_equity_position_enrichment() -> None:
             now=_NOW,
         )
     )
+    snapshot = assembled.snapshot
 
     assert len(snapshot.open_positions) == 1
     pos_out = snapshot.open_positions[0]
@@ -799,7 +803,7 @@ def test_multi_position_rollup() -> None:
             return mapping.get(pos.equity_details.ticker)
         return None
 
-    snapshot = _run(
+    assembled = _run(
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
@@ -808,6 +812,7 @@ def test_multi_position_rollup() -> None:
             now=_NOW,
         )
     )
+    snapshot = assembled.snapshot
 
     assert len(snapshot.open_positions) == 3
 
@@ -860,7 +865,7 @@ def test_two_pass_weight_enrichment() -> None:
         _NOW,
     )
 
-    snapshot = _run(
+    assembled = _run(
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
@@ -869,6 +874,7 @@ def test_two_pass_weight_enrichment() -> None:
             now=_NOW,
         )
     )
+    snapshot = assembled.snapshot
 
     by_id = {p.position_id: p for p in snapshot.open_positions}
     total = 5_200.0 + 3_200.0
@@ -896,7 +902,7 @@ def test_stale_price_does_not_abort_assembly(caplog: pytest.LogCaptureFixture) -
     provider = StubCurrentPriceProvider({"NVDA": stale_quote}, _NOW)
 
     with caplog.at_level(logging.WARNING, logger="alphamind.portfolio_state.assembler"):
-        snapshot = _run(
+        assembled = _run(
             assemble_snapshot(
                 repository=repo,
                 price_provider=provider,
@@ -905,6 +911,7 @@ def test_stale_price_does_not_abort_assembly(caplog: pytest.LogCaptureFixture) -
                 now=_NOW,
             )
         )
+    snapshot = assembled.snapshot
 
     assert len(snapshot.open_positions) == 1
     assert snapshot.open_positions[0].current_market_value_usd == pytest.approx(0.0)
@@ -926,7 +933,7 @@ def test_missing_ticker_from_get_quotes_treated_as_stale(caplog: pytest.LogCaptu
     provider = StubCurrentPriceProvider({}, _NOW)  # no quotes at all
 
     with caplog.at_level(logging.WARNING, logger="alphamind.portfolio_state.assembler"):
-        snapshot = _run(
+        assembled = _run(
             assemble_snapshot(
                 repository=repo,
                 price_provider=provider,
@@ -935,6 +942,7 @@ def test_missing_ticker_from_get_quotes_treated_as_stale(caplog: pytest.LogCaptu
                 now=_NOW,
             )
         )
+    snapshot = assembled.snapshot
 
     assert snapshot.open_positions[0].current_market_value_usd == pytest.approx(0.0)
     # Warning should have been emitted
@@ -998,7 +1006,7 @@ def test_parameter_change_flag_false_when_no_prior_context() -> None:
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider({}, _NOW)
 
-    snapshot = _run(
+    assembled = _run(
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
@@ -1007,6 +1015,7 @@ def test_parameter_change_flag_false_when_no_prior_context() -> None:
             now=_NOW,
         )
     )
+    snapshot = assembled.snapshot
 
     assert snapshot.active_risk_parameters.parameter_change_flag is False
 
@@ -1028,7 +1037,7 @@ def test_parameter_change_flag_true_when_prior_params_differ() -> None:
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider({}, _NOW)
 
-    snapshot = _run(
+    assembled = _run(
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
@@ -1037,6 +1046,7 @@ def test_parameter_change_flag_true_when_prior_params_differ() -> None:
             now=_NOW,
         )
     )
+    snapshot = assembled.snapshot
 
     assert snapshot.active_risk_parameters.parameter_change_flag is True
 
@@ -1070,7 +1080,7 @@ def test_drawdown_by_source_enriched_when_empty() -> None:
         _NOW,
     )
 
-    snapshot = _run(
+    assembled = _run(
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
@@ -1079,6 +1089,7 @@ def test_drawdown_by_source_enriched_when_empty() -> None:
             now=_NOW,
         )
     )
+    snapshot = assembled.snapshot
 
     # NVDA: 100 shares * (520 - 600) = -8000 (loss) → should be in drawdown source
     # AAPL: 10 shares * (150 - 100) = +500 (gain) → not in drawdown source
@@ -1104,7 +1115,7 @@ def test_drawdown_by_source_not_overwritten_when_prepopulated() -> None:
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider({}, _NOW)
 
-    snapshot = _run(
+    assembled = _run(
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
@@ -1113,6 +1124,7 @@ def test_drawdown_by_source_not_overwritten_when_prepopulated() -> None:
             now=_NOW,
         )
     )
+    snapshot = assembled.snapshot
 
     assert snapshot.drawdown.drawdown_by_source_pct == pre_populated
 
@@ -1137,7 +1149,7 @@ def test_pending_order_age_enriched() -> None:
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 520.0)}, _NOW)
 
-    snapshot = _run(
+    assembled = _run(
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
@@ -1146,6 +1158,7 @@ def test_pending_order_age_enriched() -> None:
             now=_NOW,
         )
     )
+    snapshot = assembled.snapshot
 
     assert len(snapshot.pending_orders) == 1
     # _ORDER_SUBMITTED_AT = _NOW - 30 min = 0.5 hours
@@ -1174,7 +1187,7 @@ def test_strategy_position_missing_leg_price_handled_in_band() -> None:
         _NOW,
     )
 
-    snapshot = _run(
+    assembled = _run(
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
@@ -1183,7 +1196,7 @@ def test_strategy_position_missing_leg_price_handled_in_band() -> None:
             now=_NOW,
         )
     )
-    assert snapshot.open_positions[0].current_market_value_usd == pytest.approx(0.0)
+    assert assembled.snapshot.open_positions[0].current_market_value_usd == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1199,7 +1212,7 @@ def test_determinism() -> None:
         cash_ledger=_make_cash_ledger(current_cash=1000.0),
     )
 
-    def make_snapshot() -> object:
+    def make_assembled() -> object:
         repo = StubPortfolioStateRepository(fixture)
         provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 520.0)}, _NOW)
         return _run(
@@ -1212,8 +1225,8 @@ def test_determinism() -> None:
             )
         )
 
-    snap1 = make_snapshot()
-    snap2 = make_snapshot()
+    snap1 = make_assembled()
+    snap2 = make_assembled()
     assert snap1 == snap2
 
 
@@ -1232,7 +1245,7 @@ def test_position_age_computed_from_entry_timestamp() -> None:
     repo = StubPortfolioStateRepository(fixture)
     provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 520.0)}, _NOW)
 
-    snapshot = _run(
+    assembled = _run(
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
@@ -1241,6 +1254,7 @@ def test_position_age_computed_from_entry_timestamp() -> None:
             now=_NOW,
         )
     )
+    snapshot = assembled.snapshot
 
     # _NOW - _ENTRY_AT = 1.5 hours
     expected_age = (_NOW - _ENTRY_AT).total_seconds() / 3600.0
@@ -1270,7 +1284,7 @@ def test_sector_resolver_used_for_sector_exposure() -> None:
     )
     resolver = _ticker_sector_resolver({"NVDA": "TECH", "JNJ": "HEALTHCARE"})
 
-    snapshot = _run(
+    assembled = _run(
         assemble_snapshot(
             repository=repo,
             price_provider=provider,
@@ -1279,8 +1293,52 @@ def test_sector_resolver_used_for_sector_exposure() -> None:
             now=_NOW,
         )
     )
+    snapshot = assembled.snapshot
 
     sector_names = {s.sector for s in snapshot.sector_exposure}
     assert "TECH" in sector_names
     assert "HEALTHCARE" in sector_names
     assert "UNCLASSIFIED" not in sector_names
+
+
+# ---------------------------------------------------------------------------
+# Test 19: assemble_snapshot returns AssembledSnapshot bundle (story 08)
+# ---------------------------------------------------------------------------
+
+
+def test_assemble_snapshot_returns_assembled_snapshot_bundle() -> None:
+    """assemble_snapshot returns an AssembledSnapshot bundling snapshot and freshness."""
+    pos = _make_open_equity_position("POS-NVDA", "NVDA", 10.0, 500.0)
+    fixture = _make_fixture(
+        open_positions=(pos,),
+        cash_ledger=_make_cash_ledger(current_cash=0.0),
+    )
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider({"NVDA": _make_fresh_quote("NVDA", 520.0)}, _NOW)
+
+    assembled = _run(
+        assemble_snapshot(
+            repository=repo,
+            price_provider=provider,
+            sector_resolver=_null_sector_resolver,
+            config=_make_config(),
+            now=_NOW,
+        )
+    )
+
+    # Verify bundle shape
+    assert isinstance(assembled, AssembledSnapshot)
+    assert isinstance(assembled.snapshot, PortfolioStateSnapshot)
+    assert isinstance(assembled.freshness, SnapshotFreshness)
+
+    # Freshness sidecar corresponds to the snapshot
+    assert assembled.freshness.snapshot_assembled_at == assembled.snapshot.snapshot_assembled_at
+    assert assembled.freshness.phase1_committed_at == assembled.snapshot.phase1_committed_at
+    assert assembled.freshness.total_open_positions == len(assembled.snapshot.open_positions)
+    assert assembled.freshness.total_positions == (
+        len(assembled.snapshot.open_positions) + len(assembled.snapshot.pending_positions)
+    )
+
+    # Position is priced fresh (NVDA quote provided)
+    assert assembled.freshness.all_position_prices_fresh is True
+    assert "POS-NVDA" in assembled.freshness.position_ids_priced_fresh
