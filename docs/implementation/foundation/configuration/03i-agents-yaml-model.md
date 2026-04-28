@@ -1,5 +1,5 @@
 ---
-status: not_started
+status: in_progress
 completed_date:
 commit_id:
 ---
