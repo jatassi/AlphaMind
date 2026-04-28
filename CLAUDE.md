@@ -10,7 +10,7 @@ uv run ruff format .
 uv run mypy
 ```
 
-Alert the user before disabling the linter or any rule in any form — including `ignore`, `per-file-ignores`, `# noqa`, and `# type: ignore`.
+Alert the user before disabling the linter or any rule in any form — including `ignore`, `per-file-ignores`, `# noqa`, and `# type: ignore`. If a subagent suppresses the linter, do not pause execution to alert user. Instead, assess whether each suppression was warranted and fix unwarranted suppressions.
 
 ## Testing
 
