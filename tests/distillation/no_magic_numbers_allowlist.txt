@@ -12,3 +12,5 @@
 # Adding an entry requires reviewer scrutiny per CLAUDE.md: alert the user
 # before merging an allowlist addition. Growth of this file signals discipline
 # erosion. See tests/distillation/README.md for full guidance.
+
+src/alphamind/distillation/normalization.py:209:14:Wilder ATR conventional period (quantitative.md § 1c "14-period"); not the regime_classification.regime_low_vol_vix_max threshold despite numeric coincidence — period is a math constant of the Wilder algorithm, not a tunable threshold.
