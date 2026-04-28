@@ -88,6 +88,13 @@ from alphamind.config.models.profiles import (
     RiskPriority,
     TokenBudgetRange,
 )
+from alphamind.config.models.regimes import (
+    LoosenOnExit,
+    Regime,
+    RegimeConfig,
+    TightenOnEntry,
+    TransitionPolicy,
+)
 from alphamind.config.models.run_types import (
     AgentsSection,
     NewsDigestConfig,
@@ -167,6 +174,7 @@ __all__ = [
     "GreeksRefresh",
     "GuardrailsConfig",
     "LLMFailureConfig",
+    "LoosenOnExit",
     "MainConfig",
     "Mode",
     "ModeConfig",
@@ -187,7 +195,9 @@ __all__ = [
     "ProgressiveTier",
     "ProviderConfig",
     "QualitativeResearcherSection",
+    "Regime",
     "RegimeChange",
+    "RegimeConfig",
     "RetryCondition",
     "RetryPolicy",
     "RetryShapeConfig",
@@ -207,7 +217,9 @@ __all__ = [
     "StressActivation",
     "StressOverlay",
     "StressTrigger",
+    "TightenOnEntry",
     "TokenBudgetRange",
+    "TransitionPolicy",
     "ValidationSuperseded",
     "ValidationWindowEnd",
     "VenueConfig",

@@ -21,6 +21,7 @@ from alphamind.config.models.overlays import (
     StressOverlay,
 )
 from alphamind.config.models.profiles import ProfileConfig
+from alphamind.config.models.regimes import Regime, RegimeConfig
 from alphamind.config.models.run_types import RunType, RunTypeConfig
 
 # Filename stems use hyphens for operator readability; enum members use
@@ -28,6 +29,13 @@ from alphamind.config.models.run_types import RunType, RunTypeConfig
 _OVERLAY_FILENAME_STEM: dict[Overlay, str] = {
     Overlay.pre_event: "pre-event",
     Overlay.stress: "stress",
+}
+
+_REGIME_FILENAME_STEM: dict[Regime, str] = {
+    Regime.low_vol: "low-vol",
+    Regime.normal: "normal",
+    Regime.elevated: "elevated",
+    Regime.crisis: "crisis",
 }
 
 
@@ -81,6 +89,24 @@ def load_modes(config_dir: Path) -> dict[Mode, ModeConfig]:
         mode: ModeConfig.model_validate(_read_yaml(modes_dir / f"{mode.value}.yaml"))
         for mode in Mode
     }
+
+
+def load_regimes(config_dir: Path) -> Mapping[Regime, RegimeConfig]:
+    """Load every regime file under ``config_dir / 'regimes'``.
+
+    Returns a frozen mapping keyed by the ``Regime`` enum member. The four
+    members are a closed set; every member must have a matching YAML file or
+    the loader raises ``FileNotFoundError`` so the resolver fails closed.
+    Filenames use hyphens (``low-vol.yaml``) while enum members use
+    underscores (``Regime.low_vol``); the ``_REGIME_FILENAME_STEM`` mapping
+    bridges the two.
+    """
+    regimes_dir = config_dir / "regimes"
+    loaded: dict[Regime, RegimeConfig] = {
+        regime: RegimeConfig.model_validate(_read_yaml(regimes_dir / f"{stem}.yaml"))
+        for regime, stem in _REGIME_FILENAME_STEM.items()
+    }
+    return MappingProxyType(loaded)
 
 
 def load_run_types(config_dir: Path) -> Mapping[RunType, RunTypeConfig]:
