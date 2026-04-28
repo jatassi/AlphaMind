@@ -1,0 +1,20 @@
+# Halt mode — defensive posture.
+#
+# Activated by daily-drawdown halt or cumulative-drawdown tier-3 full halt.
+# Restricts decision-layer agents per `state-delivery.md § Halt-mode header
+# modifications`: analyst produces a watchlist (no proposals); strategist
+# enters defensive posture with a reduced action vocabulary and cancels
+# pending orders by default; PM is restricted to risk-reducing command types
+# with a capital-preservation emphasis.
+
+analyst:
+  output_mode: watchlist
+
+strategist:
+  output_mode: defensive_posture
+  allowed_actions: [hold, reduce, close, adjust-bracket]
+  pending_orders_default: cancel
+
+pm:
+  allowed_command_types: [CLOSE, ADJUST, CANCEL]
+  emphasis: capital_preservation

@@ -11,6 +11,7 @@ from typing import Any, cast
 
 import yaml
 
+from alphamind.config.models.modes import Mode, ModeConfig
 from alphamind.config.models.overlays import (
     Overlay,
     PreEventOverlay,
@@ -48,3 +49,16 @@ def load_overlays(config_dir: Path) -> dict[Overlay, PreEventOverlay | StressOve
         else:
             resolved[overlay] = StressOverlay.model_validate(payload)
     return resolved
+
+
+def load_modes(config_dir: Path) -> dict[Mode, ModeConfig]:
+    """Load every mode file under ``config_dir / 'modes'``.
+
+    The mode set is closed; every ``Mode`` enum member must have a matching
+    YAML file or the resolver fails closed.
+    """
+    modes_dir = config_dir / "modes"
+    return {
+        mode: ModeConfig.model_validate(_read_yaml(modes_dir / f"{mode.value}.yaml"))
+        for mode in Mode
+    }
