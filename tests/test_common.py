@@ -221,14 +221,13 @@ class TestWithRetriesCritical:
         """critical shape retries up to max_attempts on httpx.TimeoutException."""
         call_count = 0
 
-        def _inner() -> str:
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def flaky() -> str:
             nonlocal call_count
             call_count += 1
             if call_count < 3:
                 raise httpx.TimeoutException("timeout")
             return "ok"
-
-        flaky = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
 
         result = flaky()
         assert result == "ok"
@@ -238,12 +237,12 @@ class TestWithRetriesCritical:
         """After all attempts fail, the last exception propagates."""
         call_count = 0
 
-        def _inner() -> None:
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def always_fails() -> None:
             nonlocal call_count
             call_count += 1
             raise httpx.TimeoutException("timeout")
 
-        always_fails = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         with pytest.raises(httpx.TimeoutException):
             always_fails()
 
@@ -254,14 +253,14 @@ class TestWithRetriesCritical:
         """4xx auth error (HTTPStatusError with 401) must not be retried."""
         call_count = 0
 
-        def _inner() -> None:
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def auth_failure() -> None:
             nonlocal call_count
             call_count += 1
             request = httpx.Request("GET", "https://api.example.com/data")
             response = httpx.Response(401, request=request)
             raise httpx.HTTPStatusError("401 Unauthorized", request=request, response=response)
 
-        auth_failure = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         with pytest.raises(httpx.HTTPStatusError):
             auth_failure()
 
@@ -271,7 +270,8 @@ class TestWithRetriesCritical:
         """5xx server error is retryable."""
         call_count = 0
 
-        def _inner() -> str:
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def server_error() -> str:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
@@ -282,7 +282,6 @@ class TestWithRetriesCritical:
                 )
             return "ok"
 
-        server_error = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         result = server_error()
         assert result == "ok"
         assert call_count == 2
@@ -291,7 +290,8 @@ class TestWithRetriesCritical:
         """429 rate-limit response is retryable."""
         call_count = 0
 
-        def _inner() -> str:
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def rate_limited() -> str:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
@@ -302,7 +302,6 @@ class TestWithRetriesCritical:
                 )
             return "ok"
 
-        rate_limited = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         result = rate_limited()
         assert result == "ok"
         assert call_count == 2
@@ -311,7 +310,8 @@ class TestWithRetriesCritical:
         """fredapi uses urllib directly; urllib.error.HTTPError 5xx is retryable."""
         call_count = 0
 
-        def _inner() -> str:
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def server_error() -> str:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
@@ -324,7 +324,6 @@ class TestWithRetriesCritical:
                 )
             return "ok"
 
-        server_error = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         result = server_error()
         assert result == "ok"
         assert call_count == 2
@@ -333,7 +332,8 @@ class TestWithRetriesCritical:
         """urllib.error.HTTPError 4xx (auth) must not be retried."""
         call_count = 0
 
-        def _inner() -> str:
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def unauthorized() -> str:
             nonlocal call_count
             call_count += 1
             raise urllib.error.HTTPError(
@@ -344,7 +344,6 @@ class TestWithRetriesCritical:
                 fp=None,
             )
 
-        unauthorized = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         with pytest.raises(urllib.error.HTTPError):
             unauthorized()
         assert call_count == 1
@@ -353,14 +352,14 @@ class TestWithRetriesCritical:
         """fredapi catches urllib HTTPError and re-raises as ValueError; 5xx is retryable."""
         call_count = 0
 
-        def _inner() -> str:
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def fred_500() -> str:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
                 raise ValueError("Internal Server Error")
             return "ok"
 
-        fred_500 = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         result = fred_500()
         assert result == "ok"
         assert call_count == 2
@@ -369,12 +368,12 @@ class TestWithRetriesCritical:
         """A ValueError without a transient-HTTP message must not be retried."""
         call_count = 0
 
-        def _inner() -> str:
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def bad_input() -> str:
             nonlocal call_count
             call_count += 1
             raise ValueError("invalid literal for int()")
 
-        bad_input = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         with pytest.raises(ValueError):
             bad_input()
         assert call_count == 1
@@ -390,12 +389,12 @@ class TestWithRetriesImportant:
         """important shape has 2 attempts (1 retry)."""
         call_count = 0
 
-        def _inner() -> None:
+        @with_retries(RetryShape.important, _sleep=_no_sleep)
+        def always_fails() -> None:
             nonlocal call_count
             call_count += 1
             raise httpx.TimeoutException("timeout")
 
-        always_fails = with_retries(RetryShape.important, _sleep=_no_sleep)(_inner)
         with pytest.raises(httpx.TimeoutException):
             always_fails()
 
@@ -405,14 +404,14 @@ class TestWithRetriesImportant:
         """4xx is propagated immediately from important shape too."""
         call_count = 0
 
-        def _inner() -> None:
+        @with_retries(RetryShape.important, _sleep=_no_sleep)
+        def auth_failure() -> None:
             nonlocal call_count
             call_count += 1
             request = httpx.Request("GET", "https://api.example.com/data")
             response = httpx.Response(403, request=request)
             raise httpx.HTTPStatusError("403 Forbidden", request=request, response=response)
 
-        auth_failure = with_retries(RetryShape.important, _sleep=_no_sleep)(_inner)
         with pytest.raises(httpx.HTTPStatusError):
             auth_failure()
 
@@ -429,12 +428,12 @@ class TestWithRetriesOptional:
         """optional shape = 1 retry (2 total attempts), then raises."""
         call_count = 0
 
-        def _inner() -> None:
+        @with_retries(RetryShape.optional, _sleep=_no_sleep)
+        def flaky() -> None:
             nonlocal call_count
             call_count += 1
             raise httpx.TimeoutException("timeout")
 
-        flaky = with_retries(RetryShape.optional, _sleep=_no_sleep)(_inner)
         with pytest.raises(httpx.TimeoutException):
             flaky()
 
@@ -446,14 +445,14 @@ class TestWithRetriesOptional:
     def test_optional_propagates_non_retryable_immediately(self) -> None:
         call_count = 0
 
-        def _inner() -> None:
+        @with_retries(RetryShape.optional, _sleep=_no_sleep)
+        def auth_failure() -> None:
             nonlocal call_count
             call_count += 1
             request = httpx.Request("GET", "https://api.example.com/data")
             response = httpx.Response(401, request=request)
             raise httpx.HTTPStatusError("401 Unauthorized", request=request, response=response)
 
-        auth_failure = with_retries(RetryShape.optional, _sleep=_no_sleep)(_inner)
         with pytest.raises(httpx.HTTPStatusError):
             auth_failure()
 
@@ -462,14 +461,14 @@ class TestWithRetriesOptional:
     def test_optional_succeeds_after_one_retry(self) -> None:
         call_count = 0
 
-        def _inner() -> str:
+        @with_retries(RetryShape.optional, _sleep=_no_sleep)
+        def sometimes_fails() -> str:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 raise httpx.TimeoutException("timeout")
             return "ok"
 
-        sometimes_fails = with_retries(RetryShape.optional, _sleep=_no_sleep)(_inner)
         result = sometimes_fails()
         assert result == "ok"
         assert call_count == 2

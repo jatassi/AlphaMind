@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, ParamSpec, TypeVar
 
 import httpx
 from dotenv import dotenv_values
@@ -36,7 +36,8 @@ from alphamind.config.models import (
     NewsOutletsConfig,
 )
 
-F = TypeVar("F", bound=Callable[..., Any])
+P = ParamSpec("P")
+R = TypeVar("R")
 
 # ---------------------------------------------------------------------------
 # Config
@@ -183,7 +184,7 @@ def with_retries(
     shape: RetryShape,
     *,
     _sleep: Callable[[float], None] = time.sleep,
-) -> Callable[[F], F]:
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """
     Decorator factory that wraps a callable with per-tier retry behaviour.
 
@@ -198,8 +199,8 @@ def with_retries(
     initial_delay = _SHAPE_INITIAL_DELAY[shape]
     multiplier = _SHAPE_BACKOFF_MULTIPLIER[shape]
 
-    def decorator(fn: F) -> F:
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
+    def decorator(fn: Callable[P, R]) -> Callable[P, R]:
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
             delay = initial_delay
             last_exc: BaseException | None = None
             for attempt in range(max_attempts):
@@ -215,7 +216,7 @@ def with_retries(
             assert last_exc is not None
             raise last_exc
 
-        return wrapper  # type: ignore[return-value]
+        return wrapper
 
     return decorator
 
