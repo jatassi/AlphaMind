@@ -16,6 +16,7 @@ Integrates:
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import httpx
 
@@ -53,12 +54,13 @@ class KalshiClient:
     # ------------------------------------------------------------------
 
     @with_retries(RetryShape.optional)
-    def get(self, path: str, **params: object) -> dict:
+    def get(self, path: str, **params: Any) -> dict[str, Any]:
         """Issue a rate-limited GET to ``path`` relative to the Kalshi base URL."""
         self._rl.acquire("kalshi")
         resp = self._http.get(f"{_BASE_URL}{path}", params=params or None)
         resp.raise_for_status()
-        return resp.json()  # type: ignore[return-value]
+        result: dict[str, Any] = resp.json()
+        return result
 
     # ------------------------------------------------------------------
     # Connectivity probe

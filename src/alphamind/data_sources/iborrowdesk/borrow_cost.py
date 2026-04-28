@@ -247,5 +247,6 @@ def refresh_ticker(
 
     real_time = payload.get("real_time") or []
     if real_time:
-        return real_time[-1].get("datetime")
+        latest: str | None = real_time[-1].get("datetime")
+        return latest
     return None

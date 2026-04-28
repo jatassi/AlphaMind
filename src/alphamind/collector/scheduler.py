@@ -12,8 +12,9 @@ import os
 from collections.abc import Callable
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
+from typing import Any
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -175,10 +176,10 @@ def _make_job(cid: str, callable_fn: Callable[..., object]) -> Callable[[], None
 def register_jobs(scheduler: BlockingScheduler) -> None:
     """Register one cron job per entry in ``collector_schedule.yaml``."""
     with _SCHEDULE_PATH.open() as fh:
-        config: dict = yaml.safe_load(fh)
+        config: dict[str, Any] = yaml.safe_load(fh)
 
     timezone: str = config.get("timezone", "US/Eastern")
-    collectors_cfg: dict[str, dict] = config.get("collectors", {})
+    collectors_cfg: dict[str, dict[str, Any]] = config.get("collectors", {})
 
     for collector_id, entry in collectors_cfg.items():
         cron_expr: str = entry["cron"]

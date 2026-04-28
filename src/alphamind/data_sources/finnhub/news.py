@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import finnhub
-import yaml  # type: ignore[import-untyped]
+import yaml
 
 from alphamind.data_sources._common import (
     RateLimiter,
@@ -112,12 +112,12 @@ def _upsert_ticker_link(sess: Any, article_id: str, ticker: str) -> None:
 @with_retries(RetryShape.important, _sleep=lambda _: None)
 def _fetch_company_news(
     sdk: finnhub.Client, ticker: str, from_date: str, to_date: str
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     return sdk.company_news(ticker, _from=from_date, to=to_date) or []
 
 
 @with_retries(RetryShape.important, _sleep=lambda _: None)
-def _fetch_general_news(sdk: finnhub.Client) -> list[dict]:
+def _fetch_general_news(sdk: finnhub.Client) -> list[dict[str, Any]]:
     return sdk.general_news("general") or []
 
 
@@ -127,9 +127,9 @@ def _gather_items(
     from_date: str,
     to_date: str,
     rate_limiter: RateLimiter | None,
-) -> list[tuple[dict, str | None]]:
+) -> list[tuple[dict[str, Any], str | None]]:
     """Fetch company news per ticker and market-wide general news."""
-    items: list[tuple[dict, str | None]] = []
+    items: list[tuple[dict[str, Any], str | None]] = []
     for ticker in ticker_scope:
         if rate_limiter:
             rate_limiter.acquire(_PROVIDER)
@@ -142,7 +142,9 @@ def _gather_items(
     return items
 
 
-def _write_items(items: list[tuple[dict, str | None]], sf: Any, outlets: dict[str, str]) -> int:
+def _write_items(
+    items: list[tuple[dict[str, Any], str | None]], sf: Any, outlets: dict[str, str]
+) -> int:
     """Persist fetched items and return count of newly inserted rows."""
     rows_written = 0
     with sf() as sess:

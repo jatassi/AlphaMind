@@ -93,14 +93,16 @@ def _upsert_event(
 
 
 @with_retries(RetryShape.important, _sleep=lambda _: None)
-def _fetch_earnings_calendar(sdk: finnhub.Client, from_date: str, to_date: str) -> list[dict]:
+def _fetch_earnings_calendar(
+    sdk: finnhub.Client, from_date: str, to_date: str
+) -> list[dict[str, Any]]:
     result = sdk.earnings_calendar(_from=from_date, to=to_date, symbol="") or {}
     return result.get("earningsCalendar") or []
 
 
 def _ingest_earnings(
     sess: Any,
-    items: list[dict],
+    items: list[dict[str, Any]],
 ) -> int:
     from alphamind.persistence.models import AssetUniverse
 
@@ -203,12 +205,14 @@ def bootstrap_earnings_calendar(
 
 
 @with_retries(RetryShape.important, _sleep=lambda _: None)
-def _fetch_economic_calendar(sdk: finnhub.Client, from_date: str, to_date: str) -> list[dict]:
+def _fetch_economic_calendar(
+    sdk: finnhub.Client, from_date: str, to_date: str
+) -> list[dict[str, Any]]:
     result = sdk.calendar_economic(_from=from_date, to=to_date) or {}
     return result.get("economicCalendar") or []
 
 
-def _ingest_economic(sess: Any, items: list[dict]) -> int:
+def _ingest_economic(sess: Any, items: list[dict[str, Any]]) -> int:
     rows_written = 0
     for item in items:
         event_name = item.get("event") or ""
@@ -286,7 +290,7 @@ def bootstrap_economic_calendar(
 
 
 @with_retries(RetryShape.important, _sleep=lambda _: None)
-def _fetch_ipo_calendar(sdk: finnhub.Client, from_date: str, to_date: str) -> list[dict]:
+def _fetch_ipo_calendar(sdk: finnhub.Client, from_date: str, to_date: str) -> list[dict[str, Any]]:
     result = sdk.ipo_calendar(_from=from_date, to=to_date) or {}
     return result.get("ipoCalendar") or []
 
@@ -333,7 +337,7 @@ def collect_ipo_calendar(
 
 
 @with_retries(RetryShape.important, _sleep=lambda _: None)
-def _fetch_fda_calendar(sdk: finnhub.Client) -> list[dict]:
+def _fetch_fda_calendar(sdk: finnhub.Client) -> list[dict[str, Any]]:
     # FDA endpoint returns a JSON array directly, unlike earnings/economic
     # which wrap their list in a {"<name>Calendar": [...]} envelope.
     result = sdk.fda_calendar() or []

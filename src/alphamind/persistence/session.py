@@ -39,7 +39,7 @@ def _resolve_path(path: str | None) -> str:
     if env_path:
         return env_path
     try:
-        import yaml  # type: ignore[import-untyped]
+        import yaml
 
         config_file = Path(__file__).parents[3] / "config" / "main.yaml"
         if config_file.exists():
@@ -80,7 +80,7 @@ def make_engine(path: str | None = None) -> Engine:
     return engine
 
 
-def make_session_factory(engine: Engine) -> type[Session]:
+def make_session_factory(engine: Engine) -> sessionmaker[Session]:
     """Return a :class:`~sqlalchemy.orm.sessionmaker` bound to *engine*."""
-    factory: type[Session] = sessionmaker(bind=engine, expire_on_commit=False)
+    factory: sessionmaker[Session] = sessionmaker(bind=engine, expire_on_commit=False)
     return factory
