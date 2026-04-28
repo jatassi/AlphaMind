@@ -1,7 +1,7 @@
 ---
 status: done
 completed_date: 2026-04-27
-commit_id:
+commit_id: 6cd2ab9c65938bcbdefa53ff56fce09fa9249b5a
 ---
 
 # 01 — Add Portfolio state implementation link to data-layer README
