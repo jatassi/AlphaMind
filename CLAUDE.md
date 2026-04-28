@@ -28,7 +28,7 @@ If a test passes serially but fails under xdist, the cause is test-order depende
 
 - For mechanical changes, use Sonnet
 - For all other changes, use Opus
-- Always spawn subagents asynchronously
+- Always spawn subagents in background (async) mode
 - Always list model name (Sonnet or Opus) in subagent title like this: [Sonnet | Opus] <Title>
 
 ## Your Location
