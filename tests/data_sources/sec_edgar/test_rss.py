@@ -11,10 +11,12 @@ import logging
 import textwrap
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from alphamind.data_sources.sec_edgar.rss import collect_8k_filings
 from alphamind.persistence.models import (
@@ -64,15 +66,16 @@ _SAMPLE_BODY_HTML = "<html><body><p>Filing body content here.</p></body></html>"
 
 
 @pytest.fixture()
-def db_session_factory():
+def db_session_factory() -> type[Session]:
     """In-memory SQLite with all tables created."""
     engine = make_engine(":memory:")
     Base.metadata.create_all(engine)
-    return make_session_factory(engine)
+    sf: type[Session] = make_session_factory(engine)
+    return sf
 
 
 @pytest.fixture()
-def db_with_ticker(db_session_factory):
+def db_with_ticker(db_session_factory: type[Session]) -> type[Session]:
     """DB with one universe ticker that has a CIK."""
     with db_session_factory() as sess:
         sess.add(
@@ -94,7 +97,7 @@ def db_with_ticker(db_session_factory):
 
 
 @pytest.fixture()
-def db_with_ticker_no_cik(db_session_factory):
+def db_with_ticker_no_cik(db_session_factory: type[Session]) -> type[Session]:
     """DB with one universe ticker that has NO CIK."""
     with db_session_factory() as sess:
         sess.add(
@@ -119,7 +122,7 @@ class _FakeRunRepo:
     """In-memory run-tracking repository."""
 
     def __init__(self) -> None:
-        self.rows: dict[str, dict] = {}
+        self.rows: dict[str, dict[str, Any]] = {}
 
     def insert_running(self, run_id: str, collector: str, started_at: str) -> None:
         self.rows[run_id] = {
@@ -155,7 +158,7 @@ def _make_http_transport(rss_xml: str, body_html: str) -> httpx.MockTransport:
 
 
 class TestCollect8kFilingsWritesRows:
-    def test_writes_news_article_row(self, db_with_ticker, tmp_path) -> None:
+    def test_writes_news_article_row(self, db_with_ticker: type[Session], tmp_path: Path) -> None:
         """collect_8k_filings writes one news_articles row per unique 8-K filing."""
         transport = _make_http_transport(_SAMPLE_RSS, _SAMPLE_BODY_HTML)
         since = datetime(2024, 3, 1, tzinfo=UTC)
@@ -179,7 +182,9 @@ class TestCollect8kFilingsWritesRows:
         assert art.source_outlet == "SEC EDGAR"
         assert art.language == "en"
 
-    def test_article_id_is_accession_number(self, db_with_ticker, tmp_path) -> None:
+    def test_article_id_is_accession_number(
+        self, db_with_ticker: type[Session], tmp_path: Path
+    ) -> None:
         """article_id must equal the EDGAR accession number."""
         transport = _make_http_transport(_SAMPLE_RSS, _SAMPLE_BODY_HTML)
         since = datetime(2024, 3, 1, tzinfo=UTC)
@@ -199,7 +204,7 @@ class TestCollect8kFilingsWritesRows:
         assert article is not None
         assert article.article_id == _ACCESSION
 
-    def test_headline_text_synthesized(self, db_with_ticker, tmp_path) -> None:
+    def test_headline_text_synthesized(self, db_with_ticker: type[Session], tmp_path: Path) -> None:
         """headline_text is '<ticker> 8-K filed <date> — <item description>'."""
         transport = _make_http_transport(_SAMPLE_RSS, _SAMPLE_BODY_HTML)
         since = datetime(2024, 3, 1, tzinfo=UTC)
@@ -221,7 +226,9 @@ class TestCollect8kFilingsWritesRows:
         assert "8-K" in article.headline_text
         assert _FILING_DATE in article.headline_text
 
-    def test_topic_tags_include_item_codes(self, db_with_ticker, tmp_path) -> None:
+    def test_topic_tags_include_item_codes(
+        self, db_with_ticker: type[Session], tmp_path: Path
+    ) -> None:
         """topic_tags JSON includes '8k' and the item code from the description."""
         transport = _make_http_transport(_SAMPLE_RSS, _SAMPLE_BODY_HTML)
         since = datetime(2024, 3, 1, tzinfo=UTC)
@@ -250,7 +257,9 @@ class TestCollect8kFilingsWritesRows:
 
 
 class TestNewsArticleTickers:
-    def test_ticker_row_written_via_cik(self, db_with_ticker, tmp_path) -> None:
+    def test_ticker_row_written_via_cik(
+        self, db_with_ticker: type[Session], tmp_path: Path
+    ) -> None:
         """news_article_tickers gets one row with is_primary=1 for the matched ticker."""
         transport = _make_http_transport(_SAMPLE_RSS, _SAMPLE_BODY_HTML)
         since = datetime(2024, 3, 1, tzinfo=UTC)
@@ -271,7 +280,9 @@ class TestNewsArticleTickers:
         assert rows[0].ticker == "ACME"
         assert rows[0].is_primary == 1
 
-    def test_ticker_without_cik_skipped(self, db_with_ticker_no_cik, tmp_path, caplog) -> None:
+    def test_ticker_without_cik_skipped(
+        self, db_with_ticker_no_cik: type[Session], tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Filings for tickers without a CIK produce no rows (warn logged)."""
         transport = _make_http_transport(_SAMPLE_RSS, _SAMPLE_BODY_HTML)
         since = datetime(2024, 3, 1, tzinfo=UTC)
@@ -299,7 +310,7 @@ class TestNewsArticleTickers:
 
 
 class TestBodyPersistence:
-    def test_body_stored_to_disk(self, db_with_ticker, tmp_path) -> None:
+    def test_body_stored_to_disk(self, db_with_ticker: type[Session], tmp_path: Path) -> None:
         """Primary document is fetched, stripped to text, and saved; body_path set."""
         transport = _make_http_transport(_SAMPLE_RSS, _SAMPLE_BODY_HTML)
         since = datetime(2024, 3, 1, tzinfo=UTC)
@@ -329,7 +340,9 @@ class TestBodyPersistence:
 
 
 class TestDuplicateSuppression:
-    def test_rerun_produces_no_duplicates(self, db_with_ticker, tmp_path) -> None:
+    def test_rerun_produces_no_duplicates(
+        self, db_with_ticker: type[Session], tmp_path: Path
+    ) -> None:
         """Running collect_8k_filings twice on the same window yields one row."""
         transport = _make_http_transport(_SAMPLE_RSS, _SAMPLE_BODY_HTML)
         since = datetime(2024, 3, 1, tzinfo=UTC)
@@ -357,7 +370,9 @@ class TestDuplicateSuppression:
 
 
 class TestFailureHandling:
-    def test_failed_run_recorded_no_data_rows(self, db_with_ticker, tmp_path) -> None:
+    def test_failed_run_recorded_no_data_rows(
+        self, db_with_ticker: type[Session], tmp_path: Path
+    ) -> None:
         """When the RSS fetch raises, collection_runs is marked failed and no articles written."""
 
         def boom(request: httpx.Request) -> httpx.Response:
@@ -391,7 +406,7 @@ class TestFailureHandling:
 
 
 class TestCollect8kFilingsNoArgs:
-    def test_callable_with_no_args(self, db_with_ticker, tmp_path) -> None:
+    def test_callable_with_no_args(self, db_with_ticker: type[Session], tmp_path: Path) -> None:
         """collect_8k_filings() is callable with no positional args."""
         from unittest.mock import patch
 

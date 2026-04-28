@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from sqlalchemy.orm import Session
 
 from alphamind.persistence.models import Base, MacroObservations
 from alphamind.persistence.session import make_engine, make_session_factory
@@ -23,11 +24,12 @@ from alphamind.persistence.session import make_engine, make_session_factory
 
 
 @pytest.fixture()
-def db_factory():
+def db_factory() -> type[Session]:
     """Session factory backed by in-memory SQLite."""
     engine = make_engine(":memory:")
     Base.metadata.create_all(engine)
-    return make_session_factory(engine)
+    sf: type[Session] = make_session_factory(engine)
+    return sf
 
 
 class _FakeRunRepo:
@@ -285,7 +287,7 @@ class TestCollectSeriesWrites:
         mock_client.fetch_series.return_value = payload["response"]["data"]
         return mock_client
 
-    def test_writes_rows_for_each_data_point(self, db_factory) -> None:
+    def test_writes_rows_for_each_data_point(self, db_factory: type[Session]) -> None:
         from alphamind.data_sources.eia.energy import collect_series
         from alphamind.data_sources.eia.series import SERIES
 
@@ -312,7 +314,7 @@ class TestCollectSeriesWrites:
 
         assert len(rows) == 2
 
-    def test_rows_have_correct_source(self, db_factory) -> None:
+    def test_rows_have_correct_source(self, db_factory: type[Session]) -> None:
         from alphamind.data_sources.eia.energy import collect_series
         from alphamind.data_sources.eia.series import SERIES
 
@@ -333,7 +335,7 @@ class TestCollectSeriesWrites:
         assert row is not None
         assert row.source == "eia"
 
-    def test_rows_have_synthesized_series_id(self, db_factory) -> None:
+    def test_rows_have_synthesized_series_id(self, db_factory: type[Session]) -> None:
         from alphamind.data_sources.eia.energy import collect_series
         from alphamind.data_sources.eia.series import SERIES
 
@@ -355,7 +357,7 @@ class TestCollectSeriesWrites:
         assert row is not None
         assert row.series_id == "eia.crude_inventory_total"
 
-    def test_frequency_populated(self, db_factory) -> None:
+    def test_frequency_populated(self, db_factory: type[Session]) -> None:
         from alphamind.data_sources.eia.energy import collect_series
         from alphamind.data_sources.eia.series import SERIES
 
@@ -379,7 +381,7 @@ class TestCollectSeriesWrites:
         assert row is not None
         assert row.frequency == "weekly"
 
-    def test_units_mapped_to_short_form(self, db_factory) -> None:
+    def test_units_mapped_to_short_form(self, db_factory: type[Session]) -> None:
         from alphamind.data_sources.eia.energy import collect_series
         from alphamind.data_sources.eia.series import SERIES
 
@@ -401,7 +403,7 @@ class TestCollectSeriesWrites:
         assert row is not None
         assert row.units == "bbl"
 
-    def test_dollars_per_barrel_units_mapped(self, db_factory) -> None:
+    def test_dollars_per_barrel_units_mapped(self, db_factory: type[Session]) -> None:
         from alphamind.data_sources.eia.energy import collect_series
         from alphamind.data_sources.eia.series import SERIES
 
@@ -426,7 +428,7 @@ class TestCollectSeriesWrites:
         assert row is not None
         assert row.units == "usd"
 
-    def test_collection_run_records_success(self, db_factory) -> None:
+    def test_collection_run_records_success(self, db_factory: type[Session]) -> None:
         from alphamind.data_sources.eia.energy import collect_series
         from alphamind.data_sources.eia.series import SERIES
 
@@ -446,7 +448,7 @@ class TestCollectSeriesWrites:
         assert row["status"] == "success"
         assert row["rows_written"] == 1
 
-    def test_revision_number_is_zero(self, db_factory) -> None:
+    def test_revision_number_is_zero(self, db_factory: type[Session]) -> None:
         from alphamind.data_sources.eia.energy import collect_series
         from alphamind.data_sources.eia.series import SERIES
 
@@ -474,7 +476,7 @@ class TestCollectSeriesWrites:
 
 
 class TestCollectSeriesIdempotency:
-    def test_rerun_produces_no_duplicates(self, db_factory) -> None:
+    def test_rerun_produces_no_duplicates(self, db_factory: type[Session]) -> None:
         from alphamind.data_sources.eia.energy import collect_series
         from alphamind.data_sources.eia.series import SERIES
 
@@ -512,7 +514,7 @@ class TestCollectSeriesIdempotency:
 
 
 class TestCollectSeriesFailure:
-    def test_http_failure_records_failed_status(self, db_factory) -> None:
+    def test_http_failure_records_failed_status(self, db_factory: type[Session]) -> None:
         from alphamind.data_sources.eia.energy import collect_series
         from alphamind.data_sources.eia.series import SERIES
 
@@ -537,7 +539,7 @@ class TestCollectSeriesFailure:
         row = next(iter(repo.rows.values()))
         assert row["status"] == "failed"
 
-    def test_http_failure_leaves_no_data_rows(self, db_factory) -> None:
+    def test_http_failure_leaves_no_data_rows(self, db_factory: type[Session]) -> None:
         from alphamind.data_sources.eia.energy import collect_series
         from alphamind.data_sources.eia.series import SERIES
 
@@ -572,7 +574,7 @@ class TestCollectSeriesFailure:
 class TestCollectSeriesNoArgs:
     """collect_series is callable with no positional args (cron registry contract)."""
 
-    def test_callable_with_no_args(self, db_factory) -> None:
+    def test_callable_with_no_args(self, db_factory: type[Session]) -> None:
         mock_client = MagicMock()
         mock_client.fetch_series.return_value = []
         repo = _FakeRunRepo()
@@ -593,7 +595,7 @@ class TestBootstrapSeries:
 
         calls: list[Any] = []
 
-        def fake_collect(series, since, **kwargs):
+        def fake_collect(series: Any, since: date, **kwargs: Any) -> None:
             calls.append(since)
 
         engine = make_engine(":memory:")
@@ -626,7 +628,7 @@ class TestBootstrapSeries:
 
         captured_series: list[Any] = []
 
-        def fake_collect(series, since, **kwargs):
+        def fake_collect(series: list[Any], since: date, **kwargs: Any) -> None:
             captured_series.extend(series)
 
         engine = make_engine(":memory:")

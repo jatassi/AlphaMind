@@ -6,6 +6,7 @@ All HTTP calls are mocked — no real network traffic.
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -16,7 +17,7 @@ from alphamind.data_sources.bls.client import BLSClient
 BLS_URL = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
 
 
-def _make_success_response(series_id: str = "LNS14000000") -> dict:
+def _make_success_response(series_id: str = "LNS14000000") -> dict[str, Any]:
     return {
         "status": "REQUEST_SUCCEEDED",
         "Results": {
@@ -102,7 +103,7 @@ class TestPostTimeseries:
 
         call_count = 0
 
-        def fake_post(url, *, json, **kwargs):
+        def fake_post(url: str, *, json: dict[str, Any], **kwargs: Any) -> MagicMock:
             nonlocal call_count
             call_count += 1
             batch_ids = json["seriesid"]

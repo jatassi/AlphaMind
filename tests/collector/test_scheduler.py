@@ -7,6 +7,7 @@ APScheduler jobs are registered but never started (no job fires).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -30,7 +31,7 @@ def _yaml_collector_keys() -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def test_collectors_keys_match_yaml():
+def test_collectors_keys_match_yaml() -> None:
     """COLLECTORS registry must have exactly the same keys as the YAML."""
     yaml_keys = _yaml_collector_keys()
 
@@ -46,7 +47,7 @@ def test_collectors_keys_match_yaml():
 # ---------------------------------------------------------------------------
 
 
-def test_build_scheduler_creates_one_executor_per_vendor():
+def test_build_scheduler_creates_one_executor_per_vendor() -> None:
     from alphamind.collector.scheduler import build_scheduler
 
     sched = build_scheduler()
@@ -73,7 +74,7 @@ def test_build_scheduler_creates_one_executor_per_vendor():
 # ---------------------------------------------------------------------------
 
 
-def test_register_jobs_registers_one_job_per_yaml_entry():
+def test_register_jobs_registers_one_job_per_yaml_entry() -> None:
     from alphamind.collector.scheduler import build_scheduler, register_jobs
 
     sched = build_scheduler()
@@ -89,7 +90,7 @@ def test_register_jobs_registers_one_job_per_yaml_entry():
 # ---------------------------------------------------------------------------
 
 
-def test_every_job_has_vendor_executor_and_max_instances_1():
+def test_every_job_has_vendor_executor_and_max_instances_1() -> None:
     from alphamind.collector.scheduler import build_scheduler, register_jobs
 
     sched = build_scheduler()
@@ -111,11 +112,11 @@ def test_every_job_has_vendor_executor_and_max_instances_1():
 # ---------------------------------------------------------------------------
 
 
-def test_finnhub_calendar_wrapper_calls_all_four_in_order():
+def test_finnhub_calendar_wrapper_calls_all_four_in_order() -> None:
     call_order: list[str] = []
 
-    def _make_side(name: str):
-        def _fn(*args, **kwargs):
+    def _make_side(name: str) -> Callable[..., None]:
+        def _fn(*args: object, **kwargs: object) -> None:
             call_order.append(name)
 
         return _fn
@@ -153,7 +154,7 @@ def test_finnhub_calendar_wrapper_calls_all_four_in_order():
 # ---------------------------------------------------------------------------
 
 
-def test_catchup_run_all_calls_every_collector_with_since_none():
+def test_catchup_run_all_calls_every_collector_with_since_none() -> None:
     from alphamind.collector.scheduler import COLLECTORS
 
     # Build a mock registry with the same keys
@@ -164,5 +165,5 @@ def test_catchup_run_all_calls_every_collector_with_since_none():
 
         run_all()
 
-    for key, mock in mock_fns.items():
-        mock.assert_called_once_with(since=None), (f"Expected {key} to be called with since=None")
+    for mock in mock_fns.values():
+        mock.assert_called_once_with(since=None)

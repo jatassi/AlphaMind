@@ -9,10 +9,13 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
 
 from alphamind.persistence.models import (
     Base,
@@ -37,13 +40,13 @@ def _make_market(
     outcomes: list[str] | None = None,
     outcome_prices: list[str] | None = None,
     **overrides: object,
-) -> dict:
+) -> dict[str, Any]:
     """Build a minimal Gamma market dict matching the live shape."""
     if outcomes is None:
         outcomes = ["Yes", "No"]
     if outcome_prices is None:
         outcome_prices = [f"{yes_price}", f"{1.0 - yes_price}"]
-    base: dict = {
+    base: dict[str, Any] = {
         "conditionId": "cid-001",
         "question": "Will the Fed cut rates in May?",
         "tags": ["FED", "Monetary Policy"],
@@ -61,7 +64,7 @@ def _make_market(
     return base
 
 
-def _make_session_and_engine():
+def _make_session_and_engine() -> tuple[Engine, type[Session]]:
     engine = make_engine(":memory:")
     Base.metadata.create_all(engine)
     return engine, make_session_factory(engine)
@@ -69,7 +72,7 @@ def _make_session_and_engine():
 
 class _FakeRunRepo:
     def __init__(self) -> None:
-        self.rows: dict[str, dict] = {}
+        self.rows: dict[str, dict[str, Any]] = {}
 
     def insert_running(self, run_id: str, collector: str, started_at: str) -> None:
         self.rows[run_id] = {
@@ -145,7 +148,7 @@ class TestClientPrimitives:
             acquire_calls.append(provider)
             original(provider)
 
-        limiter.acquire = tracking  # type: ignore[method-assign]
+        limiter.acquire = tracking
 
         mock_resp = MagicMock()
         mock_resp.raise_for_status.return_value = None
@@ -202,7 +205,7 @@ class TestUpsertContracts:
 
 
 class TestCategoryDerivation:
-    def _category(self, sf, condition_id: str, tags: list[str]) -> str:
+    def _category(self, sf: type[Session], condition_id: str, tags: list[str]) -> str:
         from alphamind.data_sources.polymarket.contracts import collect_snapshots
 
         markets = [_make_market(conditionId=condition_id, tags=tags)]
@@ -211,7 +214,7 @@ class TestCategoryDerivation:
         with sf() as sess:
             contract = sess.get(PredictionMarketContracts, condition_id)
             assert contract is not None
-            return contract.category
+            return cast(str, contract.category)
 
     def test_fed_tags_map_to_monetary_policy(self) -> None:
         _engine, sf = _make_session_and_engine()
@@ -225,7 +228,7 @@ class TestCategoryDerivation:
         _engine, sf = _make_session_and_engine()
         assert self._category(sf, "cid-opec", ["OPEC"]) == "opec"
 
-    def test_unknown_tags_default_to_other_and_warn(self, caplog) -> None:
+    def test_unknown_tags_default_to_other_and_warn(self, caplog: pytest.LogCaptureFixture) -> None:
         _engine, sf = _make_session_and_engine()
         with caplog.at_level(logging.WARNING):
             assert self._category(sf, "cid-unk", ["random_unknown"]) == "other"
@@ -372,7 +375,9 @@ class TestFailureHandling:
 
 
 class TestNonBinaryMarkets:
-    def test_market_with_no_outcome_prices_is_skipped(self, caplog) -> None:
+    def test_market_with_no_outcome_prices_is_skipped(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         from alphamind.data_sources.polymarket.contracts import collect_snapshots
 
         _engine, sf = _make_session_and_engine()

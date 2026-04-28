@@ -7,10 +7,12 @@ All HTTP calls are mocked.  DB uses an in-memory SQLite engine.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind.data_sources.bls.macro import bootstrap_series, collect_series
@@ -23,18 +25,19 @@ from alphamind.persistence.session import make_engine, make_session_factory
 
 
 @pytest.fixture()
-def engine():
-    eng = make_engine(":memory:")
+def engine() -> Engine:
+    eng: Engine = make_engine(":memory:")
     Base.metadata.create_all(eng)
     return eng
 
 
 @pytest.fixture()
-def session_factory(engine):
-    return make_session_factory(engine)
+def session_factory(engine: Engine) -> type[Session]:
+    sf: type[Session] = make_session_factory(engine)
+    return sf
 
 
-def _make_bls_response(series_id: str, observations: list[tuple[str, str, str]]) -> dict:
+def _make_bls_response(series_id: str, observations: list[tuple[str, str, str]]) -> dict[str, Any]:
     """Build a fake BLS API response payload.
 
     observations: list of (year, period, value) triples.
@@ -55,7 +58,7 @@ def _make_bls_response(series_id: str, observations: list[tuple[str, str, str]])
     }
 
 
-def _fake_client(responses: list[dict]) -> MagicMock:
+def _fake_client(responses: list[dict[str, Any]]) -> MagicMock:
     """Return a mock BLSClient whose post_timeseries consumes responses in order."""
     client = MagicMock()
     side_effects = []
@@ -71,7 +74,9 @@ def _fake_client(responses: list[dict]) -> MagicMock:
 
 
 class TestCollectSeries:
-    def test_writes_rows_for_each_observation(self, engine, session_factory) -> None:
+    def test_writes_rows_for_each_observation(
+        self, engine: Engine, session_factory: type[Session]
+    ) -> None:
         fake_client = _fake_client(
             [
                 _make_bls_response(
@@ -94,7 +99,9 @@ class TestCollectSeries:
         assert len(rows) == 2
         assert rows_written == 2
 
-    def test_observation_date_is_first_of_month(self, engine, session_factory) -> None:
+    def test_observation_date_is_first_of_month(
+        self, engine: Engine, session_factory: type[Session]
+    ) -> None:
         """BLS period 'M01' for year 2024 → observation_date = '2024-01-01'."""
         fake_client = _fake_client(
             [
@@ -117,7 +124,7 @@ class TestCollectSeries:
             row = sess.query(MacroObservations).filter_by(series_id="CES0000000001").one()
         assert row.observation_date == "2024-03-01"
 
-    def test_source_is_bls(self, engine, session_factory) -> None:
+    def test_source_is_bls(self, engine: Engine, session_factory: type[Session]) -> None:
         fake_client = _fake_client([_make_bls_response("LNS14000000", [("2024", "M01", "3.7")])])
 
         with patch("alphamind.data_sources.bls.macro.BLSClient", return_value=fake_client):
@@ -132,7 +139,9 @@ class TestCollectSeries:
             row = sess.query(MacroObservations).filter_by(series_id="LNS14000000").one()
         assert row.source == "bls"
 
-    def test_first_write_has_revision_number_zero(self, engine, session_factory) -> None:
+    def test_first_write_has_revision_number_zero(
+        self, engine: Engine, session_factory: type[Session]
+    ) -> None:
         fake_client = _fake_client([_make_bls_response("LNS14000000", [("2024", "M01", "3.7")])])
 
         with patch("alphamind.data_sources.bls.macro.BLSClient", return_value=fake_client):
@@ -147,7 +156,9 @@ class TestCollectSeries:
             row = sess.query(MacroObservations).filter_by(series_id="LNS14000000").one()
         assert row.revision_number == 0
 
-    def test_frequency_and_units_come_from_series_registry(self, engine, session_factory) -> None:
+    def test_frequency_and_units_come_from_series_registry(
+        self, engine: Engine, session_factory: type[Session]
+    ) -> None:
         fake_client = _fake_client([_make_bls_response("LNS14000000", [("2024", "M01", "3.7")])])
 
         with patch("alphamind.data_sources.bls.macro.BLSClient", return_value=fake_client):
@@ -171,7 +182,7 @@ class TestCollectSeries:
 
 class TestRevisionDetection:
     def test_revised_value_stored_with_incremented_revision_number(
-        self, engine, session_factory
+        self, engine: Engine, session_factory: type[Session]
     ) -> None:
         """If stored value differs from incoming value, insert a new row with revision_number+1."""
         # First collection: value = 3.7
@@ -207,7 +218,9 @@ class TestRevisionDetection:
         assert rows[1].revision_number == 1
         assert rows[1].value == pytest.approx(3.8)
 
-    def test_unchanged_value_does_not_add_revision(self, engine, session_factory) -> None:
+    def test_unchanged_value_does_not_add_revision(
+        self, engine: Engine, session_factory: type[Session]
+    ) -> None:
         """If the value is unchanged, no new revision row is written."""
         for _ in range(2):
             fake_client = _fake_client(
@@ -236,7 +249,9 @@ class TestRevisionDetection:
 
 
 class TestIdempotency:
-    def test_rerun_same_window_produces_no_duplicates(self, engine, session_factory) -> None:
+    def test_rerun_same_window_produces_no_duplicates(
+        self, engine: Engine, session_factory: type[Session]
+    ) -> None:
         observations = [("2024", "M01", "3.7"), ("2024", "M02", "3.9")]
 
         for _ in range(3):
@@ -261,7 +276,9 @@ class TestIdempotency:
 
 
 class TestFailureBehavior:
-    def test_http_failure_records_failed_run_no_data(self, engine, session_factory) -> None:
+    def test_http_failure_records_failed_run_no_data(
+        self, engine: Engine, session_factory: type[Session]
+    ) -> None:
         fake_client = MagicMock()
         request = httpx.Request("POST", "https://api.bls.gov/publicAPI/v2/timeseries/data/")
         response = httpx.Response(500, request=request)
@@ -296,7 +313,9 @@ class TestFailureBehavior:
 
 
 class TestBootstrapSeries:
-    def test_bootstrap_requests_24_months_of_history(self, engine, session_factory) -> None:
+    def test_bootstrap_requests_24_months_of_history(
+        self, engine: Engine, session_factory: type[Session]
+    ) -> None:
         """bootstrap_series should cover the last 24 months."""
         fake_client = MagicMock()
         fake_client.post_timeseries.return_value = []
@@ -317,14 +336,18 @@ class TestBootstrapSeries:
         assert start_year == 2024
         assert end_year == 2026
 
-    def test_bootstrap_writes_rows_for_all_configured_series(self, engine, session_factory) -> None:
+    def test_bootstrap_writes_rows_for_all_configured_series(
+        self, engine: Engine, session_factory: type[Session]
+    ) -> None:
         """bootstrap_series fetches every series in the SERIES registry."""
         from alphamind.data_sources.bls.series import SERIES
 
         fake_client = MagicMock()
 
         # Return one observation per series for the batch
-        def fake_post(series_ids, *, start_year, end_year):
+        def fake_post(
+            series_ids: list[str], *, start_year: int, end_year: int
+        ) -> list[dict[str, Any]]:
             return [
                 {
                     "seriesID": sid,

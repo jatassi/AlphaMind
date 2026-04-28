@@ -11,10 +11,13 @@ import threading
 import time
 import urllib.error
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import httpx
 import pytest
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.data_sources._common import (
     RateLimiter,
@@ -31,11 +34,15 @@ from alphamind.data_sources._common import (
 # ---------------------------------------------------------------------------
 
 
+def _no_sleep(_seconds: float) -> None:
+    """Stand-in for time.sleep used by retry decorators."""
+
+
 class _FakeRunRepo:
     """In-memory stand-in for the persistence layer used by track_run."""
 
     def __init__(self) -> None:
-        self.rows: dict[str, dict] = {}
+        self.rows: dict[str, dict[str, Any]] = {}
 
     def insert_running(self, run_id: str, collector: str, started_at: str) -> None:
         self.rows[run_id] = {
@@ -103,7 +110,7 @@ class TestPublicInterface:
 
 
 class TestLoadConfig:
-    def test_returns_immutable_config_with_all_three_sections(self, tmp_path) -> None:
+    def test_returns_immutable_config_with_all_three_sections(self, tmp_path: Path) -> None:
         """load_config reads data_sources, collector_schedule, news_outlets."""
         # Arrange: minimal but valid YAML files + .env
         env_file = tmp_path / ".env"
@@ -157,9 +164,9 @@ outlets:
         assert cfg.news_outlets is not None
         # Immutable: Pydantic model instance cannot be modified after creation
         with pytest.raises((TypeError, AttributeError, ValueError)):
-            cfg.data_sources = None  # type: ignore[assignment]
+            cfg.data_sources = None
 
-    def test_missing_required_env_var_raises_named_error(self, tmp_path) -> None:
+    def test_missing_required_env_var_raises_named_error(self, tmp_path: Path) -> None:
         """A missing *_env reference must raise an error that names the variable."""
         env_file = tmp_path / ".env"
         env_file.write_text("")  # empty — POLYGON_API_KEY is missing
@@ -214,13 +221,14 @@ class TestWithRetriesCritical:
         """critical shape retries up to max_attempts on httpx.TimeoutException."""
         call_count = 0
 
-        @with_retries(RetryShape.critical, _sleep=lambda s: None)
-        def flaky() -> str:
+        def _inner() -> str:
             nonlocal call_count
             call_count += 1
             if call_count < 3:
                 raise httpx.TimeoutException("timeout")
             return "ok"
+
+        flaky = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
 
         result = flaky()
         assert result == "ok"
@@ -230,12 +238,12 @@ class TestWithRetriesCritical:
         """After all attempts fail, the last exception propagates."""
         call_count = 0
 
-        @with_retries(RetryShape.critical, _sleep=lambda s: None)
-        def always_fails() -> None:
+        def _inner() -> None:
             nonlocal call_count
             call_count += 1
             raise httpx.TimeoutException("timeout")
 
+        always_fails = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         with pytest.raises(httpx.TimeoutException):
             always_fails()
 
@@ -246,14 +254,14 @@ class TestWithRetriesCritical:
         """4xx auth error (HTTPStatusError with 401) must not be retried."""
         call_count = 0
 
-        @with_retries(RetryShape.critical, _sleep=lambda s: None)
-        def auth_failure() -> None:
+        def _inner() -> None:
             nonlocal call_count
             call_count += 1
             request = httpx.Request("GET", "https://api.example.com/data")
             response = httpx.Response(401, request=request)
             raise httpx.HTTPStatusError("401 Unauthorized", request=request, response=response)
 
+        auth_failure = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         with pytest.raises(httpx.HTTPStatusError):
             auth_failure()
 
@@ -263,8 +271,7 @@ class TestWithRetriesCritical:
         """5xx server error is retryable."""
         call_count = 0
 
-        @with_retries(RetryShape.critical, _sleep=lambda s: None)
-        def server_error() -> str:
+        def _inner() -> str:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
@@ -275,6 +282,7 @@ class TestWithRetriesCritical:
                 )
             return "ok"
 
+        server_error = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         result = server_error()
         assert result == "ok"
         assert call_count == 2
@@ -283,8 +291,7 @@ class TestWithRetriesCritical:
         """429 rate-limit response is retryable."""
         call_count = 0
 
-        @with_retries(RetryShape.critical, _sleep=lambda s: None)
-        def rate_limited() -> str:
+        def _inner() -> str:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
@@ -295,6 +302,7 @@ class TestWithRetriesCritical:
                 )
             return "ok"
 
+        rate_limited = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         result = rate_limited()
         assert result == "ok"
         assert call_count == 2
@@ -303,8 +311,7 @@ class TestWithRetriesCritical:
         """fredapi uses urllib directly; urllib.error.HTTPError 5xx is retryable."""
         call_count = 0
 
-        @with_retries(RetryShape.critical, _sleep=lambda s: None)
-        def server_error() -> str:
+        def _inner() -> str:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
@@ -317,6 +324,7 @@ class TestWithRetriesCritical:
                 )
             return "ok"
 
+        server_error = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         result = server_error()
         assert result == "ok"
         assert call_count == 2
@@ -325,8 +333,7 @@ class TestWithRetriesCritical:
         """urllib.error.HTTPError 4xx (auth) must not be retried."""
         call_count = 0
 
-        @with_retries(RetryShape.critical, _sleep=lambda s: None)
-        def unauthorized() -> str:
+        def _inner() -> str:
             nonlocal call_count
             call_count += 1
             raise urllib.error.HTTPError(
@@ -337,6 +344,7 @@ class TestWithRetriesCritical:
                 fp=None,
             )
 
+        unauthorized = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         with pytest.raises(urllib.error.HTTPError):
             unauthorized()
         assert call_count == 1
@@ -345,14 +353,14 @@ class TestWithRetriesCritical:
         """fredapi catches urllib HTTPError and re-raises as ValueError; 5xx is retryable."""
         call_count = 0
 
-        @with_retries(RetryShape.critical, _sleep=lambda s: None)
-        def fred_500() -> str:
+        def _inner() -> str:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
                 raise ValueError("Internal Server Error")
             return "ok"
 
+        fred_500 = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         result = fred_500()
         assert result == "ok"
         assert call_count == 2
@@ -361,12 +369,12 @@ class TestWithRetriesCritical:
         """A ValueError without a transient-HTTP message must not be retried."""
         call_count = 0
 
-        @with_retries(RetryShape.critical, _sleep=lambda s: None)
-        def bad_input() -> str:
+        def _inner() -> str:
             nonlocal call_count
             call_count += 1
             raise ValueError("invalid literal for int()")
 
+        bad_input = with_retries(RetryShape.critical, _sleep=_no_sleep)(_inner)
         with pytest.raises(ValueError):
             bad_input()
         assert call_count == 1
@@ -382,12 +390,12 @@ class TestWithRetriesImportant:
         """important shape has 2 attempts (1 retry)."""
         call_count = 0
 
-        @with_retries(RetryShape.important, _sleep=lambda s: None)
-        def always_fails() -> None:
+        def _inner() -> None:
             nonlocal call_count
             call_count += 1
             raise httpx.TimeoutException("timeout")
 
+        always_fails = with_retries(RetryShape.important, _sleep=_no_sleep)(_inner)
         with pytest.raises(httpx.TimeoutException):
             always_fails()
 
@@ -397,14 +405,14 @@ class TestWithRetriesImportant:
         """4xx is propagated immediately from important shape too."""
         call_count = 0
 
-        @with_retries(RetryShape.important, _sleep=lambda s: None)
-        def auth_failure() -> None:
+        def _inner() -> None:
             nonlocal call_count
             call_count += 1
             request = httpx.Request("GET", "https://api.example.com/data")
             response = httpx.Response(403, request=request)
             raise httpx.HTTPStatusError("403 Forbidden", request=request, response=response)
 
+        auth_failure = with_retries(RetryShape.important, _sleep=_no_sleep)(_inner)
         with pytest.raises(httpx.HTTPStatusError):
             auth_failure()
 
@@ -421,12 +429,12 @@ class TestWithRetriesOptional:
         """optional shape = 1 retry (2 total attempts), then raises."""
         call_count = 0
 
-        @with_retries(RetryShape.optional, _sleep=lambda s: None)
-        def flaky() -> None:
+        def _inner() -> None:
             nonlocal call_count
             call_count += 1
             raise httpx.TimeoutException("timeout")
 
+        flaky = with_retries(RetryShape.optional, _sleep=_no_sleep)(_inner)
         with pytest.raises(httpx.TimeoutException):
             flaky()
 
@@ -438,14 +446,14 @@ class TestWithRetriesOptional:
     def test_optional_propagates_non_retryable_immediately(self) -> None:
         call_count = 0
 
-        @with_retries(RetryShape.optional, _sleep=lambda s: None)
-        def auth_failure() -> None:
+        def _inner() -> None:
             nonlocal call_count
             call_count += 1
             request = httpx.Request("GET", "https://api.example.com/data")
             response = httpx.Response(401, request=request)
             raise httpx.HTTPStatusError("401 Unauthorized", request=request, response=response)
 
+        auth_failure = with_retries(RetryShape.optional, _sleep=_no_sleep)(_inner)
         with pytest.raises(httpx.HTTPStatusError):
             auth_failure()
 
@@ -454,14 +462,14 @@ class TestWithRetriesOptional:
     def test_optional_succeeds_after_one_retry(self) -> None:
         call_count = 0
 
-        @with_retries(RetryShape.optional, _sleep=lambda s: None)
-        def sometimes_fails() -> str:
+        def _inner() -> str:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 raise httpx.TimeoutException("timeout")
             return "ok"
 
+        sometimes_fails = with_retries(RetryShape.optional, _sleep=_no_sleep)(_inner)
         result = sometimes_fails()
         assert result == "ok"
         assert call_count == 2
@@ -665,17 +673,19 @@ class TestResumeSince:
     """resume_since computes a 'since' value from MAX(column) - overlap."""
 
     @pytest.fixture
-    def session_factory(self):
+    def session_factory(self) -> sessionmaker[Session]:
         from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.orm import sessionmaker as _sessionmaker
 
         from alphamind.persistence.models import Base
 
         engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(engine)
-        return sessionmaker(bind=engine, expire_on_commit=False)
+        return _sessionmaker(bind=engine, expire_on_commit=False)
 
-    def test_falls_back_to_default_lookback_when_table_empty(self, session_factory) -> None:
+    def test_falls_back_to_default_lookback_when_table_empty(
+        self, session_factory: sessionmaker[Session]
+    ) -> None:
         from datetime import datetime as _dt
         from datetime import timedelta as _td
 
@@ -690,7 +700,7 @@ class TestResumeSince:
         delta = abs((_dt.now(result.tzinfo) - _td(days=7)) - result).total_seconds()
         assert delta < 5
 
-    def test_returns_max_minus_overlap(self, session_factory) -> None:
+    def test_returns_max_minus_overlap(self, session_factory: sessionmaker[Session]) -> None:
         from datetime import timedelta as _td
 
         from alphamind.persistence.models import MacroObservations
@@ -721,7 +731,7 @@ class TestResumeSince:
         assert result.month == 4
         assert result.day == 18  # 2026-04-20 minus 2-day overlap
 
-    def test_filters_isolate_per_source(self, session_factory) -> None:
+    def test_filters_isolate_per_source(self, session_factory: sessionmaker[Session]) -> None:
         """A filter on source='fred' ignores rows from other sources."""
         from datetime import timedelta as _td
 
@@ -760,15 +770,15 @@ class TestActiveUniverseTickers:
     """active_universe_tickers reads asset_universe with role filters."""
 
     @pytest.fixture
-    def session_factory(self):
+    def session_factory(self) -> sessionmaker[Session]:
         from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.orm import sessionmaker as _sessionmaker
 
         from alphamind.persistence.models import AssetUniverse, Base
 
         engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(engine)
-        sf = sessionmaker(bind=engine, expire_on_commit=False)
+        sf = _sessionmaker(bind=engine, expire_on_commit=False)
         with sf() as sess:
             sess.add_all(
                 [
@@ -810,14 +820,18 @@ class TestActiveUniverseTickers:
             sess.commit()
         return sf
 
-    def test_includes_universe_and_benchmarks_by_default(self, session_factory) -> None:
+    def test_includes_universe_and_benchmarks_by_default(
+        self, session_factory: sessionmaker[Session]
+    ) -> None:
         result = active_universe_tickers(session_factory=session_factory)
         assert set(result) == {"AAPL", "SPY"}
 
-    def test_excludes_benchmarks_when_requested(self, session_factory) -> None:
+    def test_excludes_benchmarks_when_requested(
+        self, session_factory: sessionmaker[Session]
+    ) -> None:
         result = active_universe_tickers(include_benchmarks=False, session_factory=session_factory)
         assert result == ["AAPL"]
 
-    def test_skips_inactive_rows(self, session_factory) -> None:
+    def test_skips_inactive_rows(self, session_factory: sessionmaker[Session]) -> None:
         result = active_universe_tickers(session_factory=session_factory)
         assert "DELISTED" not in result
