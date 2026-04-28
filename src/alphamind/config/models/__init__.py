@@ -19,6 +19,7 @@ from alphamind.config.models.data_sources import (
     RetryShapeConfig,
 )
 from alphamind.config.models.news_outlets import CredibilityTier, NewsOutletsConfig, OutletEntry
+from alphamind.config.models.scheduler import SchedulerConfig
 
 # ---------------------------------------------------------------------------
 # .env.example helpers — kept here so monkeypatching
@@ -60,4 +61,5 @@ __all__ = [
     "OutletEntry",
     "ProviderConfig",
     "RetryShapeConfig",
+    "SchedulerConfig",
 ]
