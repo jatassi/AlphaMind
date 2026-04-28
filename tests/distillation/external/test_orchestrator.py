@@ -323,12 +323,24 @@ def populated_session(session: Session) -> Session:
 
 
 def _run_orchestrator(
-    session: Session, *, archive_root: Path, invocation_id: str = "20260425T120000Z-test"
+    session: Session,
+    *,
+    archive_root: Path,
+    invocation_id: str = "20260425T120000Z-test",
+    provenance_root: Path | None = None,
 ) -> DistillationOutputs:
-    """Helper that drives the orchestrator with the standard fixture config."""
+    """Helper that drives the orchestrator with the standard fixture config.
+
+    ``provenance_root`` defaults to ``archive_root / "provenance"`` so the
+    per-invocation calibration-state snapshot lands inside ``tmp_path``
+    rather than the operator's home directory; tests that exercise the
+    snapshot path explicitly can override.
+    """
     config = _build_distillation_config()
     as_of = datetime(2026, 4, 25, tzinfo=UTC)
     ticker_scope = tuple(_SECTOR_TICKERS.keys())
+    if provenance_root is None:
+        provenance_root = archive_root / "provenance"
     return asyncio.run(
         run_external_distillation(
             session=session,
@@ -337,6 +349,7 @@ def _run_orchestrator(
             as_of=as_of,
             invocation_id=invocation_id,
             archive_root=archive_root,
+            provenance_root=provenance_root,
         )
     )
 
@@ -408,6 +421,31 @@ def test_orchestrator_writes_invocation_archive_files(
     # The sector documents and the regime archive are non-trivial.
     assert (archive_dir / "tech_semis_sector.md").stat().st_size > 0
     assert (archive_dir / "regime.md").stat().st_size > 0
+
+
+def test_orchestrator_writes_calibration_state_snapshot(
+    populated_session: Session, tmp_path: Path
+) -> None:
+    """Phase 6: the calibration-state snapshot lands under ``provenance_root`` per story 17.
+
+    The snapshot is the deterministic JSON reduction the feedback loop and
+    command center calibration-mix panel both consume; the orchestrator's
+    phase 6 invokes the writer alongside the markdown archive write so a
+    single fail-closed boundary covers both files.
+    """
+    invocation_id = "20260425T120000Z-test"
+    archive_root = tmp_path / "archive"
+    provenance_root = tmp_path / "provenance"
+    _run_orchestrator(
+        populated_session,
+        archive_root=archive_root,
+        invocation_id=invocation_id,
+        provenance_root=provenance_root,
+    )
+
+    snapshot_path = provenance_root / "invocations" / invocation_id / "data_calibration_state.json"
+    assert snapshot_path.exists()
+    assert snapshot_path.stat().st_size > 0
 
 
 def _make_independent_populated_session() -> tuple[Engine, Session]:
