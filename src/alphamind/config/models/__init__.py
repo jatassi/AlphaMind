@@ -59,6 +59,16 @@ from alphamind.config.models.llm_failure import (
 )
 from alphamind.config.models.main import ExecutionMode, MainConfig, Paths, Profile
 from alphamind.config.models.news_outlets import CredibilityTier, NewsOutletsConfig, OutletEntry
+from alphamind.config.models.overlays import (
+    EventType,
+    FinalInvocationBeforeEvent,
+    Overlay,
+    PreEventActivation,
+    PreEventOverlay,
+    StressActivation,
+    StressOverlay,
+    StressTrigger,
+)
 from alphamind.config.models.scheduler import SchedulerConfig
 from alphamind.config.models.venue import (
     Alpaca,
@@ -118,9 +128,11 @@ __all__ = [
     "EmergencyInvocation",
     "EnforcementTier",
     "EscalationZones",
+    "EventType",
     "ExecutionConfig",
     "ExecutionMode",
     "FailureMode",
+    "FinalInvocationBeforeEvent",
     "GreeksRefresh",
     "GuardrailsConfig",
     "LLMFailureConfig",
@@ -128,8 +140,11 @@ __all__ = [
     "NewsOutletsConfig",
     "OrderType",
     "OutletEntry",
+    "Overlay",
     "PaperHarness",
     "Paths",
+    "PreEventActivation",
+    "PreEventOverlay",
     "Profile",
     "ProgressiveTier",
     "ProviderConfig",
@@ -144,6 +159,9 @@ __all__ = [
     "SessionHours",
     "SessionWindow",
     "SourceSignalSurvivalDrop",
+    "StressActivation",
+    "StressOverlay",
+    "StressTrigger",
     "ValidationSuperseded",
     "ValidationWindowEnd",
     "VenueConfig",

@@ -1,0 +1,21 @@
+# Pre-event tightening overlay.
+#
+# Activates ahead of scheduled high-impact catalysts (FOMC, CPI/PPI/PCE, NFP,
+# major earnings clusters) regardless of the current regime. Tightens position
+# sizing for the configured number of invocations preceding the event and
+# blocks new positions on the final invocation. Lifts at the first invocation
+# after the event unless the event triggered a regime transition.
+#
+# Authoritative spec: docs/design/06-risk-guardrails/regime-adaptation.md
+#                     § Scheduled high-impact events
+# Schema example:     docs/design/configuration-management.md § overlays/pre-event.yaml
+
+activation:
+  windows_before_event: 2                # invocations
+  events: [fomc, cpi, ppi, pce, nfp, earnings]
+
+multipliers:
+  position_max_size_pct: 0.80            # -20% from active regime value
+
+final_invocation_before_event:
+  block_new_positions: true              # PM may override with documented rationale
