@@ -17,6 +17,8 @@ Portfolio state is the only data category where the system is both producer and 
 
 Boundary: if the OMS stores it or it's a direct aggregation, it's [portfolio state](portfolio-state.md). If it requires market-data cross-reference or LLM judgment, it's [derived metrics](../../02-distillation-layer/internal.md).
 
+[Implementation plan](../../../implementation/01-data-layer/portfolio-state/)
+
 **Data schemas:** Authoritative model definitions for positions, theses, and orders live in the [execution layer](../../05-execution-layer/README.md) — [position-model.md](../../05-execution-layer/position-model.md), [thesis-model.md](../../05-execution-layer/thesis-model.md), and [orders-and-brackets.md](../../05-execution-layer/orders-and-brackets.md) — tightly coupled with execution behavior. The portfolio state document here describes these items from the consumer's perspective.
 
 ---
