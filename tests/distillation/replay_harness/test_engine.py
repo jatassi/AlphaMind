@@ -15,6 +15,7 @@ import sqlite3
 import tempfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -676,8 +677,8 @@ def test_extract_class_b_baselines_queries_each_state_table(tmp_path: Path) -> N
     engine = create_engine(f"sqlite:///{isolated_db}")
 
     @event.listens_for(engine, "connect")
-    def _set_pragmas(dbapi_connection: object, _record: object) -> None:
-        cur = dbapi_connection.cursor()  # type: ignore[attr-defined]
+    def _set_pragmas(dbapi_connection: Any, _record: Any) -> None:
+        cur = dbapi_connection.cursor()
         cur.execute("PRAGMA foreign_keys=ON")
         cur.close()
 

@@ -32,6 +32,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from alembic import command
 from alembic.config import Config
@@ -158,9 +159,9 @@ class SliceReplayResult:
 # ---------------------------------------------------------------------------
 
 
-def _apply_replay_pragmas(dbapi_connection: object, _record: object) -> None:
+def _apply_replay_pragmas(dbapi_connection: Any, _record: Any) -> None:
     """Match the runtime FK enforcement; WAL is irrelevant for the temp DB."""
-    cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
+    cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
 
