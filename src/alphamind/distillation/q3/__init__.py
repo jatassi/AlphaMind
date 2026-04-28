@@ -1,19 +1,9 @@
 """Q3 options-flow indicators and cross-ticker signals — story 02-distillation/08b.
 
-Authoritative scope: ``docs/design/02-distillation-layer/external.md``
-§ 2 From derivatives and options. The deterministic computations cover
-the per-ticker options flow classification (BTO vs. STO breakdown for puts
-and calls; protective vs. speculative tagging), the cross-ticker pair-trade
-signature detection and sector-wide sweep detection, the ETF-IV vs.
-single-name-IV divergence and index-hedging vs. sector-conviction signals,
-and the low-OI volume anomaly that keys off the flow data. Plus the IV-rank
-baseline state per ticker for the 252-day ATM-IV history.
-
-The implementation is split across the :mod:`alphamind.distillation.q3`
-sub-package so each indicator family lives in its own module. This file is
-the import shim the orchestrator (story 12) and tests reach for: it
-re-exports the public API from each sub-module so call sites do not need
-to know the internal layout.
+The implementation is split across this sub-package so each concern lives in
+its own module. The top-level entry point
+:mod:`alphamind.distillation.q3_options` re-exports the public API from each
+sub-module so call sites do not need to know the internal layout.
 
 Structure:
 
@@ -34,21 +24,15 @@ Structure:
 
 from __future__ import annotations
 
-from alphamind.distillation.q3 import (
-    ATM_IV_BASELINE_KIND,
-    SNAPSHOT_OI_DELTA_ATTRIBUTION,
-    EtfIvDivergence,
-    EtfIvDivergenceDirection,
-    FlowClassificationInputs,
-    FlowZScore,
-    IndexVsSectorClassification,
-    IndexVsSectorLabel,
+from alphamind.distillation.q3.anomalies import (
     LowOiVolumeAnomaly,
-    PairTradeSignature,
-    PutFlowIntent,
     SectorWideSweep,
     SweepDirection,
-    TickerOptionsFlow,
+    detect_low_oi_volume_anomalies,
+    detect_sector_wide_sweeps,
+)
+from alphamind.distillation.q3.assemble import (
+    FlowClassificationInputs,
     assemble_q3_blocks,
     assemble_q3_etf_iv_divergence_blocks,
     assemble_q3_flow_classification_blocks,
@@ -56,14 +40,30 @@ from alphamind.distillation.q3 import (
     assemble_q3_iv_rank_blocks,
     assemble_q3_pair_trade_blocks,
     assemble_q3_sector_wide_sweep_blocks,
+)
+from alphamind.distillation.q3.atm_iv_baseline import (
+    ATM_IV_BASELINE_KIND,
+    refresh_atm_iv_baselines,
+)
+from alphamind.distillation.q3.etf_iv_divergence import (
+    EtfIvDivergence,
+    EtfIvDivergenceDirection,
+    compute_etf_iv_divergences,
+)
+from alphamind.distillation.q3.flow_classification import (
+    SNAPSHOT_OI_DELTA_ATTRIBUTION,
+    IndexVsSectorClassification,
+    IndexVsSectorLabel,
+    PutFlowIntent,
+    TickerOptionsFlow,
     classify_index_vs_sector_flow,
     classify_options_flow,
     classify_put_flow_intent,
-    compute_etf_iv_divergences,
-    detect_low_oi_volume_anomalies,
+)
+from alphamind.distillation.q3.pair_trade import (
+    FlowZScore,
+    PairTradeSignature,
     detect_pair_trade_signatures,
-    detect_sector_wide_sweeps,
-    refresh_atm_iv_baselines,
 )
 
 __all__ = [
