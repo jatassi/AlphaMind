@@ -1,0 +1,14 @@
+# tests/distillation/no_magic_numbers_allowlist.txt
+#
+# Allowlist for tests/distillation/test_no_magic_numbers.py.
+#
+# Format: <repo-relative-file>:<line>:<value>:<reason>
+# - One entry per line. Blank lines and lines starting with "#" are ignored.
+# - <file> is the repo-relative POSIX path (e.g. src/alphamind/distillation/foo.py).
+# - <line> is the literal's source-line number from the audit report.
+# - <value> matches the literal's repr exactly (e.g. 2.5, 90, 5.0).
+# - <reason> is free text justifying why the literal is not a Class A bypass.
+#
+# Adding an entry requires reviewer scrutiny per CLAUDE.md: alert the user
+# before merging an allowlist addition. Growth of this file signals discipline
+# erosion. See tests/distillation/README.md for full guidance.
