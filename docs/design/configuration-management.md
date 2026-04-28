@@ -451,7 +451,6 @@ agents:
     - tech_semis_analyst
     - financials_analyst
     - energy_analyst
-    - portfolio_analyst
     - qualitative_researcher
     - adaptive_researcher
     - synthesizer
@@ -476,7 +475,6 @@ agents:
     - tech_semis_analyst
     - financials_analyst
     - energy_analyst
-    - portfolio_analyst
     - qualitative_researcher
     - synthesizer
     - analyst
@@ -501,7 +499,7 @@ The remaining overlay files (`market_hours_rolling.yaml`, `pre_close.yaml`, `wee
 | `weekend_saturday` | omitted | — | — | 3 |
 | `weekend_sunday` | enabled | 20 | 3000 | 5 |
 
-The three decision-layer agents (analyst, strategist, PM) and the synthesizer fire on every run type — the run-type bundle never disables the decision layer. The four parallel analysis-layer agents (three sector analysts, portfolio analyst) likewise fire on every run type. Only the adaptive researcher and the qualitative researcher's news-digest depth carry per-trigger variance in v1.
+The three decision-layer agents (analyst, strategist, PM) and the synthesizer fire on every run type — the run-type bundle never disables the decision layer. The three parallel analysis-layer sector researchers likewise fire on every run type. Only the adaptive researcher and the qualitative researcher's news-digest depth carry per-trigger variance in v1.
 
 **Override semantics.** `agents.enabled` is the authoritative roster for the invocation; the resolver drops every agent not listed. `agents.overrides.<agent>.<field>` shallow-overrides the matching key from `agents.yaml`; unspecified fields inherit the `agents.yaml` default. `qualitative_researcher.news_digest.*` overrides news-digest sizing.
 

@@ -110,9 +110,9 @@ Class B (rolling baselines) self-tunes; Class A (operator-set thresholds) needs 
 
 ### Analysis layer
 
-Three sector domain researchers (tech-semis, financials, energy), portfolio analyst, qualitative researcher, adaptive researcher, synthesizer. All LLMs producing prose with structured reference IDs.
+Three sector domain researchers (tech-semis, financials, energy), qualitative researcher, adaptive researcher, synthesizer. All LLMs producing prose with structured reference IDs.
 
-#### Per-agent metrics — applies to each domain researcher, portfolio analyst, qualitative, adaptive
+#### Per-agent metrics — applies to each domain researcher, qualitative, adaptive
 
 | Metric | P/O | What it measures | Computation | Window |
 |---|---|---|---|---|

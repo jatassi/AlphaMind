@@ -309,12 +309,12 @@ data/provenance/
 
 ---
 
-**Agent calls.** One record per LLM agent invocation — analyst, strategist, portfolio manager, synthesizer, qualitative researcher, adaptive researcher, the three domain researchers, portfolio analyst, and the proposal pre-processor (deterministic but recorded uniformly for completeness). Captures model identity, prompt content, schema, tool definitions, sampling parameters, and call metrics. The primary substrate for the feedback loop's per-agent calibration analysis and prompt-edit validation.
+**Agent calls.** One record per LLM agent invocation — analyst, strategist, portfolio manager, synthesizer, qualitative researcher, adaptive researcher, the three domain researchers, and the proposal pre-processor (deterministic but recorded uniformly for completeness). Captures model identity, prompt content, schema, tool definitions, sampling parameters, and call metrics. The primary substrate for the feedback loop's per-agent calibration analysis and prompt-edit validation.
 
 Identity fields:
 - Agent call ID (unique, immutable — generated at call start)
 - Invocation ID: foreign key to the pipeline invocation this call belongs to
-- Agent name: enumerated identifier matching the agent docs (`analyst`, `strategist`, `portfolio_manager`, `synthesizer`, `qualitative_researcher`, `adaptive_researcher`, `tech_semis_researcher`, `financials_researcher`, `energy_researcher`, `portfolio_analyst`, `proposal_pre_processor`)
+- Agent name: enumerated identifier matching the agent docs (`analyst`, `strategist`, `portfolio_manager`, `synthesizer`, `qualitative_researcher`, `adaptive_researcher`, `tech_semis_researcher`, `financials_researcher`, `energy_researcher`, `proposal_pre_processor`)
 - Call ordinal: 0-indexed position of this call within the invocation pipeline (for parallel agents, the ordinal disambiguates the parallel branch)
 - Attempt number: 1 for the initial call, 2+ for subsequent retries triggered by [llm-agent-failure-handling.md](../llm-agent-failure-handling.md). Each attempt is a separate record so retry effectiveness is queryable.
 

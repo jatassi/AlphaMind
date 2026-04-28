@@ -58,11 +58,11 @@ These cut across the runtime profiles.
 
 ### A. Pipeline orchestration
 
-Sequencing layers, parallelism *within* layers (3 sector analysts + portfolio analyst + qualitative research run in parallel), partial failure handling, structured data between stages.
+Sequencing layers, parallelism *within* layers (3 sector analysts + qualitative research run in parallel), partial failure handling, structured data between stages.
 
 ### B. LLM agent management
 
-7-8 distinct agents per invocation (3 sector analysts, portfolio analyst, qualitative researcher, adaptive researcher, synthesizer, trader, PM), each with its own context window, system prompt, and tool access. Mix of parallel and sequential. Adaptive researcher has a nested agentic loop; decision layer agents have retrieval tools fetching from a brief store. The heart of the system's complexity.
+7-8 distinct agents per invocation (3 sector analysts, qualitative researcher, adaptive researcher, synthesizer, trader, PM), each with its own context window, system prompt, and tool access. Mix of parallel and sequential. Adaptive researcher has a nested agentic loop; decision layer agents have retrieval tools fetching from a brief store. The heart of the system's complexity.
 
 ### C. State management
 

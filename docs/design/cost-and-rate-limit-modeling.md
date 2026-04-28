@@ -48,7 +48,7 @@ OAuth token generated via `claude setup-token`, set in the pipeline process envi
 Max 5x provides full access to the current Claude lineup. The agent specs assign:
 
 - **Opus** to the three decision-layer agents (analyst, strategist, portfolio manager), where high-stakes judgment justifies the slower, more capable model.
-- **Sonnet** to the six analysis-layer agents (three sector analysts, portfolio analyst, qualitative researcher, adaptive researcher) and the synthesizer.
+- **Sonnet** to the five analysis-layer agents (three sector analysts, qualitative researcher, adaptive researcher) and the synthesizer.
 - **Haiku** is unused. Model assignments are configurable per-agent in `config/agents.yaml`; switching the analysis layer to Haiku is a manual lever under sustained cap pressure (see [Cap-approach response](#cap-approach-response)).
 
 ### Usage caps
@@ -108,7 +108,6 @@ Per [architecture/llm-integration.md § Agent inventory](../architecture/llm-int
 | Tech/semis analyst | Analysis | Sonnet | Parallel group |
 | Financials analyst | Analysis | Sonnet | Parallel group |
 | Energy analyst | Analysis | Sonnet | Parallel group |
-| Portfolio analyst | Analysis | Sonnet | Parallel group |
 | Qualitative researcher | Analysis | Sonnet | Parallel group |
 | Adaptive researcher | Analysis | Sonnet | Sequential after parallel group; omitted on off-hours rolling and weekend-Saturday triggers |
 | Synthesizer | Analysis | Sonnet | Sequential after adaptive |
@@ -127,11 +126,10 @@ Token volumes per agent are documented at the agent-spec level. Aggregated for t
 | Agent | Input | Output |
 |---|---|---|
 | Three sector analysts | ~9,000 | ~1,800 |
-| Portfolio analyst | ~2,000 | ~500 |
 | Qualitative researcher (incl. tool returns) | ~7,500 | ~500 |
 | Adaptive researcher (incl. tool returns) | ~2,500 | ~600 |
 | Synthesizer | ~10,000 | ~1,500 |
-| **Sonnet subtotal** | **~31,000** | **~4,900** |
+| **Sonnet subtotal** | **~29,000** | **~4,400** |
 
 **Opus calls per invocation, primary profile, normal day:**
 
@@ -142,7 +140,7 @@ Token volumes per agent are documented at the agent-spec level. Aggregated for t
 | Portfolio manager | ~6,000 | ~3,000 |
 | **Opus subtotal** | **~11,000** | **~5,500** |
 
-**Per-invocation total: ~52,400 tokens (~36K Sonnet, ~16.5K Opus).** Triggers that omit the adaptive researcher (off-hours rolling, weekend-Saturday — together 21 of 28 scheduled invocations per normal week) drop ~3,100 Sonnet tokens and one Sonnet call from the per-invocation total. The weekly Opus envelope — the binding constraint — is unaffected by run-type composition since the decision-layer trio fires on every trigger.
+**Per-invocation total: ~49,900 tokens (~33K Sonnet, ~16.5K Opus).** Triggers that omit the adaptive researcher (off-hours rolling, weekend-Saturday — together 21 of 28 scheduled invocations per normal week) drop ~3,100 Sonnet tokens and one Sonnet call from the per-invocation total. The weekly Opus envelope — the binding constraint — is unaffected by run-type composition since the decision-layer trio fires on every trigger.
 
 Full-system profile ($100K, 6–15 positions, options/shorts enabled) increases strategist and PM input/output proportional to position count and adds the options/shorts sections to the analyst's guardrail header. Per-invocation total scales to **~65,000–80,000 tokens** in normal operation, with the increase concentrated in Opus.
 
@@ -183,12 +181,12 @@ The cap-numerator uses the 12-message-per-Opus-hour calibration baseline. AlphaM
 
 ### Weekly Sonnet utilization
 
-Per scheduled invocation: 7 Sonnet calls. Stress and crisis weeks approximately double the call count via emergency invocations and adaptive-researcher tool turns.
+Per scheduled invocation: 6 Sonnet calls. Stress and crisis weeks approximately double the call count via emergency invocations and adaptive-researcher tool turns.
 
 | Scenario | Sonnet calls/week | Vs. 140-Sonnet-hour cap (~1,680 msg) | Vs. 280-Sonnet-hour cap (~3,360 msg) |
 |---|---|---|---|
-| Normal week | 28 × 7 + ~12 emergency + ~22 retries = ~230 | 14% | 7% |
-| Crisis week | 28 × 7 + ~48 emergency + ~58 retries = ~302 | 18% | 9% |
+| Normal week | 28 × 6 + ~10 emergency + ~20 retries = ~198 | 12% | 6% |
+| Crisis week | 28 × 6 + ~42 emergency + ~50 retries = ~260 | 15% | 8% |
 
 Sonnet has comfortable headroom in every realistic scenario.
 

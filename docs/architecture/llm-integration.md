@@ -48,7 +48,6 @@ Each invocation runs these agents with independent configuration:
 | Tech/semis analyst | Analysis (parallel) | Sonnet | None | Reads distilled sector data, produces structured brief |
 | Financials analyst | Analysis (parallel) | Sonnet | None | Financials sector |
 | Energy analyst | Analysis (parallel) | Sonnet | None | Energy sector |
-| Portfolio state analyst | Analysis (parallel) | Sonnet | None | Reads internal distillation output |
 | Qualitative researcher | Analysis (parallel) | Sonnet | None | Reads pre-collected qualitative data |
 | Adaptive researcher | Analysis (sequential) | Sonnet | Research tools (news, APIs, data pulls) | Agentic loop: triage anomalies → generate questions → investigate |
 | Synthesizer | Analysis (sequential) | Sonnet | None | Reads all briefs, produces unified snapshot |
@@ -64,13 +63,12 @@ Each invocation runs these agents with independent configuration:
 ### Pipeline execution flow
 
 ```python
-async def run_analysis_layer(distillation_output, portfolio_state):
-    # Parallel group: sector analysts + portfolio + qualitative
-    sector_briefs, portfolio_brief, qual_brief = await asyncio.gather(
+async def run_analysis_layer(distillation_output):
+    # Parallel group: sector analysts + qualitative
+    sector_briefs, qual_brief = await asyncio.gather(
         run_agent("tech_semis_analyst", distillation_output.tech_sector),
         run_agent("financials_analyst", distillation_output.financials_sector),
         run_agent("energy_analyst", distillation_output.energy_sector),
-        run_agent("portfolio_analyst", portfolio_state),
         run_agent("qualitative_researcher", distillation_output.qualitative),
     )
 
@@ -80,7 +78,7 @@ async def run_analysis_layer(distillation_output, portfolio_state):
 
     # Sequential: synthesizer (reads all briefs)
     synthesis = await run_agent("synthesizer",
-        all_briefs=[*sector_briefs, portfolio_brief, qual_brief, *adaptive_briefs])
+        all_briefs=[*sector_briefs, qual_brief, *adaptive_briefs])
 
     return synthesis
 
@@ -127,7 +125,6 @@ prompts/
     tech_semis_analyst.md
     financials_analyst.md
     energy_analyst.md
-    portfolio_analyst.md
     qualitative_researcher.md
     adaptive_researcher.md
     synthesizer.md

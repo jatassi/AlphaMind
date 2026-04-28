@@ -27,9 +27,9 @@ Land `config/agents.yaml` (per-agent LLM configuration: model, prompt path, late
 ## Scope
 
 In scope:
-- `config/agents.yaml` populated with one entry per LLM agent in the pipeline. Use the canonical agent IDs from `state-persistence.md § Agent calls`. The 10 agents:
+- `config/agents.yaml` populated with one entry per LLM agent in the pipeline. Use the canonical agent IDs from `state-persistence.md § Agent calls`. The 9 agents:
   - **Decision (Opus):** `analyst`, `strategist`, `portfolio_manager`
-  - **Analysis (Sonnet):** `tech_semis_researcher`, `financials_researcher`, `energy_researcher`, `portfolio_analyst`, `qualitative_researcher`, `adaptive_researcher`, `synthesizer`
+  - **Analysis (Sonnet):** `tech_semis_researcher`, `financials_researcher`, `energy_researcher`, `qualitative_researcher`, `adaptive_researcher`, `synthesizer`
 - Each agent entry carries:
   - `model` — `claude-opus-4-7` or `claude-sonnet-4-6` per the cost-doc inventory
   - `prompt` — path to the agent's system prompt file, relative to the repo root (e.g., `prompts/decision/analyst.md`, `prompts/analysis/tech_semis_researcher.md`)
@@ -85,7 +85,7 @@ Use `model_config = ConfigDict(frozen=True)` on every Pydantic model.
 - [ ] `config/agents.yaml` parses cleanly via `yaml.safe_load` and validates against `AgentsConfig`.
 - [ ] `src/alphamind/config/models/agents.py` defines `AgentName`, `AllowedModel`, `BaseAgentConfig`, `AdaptiveAgentConfig`, `AgentsConfig`.
 - [ ] `models/__init__.py` re-exports the five names.
-- [ ] A unit test asserts the shipped `config/agents.yaml` parses and exposes all 10 agents.
+- [ ] A unit test asserts the shipped `config/agents.yaml` parses and exposes all 9 agents.
 - [ ] A unit test asserts a YAML missing an agent (e.g., omitting `synthesizer`) raises `ValidationError`.
 - [ ] A unit test asserts a YAML containing an extra agent name not in `AgentName` raises `ValidationError`.
 - [ ] A unit test asserts a `prompt` value pointing at a non-existent path raises `ValidationError`.

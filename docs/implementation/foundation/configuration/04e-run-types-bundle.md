@@ -37,13 +37,13 @@ In scope:
   - `qualitative_researcher:` block with:
     - `news_digest:` block with `top_n_per_sector: int`, `top_n_high_priority: int`
 - Population per the table in `configuration-management.md § run_types/<trigger>.yaml`:
-  - `pre_open`: full roster (10 agents); adaptive override `cumulative_tool_call_limit: 25`, `cumulative_tool_token_budget: 4000`, `latency_budget_seconds: 300`; news digest `top_n_per_sector: 5`, `top_n_high_priority: 3`
+  - `pre_open`: full roster (9 agents); adaptive override `cumulative_tool_call_limit: 25`, `cumulative_tool_token_budget: 4000`, `latency_budget_seconds: 300`; news digest `top_n_per_sector: 5`, `top_n_high_priority: 3`
   - `market_hours_rolling`: full roster; adaptive override `cumulative_tool_call_limit: 20`, `cumulative_tool_token_budget: 3000`; news digest `top_n_per_sector: 5`
   - `pre_close`: full roster; adaptive override `cumulative_tool_call_limit: 15`, `cumulative_tool_token_budget: 2500`; news digest `top_n_per_sector: 4`
   - `off_hours_rolling`: roster omits `adaptive_researcher`; news digest `top_n_per_sector: 3`
   - `weekend_saturday`: roster omits `adaptive_researcher`; news digest `top_n_per_sector: 3`
   - `weekend_sunday`: full roster; adaptive override `cumulative_tool_call_limit: 20`, `cumulative_tool_token_budget: 3000`; news digest `top_n_per_sector: 5`
-- The four parallel-fire analysis-layer agents (three sector researchers + portfolio analyst), the synthesizer, and the three decision-layer agents are present in every run type's `agents.enabled` list per `configuration-management.md § run_types`.
+- The three parallel-fire sector researchers, the synthesizer, and the three decision-layer agents are present in every run type's `agents.enabled` list per `configuration-management.md § run_types`.
 - `src/alphamind/config/models/run_types.py` defining:
   - `RunType` (StrEnum: the six trigger names — closed set; member values match filename stems)
   - `NewsDigestConfig` (BaseModel: `top_n_per_sector: int = Field(ge=1)`, `top_n_high_priority: int = Field(ge=0)`)
@@ -76,7 +76,7 @@ Out of scope:
 
 **Why `qualitative_researcher` is its own block** rather than nested under `agents`: the design doc structures it that way to make news-digest depth a first-class operator-facing knob, distinct from the agent-runner overrides. Mirror the doc's structure.
 
-**Decision-layer presence requirement.** The validator that asserts `analyst`, `strategist`, `portfolio_manager`, `synthesizer` are in `enabled` encodes a structural rule: run types **may not** disable the decision layer or the synthesizer. The four sector/portfolio analysts likewise fire on every run type, but the validator does not enforce this — that is policy, not invariant; the `04e` run_type table in `configuration-management.md` is the authoritative source for which agents fire on which trigger.
+**Decision-layer presence requirement.** The validator that asserts `analyst`, `strategist`, `portfolio_manager`, `synthesizer` are in `enabled` encodes a structural rule: run types **may not** disable the decision layer or the synthesizer. The three sector researchers likewise fire on every run type, but the validator does not enforce this — that is policy, not invariant; the `04e` run_type table in `configuration-management.md` is the authoritative source for which agents fire on which trigger.
 
 Use `model_config = ConfigDict(frozen=True)` on every Pydantic model.
 
