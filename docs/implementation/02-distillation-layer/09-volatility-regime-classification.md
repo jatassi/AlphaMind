@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 4b1eb6e453378b02ff1f77c901927fe3869e2ce3
 ---
 
 # 09 — Volatility regime classification and universal broadcast
