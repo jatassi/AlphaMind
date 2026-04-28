@@ -9,13 +9,13 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.persistence.models import (
     Base,
@@ -64,7 +64,7 @@ def _make_market(
     return base
 
 
-def _make_session_and_engine() -> tuple[Engine, type[Session]]:
+def _make_session_and_engine() -> tuple[Engine, sessionmaker[Session]]:
     engine = make_engine(":memory:")
     Base.metadata.create_all(engine)
     return engine, make_session_factory(engine)
@@ -148,7 +148,7 @@ class TestClientPrimitives:
             acquire_calls.append(provider)
             original(provider)
 
-        limiter.acquire = tracking
+        limiter.acquire = tracking  # type: ignore[method-assign]  # mock-method assignment
 
         mock_resp = MagicMock()
         mock_resp.raise_for_status.return_value = None
@@ -205,7 +205,7 @@ class TestUpsertContracts:
 
 
 class TestCategoryDerivation:
-    def _category(self, sf: type[Session], condition_id: str, tags: list[str]) -> str:
+    def _category(self, sf: sessionmaker[Session], condition_id: str, tags: list[str]) -> str:
         from alphamind.data_sources.polymarket.contracts import collect_snapshots
 
         markets = [_make_market(conditionId=condition_id, tags=tags)]
@@ -214,7 +214,7 @@ class TestCategoryDerivation:
         with sf() as sess:
             contract = sess.get(PredictionMarketContracts, condition_id)
             assert contract is not None
-            return cast(str, contract.category)
+            return contract.category
 
     def test_fed_tags_map_to_monetary_policy(self) -> None:
         _engine, sf = _make_session_and_engine()

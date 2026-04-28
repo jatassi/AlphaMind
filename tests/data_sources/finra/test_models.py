@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -27,10 +27,10 @@ _UNIVERSE_ROW = {
 
 
 @pytest.fixture()
-def session_factory() -> type[Session]:
+def session_factory() -> sessionmaker[Session]:
     engine = make_engine(":memory:")
     Base.metadata.create_all(engine)
-    sf: type[Session] = make_session_factory(engine)
+    sf: sessionmaker[Session] = make_session_factory(engine)
     with sf() as sess:
         sess.add(AssetUniverse(**_UNIVERSE_ROW))
         sess.commit()
@@ -49,7 +49,7 @@ def test_short_volume_daily_table_exists() -> None:
     assert "short_volume_daily" in Base.metadata.tables
 
 
-def test_short_interest_snapshot_insert_and_query(session_factory: type[Session]) -> None:
+def test_short_interest_snapshot_insert_and_query(session_factory: sessionmaker[Session]) -> None:
     with session_factory() as sess:
         sess.add(
             ShortInterestSnapshot(
@@ -73,7 +73,7 @@ def test_short_interest_snapshot_insert_and_query(session_factory: type[Session]
         assert row.source == "finra"
 
 
-def test_short_volume_daily_insert_and_query(session_factory: type[Session]) -> None:
+def test_short_volume_daily_insert_and_query(session_factory: sessionmaker[Session]) -> None:
     with session_factory() as sess:
         sess.add(
             ShortVolumeDaily(

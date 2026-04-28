@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 import pytest
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.persistence.models import (
     Base,
@@ -43,13 +43,13 @@ def engine() -> Iterator[Engine]:
 
 
 @pytest.fixture()
-def session_factory(engine: Engine) -> type[Session]:
-    sf: type[Session] = make_session_factory(engine)
+def session_factory(engine: Engine) -> sessionmaker[Session]:
+    sf: sessionmaker[Session] = make_session_factory(engine)
     return sf
 
 
 @pytest.fixture()
-def session(session_factory: type[Session]) -> Iterator[Session]:
+def session(session_factory: sessionmaker[Session]) -> Iterator[Session]:
     with session_factory() as sess:
         yield sess
 
@@ -77,7 +77,7 @@ def seeded_tickers(session: Session) -> None:
 
 
 @pytest.fixture()
-def fake_repo(session_factory: type[Session]) -> Any:
+def fake_repo(session_factory: sessionmaker[Session]) -> Any:
     """A thin in-memory repo that delegates to the real SQLite session."""
 
     class _Repo:
@@ -151,7 +151,7 @@ class TestFinnhubClient:
                 acquire_calls.append(provider)
                 original_acquire(provider)
 
-            limiter.acquire = tracking_acquire
+            limiter.acquire = tracking_acquire  # type: ignore[method-assign]  # mock-method assignment
 
             client = FinnhubClient(api_key="test-key", _rate_limiter=limiter)
             client.verify_connectivity()
@@ -163,7 +163,7 @@ class TestCollectNews:
     def _run_collect_news(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         fake_repo: Any,
         ticker_scope: list[str],
         company_news_map: dict[str, list[dict[str, Any]]],
@@ -192,7 +192,7 @@ class TestCollectNews:
     def test_collect_news_writes_article_row(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -230,7 +230,7 @@ class TestCollectNews:
     def test_collect_news_synthesizes_article_id(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -272,7 +272,7 @@ class TestCollectNews:
     def test_collect_news_stamps_credibility_tier(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -309,7 +309,7 @@ class TestCollectNews:
     def test_collect_news_unknown_outlet_tier_is_none(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -346,7 +346,7 @@ class TestCollectNews:
     def test_collect_news_vendor_sentiment_null(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -384,7 +384,7 @@ class TestCollectNews:
     def test_collect_news_body_persisted_to_disk(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -425,7 +425,7 @@ class TestCollectNews:
     def test_collect_news_no_summary_body_path_null(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -462,7 +462,7 @@ class TestCollectNews:
     def test_collect_news_writes_news_article_tickers(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -500,7 +500,7 @@ class TestCollectNews:
     def test_collect_news_idempotent_no_duplicates(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -535,7 +535,7 @@ class TestCollectNews:
         assert len(rows) == 1
 
     def test_collect_news_failure_records_failed_run(
-        self, engine: Engine, session_factory: type[Session], fake_repo: Any, tmp_path: Path
+        self, engine: Engine, session_factory: sessionmaker[Session], fake_repo: Any, tmp_path: Path
     ) -> None:
         """On SDK failure, the run is marked failed and no articles written."""
         with patch("finnhub.Client") as mock_client:
@@ -562,7 +562,7 @@ class TestCollectNews:
     def test_collect_news_general_news_no_ticker_link(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -600,7 +600,7 @@ class TestCollectNews:
     def test_collect_news_callable_with_no_args(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         seeded_tickers: None,
         fake_repo: Any,
         tmp_path: Path,
@@ -658,7 +658,7 @@ class TestEarningsCalendar:
     def test_collect_earnings_calendar_writes_event_calendar_row(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -687,7 +687,7 @@ class TestEarningsCalendar:
     def test_collect_earnings_calendar_writes_earnings_details(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -717,7 +717,7 @@ class TestEarningsCalendar:
     def test_collect_earnings_calendar_maps_hour_to_call_time(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -749,7 +749,7 @@ class TestEarningsCalendar:
     def test_collect_earnings_calendar_idempotent(
         self,
         engine: Engine,
-        session_factory: type[Session],
+        session_factory: sessionmaker[Session],
         session: Session,
         seeded_tickers: None,
         fake_repo: Any,
@@ -775,7 +775,7 @@ class TestEarningsCalendar:
         assert len(events) == 1
 
     def test_bootstrap_earnings_calendar_uses_90_day_window(
-        self, engine: Engine, session_factory: type[Session], fake_repo: Any
+        self, engine: Engine, session_factory: sessionmaker[Session], fake_repo: Any
     ) -> None:
         """bootstrap_earnings_calendar() requests a 90-day forward window."""
         captured: list[dict[str, Any]] = []
@@ -824,7 +824,11 @@ class TestEconomicCalendar:
         }
 
     def test_collect_economic_calendar_maps_cpi_to_event_type(
-        self, engine: Engine, session_factory: type[Session], session: Session, fake_repo: Any
+        self,
+        engine: Engine,
+        session_factory: sessionmaker[Session],
+        session: Session,
+        fake_repo: Any,
     ) -> None:
         """CPI event maps to event_type='cpi_release'."""
         items = [self._make_eco_item(event="CPI")]
@@ -847,7 +851,11 @@ class TestEconomicCalendar:
         assert events[0].event_type == "cpi_release"
 
     def test_collect_economic_calendar_maps_fomc_to_event_type(
-        self, engine: Engine, session_factory: type[Session], session: Session, fake_repo: Any
+        self,
+        engine: Engine,
+        session_factory: sessionmaker[Session],
+        session: Session,
+        fake_repo: Any,
     ) -> None:
         """FOMC Statement maps to event_type='fomc'."""
         items = [self._make_eco_item(event="FOMC Statement")]
@@ -870,7 +878,11 @@ class TestEconomicCalendar:
         assert events[0].event_type == "fomc"
 
     def test_collect_economic_calendar_unknown_event_maps_to_other(
-        self, engine: Engine, session_factory: type[Session], session: Session, fake_repo: Any
+        self,
+        engine: Engine,
+        session_factory: sessionmaker[Session],
+        session: Session,
+        fake_repo: Any,
     ) -> None:
         """Unknown event names fall back to event_type='other'."""
         items = [self._make_eco_item(event="Some Obscure Index")]
@@ -893,7 +905,11 @@ class TestEconomicCalendar:
         assert events[0].event_type == "other"
 
     def test_collect_economic_calendar_idempotent(
-        self, engine: Engine, session_factory: type[Session], session: Session, fake_repo: Any
+        self,
+        engine: Engine,
+        session_factory: sessionmaker[Session],
+        session: Session,
+        fake_repo: Any,
     ) -> None:
         """Re-running on same window produces no duplicates."""
         items = [self._make_eco_item(event="CPI")]
@@ -916,7 +932,7 @@ class TestEconomicCalendar:
         assert len(events) == 1
 
     def test_bootstrap_economic_calendar_uses_90_day_window(
-        self, engine: Engine, session_factory: type[Session], fake_repo: Any
+        self, engine: Engine, session_factory: sessionmaker[Session], fake_repo: Any
     ) -> None:
         """bootstrap_economic_calendar() requests a 90-day forward window."""
         captured: list[dict[str, Any]] = []
@@ -958,7 +974,11 @@ class TestIpoCalendar:
         }
 
     def test_collect_ipo_calendar_writes_event_calendar_row(
-        self, engine: Engine, session_factory: type[Session], session: Session, fake_repo: Any
+        self,
+        engine: Engine,
+        session_factory: sessionmaker[Session],
+        session: Session,
+        fake_repo: Any,
     ) -> None:
         """An IPO item produces an event_calendar row."""
         items = [self._make_ipo_item()]
@@ -981,7 +1001,11 @@ class TestIpoCalendar:
         assert events[0].source == "finnhub"
 
     def test_collect_ipo_calendar_idempotent(
-        self, engine: Engine, session_factory: type[Session], session: Session, fake_repo: Any
+        self,
+        engine: Engine,
+        session_factory: sessionmaker[Session],
+        session: Session,
+        fake_repo: Any,
     ) -> None:
         """Re-running on same window produces no duplicates."""
         items = [self._make_ipo_item()]
@@ -1016,7 +1040,11 @@ class TestFdaCalendar:
         }
 
     def test_collect_fda_calendar_writes_event_calendar_row(
-        self, engine: Engine, session_factory: type[Session], session: Session, fake_repo: Any
+        self,
+        engine: Engine,
+        session_factory: sessionmaker[Session],
+        session: Session,
+        fake_repo: Any,
     ) -> None:
         """An FDA item produces an event_calendar row with event_type='fda_advisory'."""
         items = [self._make_fda_item()]
@@ -1039,7 +1067,11 @@ class TestFdaCalendar:
         assert events[0].event_type == "fda_advisory"
 
     def test_collect_fda_calendar_idempotent(
-        self, engine: Engine, session_factory: type[Session], session: Session, fake_repo: Any
+        self,
+        engine: Engine,
+        session_factory: sessionmaker[Session],
+        session: Session,
+        fake_repo: Any,
     ) -> None:
         """Re-running on same window produces no duplicates."""
         items = [self._make_fda_item()]
@@ -1062,7 +1094,7 @@ class TestFdaCalendar:
         assert len(events) == 1
 
     def test_collect_fda_calendar_failure_records_failed_run(
-        self, engine: Engine, session_factory: type[Session], fake_repo: Any
+        self, engine: Engine, session_factory: sessionmaker[Session], fake_repo: Any
     ) -> None:
         """On SDK failure, the run is marked failed."""
         with patch("finnhub.Client") as mock_client:

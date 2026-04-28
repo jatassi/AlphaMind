@@ -164,7 +164,7 @@ outlets:
         assert cfg.news_outlets is not None
         # Immutable: Pydantic model instance cannot be modified after creation
         with pytest.raises((TypeError, AttributeError, ValueError)):
-            cfg.data_sources = None
+            cfg.data_sources = None  # type: ignore[misc,assignment]  # tests read-only enforcement
 
     def test_missing_required_env_var_raises_named_error(self, tmp_path: Path) -> None:
         """A missing *_env reference must raise an error that names the variable."""

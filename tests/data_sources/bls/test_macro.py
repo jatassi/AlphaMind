@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.data_sources.bls.macro import bootstrap_series, collect_series
 from alphamind.persistence.models import Base, CollectionRuns, MacroObservations
@@ -32,8 +32,8 @@ def engine() -> Engine:
 
 
 @pytest.fixture()
-def session_factory(engine: Engine) -> type[Session]:
-    sf: type[Session] = make_session_factory(engine)
+def session_factory(engine: Engine) -> sessionmaker[Session]:
+    sf: sessionmaker[Session] = make_session_factory(engine)
     return sf
 
 
@@ -75,7 +75,7 @@ def _fake_client(responses: list[dict[str, Any]]) -> MagicMock:
 
 class TestCollectSeries:
     def test_writes_rows_for_each_observation(
-        self, engine: Engine, session_factory: type[Session]
+        self, engine: Engine, session_factory: sessionmaker[Session]
     ) -> None:
         fake_client = _fake_client(
             [
@@ -100,7 +100,7 @@ class TestCollectSeries:
         assert rows_written == 2
 
     def test_observation_date_is_first_of_month(
-        self, engine: Engine, session_factory: type[Session]
+        self, engine: Engine, session_factory: sessionmaker[Session]
     ) -> None:
         """BLS period 'M01' for year 2024 → observation_date = '2024-01-01'."""
         fake_client = _fake_client(
@@ -124,7 +124,7 @@ class TestCollectSeries:
             row = sess.query(MacroObservations).filter_by(series_id="CES0000000001").one()
         assert row.observation_date == "2024-03-01"
 
-    def test_source_is_bls(self, engine: Engine, session_factory: type[Session]) -> None:
+    def test_source_is_bls(self, engine: Engine, session_factory: sessionmaker[Session]) -> None:
         fake_client = _fake_client([_make_bls_response("LNS14000000", [("2024", "M01", "3.7")])])
 
         with patch("alphamind.data_sources.bls.macro.BLSClient", return_value=fake_client):
@@ -140,7 +140,7 @@ class TestCollectSeries:
         assert row.source == "bls"
 
     def test_first_write_has_revision_number_zero(
-        self, engine: Engine, session_factory: type[Session]
+        self, engine: Engine, session_factory: sessionmaker[Session]
     ) -> None:
         fake_client = _fake_client([_make_bls_response("LNS14000000", [("2024", "M01", "3.7")])])
 
@@ -157,7 +157,7 @@ class TestCollectSeries:
         assert row.revision_number == 0
 
     def test_frequency_and_units_come_from_series_registry(
-        self, engine: Engine, session_factory: type[Session]
+        self, engine: Engine, session_factory: sessionmaker[Session]
     ) -> None:
         fake_client = _fake_client([_make_bls_response("LNS14000000", [("2024", "M01", "3.7")])])
 
@@ -182,7 +182,7 @@ class TestCollectSeries:
 
 class TestRevisionDetection:
     def test_revised_value_stored_with_incremented_revision_number(
-        self, engine: Engine, session_factory: type[Session]
+        self, engine: Engine, session_factory: sessionmaker[Session]
     ) -> None:
         """If stored value differs from incoming value, insert a new row with revision_number+1."""
         # First collection: value = 3.7
@@ -219,7 +219,7 @@ class TestRevisionDetection:
         assert rows[1].value == pytest.approx(3.8)
 
     def test_unchanged_value_does_not_add_revision(
-        self, engine: Engine, session_factory: type[Session]
+        self, engine: Engine, session_factory: sessionmaker[Session]
     ) -> None:
         """If the value is unchanged, no new revision row is written."""
         for _ in range(2):
@@ -250,7 +250,7 @@ class TestRevisionDetection:
 
 class TestIdempotency:
     def test_rerun_same_window_produces_no_duplicates(
-        self, engine: Engine, session_factory: type[Session]
+        self, engine: Engine, session_factory: sessionmaker[Session]
     ) -> None:
         observations = [("2024", "M01", "3.7"), ("2024", "M02", "3.9")]
 
@@ -277,7 +277,7 @@ class TestIdempotency:
 
 class TestFailureBehavior:
     def test_http_failure_records_failed_run_no_data(
-        self, engine: Engine, session_factory: type[Session]
+        self, engine: Engine, session_factory: sessionmaker[Session]
     ) -> None:
         fake_client = MagicMock()
         request = httpx.Request("POST", "https://api.bls.gov/publicAPI/v2/timeseries/data/")
@@ -314,7 +314,7 @@ class TestFailureBehavior:
 
 class TestBootstrapSeries:
     def test_bootstrap_requests_24_months_of_history(
-        self, engine: Engine, session_factory: type[Session]
+        self, engine: Engine, session_factory: sessionmaker[Session]
     ) -> None:
         """bootstrap_series should cover the last 24 months."""
         fake_client = MagicMock()
@@ -337,7 +337,7 @@ class TestBootstrapSeries:
         assert end_year == 2026
 
     def test_bootstrap_writes_rows_for_all_configured_series(
-        self, engine: Engine, session_factory: type[Session]
+        self, engine: Engine, session_factory: sessionmaker[Session]
     ) -> None:
         """bootstrap_series fetches every series in the SERIES registry."""
         from alphamind.data_sources.bls.series import SERIES

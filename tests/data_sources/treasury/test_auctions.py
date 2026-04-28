@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.persistence.models import Base, CollectionRuns, TreasuryAuctions
 from alphamind.persistence.session import make_engine, make_session_factory
@@ -28,14 +28,14 @@ def engine() -> Engine:
 
 
 @pytest.fixture()
-def session_factory(engine: Engine) -> type[Session]:
+def session_factory(engine: Engine) -> sessionmaker[Session]:
     """Session factory bound to in-memory engine."""
-    sf: type[Session] = make_session_factory(engine)
+    sf: sessionmaker[Session] = make_session_factory(engine)
     return sf
 
 
 @pytest.fixture()
-def fake_repo(engine: Engine, session_factory: type[Session]) -> Any:
+def fake_repo(engine: Engine, session_factory: sessionmaker[Session]) -> Any:
     """A test double for _DefaultRepo that uses the in-memory database."""
     from alphamind.persistence.models import CollectionRuns
 
@@ -126,7 +126,7 @@ class TestCollectAuctions:
     """collect_auctions writes correct rows to treasury_auctions."""
 
     def test_writes_rows_for_all_four_tenors(
-        self, session_factory: type[Session], fake_repo: Any
+        self, session_factory: sessionmaker[Session], fake_repo: Any
     ) -> None:
         """collect_auctions writes one row per auction across 2Y/5Y/10Y/30Y."""
         from alphamind.data_sources.treasury.auctions import collect_auctions
@@ -156,7 +156,9 @@ class TestCollectAuctions:
         tenors = {r.tenor for r in rows}
         assert tenors == {"2Y", "5Y", "10Y", "30Y"}
 
-    def test_auction_id_format(self, session_factory: type[Session], fake_repo: Any) -> None:
+    def test_auction_id_format(
+        self, session_factory: sessionmaker[Session], fake_repo: Any
+    ) -> None:
         """auction_id is {auction_date}_{tenor}."""
         from alphamind.data_sources.treasury.auctions import collect_auctions
 
@@ -178,7 +180,7 @@ class TestCollectAuctions:
         assert row is not None
         assert row.auction_id == "2026-03-15_10Y"
 
-    def test_field_mapping(self, session_factory: type[Session], fake_repo: Any) -> None:
+    def test_field_mapping(self, session_factory: sessionmaker[Session], fake_repo: Any) -> None:
         """Fields are correctly mapped from API names to schema column names."""
         from alphamind.data_sources.treasury.auctions import collect_auctions
 
@@ -232,7 +234,9 @@ class TestCollectAuctions:
 class TestIdempotency:
     """Re-running on the same window produces no duplicate rows."""
 
-    def test_rerun_does_not_duplicate(self, session_factory: type[Session], fake_repo: Any) -> None:
+    def test_rerun_does_not_duplicate(
+        self, session_factory: sessionmaker[Session], fake_repo: Any
+    ) -> None:
         """Second collect_auctions on same window leaves row count unchanged."""
         from alphamind.data_sources.treasury.auctions import collect_auctions
 
@@ -268,7 +272,7 @@ class TestFailureHandling:
     """On API failure, collection_runs records failed; no data rows written."""
 
     def test_api_error_records_failed_run(
-        self, session_factory: type[Session], fake_repo: Any
+        self, session_factory: sessionmaker[Session], fake_repo: Any
     ) -> None:
         """HTTP error marks collection_runs as failed and writes no auction rows."""
         from alphamind.data_sources.treasury.auctions import collect_auctions
@@ -304,7 +308,9 @@ class TestFailureHandling:
 class TestPagination:
     """collect_auctions follows pagination to retrieve all records."""
 
-    def test_fetches_multiple_pages(self, session_factory: type[Session], fake_repo: Any) -> None:
+    def test_fetches_multiple_pages(
+        self, session_factory: sessionmaker[Session], fake_repo: Any
+    ) -> None:
         """When API returns next-page link, all pages are fetched."""
         from alphamind.data_sources.treasury.auctions import collect_auctions
 
@@ -353,7 +359,9 @@ class TestPagination:
 class TestCollectAuctionsNoArgs:
     """collect_auctions is callable with no positional args (cron registry contract)."""
 
-    def test_callable_with_no_args(self, session_factory: type[Session], fake_repo: Any) -> None:
+    def test_callable_with_no_args(
+        self, session_factory: sessionmaker[Session], fake_repo: Any
+    ) -> None:
         page = _make_api_page([])
 
         with patch(
@@ -373,7 +381,7 @@ class TestBootstrapAuctions:
     """bootstrap_auctions covers 12 months of history."""
 
     def test_bootstrap_covers_12_months(
-        self, session_factory: type[Session], fake_repo: Any
+        self, session_factory: sessionmaker[Session], fake_repo: Any
     ) -> None:
         """bootstrap_auctions calls collect with a since date 12 months back."""
         from alphamind.data_sources.treasury import auctions

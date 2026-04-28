@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind.persistence.models import (
     Base,
@@ -33,13 +33,13 @@ _GET_TICKERS = f"{_COLLECTOR}._get_tickers"
 _NOW = f"{_COLLECTOR}._now"
 
 
-def _make_db() -> tuple[Engine, type[Session]]:
+def _make_db() -> tuple[Engine, sessionmaker[Session]]:
     engine = make_engine(":memory:")
     Base.metadata.create_all(engine)
     return engine, make_session_factory(engine)
 
 
-def _seed_universe(sf: type[Session], tickers: list[str]) -> None:
+def _seed_universe(sf: sessionmaker[Session], tickers: list[str]) -> None:
     """Insert minimal asset_universe rows so FK constraints hold."""
     from alphamind.persistence.models import AssetUniverse
 
@@ -297,7 +297,7 @@ class TestRateLimiter:
             acquired.append(provider)
             original(provider)
 
-        limiter.acquire = tracking
+        limiter.acquire = tracking  # type: ignore[method-assign]  # mock-method assignment
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -629,7 +629,7 @@ class TestRefreshTicker:
             acquired.append(provider)
             original(provider)
 
-        limiter.acquire = tracking
+        limiter.acquire = tracking  # type: ignore[method-assign]  # mock-method assignment
 
         with (
             patch(_FETCH_TICKER, return_value=_make_response()),
