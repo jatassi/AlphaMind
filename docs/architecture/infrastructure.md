@@ -109,21 +109,21 @@ Each pipeline invocation writes its full agent output chain to disk as readable 
     ├── 11-30-00_market_hours_rolling/
     │   ├── _summary.json              # Phase durations, status, commands issued
     │   ├── distillation/
-    │   │   ├── tech_sector.md          # Distillation output as packaged for the tech analyst
+    │   │   ├── tech_sector.md          # Distillation output as packaged for the tech researcher
     │   │   ├── financials_sector.md
     │   │   ├── energy_sector.md
     │   │   ├── portfolio_state.md
     │   │   └── regime.md               # Volatility regime classification
     │   ├── analysis/
-    │   │   ├── tech_semis_brief.md     # Sector analyst output
+    │   │   ├── tech_semis_brief.md     # Sector researcher output
     │   │   ├── financials_brief.md
     │   │   ├── energy_brief.md
-    │   │   ├── portfolio_brief.md
     │   │   ├── qualitative_brief.md
     │   │   ├── adaptive_research.md    # Investigation threads and findings
     │   │   └── synthesis.md            # Synthesizer output (primary decision layer input)
     │   ├── decision/
-    │   │   ├── trader_recommendations.md
+    │   │   ├── analyst_recommendations.md
+    │   │   ├── strategist_assessments.md
     │   │   └── pm_evaluation.md        # PM's reasoning + final OMS commands
     │   └── execution/
     │       └── commands.json           # Actual OMS commands submitted
@@ -133,7 +133,7 @@ Each pipeline invocation writes its full agent output chain to disk as readable 
         └── ...
 ```
 
-**The primary debugging and development tool.** During prompt iteration, walk the archive top-to-bottom: distillation produced → analyst interpreted → synthesizer highlighted → trader proposed → PM decided. Markdown is readable, diffable, greppable.
+**The primary debugging and development tool.** During prompt iteration, walk the archive top-to-bottom: distillation produced → sector researcher interpreted → synthesizer highlighted → analyst proposed → PM decided. Markdown is readable, diffable, greppable.
 
 **Retention:** Archive indefinitely during paper trading evaluation (a few MB per invocation, ~80 MB/day). Prune when disk space becomes a concern.
 

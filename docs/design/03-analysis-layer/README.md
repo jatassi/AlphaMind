@@ -13,7 +13,7 @@ LLM agents interpret outputs from the [data](../01-data-layer/README.md) and [di
 
 *Upstream relationship:* [Data layer](../01-data-layer/README.md) defines *what raw data is collected*; [distillation](../02-distillation-layer/README.md) defines *what is computed*; this layer defines *what LLM agents interpret*. Portfolio state (raw and derived metrics specified in the [data](../01-data-layer/internal/README.md) and [distillation](../02-distillation-layer/internal.md) layers) is consumed directly by decision-layer agents via tools; the [synthesizer](synthesizer.md) has lightweight portfolio-state tools for on-demand context during cross-domain synthesis.
 
-**Universal context broadcast:** Every analysis-layer agent (downstream — trader, PM) receives the volatility regime label from [distillation external.md §4](../02-distillation-layer/external.md). This flag changes how each agent interprets its data and decides.
+**Universal context broadcast:** Every analysis-layer agent (downstream — analyst, strategist, PM) receives the volatility regime label from [distillation external.md §4](../02-distillation-layer/external.md). This flag changes how each agent interprets its data and decides.
 
 ---
 

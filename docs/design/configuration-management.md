@@ -448,9 +448,9 @@ The bundle is **deterministic-only**: it controls two surfaces — the agent ros
 # pre_open.yaml — high-density: overnight news, pre-market flow, FOMC overnight moves
 agents:
   enabled:
-    - tech_semis_analyst
-    - financials_analyst
-    - energy_analyst
+    - tech_semis_researcher
+    - financials_researcher
+    - energy_researcher
     - qualitative_researcher
     - adaptive_researcher
     - synthesizer
@@ -472,9 +472,9 @@ qualitative_researcher:
 # off_hours_rolling.yaml — low-density: overnight rolling, signal density drops
 agents:
   enabled:
-    - tech_semis_analyst
-    - financials_analyst
-    - energy_analyst
+    - tech_semis_researcher
+    - financials_researcher
+    - energy_researcher
     - qualitative_researcher
     - synthesizer
     - analyst

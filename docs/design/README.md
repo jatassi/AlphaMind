@@ -147,7 +147,7 @@ Executes trades and records results.
 
 ### 06 — Risk guardrails (cross-cutting)
 
-Hard-coded programmatic constraints — not LLM-mediated. Enforced at multiple layers: trader advisory, PM judgment, execution engine hard stop.
+Hard-coded programmatic constraints — not LLM-mediated. Enforced at multiple layers: analyst advisory, PM judgment, execution engine hard stop.
 
 | Document | Description |
 |----------|-------------|

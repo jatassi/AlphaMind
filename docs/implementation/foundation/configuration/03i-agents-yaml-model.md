@@ -62,8 +62,6 @@ Out of scope:
 
 ## Notes
 
-**Agent-name canonicalization.** `configuration-management.md`'s worked example uses `tech_semis_analyst` / `_analyst` suffixes for the sector researchers, while `state-persistence.md § Agent calls` uses `_researcher` suffixes. The downstream domain-researcher implementation stories under `docs/implementation/03-analysis-layer/domain-researchers/` use `_researcher` (the prompt files at `prompts/analysis/{name}_researcher.md` follow this convention per their respective stories). This story locks the **`_researcher`** suffix because the prompt files and agent-call records both consume it. The configuration-management worked example is the divergent doc; subsequent edits to that doc should align.
-
 **Closed enum vs. open dict.** `AgentsConfig.agents` is keyed by the closed `AgentName` enum to make the per-agent slots a contract — adding a new agent requires editing the enum, which forces touches on every consuming story (04c modes, 04e run_types). Open dictionaries silently accept new keys, which is the wrong default for a roster of fixed agents.
 
 **Discriminated union.** Pydantic v2 supports tagged unions natively, but the discriminator here (adaptive-only fields) is structural rather than tagged. The model validator approach is simpler than declaring a Pydantic discriminator and equivalent for the validation goal.

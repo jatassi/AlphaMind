@@ -95,7 +95,7 @@ These items define what the decision-layer agents can see and do. Finish all of 
 ### Risk guardrails
 
 - [x] Rules & limits: concrete default values for every constraint category (position size, sector concentration, directional exposure, gross exposure, drawdown, correlation, Greeks, short exposure) with rationale for each value
-- [x] Rules & limits: three-tier enforcement mapping per rule (trader-advisory / PM-judgment / engine-authoritative)
+- [x] Rules & limits: three-tier enforcement mapping per rule (analyst-advisory / PM-judgment / engine-authoritative)
 - [x] Rules & limits: dual portfolio profiles ($1,500 primary for deployment validation, $100K full-system for architecture validation) with feature flags and structural constraints
 - [x] Breach behavior: forced reduction policy — per-rule classification of automatic mechanical reduction vs. flag-for-PM, with position selection logic and secondary breach checking
 - [x] Breach behavior: drawdown halt mode — daily halt (block new positions) plus progressive cumulative drawdown response (three tiers: constrained → heavily constrained → full halt with orderly wind-down)

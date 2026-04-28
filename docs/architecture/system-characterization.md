@@ -62,7 +62,7 @@ Sequencing layers, parallelism *within* layers (3 sector analysts + qualitative 
 
 ### B. LLM agent management
 
-7-8 distinct agents per invocation (3 sector analysts, qualitative researcher, adaptive researcher, synthesizer, trader, PM), each with its own context window, system prompt, and tool access. Mix of parallel and sequential. Adaptive researcher has a nested agentic loop; decision layer agents have retrieval tools fetching from a brief store. The heart of the system's complexity.
+9 distinct agents per invocation (3 sector researchers, qualitative researcher, adaptive researcher, synthesizer, analyst, strategist, PM), each with its own context window, system prompt, and tool access. Mix of parallel and sequential. Adaptive researcher has a nested agentic loop; decision layer agents have retrieval tools fetching from a brief store. The heart of the system's complexity.
 
 ### C. State management
 
@@ -83,4 +83,4 @@ Dozens of heterogeneous APIs (market data vendors, news, prediction markets) wit
 
 ### F. Observability and auditability
 
-Every decision must be traceable: PM approved → trader recommended → synthesizer highlighted → analyst flagged → distillation computed → raw data showed. Structured logging, brief archival, decision audit trails.
+Every decision must be traceable: PM approved → analyst recommended → synthesizer highlighted → sector researcher flagged → distillation computed → raw data showed. Structured logging, brief archival, decision audit trails.

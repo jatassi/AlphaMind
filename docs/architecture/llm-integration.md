@@ -45,16 +45,17 @@ Each invocation runs these agents with independent configuration:
 
 | Agent | Parallel group | Model (initial) | Tool access | Notes |
 |-------|---------------|-----------------|-------------|-------|
-| Tech/semis analyst | Analysis (parallel) | Sonnet | None | Reads distilled sector data, produces structured brief |
-| Financials analyst | Analysis (parallel) | Sonnet | None | Financials sector |
-| Energy analyst | Analysis (parallel) | Sonnet | None | Energy sector |
+| Tech/semis researcher | Analysis (parallel) | Sonnet | None | Reads distilled sector data, produces structured brief |
+| Financials researcher | Analysis (parallel) | Sonnet | None | Financials sector |
+| Energy researcher | Analysis (parallel) | Sonnet | None | Energy sector |
 | Qualitative researcher | Analysis (parallel) | Sonnet | None | Reads pre-collected qualitative data |
 | Adaptive researcher | Analysis (sequential) | Sonnet | Research tools (news, APIs, data pulls) | Agentic loop: triage anomalies → generate questions → investigate |
 | Synthesizer | Analysis (sequential) | Sonnet | None | Reads all briefs, produces unified snapshot |
-| Trader agent | Decision (sequential) | Opus | Brief retrieval | Reads synthesis, drills into source briefs on demand |
-| PM agent | Decision (sequential) | Opus | Brief retrieval, OMS command | Evaluates trader proposals, issues execution commands |
+| Analyst | Decision (parallel pair) | Opus | Brief retrieval, guardrail validation | Reads synthesis, proposes new-entry trade recommendations |
+| Strategist | Decision (parallel pair) | Opus | Brief retrieval, guardrail validation | Reads synthesis + portfolio state, produces per-position assessments |
+| Portfolio manager | Decision (sequential after pair) | Opus | Brief retrieval, guardrail validation, OMS command | Evaluates analyst and strategist proposals, issues execution commands |
 
-**Model rationale:** Sector analysts, qualitative researcher, and synthesizer do structured analytical work where Sonnet suffices. Trader and PM make high-stakes judgment calls (trade selection, risk evaluation, position sizing) where Opus's stronger reasoning justifies the slower speed. Models swap per-agent via `ClaudeAgentOptions` without code changes.
+**Model rationale:** Sector researchers, qualitative researcher, and synthesizer do structured analytical work where Sonnet suffices. The decision-layer trio (analyst, strategist, portfolio manager) makes high-stakes judgment calls (trade selection, position management, risk evaluation, sizing) where Opus's stronger reasoning justifies the slower speed. Models swap per-agent via `ClaudeAgentOptions` without code changes.
 
 ---
 
@@ -66,9 +67,9 @@ Each invocation runs these agents with independent configuration:
 async def run_analysis_layer(distillation_output):
     # Parallel group: sector analysts + qualitative
     sector_briefs, qual_brief = await asyncio.gather(
-        run_agent("tech_semis_analyst", distillation_output.tech_sector),
-        run_agent("financials_analyst", distillation_output.financials_sector),
-        run_agent("energy_analyst", distillation_output.energy_sector),
+        run_agent("tech_semis_researcher", distillation_output.tech_sector),
+        run_agent("financials_researcher", distillation_output.financials_sector),
+        run_agent("energy_researcher", distillation_output.energy_sector),
         run_agent("qualitative_researcher", distillation_output.qualitative),
     )
 
@@ -82,10 +83,14 @@ async def run_analysis_layer(distillation_output):
 
     return synthesis
 
-async def run_decision_layer(synthesis):
-    # Sequential: trader then PM
-    trade_recommendations = await run_agent("trader", synthesis)
-    pm_commands = await run_agent("pm", synthesis, trade_recommendations)
+async def run_decision_layer(synthesis, portfolio_state):
+    # Parallel pair: analyst (new entries) + strategist (existing positions)
+    analyst_recs, strategist_assessments = await asyncio.gather(
+        run_agent("analyst", synthesis),
+        run_agent("strategist", synthesis, portfolio_state),
+    )
+    pm_commands = await run_agent("portfolio_manager",
+        synthesis, analyst_recs, strategist_assessments, portfolio_state)
     return pm_commands
 ```
 
@@ -94,7 +99,7 @@ async def run_decision_layer(synthesis):
 Tools are Python functions registered as MCP servers:
 
 ```python
-# Brief retrieval tool — used by trader and PM agents
+# Brief retrieval tool — used by analyst, strategist, and portfolio manager
 @tool("retrieve_brief", "Retrieve analysis brief by reference ID",
       {"ref_id": str})
 async def retrieve_brief(args):
@@ -122,14 +127,15 @@ System prompts load from files, one per agent role:
 ```
 prompts/
   analysis/
-    tech_semis_analyst.md
-    financials_analyst.md
-    energy_analyst.md
+    tech_semis_researcher.md
+    financials_researcher.md
+    energy_researcher.md
     qualitative_researcher.md
     adaptive_researcher.md
     synthesizer.md
   decision/
-    trader.md
+    analyst.md
+    strategist.md
     pm.md
 ```
 
