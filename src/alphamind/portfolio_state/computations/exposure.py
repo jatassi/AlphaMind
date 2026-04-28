@@ -119,8 +119,6 @@ def compute_directional_exposure(
     return DirectionalExposure(
         total_long_delta_adjusted_usd=total_long,
         total_short_delta_adjusted_usd=total_short,
-        net_directional_pct_of_portfolio=_pct(
-            total_long - total_short, total_portfolio_value_usd
-        ),
+        net_directional_pct_of_portfolio=_pct(total_long - total_short, total_portfolio_value_usd),
         gross_pct_of_portfolio=_pct(total_long + total_short, total_portfolio_value_usd),
     )

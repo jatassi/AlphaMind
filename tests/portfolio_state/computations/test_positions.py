@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -78,14 +78,14 @@ def _equity_position(
     direction: Direction = Direction.LONG,
     avg_cost: float = 100.0,
 ) -> PositionRecord:
-    short_kwargs = (
-        {
-            "borrow_rate_pct": 0.5,
-            "locate_status": LocateStatus.LOCATED,
-            "margin_held_usd": 500.0,
-        }
-        if direction == Direction.SHORT
-        else {}
+    is_short = direction == Direction.SHORT
+    equity_details = EquityPositionDetails(
+        ticker="AAPL",
+        share_count=share_count,
+        average_cost_basis_per_share=avg_cost,
+        borrow_rate_pct=0.5 if is_short else None,
+        locate_status=LocateStatus.LOCATED if is_short else None,
+        margin_held_usd=500.0 if is_short else None,
     )
     return PositionRecord(
         position_id="pos-001",
@@ -95,12 +95,7 @@ def _equity_position(
         direction=direction,
         entry_timestamp=_NOW,
         instrument_type=InstrumentType.EQUITY,
-        equity_details=EquityPositionDetails(
-            ticker="AAPL",
-            share_count=share_count,
-            average_cost_basis_per_share=avg_cost,
-            **short_kwargs,
-        ),
+        equity_details=equity_details,
         execution_history=(_fill(),),
         realized_pnl_to_date_usd=None,
         current_market_value_usd=1000.0,
@@ -132,7 +127,7 @@ def _options_details(
     return OptionsPositionDetails(
         underlying_ticker="AAPL",
         strike_price=150.0,
-        expiration_date=datetime(2025, 3, 21).date(),
+        expiration_date=date(2025, 3, 21),
         contract_type=contract_type,
         contract_count=contract_count,
         contract_multiplier=contract_multiplier,
@@ -234,8 +229,9 @@ def _strategy_position(
 def _bracket(
     legs: list[tuple[BracketLegType, str, BracketLegEnforcement | None]],
 ) -> BracketRecord:
-    """Build a BracketRecord with the given legs. Each entry: (leg_type, trigger_condition, enforcement).
-    If enforcement is None, use MECHANICAL for TAKE_PROFIT/PRICE_STOP/TIME_EXPIRATION, else ADVISORY.
+    """Build a BracketRecord. Each leg entry: (leg_type, trigger_condition, enforcement).
+
+    enforcement=None → MECHANICAL for TAKE_PROFIT/PRICE_STOP/TIME_EXPIRATION, else ADVISORY.
     """
     bracket_legs = []
     for i, (leg_type, trigger, enforcement) in enumerate(legs):
@@ -377,14 +373,14 @@ class TestComputePositionAgeHours:
         assert result < 0.0
 
     def test_mixed_tz_aware_naive_raises(self) -> None:
-        naive = datetime(2025, 1, 15, 12, 0, 0)  # no tzinfo
         aware = datetime(2025, 1, 15, 12, 0, 0, tzinfo=UTC)
+        naive = aware.replace(tzinfo=None)
         with pytest.raises((TypeError, ValueError)):
             compute_position_age_hours(naive, aware)
 
     def test_naive_entry_aware_now_raises(self) -> None:
-        naive = datetime(2025, 1, 15, 10, 0, 0)
         aware = datetime(2025, 1, 15, 12, 0, 0, tzinfo=UTC)
+        naive = datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC).replace(tzinfo=None)
         with pytest.raises((TypeError, ValueError)):
             compute_position_age_hours(naive, aware)
 
@@ -413,7 +409,7 @@ class TestComputeUnrealizedPnlUsd:
         assert result == pytest.approx(-200.0)
 
     def test_short_profit_when_price_falls(self) -> None:
-        # Short: cost_basis was 1000, now market_value (price×qty) is -800
+        # Short: cost_basis was 1000, now market_value (price * qty) is -800
         result = compute_unrealized_pnl_usd(
             market_value_usd=-800.0,
             cost_basis_usd=1000.0,
@@ -694,7 +690,9 @@ class TestComputeStrategyDeltaAdjustedExposureUsd:
     def test_missing_leg_raises_missing_leg_price_error(self) -> None:
         pos = _strategy_position([("leg-A", 1.0, 100.0, 0.5), ("leg-B", 2.0, 50.0, -0.3)])
         with pytest.raises(MissingLegPriceError):
-            compute_strategy_delta_adjusted_exposure_usd(pos, {"leg-A": _price(200.0, ticker="leg-A")})
+            compute_strategy_delta_adjusted_exposure_usd(
+                pos, {"leg-A": _price(200.0, ticker="leg-A")}
+            )
 
 
 # ---------------------------------------------------------------------------

@@ -46,8 +46,7 @@ def compute_order_age_hours(submission_timestamp: datetime, now: datetime) -> fl
     May return negative when now < submission_timestamp.
     """
     sub_aware = (
-        submission_timestamp.tzinfo is not None
-        and submission_timestamp.utcoffset() is not None
+        submission_timestamp.tzinfo is not None and submission_timestamp.utcoffset() is not None
     )
     now_aware = now.tzinfo is not None and now.utcoffset() is not None
     if sub_aware != now_aware:

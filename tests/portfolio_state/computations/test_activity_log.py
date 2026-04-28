@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -13,15 +13,15 @@ from alphamind.portfolio_state.records.activity_log import (
     EventType,
     PMDecisionDetail,
     PMVerdict,
-    PositionOpenMechanism,
     PositionOpenedDetail,
+    PositionOpenMechanism,
 )
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
 
-_UTC = timezone.utc
+_UTC = UTC
 
 
 def _pm_detail() -> PMDecisionDetail:
@@ -444,8 +444,8 @@ def test_filter_by_timestamp_range_reversed_range_returns_empty() -> None:
 def test_filter_by_timestamp_range_mixed_tz_raises() -> None:
     from alphamind.portfolio_state.computations.activity_log import filter_by_timestamp_range
 
-    naive = datetime(2024, 1, 1, 12, 0, 0)  # no tzinfo
     aware = datetime(2024, 1, 1, 12, 0, 0, tzinfo=_UTC)
+    naive = aware.replace(tzinfo=None)
 
     with pytest.raises(ValueError):
         filter_by_timestamp_range((), start=naive, end=aware)
@@ -475,9 +475,7 @@ def test_intra_invocation_changelog_equivalence() -> None:
     e2 = _pos_entry(entry_id="e2", invocation_id="inv-B")
     entries = (e1, e2)
 
-    assert intra_invocation_changelog(entries, "inv-A") == filter_by_invocation_id(
-        entries, "inv-A"
-    )
+    assert intra_invocation_changelog(entries, "inv-A") == filter_by_invocation_id(entries, "inv-A")
 
 
 # ---------------------------------------------------------------------------
@@ -740,38 +738,32 @@ def test_all_functions_deterministic() -> None:
     e2 = _pos_entry(entry_id="e2", timestamp=base + timedelta(hours=1))
     entries = (e1, e2)
 
-    assert filter_by_invocation_id(entries, "inv-1") == filter_by_invocation_id(
-        entries, "inv-1"
-    )
+    assert filter_by_invocation_id(entries, "inv-1") == filter_by_invocation_id(entries, "inv-1")
     assert filter_by_event_type(entries, EventType.PM_DECISION) == filter_by_event_type(
         entries, EventType.PM_DECISION
     )
     assert filter_by_event_types(
         entries, frozenset({EventType.PM_DECISION})
     ) == filter_by_event_types(entries, frozenset({EventType.PM_DECISION}))
-    assert filter_by_event_group(
+    assert filter_by_event_group(entries, EventGroup.PM_DECISION) == filter_by_event_group(
         entries, EventGroup.PM_DECISION
-    ) == filter_by_event_group(entries, EventGroup.PM_DECISION)
-    assert filter_by_source(
+    )
+    assert filter_by_source(entries, EventSource.FILL_PROCESSOR) == filter_by_source(
         entries, EventSource.FILL_PROCESSOR
-    ) == filter_by_source(entries, EventSource.FILL_PROCESSOR)
-    assert filter_by_position_id(entries, "pos-1") == filter_by_position_id(
-        entries, "pos-1"
     )
+    assert filter_by_position_id(entries, "pos-1") == filter_by_position_id(entries, "pos-1")
     assert filter_by_order_id(entries, "ord-1") == filter_by_order_id(entries, "ord-1")
-    assert filter_by_thesis_id(entries, "thesis-1") == filter_by_thesis_id(
-        entries, "thesis-1"
-    )
-    assert filter_by_timestamp_range(
+    assert filter_by_thesis_id(entries, "thesis-1") == filter_by_thesis_id(entries, "thesis-1")
+    assert filter_by_timestamp_range(entries, start=None, end=None) == filter_by_timestamp_range(
         entries, start=None, end=None
-    ) == filter_by_timestamp_range(entries, start=None, end=None)
+    )
     assert intra_invocation_changelog(entries, "inv-1") == intra_invocation_changelog(
         entries, "inv-1"
     )
     assert pm_decision_log(entries) == pm_decision_log(entries)
-    assert position_modification_trail(
+    assert position_modification_trail(entries, ("pos-1",)) == position_modification_trail(
         entries, ("pos-1",)
-    ) == position_modification_trail(entries, ("pos-1",))
+    )
     assert recent_pm_decisions_for_position(
         entries, "pos-1", 1
     ) == recent_pm_decisions_for_position(entries, "pos-1", 1)

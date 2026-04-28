@@ -25,6 +25,15 @@ from alphamind.portfolio_state.records.positions import (
 )
 from alphamind.portfolio_state.snapshot import DirectionalExposure, SectorExposureEntry
 
+
+def _resolve_tech(_: PositionRecord) -> str | None:
+    return "tech"
+
+
+def _resolve_none(_: PositionRecord) -> str | None:
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Test fixtures
 # ---------------------------------------------------------------------------
@@ -233,7 +242,7 @@ class TestComputeSectorExposureHappyPath:
     def test_imports_sector_exposure_entry_from_snapshot(self) -> None:
         """SectorExposureEntry comes from snapshot, not redeclared."""
         nvda = _make_long_equity("POS-NVDA", "NVDA", 10_000.0)
-        resolver: SectorResolver = lambda pos: "tech"  # noqa: E731
+        resolver: SectorResolver = _resolve_tech
         result = compute_sector_exposure((nvda,), resolver, 100_000.0)
         assert isinstance(result[0], SectorExposureEntry)
 
@@ -242,7 +251,7 @@ class TestComputeSectorExposureUnclassified:
     def test_none_resolver_aggregates_under_unclassified(self) -> None:
         """Position with resolver returning None -> UNCLASSIFIED."""
         pos = _make_long_equity("POS-UNKNOWN", "XYZ", 3_000.0)
-        resolver: SectorResolver = lambda _: None  # noqa: E731
+        resolver: SectorResolver = _resolve_none
         result = compute_sector_exposure((pos,), resolver, 50_000.0)
 
         assert len(result) == 1
@@ -268,7 +277,7 @@ class TestComputeSectorExposureUnclassified:
 
 class TestComputeSectorExposureEmpty:
     def test_empty_portfolio_returns_empty_tuple(self) -> None:
-        resolver: SectorResolver = lambda _: "tech"  # noqa: E731
+        resolver: SectorResolver = _resolve_tech
         result = compute_sector_exposure((), resolver, 100_000.0)
         assert result == ()
 
@@ -276,7 +285,7 @@ class TestComputeSectorExposureEmpty:
 class TestComputeSectorExposureZeroTotal:
     def test_zero_total_returns_zero_percentages(self) -> None:
         pos = _make_long_equity("POS-001", "NVDA", 10_000.0)
-        resolver: SectorResolver = lambda _: "tech"  # noqa: E731
+        resolver: SectorResolver = _resolve_tech
         result = compute_sector_exposure((pos,), resolver, 0.0)
 
         assert len(result) == 1
@@ -287,7 +296,7 @@ class TestComputeSectorExposureZeroTotal:
 class TestComputeSectorExposureNegativeTotal:
     def test_negative_total_raises_value_error(self) -> None:
         pos = _make_long_equity("POS-001", "NVDA", 10_000.0)
-        resolver: SectorResolver = lambda _: "tech"  # noqa: E731
+        resolver: SectorResolver = _resolve_tech
         with pytest.raises(ValueError, match="total_portfolio_value_usd"):
             compute_sector_exposure((pos,), resolver, -1.0)
 
@@ -297,7 +306,7 @@ class TestComputeSectorExposureUnenriched:
         pos = _make_long_equity("POS-UNENRICHED", "NVDA", 0.0)
         # Bypass pydantic to inject None
         unenriched = pos.model_copy(update={"delta_adjusted_exposure_usd": None})
-        resolver: SectorResolver = lambda _: "tech"  # noqa: E731
+        resolver: SectorResolver = _resolve_tech
         with pytest.raises(ValueError, match="POS-UNENRICHED"):
             compute_sector_exposure((unenriched,), resolver, 100_000.0)
 
@@ -323,13 +332,13 @@ class TestComputeSectorExposureOrdering:
 class TestComputeSectorExposureLongShortRatio:
     def test_ratio_none_when_no_short_positions(self) -> None:
         pos = _make_long_equity("POS-001", "NVDA", 10_000.0)
-        resolver: SectorResolver = lambda _: "tech"  # noqa: E731
+        resolver: SectorResolver = _resolve_tech
         result = compute_sector_exposure((pos,), resolver, 100_000.0)
         assert result[0].long_short_ratio is None
 
     def test_ratio_none_when_no_long_positions(self) -> None:
         pos = _make_short_equity("POS-001", "AMD", -8_000.0)
-        resolver: SectorResolver = lambda _: "tech"  # noqa: E731
+        resolver: SectorResolver = _resolve_tech
         result = compute_sector_exposure((pos,), resolver, 100_000.0)
         # short bucket has 8000, long bucket has 0 -> ratio is None (division by zero)
         assert result[0].long_short_ratio is None
@@ -337,7 +346,7 @@ class TestComputeSectorExposureLongShortRatio:
     def test_ratio_finite_when_both_long_and_short(self) -> None:
         long_pos = _make_long_equity("POS-LONG", "NVDA", 12_000.0)
         short_pos = _make_short_equity("POS-SHORT", "AMD", -4_000.0)
-        resolver: SectorResolver = lambda _: "tech"  # noqa: E731
+        resolver: SectorResolver = _resolve_tech
         result = compute_sector_exposure((long_pos, short_pos), resolver, 100_000.0)
         assert result[0].long_short_ratio == pytest.approx(3.0)  # 12000/4000
 
@@ -363,9 +372,7 @@ class TestComputeDirectionalExposureHappyPath:
         assert result.net_directional_pct_of_portfolio == pytest.approx(
             (35_000.0 - 8_000.0) / total * 100
         )
-        assert result.gross_pct_of_portfolio == pytest.approx(
-            (35_000.0 + 8_000.0) / total * 100
-        )
+        assert result.gross_pct_of_portfolio == pytest.approx((35_000.0 + 8_000.0) / total * 100)
 
     def test_imports_directional_exposure_from_snapshot(self) -> None:
         """DirectionalExposure comes from snapshot, not redeclared."""
@@ -423,11 +430,12 @@ class TestDeterminism:
     def test_sector_exposure_deterministic(self) -> None:
         nvda = _make_long_equity("POS-NVDA", "NVDA", 20_000.0)
         amd = _make_short_equity("POS-AMD", "AMD", -5_000.0)
-        resolver: SectorResolver = lambda pos: (  # noqa: E731
-            "tech"
-            if pos.equity_details and pos.equity_details.ticker in ("NVDA", "AMD")
-            else None
-        )
+
+        def resolver(pos: PositionRecord) -> str | None:
+            if pos.equity_details and pos.equity_details.ticker in ("NVDA", "AMD"):
+                return "tech"
+            return None
+
         total = 100_000.0
         result_a = compute_sector_exposure((nvda, amd), resolver, total)
         result_b = compute_sector_exposure((nvda, amd), resolver, total)

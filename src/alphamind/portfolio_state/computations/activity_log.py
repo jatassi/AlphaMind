@@ -61,7 +61,7 @@ def filter_by_position_id(
     entries: tuple[ActivityLogEntry, ...],
     position_id: str,
 ) -> tuple[ActivityLogEntry, ...]:
-    """Return entries whose position_id exactly matches; entries with position_id None are excluded."""
+    """Return entries whose position_id matches; entries with position_id None are excluded."""
     return tuple(e for e in entries if e.position_id == position_id)
 
 
@@ -93,10 +93,13 @@ def filter_by_timestamp_range(
     mixed tz-aware / tz-naive inputs.  A reversed range (start > end) returns
     an empty tuple.
     """
-    if start is not None and end is not None:
-        if (start.tzinfo is not None) != (end.tzinfo is not None):
-            msg = "start and end must both be tz-aware or both be tz-naive"
-            raise ValueError(msg)
+    if (
+        start is not None
+        and end is not None
+        and (start.tzinfo is not None) != (end.tzinfo is not None)
+    ):
+        msg = "start and end must both be tz-aware or both be tz-naive"
+        raise ValueError(msg)
 
     return tuple(
         e

@@ -19,7 +19,7 @@ from alphamind.portfolio_state.records.positions import (
 
 
 class MissingLegPriceError(KeyError):
-    """Raised by strategy-variant functions when a leg_id is absent from the supplied prices dict."""
+    """Raised by strategy-variant functions when a leg_id is missing from the supplied dict."""
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +309,7 @@ def compute_delta_adjusted_exposure_usd(position: PositionRecord, price: PriceQu
     EQUITY LONG:  +share_count * price_usd  (delta = +1)
     EQUITY SHORT: -share_count * price_usd  (delta = -1)
     OPTIONS:      contract_count * contract_multiplier * greeks.delta * underlying_price_usd
-                  (price must be the underlying's price; the assembler resolves option vs underlying)
+                  (price must be the underlying's price; assembler resolves option vs underlying)
 
     Raises ValueError for STRATEGY positions — use compute_strategy_delta_adjusted_exposure_usd.
     """
