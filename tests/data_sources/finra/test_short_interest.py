@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock
 
 import httpx
 import pytest
+from sqlalchemy.orm import Session
 
 from alphamind.persistence.models import AssetUniverse, Base, ShortInterestSnapshot
 from alphamind.persistence.session import make_engine, make_session_factory
@@ -20,10 +22,10 @@ _SETTLEMENT_YYYYMMDD = "20260115"
 
 
 @pytest.fixture()
-def session_factory():
+def session_factory() -> type[Session]:
     engine = make_engine(":memory:")
     Base.metadata.create_all(engine)
-    sf = make_session_factory(engine)
+    sf: type[Session] = make_session_factory(engine)
     with sf() as sess:
         sess.add(
             AssetUniverse(
@@ -42,7 +44,7 @@ def session_factory():
     return sf
 
 
-def _csv_body(rows: list[dict]) -> str:
+def _csv_body(rows: list[dict[str, Any]]) -> str:
     """Build a minimal FINRA short interest CSV body."""
     header = (
         "settlementDate,symbol,currentShortPositionQuantity,"
@@ -90,7 +92,7 @@ def _path_for(yyyymmdd: str) -> str:
 
 
 class TestCollectShortInterest:
-    def test_writes_rows_with_source_finra(self, session_factory) -> None:
+    def test_writes_rows_with_source_finra(self, session_factory: type[Session]) -> None:
         """New settlement-date file rows are written with source='finra'."""
         from alphamind.data_sources.finra.short_interest import collect_short_interest
 
@@ -123,7 +125,7 @@ class TestCollectShortInterest:
             assert row.current_short_shares == 100_000
             assert row.source == "finra"
 
-    def test_filters_non_universe_tickers(self, session_factory) -> None:
+    def test_filters_non_universe_tickers(self, session_factory: type[Session]) -> None:
         """Rows for tickers not in asset_universe are not written."""
         from alphamind.data_sources.finra.short_interest import collect_short_interest
 
@@ -165,7 +167,7 @@ class TestCollectShortInterest:
             assert "UNKNOWN_XYZ" not in tickers
             assert "AAPL" in tickers
 
-    def test_idempotent_rerun(self, session_factory) -> None:
+    def test_idempotent_rerun(self, session_factory: type[Session]) -> None:
         """Re-running on the same settlement date produces no duplicate rows."""
         from alphamind.data_sources.finra.short_interest import collect_short_interest
 
@@ -201,7 +203,7 @@ class TestCollectShortInterest:
         with session_factory() as sess:
             assert sess.query(ShortInterestSnapshot).count() == 1
 
-    def test_404_treated_as_not_yet_published(self, session_factory) -> None:
+    def test_404_treated_as_not_yet_published(self, session_factory: type[Session]) -> None:
         """A 404 on a settlement-date file is silently skipped — no rows, no error."""
         from alphamind.data_sources.finra.short_interest import collect_short_interest
 
@@ -217,7 +219,9 @@ class TestCollectShortInterest:
         with session_factory() as sess:
             assert sess.query(ShortInterestSnapshot).count() == 0
 
-    def test_on_failure_collection_runs_records_failed(self, session_factory) -> None:
+    def test_on_failure_collection_runs_records_failed(
+        self, session_factory: type[Session]
+    ) -> None:
         """Unexpected error causes collection_runs to record 'failed'."""
         from alphamind.data_sources.finra.short_interest import collect_short_interest
 

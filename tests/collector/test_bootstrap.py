@@ -7,6 +7,8 @@ All vendor bootstrap_* functions are mocked — no real API calls or DB writes.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -35,7 +37,7 @@ _VENDOR_PATCHES = {
 }
 
 
-def _patch_all_vendors():
+def _patch_all_vendors() -> dict[str, Any]:
     """Return a context manager that patches all vendor functions."""
     return {k: patch(v) for k, v in _VENDOR_PATCHES.items()}
 
@@ -45,7 +47,7 @@ def _patch_all_vendors():
 # ---------------------------------------------------------------------------
 
 
-def test_run_all_is_callable():
+def test_run_all_is_callable() -> None:
     patches = _patch_all_vendors()
     for p in patches.values():
         p.__enter__()
@@ -63,7 +65,7 @@ def test_run_all_is_callable():
 # ---------------------------------------------------------------------------
 
 
-def test_run_all_calls_all_vendors():
+def test_run_all_calls_all_vendors() -> None:
     with (
         patch("alphamind.collector.bootstrap.collect_reference") as mock_ref,
         patch("alphamind.collector.bootstrap._seed_asset_universe") as mock_seed,
@@ -110,11 +112,11 @@ def test_run_all_calls_all_vendors():
 # ---------------------------------------------------------------------------
 
 
-def test_run_all_lifecycle_order():
+def test_run_all_lifecycle_order() -> None:
     call_order: list[str] = []
 
-    def _make_side(name: str):
-        def _fn(*args, **kwargs):
+    def _make_side(name: str) -> Callable[..., None]:
+        def _fn(*args: object, **kwargs: object) -> None:
             call_order.append(name)
 
         return _fn
@@ -198,11 +200,11 @@ def test_run_all_lifecycle_order():
 # ---------------------------------------------------------------------------
 
 
-def test_seed_runs_before_vendor_api():
+def test_seed_runs_before_vendor_api() -> None:
     call_order: list[str] = []
 
-    def _make_side(name: str):
-        def _fn(*args, **kwargs):
+    def _make_side(name: str) -> Callable[..., None]:
+        def _fn(*args: object, **kwargs: object) -> None:
             call_order.append(name)
 
         return _fn
@@ -244,7 +246,7 @@ def test_seed_runs_before_vendor_api():
 # ---------------------------------------------------------------------------
 
 
-def test_exception_in_vendor_does_not_abort(caplog):
+def test_exception_in_vendor_does_not_abort(caplog: pytest.LogCaptureFixture) -> None:
     with (
         patch("alphamind.collector.bootstrap._seed_asset_universe"),
         patch("alphamind.collector.bootstrap.collect_reference"),
@@ -283,7 +285,7 @@ def test_exception_in_vendor_does_not_abort(caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_only_polygon_runs_polygon_steps_only():
+def test_only_polygon_runs_polygon_steps_only() -> None:
     with (
         patch("alphamind.collector.bootstrap._seed_asset_universe") as mock_seed,
         patch("alphamind.collector.bootstrap.collect_reference") as mock_ref,
@@ -319,7 +321,7 @@ def test_only_polygon_runs_polygon_steps_only():
 # ---------------------------------------------------------------------------
 
 
-def test_only_fred_runs_fred_steps():
+def test_only_fred_runs_fred_steps() -> None:
     with (
         patch("alphamind.collector.bootstrap._seed_asset_universe") as mock_seed,
         patch("alphamind.collector.bootstrap.collect_reference") as mock_ref,
@@ -355,7 +357,7 @@ def test_only_fred_runs_fred_steps():
 # ---------------------------------------------------------------------------
 
 
-def test_only_eia_runs_eia_only():
+def test_only_eia_runs_eia_only() -> None:
     with (
         patch("alphamind.collector.bootstrap._seed_asset_universe") as mock_seed,
         patch("alphamind.collector.bootstrap.collect_reference") as mock_ref,
@@ -391,7 +393,7 @@ def test_only_eia_runs_eia_only():
 # ---------------------------------------------------------------------------
 
 
-def test_progress_logging_emits_start_and_end(caplog):
+def test_progress_logging_emits_start_and_end(caplog: pytest.LogCaptureFixture) -> None:
     with (
         patch("alphamind.collector.bootstrap._seed_asset_universe"),
         patch("alphamind.collector.bootstrap.collect_reference"),
@@ -432,7 +434,7 @@ def test_progress_logging_emits_start_and_end(caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_unknown_vendor_raises():
+def test_unknown_vendor_raises() -> None:
     with (
         patch("alphamind.collector.bootstrap._seed_asset_universe"),
         patch("alphamind.collector.bootstrap.collect_reference"),

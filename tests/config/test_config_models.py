@@ -1,6 +1,7 @@
 """Tests for src/alphamind/config/models.py — configuration scaffolding (story 03a)."""
 
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -10,8 +11,8 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 CONFIG_DIR = REPO_ROOT / "config"
 
 
-def load_yaml(path: Path) -> dict:  # type: ignore[type-arg]
-    return yaml.safe_load(path.read_text())
+def load_yaml(path: Path) -> dict[str, Any]:
+    return cast(dict[str, Any], yaml.safe_load(path.read_text()))
 
 
 # ---------------------------------------------------------------------------

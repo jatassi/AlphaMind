@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
+from sqlalchemy.orm import Session
 
 from alphamind.persistence.models import AssetUniverse, Base, ShortVolumeDaily
 from alphamind.persistence.session import make_engine, make_session_factory
@@ -22,10 +23,10 @@ _TRADE_DATE_ISO = "2026-01-23"
 
 
 @pytest.fixture()
-def session_factory():
+def session_factory() -> type[Session]:
     engine = make_engine(":memory:")
     Base.metadata.create_all(engine)
-    sf = make_session_factory(engine)
+    sf: type[Session] = make_session_factory(engine)
     with sf() as sess:
         sess.add(
             AssetUniverse(
@@ -84,7 +85,7 @@ def _path_for(trade_date: date) -> str:
 
 
 class TestCollectShortVolume:
-    def test_writes_rows_with_cnms_market(self, session_factory) -> None:
+    def test_writes_rows_with_cnms_market(self, session_factory: type[Session]) -> None:
         """Rows are written with market='cnms' and source='finra'."""
         from alphamind.data_sources.finra.short_volume import collect_short_volume
 
@@ -107,7 +108,7 @@ class TestCollectShortVolume:
             assert row.market == "cnms"
             assert row.source == "finra"
 
-    def test_filters_non_universe_tickers(self, session_factory) -> None:
+    def test_filters_non_universe_tickers(self, session_factory: type[Session]) -> None:
         """Rows for tickers not in asset_universe are not written."""
         from alphamind.data_sources.finra.short_volume import collect_short_volume
 
@@ -134,7 +135,7 @@ class TestCollectShortVolume:
             assert "UNKNOWN_XYZ" not in tickers
             assert "AAPL" in tickers
 
-    def test_idempotent_rerun(self, session_factory) -> None:
+    def test_idempotent_rerun(self, session_factory: type[Session]) -> None:
         """Re-running on the same date produces no duplicate rows."""
         from alphamind.data_sources.finra.short_volume import collect_short_volume
 
@@ -160,7 +161,7 @@ class TestCollectShortVolume:
         with session_factory() as sess:
             assert sess.query(ShortVolumeDaily).count() == 1
 
-    def test_404_treated_as_not_yet_published(self, session_factory) -> None:
+    def test_404_treated_as_not_yet_published(self, session_factory: type[Session]) -> None:
         """A 404 on a future-dated file is silently skipped — no rows, no error."""
         from alphamind.data_sources.finra.short_volume import collect_short_volume
 
@@ -177,7 +178,9 @@ class TestCollectShortVolume:
         with session_factory() as sess:
             assert sess.query(ShortVolumeDaily).count() == 0
 
-    def test_on_failure_collection_runs_records_failed(self, session_factory) -> None:
+    def test_on_failure_collection_runs_records_failed(
+        self, session_factory: type[Session]
+    ) -> None:
         """Unexpected error causes collection_runs to record 'failed'."""
         from alphamind.data_sources.finra.short_volume import collect_short_volume
 

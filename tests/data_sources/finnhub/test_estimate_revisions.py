@@ -7,9 +7,13 @@ seeded with minimal rows so FK constraints are satisfied.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from typing import Any
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
 
 from alphamind.persistence.models import Base, EarningsEstimateRevisions
 from alphamind.persistence.session import make_engine, make_session_factory
@@ -20,7 +24,7 @@ from alphamind.persistence.session import make_engine, make_session_factory
 
 
 @pytest.fixture()
-def engine():
+def engine() -> Iterator[Engine]:
     eng = make_engine(":memory:")
     Base.metadata.create_all(eng)
     yield eng
@@ -28,18 +32,19 @@ def engine():
 
 
 @pytest.fixture()
-def session_factory(engine):
-    return make_session_factory(engine)
+def session_factory(engine: Engine) -> type[Session]:
+    sf: type[Session] = make_session_factory(engine)
+    return sf
 
 
 @pytest.fixture()
-def session(session_factory):
+def session(session_factory: type[Session]) -> Iterator[Session]:
     with session_factory() as sess:
         yield sess
 
 
 @pytest.fixture()
-def seeded_tickers(session):
+def seeded_tickers(session: Session) -> None:
     """Insert minimal AssetUniverse rows for tickers used in tests."""
     from alphamind.persistence.models import AssetUniverse
 
@@ -61,12 +66,12 @@ def seeded_tickers(session):
 
 
 @pytest.fixture()
-def fake_repo():
+def fake_repo() -> Any:
     """In-memory collection_runs repo for test isolation."""
 
     class _Repo:
         def __init__(self) -> None:
-            self.rows: dict[str, dict] = {}
+            self.rows: dict[str, dict[str, Any]] = {}
 
         def insert_running(self, run_id: str, collector: str, started_at: str) -> None:
             self.rows[run_id] = {
@@ -93,7 +98,7 @@ def fake_repo():
 def _make_eps_response(
     ticker: str = "AAPL",
     periods: list[tuple[str, float, int | None]] | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Build a fake finnhub earnings_estimate response."""
     if periods is None:
         periods = [("2026-06-30", 1.5, 10), ("2026-09-30", 1.8, 10)]
@@ -110,7 +115,7 @@ def _make_eps_response(
 def _make_revenue_response(
     ticker: str = "AAPL",
     periods: list[tuple[str, float, int | None]] | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Build a fake finnhub revenue_estimate response."""
     if periods is None:
         periods = [("2026-06-30", 95_000_000_000.0, 10), ("2026-09-30", 98_000_000_000.0, 10)]
@@ -125,21 +130,21 @@ def _make_revenue_response(
 
 
 def _run_collect(
-    engine,
-    session_factory,
-    fake_repo,
+    engine: Engine,
+    session_factory: type[Session],
+    fake_repo: Any,
     ticker_scope: list[str] | None,
-    eps_response_map: dict[str, dict],
-    revenue_response_map: dict[str, dict],
+    eps_response_map: dict[str, dict[str, Any]],
+    revenue_response_map: dict[str, dict[str, Any]],
 ) -> None:
     """Helper: run collect_estimate_revisions with mocked SDK."""
     with patch("finnhub.Client") as mock_client:
         mock_sdk = mock_client.return_value
 
-        def _eps_side(symbol, **_kwargs):
+        def _eps_side(symbol: str, **_kwargs: Any) -> dict[str, Any]:
             return eps_response_map.get(symbol, {"symbol": symbol, "data": [], "freq": "quarterly"})
 
-        def _rev_side(symbol, **_kwargs):
+        def _rev_side(symbol: str, **_kwargs: Any) -> dict[str, Any]:
             return revenue_response_map.get(
                 symbol, {"symbol": symbol, "data": [], "freq": "quarterly"}
             )
@@ -163,7 +168,7 @@ def _run_collect(
 
 
 class TestEarningsEstimateRevisionsModel:
-    def test_table_creation_succeeds(self, engine, session) -> None:
+    def test_table_creation_succeeds(self, engine: Engine, session: Session) -> None:
         """EarningsEstimateRevisions table can be created and queried."""
         rows = session.query(EarningsEstimateRevisions).all()
         assert rows == []
@@ -213,7 +218,12 @@ class TestNoNewClientFile:
 
 class TestFirstObservation:
     def test_seed_inserts_eps_row_with_null_prior(
-        self, engine, session_factory, session, seeded_tickers, fake_repo
+        self,
+        engine: Engine,
+        session_factory: type[Session],
+        session: Session,
+        seeded_tickers: None,
+        fake_repo: Any,
     ) -> None:
         """First EPS observation inserts a row with prior_consensus_value=NULL."""
         _run_collect(
@@ -231,7 +241,12 @@ class TestFirstObservation:
         assert rows[0].prior_consensus_value is None
 
     def test_seed_inserts_revenue_row_with_null_prior(
-        self, engine, session_factory, session, seeded_tickers, fake_repo
+        self,
+        engine: Engine,
+        session_factory: type[Session],
+        session: Session,
+        seeded_tickers: None,
+        fake_repo: Any,
     ) -> None:
         """First revenue observation inserts a row with prior_consensus_value=NULL."""
         _run_collect(
@@ -255,7 +270,12 @@ class TestFirstObservation:
         assert rows[0].prior_consensus_value is None
 
     def test_num_analysts_populated_when_present(
-        self, engine, session_factory, session, seeded_tickers, fake_repo
+        self,
+        engine: Engine,
+        session_factory: type[Session],
+        session: Session,
+        seeded_tickers: None,
+        fake_repo: Any,
     ) -> None:
         """num_analysts is populated from numberAnalysts when present."""
         _run_collect(
@@ -274,7 +294,12 @@ class TestFirstObservation:
         assert row.num_analysts == 12
 
     def test_num_analysts_null_when_omitted(
-        self, engine, session_factory, session, seeded_tickers, fake_repo
+        self,
+        engine: Engine,
+        session_factory: type[Session],
+        session: Session,
+        seeded_tickers: None,
+        fake_repo: Any,
     ) -> None:
         """num_analysts is NULL when numberAnalysts is absent in response."""
         _run_collect(
@@ -300,7 +325,12 @@ class TestFirstObservation:
 
 class TestChangedConsensus:
     def test_changed_consensus_inserts_new_row_with_prior_value(
-        self, engine, session_factory, session, seeded_tickers, fake_repo
+        self,
+        engine: Engine,
+        session_factory: type[Session],
+        session: Session,
+        seeded_tickers: None,
+        fake_repo: Any,
     ) -> None:
         """When consensus changes, a new row is written with prior_consensus_value set."""
         period = "2026-06-30"
@@ -345,7 +375,12 @@ class TestChangedConsensus:
 
 class TestUnchangedConsensus:
     def test_unchanged_consensus_produces_no_new_row(
-        self, engine, session_factory, session, seeded_tickers, fake_repo
+        self,
+        engine: Engine,
+        session_factory: type[Session],
+        session: Session,
+        seeded_tickers: None,
+        fake_repo: Any,
     ) -> None:
         """Re-running with the same consensus value does not write a new row."""
         period = "2026-06-30"
@@ -381,7 +416,7 @@ class TestUnchangedConsensus:
 
 class TestUniverseFilter:
     def test_inactive_ticker_not_processed(
-        self, engine, session_factory, session, fake_repo
+        self, engine: Engine, session_factory: type[Session], session: Session, fake_repo: Any
     ) -> None:
         """Tickers with is_active=0 are excluded from collection."""
         from alphamind.persistence.models import AssetUniverse
@@ -428,7 +463,12 @@ class TestUniverseFilter:
         assert rows == [], "Inactive ticker should not produce estimate_revisions rows"
 
     def test_active_ticker_is_processed(
-        self, engine, session_factory, session, seeded_tickers, fake_repo
+        self,
+        engine: Engine,
+        session_factory: type[Session],
+        session: Session,
+        seeded_tickers: None,
+        fake_repo: Any,
     ) -> None:
         """With ticker_scope=None, active universe tickers are processed."""
         _run_collect(
@@ -456,7 +496,12 @@ class TestUniverseFilter:
 
 class TestFiscalPeriodMapping:
     def _seed_earnings_event_details(
-        self, session, ticker: str, fiscal_year: int, fiscal_period: str, period_end_date: str
+        self,
+        session: Session,
+        ticker: str,
+        fiscal_year: int,
+        fiscal_period: str,
+        period_end_date: str,
     ) -> None:
         """Insert event_calendar + earnings_event_details to give the mapping precedent."""
         from alphamind.persistence.models import EarningsEventDetails, EventCalendar
@@ -493,7 +538,12 @@ class TestFiscalPeriodMapping:
         session.commit()
 
     def test_fiscal_period_mapping_uses_event_details_when_available(
-        self, engine, session_factory, session, seeded_tickers, fake_repo
+        self,
+        engine: Engine,
+        session_factory: type[Session],
+        session: Session,
+        seeded_tickers: None,
+        fake_repo: Any,
     ) -> None:
         """When earnings_event_details has a row for (ticker, fiscal_year, fiscal_period),
         that mapping is used for the period date."""
@@ -517,7 +567,12 @@ class TestFiscalPeriodMapping:
         assert row.fiscal_year == 2026
 
     def test_fiscal_period_fallback_to_calendar_quarter(
-        self, engine, session_factory, session, seeded_tickers, fake_repo
+        self,
+        engine: Engine,
+        session_factory: type[Session],
+        session: Session,
+        seeded_tickers: None,
+        fake_repo: Any,
     ) -> None:
         """When no earnings_event_details row exists, calendar-quarter mapping is used."""
         # No seed — MSFT has no fiscal calendar entry
@@ -546,7 +601,12 @@ class TestFiscalPeriodMapping:
 
 class TestBootstrapEstimateRevisions:
     def test_bootstrap_seeds_with_null_prior(
-        self, engine, session_factory, session, seeded_tickers, fake_repo
+        self,
+        engine: Engine,
+        session_factory: type[Session],
+        session: Session,
+        seeded_tickers: None,
+        fake_repo: Any,
     ) -> None:
         """bootstrap_estimate_revisions() inserts rows with prior_consensus_value=NULL."""
         with patch("finnhub.Client") as mock_client:
@@ -574,11 +634,16 @@ class TestBootstrapEstimateRevisions:
             )
 
     def test_bootstrap_is_idempotent(
-        self, engine, session_factory, session, seeded_tickers, fake_repo
+        self,
+        engine: Engine,
+        session_factory: type[Session],
+        session: Session,
+        seeded_tickers: None,
+        fake_repo: Any,
     ) -> None:
         """Running bootstrap_estimate_revisions() twice does not duplicate rows."""
 
-        def _run_bootstrap():
+        def _run_bootstrap() -> None:
             with patch("finnhub.Client") as mock_client:
                 mock_sdk = mock_client.return_value
                 mock_sdk.earnings_estimate.return_value = _make_eps_response(
@@ -613,7 +678,9 @@ class TestBootstrapEstimateRevisions:
 
 
 class TestFailureRecording:
-    def test_sdk_failure_records_failed_run(self, engine, session_factory, fake_repo) -> None:
+    def test_sdk_failure_records_failed_run(
+        self, engine: Engine, session_factory: type[Session], fake_repo: Any
+    ) -> None:
         """When the SDK raises, collection_runs records 'failed' and no rows are written."""
         with patch("finnhub.Client") as mock_client:
             mock_sdk = mock_client.return_value
@@ -634,7 +701,7 @@ class TestFailureRecording:
         assert run["status"] == "failed"
 
     def test_sdk_failure_writes_no_data_rows(
-        self, engine, session_factory, session, fake_repo
+        self, engine: Engine, session_factory: type[Session], session: Session, fake_repo: Any
     ) -> None:
         """On failure, no EarningsEstimateRevisions rows are written."""
         with patch("finnhub.Client") as mock_client:
@@ -687,8 +754,10 @@ class TestBootstrapRunAll:
         """run_all() calls bootstrap_estimate_revisions after the calendar bootstraps."""
         calls: list[str] = []
 
-        def _make_tracker(name: str):
-            def _fn(*args, **kwargs):
+        from collections.abc import Callable
+
+        def _make_tracker(name: str) -> Callable[..., None]:
+            def _fn(*args: object, **kwargs: object) -> None:
                 calls.append(name)
 
             return _fn
@@ -732,8 +801,10 @@ class TestBootstrapRunAll:
         """bootstrap_estimate_revisions is called after the calendar bootstraps in step 6."""
         calls: list[str] = []
 
-        def _make_tracker(name: str):
-            def _fn(*args, **kwargs):
+        from collections.abc import Callable
+
+        def _make_tracker(name: str) -> Callable[..., None]:
+            def _fn(*args: object, **kwargs: object) -> None:
                 calls.append(name)
 
             return _fn

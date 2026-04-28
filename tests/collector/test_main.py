@@ -15,7 +15,7 @@ from unittest.mock import patch
 # ---------------------------------------------------------------------------
 
 
-def test_bootstrap_subcommand_routes_to_run_all():
+def test_bootstrap_subcommand_routes_to_run_all() -> None:
     with (
         patch("alphamind.collector.__main__.bootstrap_run_all") as mock_bootstrap,
         patch("alphamind.collector.__main__._parse_args") as mock_parse,
@@ -30,7 +30,7 @@ def test_bootstrap_subcommand_routes_to_run_all():
     mock_bootstrap.assert_called_once_with(only_vendor=None)
 
 
-def test_bootstrap_subcommand_passes_only_vendor():
+def test_bootstrap_subcommand_passes_only_vendor() -> None:
     with (
         patch("alphamind.collector.__main__.bootstrap_run_all") as mock_bootstrap,
         patch("alphamind.collector.__main__._parse_args") as mock_parse,
@@ -50,7 +50,7 @@ def test_bootstrap_subcommand_passes_only_vendor():
 # ---------------------------------------------------------------------------
 
 
-def test_catchup_subcommand_routes_to_catchup_run_all():
+def test_catchup_subcommand_routes_to_catchup_run_all() -> None:
     with (
         patch("alphamind.collector.__main__.catchup_run_all") as mock_catchup,
         patch("alphamind.collector.__main__._parse_args") as mock_parse,
@@ -71,7 +71,7 @@ def test_catchup_subcommand_routes_to_catchup_run_all():
 # ---------------------------------------------------------------------------
 
 
-def test_run_subcommand_routes_to_start_blocking():
+def test_run_subcommand_routes_to_start_blocking() -> None:
     with (
         patch("alphamind.collector.__main__.start_blocking") as mock_start,
         patch("alphamind.collector.__main__._parse_args") as mock_parse,
@@ -90,7 +90,7 @@ def test_run_subcommand_routes_to_start_blocking():
 # ---------------------------------------------------------------------------
 
 
-def test_help_lists_all_three_subcommands():
+def test_help_lists_all_three_subcommands() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "alphamind.collector", "--help"],
         capture_output=True,

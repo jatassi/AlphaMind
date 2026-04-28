@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
 
 from alphamind.persistence.models import (
     Base,
@@ -30,13 +33,13 @@ _GET_TICKERS = f"{_COLLECTOR}._get_tickers"
 _NOW = f"{_COLLECTOR}._now"
 
 
-def _make_db():
+def _make_db() -> tuple[Engine, type[Session]]:
     engine = make_engine(":memory:")
     Base.metadata.create_all(engine)
     return engine, make_session_factory(engine)
 
 
-def _seed_universe(sf, tickers: list[str]) -> None:
+def _seed_universe(sf: type[Session], tickers: list[str]) -> None:
     """Insert minimal asset_universe rows so FK constraints hold."""
     from alphamind.persistence.models import AssetUniverse
 
@@ -59,7 +62,7 @@ def _seed_universe(sf, tickers: list[str]) -> None:
         sess.commit()
 
 
-def _make_response(*, ticker: str = "AAPL") -> dict:
+def _make_response(*, ticker: str = "AAPL") -> dict[str, Any]:
     """Minimal iBorrowDesk JSON response."""
     return {
         "ticker": ticker,
@@ -88,7 +91,7 @@ def _make_response(*, ticker: str = "AAPL") -> dict:
 
 class _FakeRunRepo:
     def __init__(self) -> None:
-        self.rows: dict[str, dict] = {}
+        self.rows: dict[str, dict[str, Any]] = {}
 
     def insert_running(self, run_id: str, collector: str, started_at: str) -> None:
         self.rows[run_id] = {
@@ -294,7 +297,7 @@ class TestRateLimiter:
             acquired.append(provider)
             original(provider)
 
-        limiter.acquire = tracking  # type: ignore[method-assign]
+        limiter.acquire = tracking
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -428,13 +431,15 @@ class TestCollectBorrowCostIntraday:
 
 
 class TestCoverageErrorHandling:
-    def test_warn_logs_and_continues_on_coverage_error(self, caplog) -> None:
+    def test_warn_logs_and_continues_on_coverage_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         from alphamind.data_sources.iborrowdesk.client import IBorrowDeskCoverageError
 
         _engine, sf = _make_db()
         _seed_universe(sf, ["UNKN", "AAPL"])
 
-        def _side_effect(ticker: str) -> dict:
+        def _side_effect(ticker: str) -> dict[str, Any]:
             if ticker == "UNKN":
                 raise IBorrowDeskCoverageError("UNKN not in coverage")
             return _make_response(ticker="AAPL")
@@ -471,7 +476,7 @@ class TestBlockedErrorHandling:
         repo = _FakeRunRepo()
         fetched: list[str] = []
 
-        def _side_effect(ticker: str) -> dict:
+        def _side_effect(ticker: str) -> dict[str, Any]:
             fetched.append(ticker)
             if ticker == "AAPL":
                 raise IBorrowDeskBlockedError("444 blocked")
@@ -522,7 +527,9 @@ class TestBlockedErrorHandling:
 
 
 class TestMalformedJson:
-    def test_missing_daily_key_skips_ticker_gracefully(self, caplog) -> None:
+    def test_missing_daily_key_skips_ticker_gracefully(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Response without 'daily'/'real_time' keys is treated as empty — no crash."""
         _engine, sf = _make_db()
         _seed_universe(sf, ["AAPL"])
@@ -622,7 +629,7 @@ class TestRefreshTicker:
             acquired.append(provider)
             original(provider)
 
-        limiter.acquire = tracking  # type: ignore[method-assign]
+        limiter.acquire = tracking
 
         with (
             patch(_FETCH_TICKER, return_value=_make_response()),

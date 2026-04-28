@@ -6,6 +6,7 @@ All HTTP calls are mocked — no real network traffic.
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -21,7 +22,7 @@ def _make_client(api_key: str = "test-key") -> MarketauxClient:
     return MarketauxClient(api_key=api_key, rate_limit_per_minute=1)
 
 
-def _ok_response(data: dict) -> MagicMock:
+def _ok_response(data: dict[str, Any]) -> MagicMock:
     resp = MagicMock(spec=httpx.Response)
     resp.status_code = 200
     resp.json.return_value = data

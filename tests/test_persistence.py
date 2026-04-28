@@ -8,9 +8,14 @@ database (WAL mode is not available on in-memory databases).
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from pathlib import Path
+
 import pytest
 from sqlalchemy import text
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from alphamind.persistence.models import (
     AssetUniverse,
@@ -40,7 +45,7 @@ from alphamind.persistence.session import make_engine, make_session_factory
 
 
 @pytest.fixture()
-def engine():
+def engine() -> Iterator[Engine]:
     """In-memory SQLite engine with all pragmas and tables."""
     eng = make_engine(":memory:")
     Base.metadata.create_all(eng)
@@ -49,7 +54,7 @@ def engine():
 
 
 @pytest.fixture()
-def file_engine(tmp_path):
+def file_engine(tmp_path: Path) -> Iterator[Engine]:
     """File-backed SQLite engine — needed for WAL-mode pragma tests."""
     db_path = str(tmp_path / "test.db")
     eng = make_engine(db_path)
@@ -59,7 +64,7 @@ def file_engine(tmp_path):
 
 
 @pytest.fixture()
-def session(engine):
+def session(engine: Engine) -> Iterator[Session]:
     """Session bound to the in-memory engine."""
     session_factory = make_session_factory(engine)
     with session_factory() as sess:
@@ -67,7 +72,7 @@ def session(engine):
 
 
 @pytest.fixture()
-def seeded_universe(session):
+def seeded_universe(session: Session) -> AssetUniverse:
     """Insert a minimal AssetUniverse row so FK constraints can be satisfied."""
     row = AssetUniverse(
         asset_id="asset-aapl",
@@ -91,18 +96,18 @@ def seeded_universe(session):
 
 
 class TestPragmas:
-    def test_journal_mode_is_wal(self, file_engine):
+    def test_journal_mode_is_wal(self, file_engine: Engine) -> None:
         """WAL mode requires a file-backed database."""
         with file_engine.connect() as conn:
             result = conn.execute(text("PRAGMA journal_mode")).scalar()
         assert result == "wal"
 
-    def test_foreign_keys_on(self, file_engine):
+    def test_foreign_keys_on(self, file_engine: Engine) -> None:
         with file_engine.connect() as conn:
             result = conn.execute(text("PRAGMA foreign_keys")).scalar()
         assert result == 1
 
-    def test_busy_timeout(self, file_engine):
+    def test_busy_timeout(self, file_engine: Engine) -> None:
         with file_engine.connect() as conn:
             result = conn.execute(text("PRAGMA busy_timeout")).scalar()
         assert result == 60000
@@ -114,13 +119,13 @@ class TestPragmas:
 
 
 class TestRoundTrips:
-    def test_asset_universe(self, session, seeded_universe):
+    def test_asset_universe(self, session: Session, seeded_universe: AssetUniverse) -> None:
         fetched = session.get(AssetUniverse, "asset-aapl")
         assert fetched is not None
         assert fetched.ticker == "AAPL"
         assert fetched.asset_class == "equity"
 
-    def test_sector_classification(self, session, seeded_universe):
+    def test_sector_classification(self, session: Session, seeded_universe: AssetUniverse) -> None:
         row = SectorClassification(
             ticker="AAPL",
             asset_id="asset-aapl",
@@ -136,7 +141,7 @@ class TestRoundTrips:
         assert fetched is not None
         assert fetched.alphamind_sector == "tech"
 
-    def test_etf_membership(self, session, seeded_universe):
+    def test_etf_membership(self, session: Session, seeded_universe: AssetUniverse) -> None:
         row = EtfMembership(
             ticker="AAPL",
             etf_ticker="XLK",
@@ -151,7 +156,7 @@ class TestRoundTrips:
         assert fetched is not None
         assert fetched.weight_pct == 22.5
 
-    def test_ticker_change_history(self, session, seeded_universe):
+    def test_ticker_change_history(self, session: Session, seeded_universe: AssetUniverse) -> None:
         row = TickerChangeHistory(
             asset_id="asset-aapl",
             previous_ticker="AAPL",
@@ -165,7 +170,7 @@ class TestRoundTrips:
         assert fetched is not None
         assert fetched.reason == "rebrand"
 
-    def test_ohlcv_bars(self, session, seeded_universe):
+    def test_ohlcv_bars(self, session: Session, seeded_universe: AssetUniverse) -> None:
         row = OhlcvBars(
             ticker="AAPL",
             timeframe="1d",
@@ -191,7 +196,7 @@ class TestRoundTrips:
         assert fetched is not None
         assert fetched.adj_close == 174.0
 
-    def test_corporate_actions(self, session, seeded_universe):
+    def test_corporate_actions(self, session: Session, seeded_universe: AssetUniverse) -> None:
         row = CorporateActions(
             action_id="act-001",
             ticker="AAPL",
@@ -206,7 +211,7 @@ class TestRoundTrips:
         assert fetched is not None
         assert fetched.action_type == "split"
 
-    def test_options_contracts(self, session, seeded_universe):
+    def test_options_contracts(self, session: Session, seeded_universe: AssetUniverse) -> None:
         row = OptionsContracts(
             contract_ticker="O:AAPL250117C00200000",
             underlying_ticker="AAPL",
@@ -223,7 +228,9 @@ class TestRoundTrips:
         assert fetched is not None
         assert fetched.strike_price == 200.0
 
-    def test_options_contract_snapshots(self, session, seeded_universe):
+    def test_options_contract_snapshots(
+        self, session: Session, seeded_universe: AssetUniverse
+    ) -> None:
         # Requires parent options contract
         contract = OptionsContracts(
             contract_ticker="O:AAPL250117C00200000",
@@ -253,7 +260,7 @@ class TestRoundTrips:
         assert fetched is not None
         assert fetched.underlying_ticker == "AAPL"
 
-    def test_macro_observations(self, session):
+    def test_macro_observations(self, session: Session) -> None:
         row = MacroObservations(
             source="fred",
             series_id="DGS10",
@@ -268,7 +275,7 @@ class TestRoundTrips:
         assert fetched is not None
         assert fetched.value == 4.5
 
-    def test_treasury_auctions(self, session):
+    def test_treasury_auctions(self, session: Session) -> None:
         row = TreasuryAuctions(
             auction_id="2026-03-15_10Y",
             tenor="10Y",
@@ -282,7 +289,7 @@ class TestRoundTrips:
         assert fetched is not None
         assert fetched.tenor == "10Y"
 
-    def test_event_calendar(self, session):
+    def test_event_calendar(self, session: Session) -> None:
         row = EventCalendar(
             event_id="evt-001",
             event_type="fomc",
@@ -298,7 +305,7 @@ class TestRoundTrips:
         assert fetched is not None
         assert fetched.event_type == "fomc"
 
-    def test_earnings_event_details(self, session):
+    def test_earnings_event_details(self, session: Session) -> None:
         # Requires parent event_calendar row
         parent = EventCalendar(
             event_id="evt-earn-001",
@@ -324,7 +331,7 @@ class TestRoundTrips:
         assert fetched is not None
         assert fetched.fiscal_period == "Q1"
 
-    def test_news_articles(self, session):
+    def test_news_articles(self, session: Session) -> None:
         row = NewsArticles(
             article_id="art-001",
             source="finnhub",
@@ -339,7 +346,7 @@ class TestRoundTrips:
         assert fetched is not None
         assert fetched.headline_text == "AAPL beats estimates"
 
-    def test_news_article_tickers(self, session, seeded_universe):
+    def test_news_article_tickers(self, session: Session, seeded_universe: AssetUniverse) -> None:
         article = NewsArticles(
             article_id="art-002",
             source="marketaux",
@@ -361,7 +368,7 @@ class TestRoundTrips:
         assert fetched is not None
         assert fetched.is_primary == 1
 
-    def test_prediction_market_contracts(self, session):
+    def test_prediction_market_contracts(self, session: Session) -> None:
         row = PredictionMarketContracts(
             contract_id="pm-001",
             platform="polymarket",
@@ -376,7 +383,7 @@ class TestRoundTrips:
         assert fetched is not None
         assert fetched.platform == "polymarket"
 
-    def test_prediction_market_snapshots(self, session):
+    def test_prediction_market_snapshots(self, session: Session) -> None:
         contract = PredictionMarketContracts(
             contract_id="pm-002",
             platform="kalshi",
@@ -399,7 +406,7 @@ class TestRoundTrips:
         assert fetched is not None
         assert fetched.yes_probability == 0.65
 
-    def test_collection_runs(self, session):
+    def test_collection_runs(self, session: Session) -> None:
         row = CollectionRuns(
             run_id="run-001",
             collector="polygon.equity",
@@ -419,8 +426,10 @@ class TestRoundTrips:
 
 
 class TestCompositeKeyUniqueness:
-    def test_ohlcv_bars_duplicate_raises(self, session, seeded_universe):
-        def make_bar():
+    def test_ohlcv_bars_duplicate_raises(
+        self, session: Session, seeded_universe: AssetUniverse
+    ) -> None:
+        def make_bar() -> OhlcvBars:
             return OhlcvBars(
                 ticker="AAPL",
                 timeframe="1d",
@@ -447,8 +456,8 @@ class TestCompositeKeyUniqueness:
         with pytest.raises(IntegrityError):
             session.commit()
 
-    def test_macro_observations_duplicate_raises(self, session):
-        def make_obs():
+    def test_macro_observations_duplicate_raises(self, session: Session) -> None:
+        def make_obs() -> MacroObservations:
             return MacroObservations(
                 source="fred",
                 series_id="DGS10",
@@ -464,7 +473,9 @@ class TestCompositeKeyUniqueness:
         with pytest.raises(IntegrityError):
             session.commit()
 
-    def test_options_contract_snapshots_duplicate_raises(self, session, seeded_universe):
+    def test_options_contract_snapshots_duplicate_raises(
+        self, session: Session, seeded_universe: AssetUniverse
+    ) -> None:
         contract = OptionsContracts(
             contract_ticker="O:AAPL250117C00200000",
             underlying_ticker="AAPL",
@@ -478,7 +489,7 @@ class TestCompositeKeyUniqueness:
         session.add(contract)
         session.commit()
 
-        def make_snap():
+        def make_snap() -> OptionsContractSnapshots:
             return OptionsContractSnapshots(
                 snapshot_ts="2026-04-26T15:00:00Z",
                 contract_ticker="O:AAPL250117C00200000",
@@ -500,7 +511,7 @@ class TestCompositeKeyUniqueness:
 
 
 class TestForeignKeyConstraints:
-    def test_sector_classification_fk_ticker(self, session):
+    def test_sector_classification_fk_ticker(self, session: Session) -> None:
         """ticker must exist in asset_universe."""
         row = SectorClassification(
             ticker="NONEXISTENT",
@@ -515,7 +526,7 @@ class TestForeignKeyConstraints:
         with pytest.raises(IntegrityError):
             session.commit()
 
-    def test_ohlcv_bars_fk_ticker(self, session):
+    def test_ohlcv_bars_fk_ticker(self, session: Session) -> None:
         """ticker must exist in asset_universe."""
         row = OhlcvBars(
             ticker="NONEXISTENT",
@@ -540,7 +551,9 @@ class TestForeignKeyConstraints:
         with pytest.raises(IntegrityError):
             session.commit()
 
-    def test_news_article_tickers_cascade_delete(self, engine, seeded_universe):
+    def test_news_article_tickers_cascade_delete(
+        self, engine: Engine, seeded_universe: AssetUniverse
+    ) -> None:
         """
         Deleting an article via raw SQL should cascade to news_article_tickers
         (ON DELETE CASCADE declared in FK).  Uses a fresh session so the ORM

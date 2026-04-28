@@ -6,6 +6,7 @@ All HTTP calls are mocked — no real network traffic.
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -15,7 +16,7 @@ from alphamind.data_sources.kalshi.client import KalshiClient
 BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 
 
-def _mock_get_response(payload: dict) -> MagicMock:
+def _mock_get_response(payload: dict[str, Any]) -> MagicMock:
     resp = MagicMock()
     resp.status_code = 200
     resp.json.return_value = payload
