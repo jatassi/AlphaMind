@@ -30,6 +30,13 @@ from alphamind.config.models.guardrails import (
 from alphamind.config.models.main import ExecutionMode, MainConfig, Paths, Profile
 from alphamind.config.models.news_outlets import CredibilityTier, NewsOutletsConfig, OutletEntry
 from alphamind.config.models.scheduler import SchedulerConfig
+from alphamind.config.models.venue import (
+    Alpaca,
+    AlpacaCredentials,
+    SessionHours,
+    SessionWindow,
+    VenueConfig,
+)
 
 # ---------------------------------------------------------------------------
 # .env.example helpers — kept here so monkeypatching
@@ -55,6 +62,8 @@ def _load_env_example_keys() -> frozenset[str]:
 _ENV_EXAMPLE_KEYS: frozenset[str] = _load_env_example_keys()
 
 __all__ = [
+    "Alpaca",
+    "AlpacaCredentials",
     "AssetRole",
     "AssetsConfig",
     "BackoffStrategy",
@@ -83,4 +92,7 @@ __all__ = [
     "RetryShapeConfig",
     "RuleEntry",
     "SchedulerConfig",
+    "SessionHours",
+    "SessionWindow",
+    "VenueConfig",
 ]
