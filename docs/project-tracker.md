@@ -21,7 +21,7 @@ Cross-cutting policies and reference specs that constrain implementation but are
 
 ### Foundation
 
-- [ ] **Configuration management** — _stories drafted_ — [design](design/configuration-management.md), [stories](implementation/foundation/configuration/)
+- [x] **Configuration management** — _done_ — [design](design/configuration-management.md), [stories](implementation/foundation/configuration/)
 
 ### Data layer
 
