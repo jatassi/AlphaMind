@@ -3,13 +3,18 @@
 import alphamind.config.models as models_mod
 
 _EXPECTED_PUBLIC_NAMES = {
+    "AssetRole",
+    "AssetsConfig",
     "BackoffStrategy",
+    "Benchmark",
     "CategoryConfig",
     "CollectorEntry",
     "CollectorScheduleConfig",
     "CredibilityTier",
     "CriticalityTier",
     "DataSourcesConfig",
+    "DiscoverySource",
+    "DiscoveryVendor",
     "NewsOutletsConfig",
     "OutletEntry",
     "ProviderConfig",

@@ -141,3 +141,107 @@ def test_data_sources_api_key_env_all_in_env_example() -> None:
 
     data = load_yaml(CONFIG_DIR / "data_sources.yaml")
     DataSourcesConfig.model_validate(data)
+
+
+# ---------------------------------------------------------------------------
+# assets.yaml (story 03a)
+# ---------------------------------------------------------------------------
+
+
+def test_assets_yaml_parses_cleanly_and_exposes_expected_sectors() -> None:
+    from alphamind.config.models import AssetsConfig
+
+    data = load_yaml(CONFIG_DIR / "assets.yaml")
+    config = AssetsConfig.model_validate(data)
+
+    assert "AAPL" in config.sectors["tech"]
+    assert "NVDA" in config.sectors["semis"]
+    assert "JPM" in config.sectors["financials"]
+    assert "COP" in config.sectors["energy"]
+
+
+def test_assets_rejects_lowercase_ticker() -> None:
+    from alphamind.config.models import AssetsConfig
+
+    raw = {
+        "last_full_validation": "2026-04-25",
+        "discovery_sources": {},
+        "sectors": {"tech": ["aapl"]},
+        "benchmarks": {},
+    }
+    with pytest.raises(ValidationError, match="aapl"):
+        AssetsConfig.model_validate(raw)
+
+
+def test_assets_rejects_digit_leading_ticker() -> None:
+    from alphamind.config.models import AssetsConfig
+
+    raw = {
+        "last_full_validation": "2026-04-25",
+        "discovery_sources": {},
+        "sectors": {"tech": ["123XYZ"]},
+        "benchmarks": {},
+    }
+    with pytest.raises(ValidationError, match="123XYZ"):
+        AssetsConfig.model_validate(raw)
+
+
+def test_assets_rejects_benchmark_key_with_space() -> None:
+    from alphamind.config.models import AssetsConfig
+
+    raw = {
+        "last_full_validation": "2026-04-25",
+        "discovery_sources": {},
+        "sectors": {},
+        "benchmarks": {"SP Y": {"role": "broad_market", "description": "bad key"}},
+    }
+    with pytest.raises(ValidationError, match="SP Y"):
+        AssetsConfig.model_validate(raw)
+
+
+def test_assets_accepts_absent_last_full_validation() -> None:
+    from alphamind.config.models import AssetsConfig
+
+    raw: dict[str, object] = {
+        "discovery_sources": {},
+        "sectors": {},
+        "benchmarks": {},
+    }
+    config = AssetsConfig.model_validate(raw)
+    assert config.last_full_validation is None
+
+
+def test_assets_rejects_malformed_last_full_validation() -> None:
+    from alphamind.config.models import AssetsConfig
+
+    raw = {
+        "last_full_validation": "not-a-date",
+        "discovery_sources": {},
+        "sectors": {},
+        "benchmarks": {},
+    }
+    with pytest.raises(ValidationError):
+        AssetsConfig.model_validate(raw)
+
+
+def test_assets_models_are_frozen() -> None:
+    from alphamind.config.models import AssetsConfig, Benchmark, DiscoverySource
+
+    data = load_yaml(CONFIG_DIR / "assets.yaml")
+    config = AssetsConfig.model_validate(data)
+
+    # AssetsConfig itself
+    with pytest.raises(ValidationError):
+        config.sectors = {}
+
+    # Nested DiscoverySource
+    src = next(iter(config.discovery_sources.values()))
+    assert isinstance(src, DiscoverySource)
+    with pytest.raises(ValidationError):
+        src.etf = "ZZZZ"
+
+    # Nested Benchmark
+    bench = next(iter(config.benchmarks.values()))
+    assert isinstance(bench, Benchmark)
+    with pytest.raises(ValidationError):
+        bench.description = "mutated"
