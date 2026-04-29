@@ -258,7 +258,21 @@ def _compose_overlay_multipliers(
     ``rule_ids`` is iterated for keys only; the values are unused (the
     interpolated-multipliers map happens to be the canonical key source so
     the call site avoids a second container).
+
+    Raises ``ValueError`` if any active overlay declares a multiplier for a
+    rule_id absent from ``rule_ids`` — that catches operator typos that would
+    otherwise be silently dropped.
     """
+    rule_id_set = frozenset(rule_ids)
+    for overlay in active_overlays:
+        overlay_multipliers = loaded_config.overlays[overlay].multipliers
+        unknown_keys = sorted(set(overlay_multipliers).difference(rule_id_set))
+        if unknown_keys:
+            msg = (
+                f"overlay {overlay.value!r} declares multipliers for rule_ids "
+                f"absent from the active rule space: {unknown_keys!r}"
+            )
+            raise ValueError(msg)
     overlay_multiplier_maps = tuple(
         loaded_config.overlays[overlay].multipliers for overlay in active_overlays
     )

@@ -39,7 +39,13 @@ from alphamind.config.models.execution import ExecutionConfig
 from alphamind.config.models.guardrails import GuardrailsConfig
 from alphamind.config.models.llm_failure import LLMFailureConfig
 from alphamind.config.models.main import MainConfig
-from alphamind.config.models.overlays import EventType, Overlay
+from alphamind.config.models.overlays import (
+    EventType,
+    FinalInvocationBeforeEvent,
+    Overlay,
+    PreEventActivation,
+    PreEventOverlay,
+)
 from alphamind.config.models.regimes import Regime
 from alphamind.config.models.scheduler import SchedulerConfig
 from alphamind.config.models.venue import VenueConfig
@@ -720,6 +726,53 @@ class TestPreEventOverlayActivates:
         ]
         overlays_activated = [entry.payload["overlay"] for entry in activations]
         assert Overlay.pre_event in overlays_activated
+
+
+class TestOverlayMultiplierKeyTypoRejected:
+    """Overlay declaring a multiplier for a rule_id absent from the rule space raises."""
+
+    def test_orchestrator_raises_value_error_naming_overlay_and_rule(
+        self, session: Session
+    ) -> None:
+        from dataclasses import replace
+
+        base_config = _loaded_config()
+        typo_overlay = PreEventOverlay(
+            activation=PreEventActivation(
+                windows_before_event=2,
+                events=[EventType.fomc],
+            ),
+            multipliers={"position_max_size_pcr": 0.80},  # typo'd: should be _pct
+            final_invocation_before_event=FinalInvocationBeforeEvent(block_new_positions=True),
+        )
+        overlays_with_typo = dict(base_config.overlays)
+        overlays_with_typo[Overlay.pre_event] = typo_overlay
+        config_with_typo = replace(base_config, overlays=overlays_with_typo)
+
+        fomc_time = _NOW + timedelta(hours=1, minutes=30)
+        calendar = EventCalendar(
+            entries=(
+                EventCalendarEntry(
+                    event_type=EventType.fomc,
+                    event_timestamp_utc=fomc_time,
+                    label="FOMC announcement",
+                ),
+            )
+        )
+        inputs = _build_inputs(
+            distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
+            distillation_vix_level=18.0,
+            event_calendar=calendar,
+            loaded_config=config_with_typo,
+        )
+
+        with pytest.raises(ValueError, match=r"pre_event.*position_max_size_pcr"):
+            resolve_regime_adaptation(
+                invocation_id="INV-TYPO",
+                now_utc=_NOW,
+                inputs=inputs,
+                session=session,
+            )
 
 
 # ---------------------------------------------------------------------------
