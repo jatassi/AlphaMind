@@ -5,6 +5,9 @@ subsequent stories drop function modules into this package and add their own
 re-exports below.
 """
 
+from alphamind.risk_guardrails.regime_adaptation.breach_detector import (
+    detect_regime_transition_breaches,
+)
 from alphamind.risk_guardrails.regime_adaptation.event_calendar import (
     EventCalendarParseError,
     load_event_calendar,
@@ -63,6 +66,7 @@ __all__ = [
     "StaleCalendarReport",
     "VixBoundaryThresholds",
     "compute_next_transition",
+    "detect_regime_transition_breaches",
     "evaluate_stress_overlay",
     "fetch_composite_alert_state",
     "from_regime_classification",
