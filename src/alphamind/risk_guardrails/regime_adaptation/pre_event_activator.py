@@ -90,6 +90,13 @@ def _compute_upcoming_firings(
     Cron expressions are interpreted in ``scheduler_config.timezone`` and the
     resulting firings are converted to UTC. Duplicates (multiple triggers
     firing at the same UTC instant) collapse to one firing.
+
+    The result is the *unioned* next ``horizon_count`` firings across all
+    triggers — not the per-trigger next ``horizon_count``. Trigger A's
+    ``horizon_count``-th firing may land later than trigger B's, and we keep
+    only the earliest ``horizon_count`` firings overall. Each trigger
+    contributes its own next ``horizon_count`` candidates so the merged top-N
+    never undercounts when triggers fire densely.
     """
     cron_tz = ZoneInfo(scheduler_config.timezone)
     start_local = now_utc.astimezone(cron_tz)
