@@ -388,6 +388,9 @@ def test_public_api_surface_matches_documented_re_exports() -> None:
         "build_active_specs",
         "project_all",
         "project_rule",
+        # Library entry point (story 05)
+        "LibraryInputError",
+        "evaluate_proposals",
     }
 
     public = {name for name in dir(module) if not name.startswith("_")}
