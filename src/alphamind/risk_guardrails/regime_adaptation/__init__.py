@@ -5,6 +5,10 @@ subsequent stories drop function modules into this package and add their own
 re-exports below.
 """
 
+from alphamind.risk_guardrails.regime_adaptation.interpolation import (
+    interpolate_loosening_multipliers,
+    resolve_active_multipliers,
+)
 from alphamind.risk_guardrails.regime_adaptation.regime_mapping import (
     from_regime_classification,
     map_distillation_to_guardrail_regime,
@@ -45,6 +49,8 @@ __all__ = [
     "VixBoundaryThresholds",
     "compute_next_transition",
     "from_regime_classification",
+    "interpolate_loosening_multipliers",
     "map_distillation_to_guardrail_regime",
     "overlays_to_strings",
+    "resolve_active_multipliers",
 ]
