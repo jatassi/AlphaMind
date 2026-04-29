@@ -13,6 +13,11 @@ from alphamind.risk_guardrails.breach_behavior.drawdown_tiers import (
     apply_progressive_tier_overrides,
     classify_cumulative_drawdown_tier,
 )
+from alphamind.risk_guardrails.breach_behavior.hard_rejection import (
+    LibraryOutputProtocol,
+    RuleProjectionProtocol,
+    compose_hard_rejection_payload,
+)
 from alphamind.risk_guardrails.breach_behavior.types import (
     ActiveRiskParameterSet,
     BreachDetails,
@@ -66,6 +71,7 @@ __all__ = [
     "HaltState",
     "HardRejectionPayload",
     "InstrumentType",
+    "LibraryOutputProtocol",
     "PositionRecord",
     "PositionSelectionAction",
     "PositionSelectionResult",
@@ -77,10 +83,12 @@ __all__ = [
     "RiskBudgetEntry",
     "RiskManagementSubtype",
     "RiskZone",
+    "RuleProjectionProtocol",
     "SecondaryBreachCheckResult",
     "SecondaryBreachOutcome",
     "apply_progressive_tier_overrides",
     "classify_cumulative_drawdown_tier",
     "classify_zone",
+    "compose_hard_rejection_payload",
     "load_breach_behavior_config",
 ]
