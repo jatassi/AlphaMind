@@ -228,17 +228,14 @@ def _load_regime_rows(
     filter robust to mixed timezone-suffix conventions across writers.
     """
     cutoff = now - timedelta(days=lookback_days)
-    stmt = (
-        select(
-            DistillationRegimeState.as_of,
-            DistillationRegimeState.regime_label,
-            DistillationRegimeState.transition_state,
-            DistillationRegimeState.prior_label,
-            DistillationRegimeState.indicator_agreement_count,
-            DistillationRegimeState.invocations_held,
-        )
-        .order_by(DistillationRegimeState.as_of.asc())
-    )
+    stmt = select(
+        DistillationRegimeState.as_of,
+        DistillationRegimeState.regime_label,
+        DistillationRegimeState.transition_state,
+        DistillationRegimeState.prior_label,
+        DistillationRegimeState.indicator_agreement_count,
+        DistillationRegimeState.invocations_held,
+    ).order_by(DistillationRegimeState.as_of.asc())
     rows = session.execute(stmt).all()
     selected: list[RegimeRow] = []
     for as_of, label, state, prior, agreement, held in rows:

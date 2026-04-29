@@ -122,13 +122,18 @@ class SectorOutput:
 # ---------------------------------------------------------------------------
 
 
-def _load_sector_roster(session: Session, domain_researcher: str) -> tuple[str, ...]:
+def load_sector_roster(session: Session, domain_researcher: str) -> tuple[str, ...]:
     """Return the sorted ticker roster for a ``domain_researcher`` value.
 
     The roster is the set of tickers whose ``sector_classification``
     row carries the requested ``domain_researcher`` — the storage spec
     pairs each sector audience with one storage-layer value (story
     file § ``sector_classification`` — "tech_semis / financials / energy").
+
+    The orchestrator pre-computes the roster once per audience in the main
+    thread and passes the result to :func:`assemble_sector_output`. The
+    SQLAlchemy ``Session`` is not thread-safe under concurrent reads, so
+    the DB lookup must happen before any ``asyncio.gather`` fan-out.
     """
     rows = session.execute(
         select(SectorClassification.ticker).where(
@@ -237,16 +242,16 @@ def assemble_sector_output(
     *,
     audience: OutputAudience,
     blocks: Iterable[OutputBlock],
-    session: Session,
+    roster: tuple[str, ...],
     invocation_id: str,
 ) -> SectorOutput:
     """Assemble the per-sector distillation document for ``audience``.
 
     Filtering rules (per the story file):
 
-    1. Read the sector's tickers from ``sector_classification`` for the
-       ``domain_researcher`` paired with ``audience`` in
-       :data:`DOMAIN_RESEARCHER_BY_AUDIENCE`.
+    1. The sector's ticker ``roster`` is supplied by the caller (the
+       orchestrator pre-computes it via :func:`load_sector_roster` in the
+       main thread before fanning out to the per-audience workers).
     2. Keep blocks whose ``audience`` set contains either ``audience``
        itself or :attr:`OutputAudience.UNIVERSAL_BROADCAST`.
     3. Within the kept set, restrict ``payload["per_ticker"]`` entries to
@@ -263,16 +268,15 @@ def assemble_sector_output(
             f"expected one of {sorted(a.value for a in DOMAIN_RESEARCHER_BY_AUDIENCE)}"
         )
 
-    domain_researcher = DOMAIN_RESEARCHER_BY_AUDIENCE[audience]
     sector_label = SECTOR_LABEL_BY_AUDIENCE[audience]
-    tickers = _load_sector_roster(session, domain_researcher)
-    roster = frozenset(tickers)
+    tickers = roster
+    roster_set = frozenset(tickers)
 
     surviving: list[OutputBlock] = []
     for block in blocks:
         if not (audience in block.audience or OutputAudience.UNIVERSAL_BROADCAST in block.audience):
             continue
-        restricted = _restrict_per_ticker_payload(block, roster)
+        restricted = _restrict_per_ticker_payload(block, roster_set)
         if restricted is None:
             continue
         surviving.append(restricted)
@@ -327,4 +331,5 @@ __all__ = [
     "SECTOR_LABEL_BY_AUDIENCE",
     "SectorOutput",
     "assemble_sector_output",
+    "load_sector_roster",
 ]

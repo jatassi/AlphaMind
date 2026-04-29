@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 52ce7b7
 ---
 
 # 04 — Candidate config loader and content hashing

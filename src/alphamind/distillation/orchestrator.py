@@ -98,6 +98,7 @@ from alphamind.distillation.sector_assembly import (
     DOMAIN_RESEARCHER_BY_AUDIENCE,
     SectorOutput,
     assemble_sector_output,
+    load_sector_roster,
 )
 from alphamind.persistence.models import MacroObservations
 
@@ -807,15 +808,25 @@ async def run_external_distillation(
     # are independent (each reads its own audience slice of the same
     # block list), so they fan out via asyncio.gather instead of
     # serializing through a per-audience loop.
+    #
+    # The sector roster lookup is the only DB read inside the per-audience
+    # work, and SQLAlchemy's ``Session`` is not thread-safe under
+    # concurrent reads (sporadic ``IndexError`` inside the result-row
+    # constructor). Pre-compute every roster in the main thread before the
+    # gather so the gathered tasks touch only pure-Python state.
     phase_start = time.monotonic()
     sector_audiences = tuple(DOMAIN_RESEARCHER_BY_AUDIENCE)
+    sector_rosters: dict[OutputAudience, tuple[str, ...]] = {
+        audience: load_sector_roster(session, DOMAIN_RESEARCHER_BY_AUDIENCE[audience])
+        for audience in sector_audiences
+    }
     sector_assembly_results: list[SectorOutput] = await asyncio.gather(
         *(
             asyncio.to_thread(
                 assemble_sector_output,
                 audience=audience,
                 blocks=all_blocks,
-                session=session,
+                roster=sector_rosters[audience],
                 invocation_id=invocation_id,
             )
             for audience in sector_audiences

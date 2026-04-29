@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 442a8bfbcf57f06c346ec02f8143fefb18f1d218
 ---
 
 # 01 — Add replay-harness implementation link to distillation README

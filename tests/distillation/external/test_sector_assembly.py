@@ -27,9 +27,19 @@ from alphamind.distillation.sector_assembly import (
     SECTOR_LABEL_BY_AUDIENCE,
     SectorOutput,
     assemble_sector_output,
+    load_sector_roster,
 )
 from alphamind.persistence.models import AssetUniverse, Base, SectorClassification
 from alphamind.persistence.session import make_engine, make_session_factory
+
+# ---------------------------------------------------------------------------
+# Roster fixtures — pre-computed in the test (mirrors the orchestrator's
+# main-thread roster lookup before fanning out to per-audience workers).
+# ---------------------------------------------------------------------------
+
+TECH_SEMIS_ROSTER: tuple[str, ...] = ("AAPL", "NVDA")
+FINANCIALS_ROSTER: tuple[str, ...] = ("BAC", "JPM")
+ENERGY_ROSTER: tuple[str, ...] = ("CVX", "XOM")
 
 # ---------------------------------------------------------------------------
 # In-memory SQLite scaffolding
@@ -192,40 +202,34 @@ class TestRosterFromSectorClassification:
     def test_tech_semis_roster_pulls_from_domain_researcher(
         self, populated_session: Session
     ) -> None:
-        output = assemble_sector_output(
-            audience=OutputAudience.SECTOR_TECH_SEMIS,
-            blocks=(),
-            session=populated_session,
-            invocation_id="inv-001",
-        )
-        assert output.tickers == ("AAPL", "NVDA")
+        roster = load_sector_roster(populated_session, "tech_semis")
+        assert roster == TECH_SEMIS_ROSTER
 
     def test_financials_roster_pulls_from_domain_researcher(
         self, populated_session: Session
     ) -> None:
-        output = assemble_sector_output(
-            audience=OutputAudience.SECTOR_FINANCIALS,
-            blocks=(),
-            session=populated_session,
-            invocation_id="inv-001",
-        )
-        assert output.tickers == ("BAC", "JPM")
+        roster = load_sector_roster(populated_session, "financials")
+        assert roster == FINANCIALS_ROSTER
 
     def test_energy_roster_pulls_from_domain_researcher(self, populated_session: Session) -> None:
+        roster = load_sector_roster(populated_session, "energy")
+        assert roster == ENERGY_ROSTER
+
+    def test_assembly_propagates_roster_into_output_tickers(self) -> None:
         output = assemble_sector_output(
-            audience=OutputAudience.SECTOR_ENERGY,
+            audience=OutputAudience.SECTOR_TECH_SEMIS,
             blocks=(),
-            session=populated_session,
+            roster=TECH_SEMIS_ROSTER,
             invocation_id="inv-001",
         )
-        assert output.tickers == ("CVX", "XOM")
+        assert output.tickers == TECH_SEMIS_ROSTER
 
-    def test_non_sector_audience_is_rejected(self, populated_session: Session) -> None:
+    def test_non_sector_audience_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="sector audience"):
             assemble_sector_output(
                 audience=OutputAudience.UNIVERSAL_BROADCAST,
                 blocks=(),
-                session=populated_session,
+                roster=TECH_SEMIS_ROSTER,
                 invocation_id="inv-001",
             )
 
@@ -236,9 +240,7 @@ class TestRosterFromSectorClassification:
 
 
 class TestAudienceFiltering:
-    def test_block_targeting_only_a_different_sector_is_excluded(
-        self, populated_session: Session
-    ) -> None:
+    def test_block_targeting_only_a_different_sector_is_excluded(self) -> None:
         fin_only = _make_block(
             block_id="q1.financials_local",
             audience=frozenset({OutputAudience.SECTOR_FINANCIALS}),
@@ -246,37 +248,33 @@ class TestAudienceFiltering:
         output = assemble_sector_output(
             audience=OutputAudience.SECTOR_TECH_SEMIS,
             blocks=(fin_only,),
-            session=populated_session,
+            roster=TECH_SEMIS_ROSTER,
             invocation_id="inv-001",
         )
         assert "q1.financials_local" not in output.text
         assert "q1.financials_local" not in output.block_ids
 
-    def test_universal_broadcast_block_appears_in_every_sector_output(
-        self, populated_session: Session
-    ) -> None:
+    def test_universal_broadcast_block_appears_in_every_sector_output(self) -> None:
         universal = _make_block(
             block_id="regime.label",
             audience=frozenset({OutputAudience.UNIVERSAL_BROADCAST}),
             payload={"regime": "normal"},
         )
-        for audience in (
-            OutputAudience.SECTOR_TECH_SEMIS,
-            OutputAudience.SECTOR_FINANCIALS,
-            OutputAudience.SECTOR_ENERGY,
+        for audience, roster in (
+            (OutputAudience.SECTOR_TECH_SEMIS, TECH_SEMIS_ROSTER),
+            (OutputAudience.SECTOR_FINANCIALS, FINANCIALS_ROSTER),
+            (OutputAudience.SECTOR_ENERGY, ENERGY_ROSTER),
         ):
             output = assemble_sector_output(
                 audience=audience,
                 blocks=(universal,),
-                session=populated_session,
+                roster=roster,
                 invocation_id="inv-001",
             )
             assert "regime.label" in output.block_ids
             assert "regime.label" in output.text
 
-    def test_multi_sector_block_appears_in_every_sector_it_targets(
-        self, populated_session: Session
-    ) -> None:
+    def test_multi_sector_block_appears_in_every_sector_it_targets(self) -> None:
         pair = _make_block(
             block_id="q3.pair_signature",
             audience=frozenset(
@@ -286,19 +284,19 @@ class TestAudienceFiltering:
         tech_output = assemble_sector_output(
             audience=OutputAudience.SECTOR_TECH_SEMIS,
             blocks=(pair,),
-            session=populated_session,
+            roster=TECH_SEMIS_ROSTER,
             invocation_id="inv-001",
         )
         fin_output = assemble_sector_output(
             audience=OutputAudience.SECTOR_FINANCIALS,
             blocks=(pair,),
-            session=populated_session,
+            roster=FINANCIALS_ROSTER,
             invocation_id="inv-001",
         )
         energy_output = assemble_sector_output(
             audience=OutputAudience.SECTOR_ENERGY,
             blocks=(pair,),
-            session=populated_session,
+            roster=ENERGY_ROSTER,
             invocation_id="inv-001",
         )
         assert "q3.pair_signature" in tech_output.block_ids
@@ -312,9 +310,7 @@ class TestAudienceFiltering:
 
 
 class TestPerTickerFiltering:
-    def test_per_ticker_payload_keeps_only_in_roster_tickers(
-        self, populated_session: Session
-    ) -> None:
+    def test_per_ticker_payload_keeps_only_in_roster_tickers(self) -> None:
         block = _per_ticker_block(
             block_id="q1.technicals",
             audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
@@ -327,16 +323,14 @@ class TestPerTickerFiltering:
         output = assemble_sector_output(
             audience=OutputAudience.SECTOR_TECH_SEMIS,
             blocks=(block,),
-            session=populated_session,
+            roster=TECH_SEMIS_ROSTER,
             invocation_id="inv-001",
         )
         assert "AAPL" in output.text
         assert "NVDA" in output.text
         assert "JPM" not in output.text
 
-    def test_per_ticker_block_with_no_in_roster_tickers_is_dropped(
-        self, populated_session: Session
-    ) -> None:
+    def test_per_ticker_block_with_no_in_roster_tickers_is_dropped(self) -> None:
         block = _per_ticker_block(
             block_id="q1.technicals",
             audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
@@ -345,14 +339,12 @@ class TestPerTickerFiltering:
         output = assemble_sector_output(
             audience=OutputAudience.SECTOR_TECH_SEMIS,
             blocks=(block,),
-            session=populated_session,
+            roster=TECH_SEMIS_ROSTER,
             invocation_id="inv-001",
         )
         assert "q1.technicals" not in output.block_ids
 
-    def test_blocks_without_per_ticker_payload_are_kept_unchanged(
-        self, populated_session: Session
-    ) -> None:
+    def test_blocks_without_per_ticker_payload_are_kept_unchanged(self) -> None:
         block = _make_block(
             block_id="q9.regime",
             audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
@@ -361,7 +353,7 @@ class TestPerTickerFiltering:
         output = assemble_sector_output(
             audience=OutputAudience.SECTOR_TECH_SEMIS,
             blocks=(block,),
-            session=populated_session,
+            roster=TECH_SEMIS_ROSTER,
             invocation_id="inv-001",
         )
         assert "q9.regime" in output.block_ids
@@ -373,7 +365,7 @@ class TestPerTickerFiltering:
 
 
 class TestFreshness:
-    def test_freshness_min_is_oldest_block_freshness(self, populated_session: Session) -> None:
+    def test_freshness_min_is_oldest_block_freshness(self) -> None:
         oldest_ts = datetime(2026, 4, 27, 9, 0, tzinfo=UTC)
         newest_ts = datetime(2026, 4, 27, 15, 0, tzinfo=UTC)
         old_block = _make_block(
@@ -389,7 +381,7 @@ class TestFreshness:
         output = assemble_sector_output(
             audience=OutputAudience.SECTOR_TECH_SEMIS,
             blocks=(new_block, old_block),
-            session=populated_session,
+            roster=TECH_SEMIS_ROSTER,
             invocation_id="inv-001",
         )
         assert output.freshness_min == oldest_ts
@@ -401,9 +393,7 @@ class TestFreshness:
 
 
 class TestDocumentFraming:
-    def test_header_carries_sector_label_invocation_tickers_freshness(
-        self, populated_session: Session
-    ) -> None:
+    def test_header_carries_sector_label_invocation_tickers_freshness(self) -> None:
         block = _per_ticker_block(
             block_id="q1.technicals",
             audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
@@ -412,7 +402,7 @@ class TestDocumentFraming:
         output = assemble_sector_output(
             audience=OutputAudience.SECTOR_TECH_SEMIS,
             blocks=(block,),
-            session=populated_session,
+            roster=TECH_SEMIS_ROSTER,
             invocation_id="inv-007",
         )
         sector_label = SECTOR_LABEL_BY_AUDIENCE[OutputAudience.SECTOR_TECH_SEMIS]
@@ -421,7 +411,7 @@ class TestDocumentFraming:
         assert "Tickers: AAPL, NVDA" in output.text
         assert f"Effective freshness: {_BASE_TS.isoformat()}" in output.text
 
-    def test_section_headers_are_present_in_document(self, populated_session: Session) -> None:
+    def test_section_headers_are_present_in_document(self) -> None:
         block = _make_block(
             block_id="q1.tech",
             audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
@@ -433,14 +423,14 @@ class TestDocumentFraming:
         output = assemble_sector_output(
             audience=OutputAudience.SECTOR_TECH_SEMIS,
             blocks=(block, universal),
-            session=populated_session,
+            roster=TECH_SEMIS_ROSTER,
             invocation_id="inv-001",
         )
         assert "=== ANOMALY FLAGS" in output.text
         assert "=== UNIVERSAL CONTEXT ===" in output.text
         assert "=== SECTOR INDICATORS ===" in output.text
 
-    def test_byte_identical_on_repeated_calls(self, populated_session: Session) -> None:
+    def test_byte_identical_on_repeated_calls(self) -> None:
         flag = AnomalyFlag(name="volume_spike", magnitude=2.5, severity="investigate_now")
         block_a = _per_ticker_block(
             block_id="q1.technicals",
@@ -455,20 +445,18 @@ class TestDocumentFraming:
         first = assemble_sector_output(
             audience=OutputAudience.SECTOR_TECH_SEMIS,
             blocks=(block_a, block_b),
-            session=populated_session,
+            roster=TECH_SEMIS_ROSTER,
             invocation_id="inv-001",
         )
         second = assemble_sector_output(
             audience=OutputAudience.SECTOR_TECH_SEMIS,
             blocks=(block_a, block_b),
-            session=populated_session,
+            roster=TECH_SEMIS_ROSTER,
             invocation_id="inv-001",
         )
         assert first.text == second.text
 
-    def test_anomaly_summary_integrates_via_aggregation_primitives(
-        self, populated_session: Session
-    ) -> None:
+    def test_anomaly_summary_integrates_via_aggregation_primitives(self) -> None:
         flag = AnomalyFlag(name="rvol_breakout", magnitude=2.5, severity="investigate_now")
         block = _make_block(
             block_id="q1.tech",
@@ -478,7 +466,7 @@ class TestDocumentFraming:
         output = assemble_sector_output(
             audience=OutputAudience.SECTOR_TECH_SEMIS,
             blocks=(block,),
-            session=populated_session,
+            roster=TECH_SEMIS_ROSTER,
             invocation_id="inv-001",
         )
         assert "=== ANOMALY FLAGS (1) ===" in output.text
@@ -491,13 +479,11 @@ class TestDocumentFraming:
 
 
 class TestEmptyCase:
-    def test_empty_block_set_still_produces_well_formed_document(
-        self, populated_session: Session
-    ) -> None:
+    def test_empty_block_set_still_produces_well_formed_document(self) -> None:
         output = assemble_sector_output(
             audience=OutputAudience.SECTOR_TECH_SEMIS,
             blocks=(),
-            session=populated_session,
+            roster=TECH_SEMIS_ROSTER,
             invocation_id="inv-001",
         )
         assert isinstance(output, SectorOutput)
@@ -508,9 +494,7 @@ class TestEmptyCase:
         assert "=== SECTOR INDICATORS ===" in output.text
         assert output.block_ids == ()
 
-    def test_empty_block_set_freshness_min_falls_back_to_epoch_zero(
-        self, populated_session: Session
-    ) -> None:
+    def test_empty_block_set_freshness_min_falls_back_to_epoch_zero(self) -> None:
         """With no blocks, ``freshness_min`` is the conservative epoch-zero sentinel.
 
         Domain researchers downstream need a non-null timestamp to compare
@@ -519,7 +503,7 @@ class TestEmptyCase:
         output = assemble_sector_output(
             audience=OutputAudience.SECTOR_TECH_SEMIS,
             blocks=(),
-            session=populated_session,
+            roster=TECH_SEMIS_ROSTER,
             invocation_id="inv-001",
         )
         assert output.freshness_min == datetime.fromtimestamp(0, tz=UTC)
