@@ -22,6 +22,12 @@ from alphamind.risk_guardrails.breach_behavior.emergency_triggers import (
     evaluate_multi_rule_breach,
     evaluate_regime_jump,
 )
+from alphamind.risk_guardrails.breach_behavior.engine_envelope import (
+    command_id_for,
+    compose_engine_envelope,
+    compose_guardrail_trigger_record,
+    envelope_id_for,
+)
 from alphamind.risk_guardrails.breach_behavior.halt_state import compute_halt_state
 from alphamind.risk_guardrails.breach_behavior.hard_rejection import (
     LibraryOutputProtocol,
@@ -128,8 +134,12 @@ __all__ = [
     "check_secondary_breach",
     "classify_cumulative_drawdown_tier",
     "classify_zone",
+    "command_id_for",
+    "compose_engine_envelope",
+    "compose_guardrail_trigger_record",
     "compose_hard_rejection_payload",
     "compute_halt_state",
+    "envelope_id_for",
     "evaluate_daily_drawdown_velocity",
     "evaluate_emergency_invocation",
     "evaluate_margin_call",
