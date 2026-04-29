@@ -5,6 +5,9 @@ subsequent stories drop function modules into this package and add their own
 re-exports below.
 """
 
+from alphamind.risk_guardrails.regime_adaptation.transition_machine import (
+    compute_next_transition,
+)
 from alphamind.risk_guardrails.regime_adaptation.types import (
     LOOSENING_INVOCATIONS,
     CompositeAlertState,
@@ -36,5 +39,6 @@ __all__ = [
     "RuleMetadata",
     "StaleCalendarReport",
     "VixBoundaryThresholds",
+    "compute_next_transition",
     "overlays_to_strings",
 ]
