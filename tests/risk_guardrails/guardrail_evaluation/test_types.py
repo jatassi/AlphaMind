@@ -361,6 +361,8 @@ def test_public_api_surface_matches_documented_re_exports() -> None:
         "LibraryOutput",
         # Forward-declared protocol from story 02b
         "IvProvider",
+        # Black-Scholes core (story 02a)
+        "bs_greeks",
     }
 
     public = {name for name in dir(module) if not name.startswith("_")}

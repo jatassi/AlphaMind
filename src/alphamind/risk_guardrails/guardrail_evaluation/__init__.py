@@ -7,6 +7,7 @@ combined-set check, and the engine T3 enforcement check); story 01 lays the
 boundary contract every later story builds on.
 """
 
+from alphamind.risk_guardrails.guardrail_evaluation.black_scholes import bs_greeks
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
     Action,
     AssetType,
@@ -30,10 +31,11 @@ from alphamind.risk_guardrails.guardrail_evaluation.types import (
     Status,
 )
 
-# Drop the implicit ``types`` submodule attribute the import system populates,
-# so ``dir(...)`` reflects the documented re-export list verbatim — story 01's
+# Drop the implicit submodule attributes the import system populates, so
+# ``dir(...)`` reflects the documented re-export list verbatim — the
 # acceptance test asserts the surface is exactly the names below and nothing
 # more.
+globals().pop("black_scholes", None)
 globals().pop("types", None)
 
 __all__ = [
@@ -57,4 +59,5 @@ __all__ = [
     "ProposedDelta",
     "RuleProjection",
     "Status",
+    "bs_greeks",
 ]
