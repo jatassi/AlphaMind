@@ -138,6 +138,28 @@ def _option_dae(
     )
 
 
+def _existing_option_position(
+    *,
+    position_id: str = "POS-OPT",
+    quantity: float = 10.0,
+    theta: float = -0.10,
+    vega: float = 0.20,
+) -> ExistingPosition:
+    return ExistingPosition(
+        position_id=position_id,
+        underlying="AAPL",
+        sector="tech",
+        direction=Direction.LONG,
+        asset_type=AssetType.OPTION,
+        notional_usd=2_000.0,
+        delta_adjusted_exposure_usd=4_500.0,
+        current_greeks=Greeks(delta=0.45, gamma=0.02, theta=theta, vega=vega),
+        daily_borrow_cost_usd=None,
+        reserves_capital_usd=0.0,
+        quantity=quantity,
+    )
+
+
 def _equity_dae(*, signed_notional_usd: float = 5_000.0) -> DeltaAdjustedExposure:
     return DeltaAdjustedExposure(
         proposal_id="P-EQ",
@@ -222,30 +244,78 @@ def test_portfolio_theta_spec_uses_magnitude_flag() -> None:
 
 
 def test_portfolio_theta_contribute_close_uses_existing_greeks() -> None:
-    """CLOSE on options reads the existing position's current greeks."""
+    """CLOSE on options reads the existing position's current greeks scaled
+    by the existing position's contract count.
+
+    The proposal carries ``quantity=3`` (size of the close); the existing
+    position has ``quantity=10``. The contribution must use the existing
+    position's quantity so the closed theta dollars match what the position
+    actually contributed to the book.
+    """
     config = _config()
-    existing = ExistingPosition(
-        position_id="POS-OPT",
-        underlying="AAPL",
-        sector="tech",
-        direction=Direction.LONG,
-        asset_type=AssetType.OPTION,
-        notional_usd=2_000.0,
-        delta_adjusted_exposure_usd=4_500.0,
-        current_greeks=Greeks(delta=0.45, gamma=0.02, theta=-0.10, vega=0.20),
-        daily_borrow_cost_usd=None,
-        reserves_capital_usd=0.0,
-    )
     state = _snapshot(
         portfolio_value_usd=100_000.0,
-        existing_positions={"POS-OPT": existing},
+        existing_positions={"POS-OPT": _existing_option_position(quantity=10.0, theta=-0.10)},
     )
     spec = _spec_by_id(build_active_specs(config), "portfolio_theta_pct_per_day")
-    proposal = _option_proposal(quantity=10.0, action=Action.CLOSE, existing_position_id="POS-OPT")
-    # CLOSE: after_theta=0; before_theta = -0.10 * 100 * 10 = -100
-    # contribution = (0 - (-100)) / 100_000 * 100 = +0.10
+    proposal = _option_proposal(quantity=3.0, action=Action.CLOSE, existing_position_id="POS-OPT")
     dae = _option_dae(theta=-0.10)
+    # CLOSE: after_theta=0; before_theta = -0.10 * 10 (existing.quantity) * 100 = -100
+    # contribution = (0 - (-100)) / 100_000 * 100 = +0.10
     assert spec.contribute(proposal, dae, state, config) == pytest.approx(0.10)
+
+
+def test_portfolio_theta_contribute_add_on_same_strike_is_new_contracts_only() -> None:
+    """ADD on an existing options position contributes the new contracts'
+    greeks only — the existing position's greeks must not subtract.
+
+    For an ADD where new and existing per-contract theta are equal, the
+    naive ``proposal_after - existing_per_contract * proposal_qty`` would
+    cancel to zero. The correct contribution scales the new per-contract
+    theta by the proposal quantity (the size of the addition).
+    """
+    config = _config()
+    state = _snapshot(
+        portfolio_value_usd=100_000.0,
+        existing_positions={"POS-OPT": _existing_option_position(quantity=10.0, theta=-0.10)},
+    )
+    spec = _spec_by_id(build_active_specs(config), "portfolio_theta_pct_per_day")
+    proposal = _option_proposal(quantity=5.0, action=Action.ADD, existing_position_id="POS-OPT")
+    dae = _option_dae(theta=-0.10)
+    # theta_dollars = new_per_contract_theta * proposal.quantity * 100 = -0.10 * 5 * 100 = -50
+    # contribution_pct = -50 / 100_000 * 100 = -0.05
+    assert spec.contribute(proposal, dae, state, config) == pytest.approx(-0.05)
+
+
+def test_portfolio_vega_contribute_add_on_same_strike_is_new_contracts_only() -> None:
+    """ADD on options: vega contribution is the new contracts' vega only."""
+    config = _config()
+    state = _snapshot(
+        portfolio_value_usd=100_000.0,
+        existing_positions={"POS-OPT": _existing_option_position(quantity=10.0, vega=0.20)},
+    )
+    spec = _spec_by_id(build_active_specs(config), "portfolio_vega_pct_per_iv_point")
+    proposal = _option_proposal(quantity=5.0, action=Action.ADD, existing_position_id="POS-OPT")
+    dae = _option_dae(vega=0.20)
+    # vega_dollars_per_iv_point = 0.20 * 5 * 100 / 100 = 1.0
+    # contribution_pct = 1.0 / 100_000 * 100 = 0.001
+    assert spec.contribute(proposal, dae, state, config) == pytest.approx(0.001)
+
+
+def test_portfolio_vega_contribute_close_uses_existing_position_quantity() -> None:
+    """CLOSE on options: vega contribution unwinds the existing position's
+    vega using the existing position's quantity (not the proposal's)."""
+    config = _config()
+    state = _snapshot(
+        portfolio_value_usd=100_000.0,
+        existing_positions={"POS-OPT": _existing_option_position(quantity=10.0, vega=0.20)},
+    )
+    spec = _spec_by_id(build_active_specs(config), "portfolio_vega_pct_per_iv_point")
+    proposal = _option_proposal(quantity=3.0, action=Action.CLOSE, existing_position_id="POS-OPT")
+    dae = _option_dae(vega=0.20)
+    # vega_dollars_per_iv_point = -(existing.vega * existing.quantity * 100 / 100) = -2.0
+    # contribution_pct = -2.0 / 100_000 * 100 = -0.002
+    assert spec.contribute(proposal, dae, state, config) == pytest.approx(-0.002)
 
 
 # ---------------------------------------------------------------------------

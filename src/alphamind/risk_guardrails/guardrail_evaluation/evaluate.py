@@ -72,7 +72,7 @@ def evaluate_proposals(
     Determinism: equal inputs produce equal outputs (``==`` and ``hash``
     agree). The function is pure — no I/O, no logging, no clock reads.
     """
-    _validate_inputs(state=state, proposals=proposals, config=config)
+    _validate_inputs(state=state, proposals=proposals, config=config, market=market)
 
     rejections: list[FeatureDisabledRejection] = []
     proposals_with_dae: list[tuple[ProposedDelta, DeltaAdjustedExposure]] = []
@@ -107,6 +107,7 @@ def _validate_inputs(
     state: PortfolioStateSnapshot,
     proposals: Sequence[ProposedDelta],
     config: LibraryConfig,
+    market: MarketInputs,
 ) -> None:
     """Run every cross-field invariant; raise ``LibraryInputError`` once on any failure."""
     failures: list[str] = []
@@ -118,7 +119,7 @@ def _validate_inputs(
         if proposal.id in seen_ids:
             failures.append(f"duplicate proposal id {proposal.id!r}")
         seen_ids.add(proposal.id)
-        failures.extend(_validate_proposal(proposal, state=state, config=config))
+        failures.extend(_validate_proposal(proposal, state=state, config=config, market=market))
 
     if failures:
         raise LibraryInputError("\n".join(failures))
@@ -129,6 +130,7 @@ def _validate_proposal(
     *,
     state: PortfolioStateSnapshot,
     config: LibraryConfig,
+    market: MarketInputs,
 ) -> list[str]:
     """Per-proposal cross-field invariants. Returns the list of failure messages."""
     failures: list[str] = []
@@ -137,7 +139,18 @@ def _validate_proposal(
     failures.extend(_check_action_sector(proposal, state=state, config=config))
     failures.extend(_check_short_borrow_cost(proposal))
     failures.extend(_check_notional_quantity(proposal))
+    failures.extend(_check_underlying_in_market(proposal, market=market))
     return failures
+
+
+def _check_underlying_in_market(proposal: ProposedDelta, *, market: MarketInputs) -> list[str]:
+    """``proposal.underlying`` must be in ``market.underlying_prices``."""
+    if proposal.underlying not in market.underlying_prices:
+        return [
+            f"proposal {proposal.id!r}: underlying {proposal.underlying!r} "
+            f"not in market.underlying_prices"
+        ]
+    return []
 
 
 def _check_asset_type_legs_consistency(proposal: ProposedDelta) -> list[str]:

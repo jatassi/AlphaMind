@@ -46,7 +46,7 @@ class ProjectionError(Exception):
     """Defensive structural-error class.
 
     Raised on inputs the configuration semantic-self-test should have already
-    blocked (e.g., ``effective_limit == 0``). Math-layer guards against
+    blocked (e.g., ``effective_limit <= 0``). Math-layer guards against
     structural mistakes that would otherwise produce nonsensical projections.
     """
 
@@ -87,12 +87,15 @@ def project_rule(
         otherwise PASS. ``headroom_remaining = projected_after -
         effective_limit`` (positive when above the floor).
 
-    Raises ``ProjectionError`` if ``effective_limit == 0`` — the configuration
-    semantic-self-test is supposed to block zero limits upstream; the math
-    layer's check is a defence-in-depth backstop.
+    Raises ``ProjectionError`` if ``effective_limit <= 0`` — the configuration
+    semantic-self-test is supposed to block non-positive limits upstream; the
+    math layer's check is a defence-in-depth backstop. Negative limits flip
+    the consumption-vs-zone classification, so they're also rejected here.
     """
-    if effective_limit == 0:
-        raise ProjectionError(f"effective_limit must be non-zero for rule {rule_id!r}; got 0")
+    if effective_limit <= 0:
+        raise ProjectionError(
+            f"effective_limit must be > 0 for rule {rule_id!r}; got {effective_limit}"
+        )
 
     projected_after = current + math.fsum(contributions)
     status, headroom_remaining = _classify(

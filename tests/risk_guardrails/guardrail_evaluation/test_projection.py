@@ -97,6 +97,19 @@ def test_project_rule_zero_limit_raises_projection_error() -> None:
         )
 
 
+def test_project_rule_negative_limit_raises_projection_error() -> None:
+    """Negative limits are also structural errors — flips PASS/FAIL classification."""
+    with pytest.raises(ProjectionError):
+        project_rule(
+            rule_id="net_long_pct",
+            current=0.0,
+            contributions=[1.0],
+            effective_limit=-5.0,
+            zones=_DEFAULT_ZONES,
+            unit=_PCT_UNIT,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Magnitude classification (theta, vega)
 # ---------------------------------------------------------------------------

@@ -1060,6 +1060,44 @@ def test_zero_portfolio_value_raises() -> None:
         )
 
 
+def test_options_proposal_underlying_missing_from_market_raises() -> None:
+    """An options proposal whose ``underlying`` isn't in
+    ``market.underlying_prices`` raises ``LibraryInputError`` at the entry
+    point's aggregated boundary, naming the missing underlying — not a
+    mid-computation ``KeyError``."""
+    bad = _option(
+        proposal_id="REC-MISSING",
+        underlying="NOT-IN-MARKET",
+    )
+    with pytest.raises(LibraryInputError, match=r"REC-MISSING.*NOT-IN-MARKET"):
+        evaluate_proposals(
+            state=_snapshot(),
+            proposals=(bad,),
+            config=_full_config(),
+            market=_market(),
+        )
+
+
+def test_equity_proposal_underlying_missing_from_market_raises() -> None:
+    """Equity proposals also require their ``underlying`` to be in
+    ``market.underlying_prices`` — the boundary check is uniform across asset
+    types so callers get a consistent ``LibraryInputError`` upfront."""
+    bad = _equity(
+        proposal_id="REC-MISSING",
+        underlying="NOT-IN-MARKET",
+        sector="tech",
+        direction=Direction.LONG,
+        notional_usd=1_000.0,
+    )
+    with pytest.raises(LibraryInputError, match=r"REC-MISSING.*NOT-IN-MARKET"):
+        evaluate_proposals(
+            state=_snapshot(),
+            proposals=(bad,),
+            config=_full_config(),
+            market=_market(),
+        )
+
+
 def test_aggregated_errors_lists_every_violation() -> None:
     """A batch with three independent violations raises one
     ``LibraryInputError`` whose message names all three offending proposals."""

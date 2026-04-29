@@ -21,10 +21,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import IvProvider
+from typing import Protocol
 
 # ---------------------------------------------------------------------------
 # Classification enums
@@ -84,6 +81,46 @@ class IvSource(Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class IvLookupResult:
+    """Outcome of a single ``IvProvider.lookup_iv`` call.
+
+    ``notes`` is ``None`` for a clean surface hit; populated with a short tag
+    (e.g., ``"strike_interpolated"``, ``"expiration_interpolated"``,
+    ``"realized_vol_fallback_no_chain"``,
+    ``"realized_vol_fallback_strike_outside_chain"``,
+    ``"realized_vol_fallback_expiration_extrapolated"``) whenever the lookup
+    interpolated non-trivially or fell back. ``notes`` is informational —
+    callers log it for IV-provenance auditing but the projection math does not
+    branch on its value.
+    """
+
+    implied_volatility: float
+    source: IvSource
+    notes: str | None
+
+
+class IvProvider(Protocol):
+    """The library's IV-sourcing contract.
+
+    Concrete implementations: ``FixtureIvProvider`` (test/bootstrap) and the
+    Polygon-backed production adapter that reads ``options_contract_snapshots``
+    when the options collector lands. ``lookup_iv`` is total — every successful
+    path returns an ``IvLookupResult`` with positive ``implied_volatility``;
+    the inability to produce one raises ``IvLookupError``.
+    """
+
+    def lookup_iv(
+        self,
+        *,
+        underlying: str,
+        strike: float,
+        expiration: date,
+        contract_type: ContractType,
+        as_of: datetime,
+    ) -> IvLookupResult: ...
+
+
+@dataclass(frozen=True, slots=True)
 class Greeks:
     """Per-leg result of the Black-Scholes core and strategy-level net result
     after aggregation."""
@@ -137,10 +174,15 @@ class ProposedDelta:
 class ExistingPosition:
     """Minimal per-position fields the library consults for ADD/CLOSE/ADJUST.
 
-    ``current_greeks`` is None for equity; ``daily_borrow_cost_usd`` is None
-    for long and options positions, populated for shorts;
+    ``current_greeks`` is per-contract (per-unit), not total position greeks;
+    the position's total theta/vega/etc. is ``current_greeks.X * quantity *
+    contract_multiplier``. It is None for equity. ``daily_borrow_cost_usd`` is
+    None for long and options positions, populated for shorts;
     ``reserves_capital_usd`` is the capital the existing position holds against
-    an unfilled non-marketable limit (zero for filled positions).
+    an unfilled non-marketable limit (zero for filled positions). ``quantity``
+    is the position's current contract count (options/strategies) or share
+    count (equity); options/strategy positions must populate it for CLOSE on
+    options-greeks rules to compute correctly.
     """
 
     position_id: str
@@ -153,6 +195,7 @@ class ExistingPosition:
     current_greeks: Greeks | None
     daily_borrow_cost_usd: float | None
     reserves_capital_usd: float
+    quantity: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,10 +421,3 @@ class LibraryOutput:
                 self.feature_disabled,
             )
         )
-
-
-# ``IvProvider`` is bound into this module's runtime namespace by
-# ``iv_sourcing`` (story 02b) after that module finishes loading, so
-# ``typing.get_type_hints(MarketInputs)`` resolves the forward
-# ``"IvProvider"`` annotation against this module's globals. The Protocol's
-# canonical definition lives there.

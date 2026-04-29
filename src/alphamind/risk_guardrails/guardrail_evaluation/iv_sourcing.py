@@ -5,9 +5,9 @@ estimate at a proposal's ``(strike, expiration, contract_type)``. The primary
 source is the data pipeline's IV surface (production-side this is
 ``options_contract_snapshots`` populated by the Polygon options collector); the
 fallback is the underlying's trailing 30-day realized volatility, supplied as a
-per-underlying scalar from the data pipeline. The ``IvProvider`` Protocol
-expresses the contract; ``FixtureIvProvider`` is the test-and-bootstrap
-implementation backed by inline data.
+per-underlying scalar from the data pipeline. The ``IvProvider`` Protocol (in
+``types``) expresses the contract; ``FixtureIvProvider`` is the
+test-and-bootstrap implementation backed by inline data.
 
 The Polygon-backed production adapter lands when the options collector is
 built (per ``project-tracker.md`` § Backlog → Forward-trigger entries); both
@@ -21,35 +21,16 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from itertools import pairwise
-from typing import Protocol
 
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
     ContractType,
+    IvLookupResult,
     IvSource,
 )
 
 # ---------------------------------------------------------------------------
-# Protocol surface and result/error types
+# Error type
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class IvLookupResult:
-    """Outcome of a single ``IvProvider.lookup_iv`` call.
-
-    ``notes`` is ``None`` for a clean surface hit; populated with a short tag
-    (e.g., ``"strike_interpolated"``, ``"expiration_interpolated"``,
-    ``"realized_vol_fallback_no_chain"``,
-    ``"realized_vol_fallback_strike_outside_chain"``,
-    ``"realized_vol_fallback_expiration_extrapolated"``) whenever the lookup
-    interpolated non-trivially or fell back. ``notes`` is informational —
-    callers log it for IV-provenance auditing but the projection math does not
-    branch on its value.
-    """
-
-    implied_volatility: float
-    source: IvSource
-    notes: str | None
 
 
 class IvLookupError(Exception):
@@ -64,27 +45,6 @@ class IvLookupError(Exception):
         of that type for the underlying within the lookback window AND
         realized-vol fallback is unavailable.
     """
-
-
-class IvProvider(Protocol):
-    """The library's IV-sourcing contract.
-
-    Concrete implementations: ``FixtureIvProvider`` (test/bootstrap) and the
-    Polygon-backed production adapter that reads ``options_contract_snapshots``
-    when the options collector lands. ``lookup_iv`` is total — every successful
-    path returns an ``IvLookupResult`` with positive ``implied_volatility``;
-    the inability to produce one raises ``IvLookupError``.
-    """
-
-    def lookup_iv(
-        self,
-        *,
-        underlying: str,
-        strike: float,
-        expiration: date,
-        contract_type: ContractType,
-        as_of: datetime,
-    ) -> IvLookupResult: ...
 
 
 # ---------------------------------------------------------------------------
@@ -271,15 +231,3 @@ def _bracketing_expirations(
         if low <= target <= high:
             return low, high
     return None
-
-
-# Bind ``IvProvider`` into ``types`` so ``typing.get_type_hints(MarketInputs)``
-# resolves the ``"IvProvider"`` forward annotation against the module where
-# ``MarketInputs`` is defined. ``types`` is fully loaded by this point (the
-# import at the top of this file brought it in), so writing the attribute is
-# the cycle-free way to keep the Protocol's canonical home here while
-# satisfying the typing-introspection contract there.
-from alphamind.risk_guardrails.guardrail_evaluation import types as _types  # noqa: E402
-
-_types.IvProvider = IvProvider  # type: ignore[attr-defined]
-del _types
