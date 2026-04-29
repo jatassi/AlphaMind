@@ -26,12 +26,12 @@ Cross-cutting policies and reference specs that constrain implementation but are
 ### Data layer
 
 - [x] **Collector** — _done_ — [design](design/01-data-layer/collector/), [stories](implementation/01-data-layer/collector/)
-- [x] **Portfolio state** — _stories drafted_ — [design](design/01-data-layer/internal/portfolio-state.md), [stories](implementation/01-data-layer/portfolio-state/)
+- [x] **Portfolio state** — _done_ — [design](design/01-data-layer/internal/portfolio-state.md), [stories](implementation/01-data-layer/portfolio-state/)
 
 ### Distillation layer
 
-- [*] **Distillation** — _stories drafted_ — [external](design/02-distillation-layer/external.md), [internal](design/02-distillation-layer/internal.md), [stories](implementation/02-distillation-layer/)
-- [*] **Threshold calibration framework** — _stories drafted (within the Distillation work tree)_ — [design](design/02-distillation-layer/threshold-calibration.md), stories 02 (config schema), 03 (state schema), 04 (bootstrap framework), 07 (Class B refresh), 09 (regime classification), 13 (verification incl. `verify_regime_transition.py`), 14a (audit trail + calibration log convention), 14b (no-magic-numbers audit), 15 (emergency-invocation review), 16 (flag-rate reporter), 17 (calibration-state snapshot + dashboard panel) under [implementation/02-distillation-layer/](implementation/02-distillation-layer/)
+- [*] **Distillation** — _Partially done_ — [external](design/02-distillation-layer/external.md), [internal](design/02-distillation-layer/internal.md), [stories](implementation/02-distillation-layer/)
+- [*] **Threshold calibration framework** — _Partially done_ — [design](design/02-distillation-layer/threshold-calibration.md), stories 02 (config schema), 03 (state schema), 04 (bootstrap framework), 07 (Class B refresh), 09 (regime classification), 13 (verification incl. `verify_regime_transition.py`), 14a (audit trail + calibration log convention), 14b (no-magic-numbers audit), 15 (emergency-invocation review), 16 (flag-rate reporter), 17 (calibration-state snapshot + dashboard panel) under [implementation/02-distillation-layer/](implementation/02-distillation-layer/)
 - [x] **Replay harness** — _done_ — [design](design/02-distillation-layer/replay-harness.md), [stories](implementation/02-distillation-layer/replay-harness/)
 
 ### Risk guardrails
