@@ -258,10 +258,18 @@ class RegimeAdaptationOutput:
     The orchestrator does not perform persistence side-effects itself; it
     returns the new state and the audit log entries for the pipeline runtime
     to commit alongside the rest of the invocation's writes.
+
+    ``overlay_activation_decisions`` surfaces the per-overlay activator
+    outputs (one per registered overlay) so downstream consumers can read
+    overlay-specific auxiliary fields such as
+    ``pre_event_block_new_positions`` without re-running the activators.
+    Ordered alphabetically by overlay value to mirror
+    ``runtime_dimensions_active_overlays``.
     """
 
     runtime_dimensions_active_regime: Regime
     runtime_dimensions_active_overlays: tuple[Overlay, ...]
+    overlay_activation_decisions: tuple[OverlayActivationDecision, ...]
     effective_limits: Mapping[str, float]
     active_risk_parameter_set: ActiveRiskParameterSet
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...]

@@ -194,6 +194,9 @@ def resolve_regime_adaptation(
     return RegimeAdaptationOutput(
         runtime_dimensions_active_regime=next_transition.active_regime,
         runtime_dimensions_active_overlays=active_overlays,
+        overlay_activation_decisions=tuple(
+            sorted(overlay_decisions, key=lambda decision: decision.overlay)
+        ),
         effective_limits=effective_limits,
         active_risk_parameter_set=active_risk_parameter_set,
         regime_transition_breaches=breaches,
