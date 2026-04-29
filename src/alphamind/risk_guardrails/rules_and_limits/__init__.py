@@ -1,10 +1,10 @@
-"""Rules-and-limits feature surface.
+"""Public surface for the rules-and-limits subpackage."""
 
-Public re-exports for the rule-registry runtime accessor (story 01a). The
-registry is a thin, immutable lookup over ``GuardrailsConfig.rules`` shared
-across guardrail consumers.
-"""
-
+from alphamind.risk_guardrails.rules_and_limits.profile_boundary import (
+    ProfileBoundaryEvaluation,
+    ProfileBoundaryStatus,
+    evaluate_profile_boundary,
+)
 from alphamind.risk_guardrails.rules_and_limits.registry import (
     ResolvedRule,
     RuleRegistry,
@@ -13,8 +13,11 @@ from alphamind.risk_guardrails.rules_and_limits.registry import (
 )
 
 __all__ = [
+    "ProfileBoundaryEvaluation",
+    "ProfileBoundaryStatus",
     "ResolvedRule",
     "RuleRegistry",
     "build_rule_registry",
+    "evaluate_profile_boundary",
     "iter_active_rules",
 ]
