@@ -5,6 +5,10 @@ subsequent stories drop function modules into this package and add their own
 re-exports below.
 """
 
+from alphamind.risk_guardrails.regime_adaptation.regime_mapping import (
+    from_regime_classification,
+    map_distillation_to_guardrail_regime,
+)
 from alphamind.risk_guardrails.regime_adaptation.types import (
     LOOSENING_INVOCATIONS,
     CompositeAlertState,
@@ -36,5 +40,7 @@ __all__ = [
     "RuleMetadata",
     "StaleCalendarReport",
     "VixBoundaryThresholds",
+    "from_regime_classification",
+    "map_distillation_to_guardrail_regime",
     "overlays_to_strings",
 ]

@@ -40,3 +40,16 @@ def test_top_level_reexports_every_typed_record() -> None:
         assert hasattr(regime_adaptation, name), (
             f"top-level package missing re-exported symbol {name!r}"
         )
+
+
+def test_top_level_reexports_regime_mapping_helpers() -> None:
+    """``map_distillation_to_guardrail_regime`` and ``from_regime_classification``
+    are reachable from the top-level package (story 03)."""
+    expected_symbols = (
+        "from_regime_classification",
+        "map_distillation_to_guardrail_regime",
+    )
+    for name in expected_symbols:
+        assert hasattr(regime_adaptation, name), (
+            f"top-level package missing re-exported symbol {name!r}"
+        )
