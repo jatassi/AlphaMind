@@ -8,6 +8,9 @@ boundary contract every later story builds on.
 """
 
 from alphamind.risk_guardrails.guardrail_evaluation.black_scholes import bs_greeks
+from alphamind.risk_guardrails.guardrail_evaluation.delta_adjusted import (
+    compute_delta_adjusted_exposure,
+)
 from alphamind.risk_guardrails.guardrail_evaluation.effective_limits import (
     EffectiveLimitAdapterError,
     from_resolved_config,
@@ -50,7 +53,14 @@ from alphamind.risk_guardrails.guardrail_evaluation.types import (
 # ``dir(...)`` reflects the documented re-export list verbatim — the
 # acceptance test asserts the surface is exactly the names below and nothing
 # more.
-for _submodule in ("black_scholes", "effective_limits", "feature_gate", "iv_sourcing", "types"):
+for _submodule in (
+    "black_scholes",
+    "delta_adjusted",
+    "effective_limits",
+    "feature_gate",
+    "iv_sourcing",
+    "types",
+):
     globals().pop(_submodule, None)
 del _submodule
 
@@ -84,5 +94,6 @@ __all__ = [
     "Status",
     "bs_greeks",
     "classify_feature_gate",
+    "compute_delta_adjusted_exposure",
     "from_resolved_config",
 ]

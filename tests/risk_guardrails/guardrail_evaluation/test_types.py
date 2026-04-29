@@ -380,6 +380,8 @@ def test_public_api_surface_matches_documented_re_exports() -> None:
         "EffectiveLimitAdapterError",
         "classify_feature_gate",
         "from_resolved_config",
+        # Delta-adjusted exposure (story 03)
+        "compute_delta_adjusted_exposure",
     }
 
     public = {name for name in dir(module) if not name.startswith("_")}

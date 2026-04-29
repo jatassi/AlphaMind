@@ -1,0 +1,184 @@
+"""Delta-adjusted exposure with conservative buffer and strategy aggregation
+(story 03).
+
+Single call site that combines Black-Scholes greeks (story 02a), IV sourcing
+(story 02b), and the conservative buffer into a per-proposal
+``DeltaAdjustedExposure``. Downstream rule-contribution math (story 04)
+consumes ``signed_notional_usd`` and ``net_greeks`` without reaching back into
+this layer.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from alphamind.risk_guardrails.guardrail_evaluation.black_scholes import bs_greeks
+from alphamind.risk_guardrails.guardrail_evaluation.types import (
+    Action,
+    AssetType,
+    DeltaAdjustedExposure,
+    Direction,
+    Greeks,
+    IvSource,
+    LibraryConfig,
+    MarketInputs,
+    OptionLeg,
+    ProposedDelta,
+)
+
+_CONTRACT_MULTIPLIER = 100
+_DAYS_PER_YEAR = 365
+
+# Per-regime multiplier applied to ``LibraryConfig.conservative_buffer_pct``.
+# Keys match ``Regime.value`` (underscore form) since ``LibraryConfig.active_regime``
+# carries the enum's ``.value`` string. Out-of-band labels fall through to ``1.0``;
+# structural input errors are caught by ``from_resolved_config`` upstream so the
+# math layer stays total.
+_REGIME_BUFFER_MULTIPLIERS = {
+    "low_vol": 0.8,
+    "normal": 1.0,
+    "elevated": 1.5,
+    "crisis": 2.0,
+}
+
+
+def compute_delta_adjusted_exposure(
+    *,
+    proposal: ProposedDelta,
+    market: MarketInputs,
+    config: LibraryConfig,
+) -> DeltaAdjustedExposure:
+    """Combine Black-Scholes, IV sourcing, and the conservative buffer."""
+    if proposal.action in (Action.ADJUST, Action.CANCEL):
+        return _exposure_neutral(proposal)
+
+    direction_sign = 1.0 if proposal.direction is Direction.LONG else -1.0
+    # ``CLOSE`` reduces exposure, so signed notional carries the *direction of
+    # change* — opposite the proposal's ``direction``. The rule-contribution
+    # math then sums ``current + Σ signed_notional`` uniformly across actions.
+    sign = -direction_sign if proposal.action is Action.CLOSE else direction_sign
+
+    if proposal.asset_type is AssetType.EQUITY:
+        return DeltaAdjustedExposure(
+            proposal_id=proposal.id,
+            signed_notional_usd=sign * proposal.notional_usd,
+            net_greeks=None,
+            iv_used=None,
+            iv_source=None,
+            unbuffered_delta=None,
+        )
+
+    legs = proposal.option_legs or ()
+    spot = market.underlying_prices[proposal.underlying]
+    leg_results = [
+        _resolve_leg(leg=leg, proposal=proposal, market=market, spot=spot) for leg in legs
+    ]
+
+    net_greeks = _sum_leg_greeks(leg_results)
+    unbuffered_abs_delta = abs(net_greeks.delta)
+    buffered_abs_delta = unbuffered_abs_delta * (1 + _effective_buffer_fraction(config))
+    signed_notional = sign * buffered_abs_delta * spot * _CONTRACT_MULTIPLIER * proposal.quantity
+
+    return DeltaAdjustedExposure(
+        proposal_id=proposal.id,
+        signed_notional_usd=signed_notional,
+        net_greeks=net_greeks,
+        iv_used=_mean_iv(leg_results),
+        iv_source=_aggregate_iv_source(leg_results),
+        unbuffered_delta=unbuffered_abs_delta,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-leg resolution and aggregation helpers
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _LegResult:
+    """Per-leg greeks already weighted by signed ``leg.quantity``, plus the
+    IV used for the leg."""
+
+    weighted_greeks: Greeks
+    iv: float
+    iv_source: IvSource
+
+
+def _exposure_neutral(proposal: ProposedDelta) -> DeltaAdjustedExposure:
+    """Result for ``ADJUST``/``CANCEL`` — exposure-neutral by definition.
+
+    Greeks are zero for options (so the rule-contribution math sees zero
+    impact on theta/vega budgets) and ``None`` for equity (the dataclass
+    invariant for ``net_greeks``).
+    """
+    zero_greeks = (
+        Greeks(0.0, 0.0, 0.0, 0.0) if proposal.asset_type is not AssetType.EQUITY else None
+    )
+    return DeltaAdjustedExposure(
+        proposal_id=proposal.id,
+        signed_notional_usd=0.0,
+        net_greeks=zero_greeks,
+        iv_used=None,
+        iv_source=None,
+        unbuffered_delta=None,
+    )
+
+
+def _resolve_leg(
+    *, leg: OptionLeg, proposal: ProposedDelta, market: MarketInputs, spot: float
+) -> _LegResult:
+    iv_result = market.iv_provider.lookup_iv(
+        underlying=proposal.underlying,
+        strike=leg.strike,
+        expiration=leg.expiration,
+        contract_type=leg.contract_type,
+        as_of=market.as_of,
+    )
+    time_to_expiration_years = (leg.expiration - market.as_of.date()).days / _DAYS_PER_YEAR
+    leg_greeks = bs_greeks(
+        spot=spot,
+        strike=leg.strike,
+        time_to_expiration_years=time_to_expiration_years,
+        risk_free_rate=market.risk_free_rate,
+        implied_volatility=iv_result.implied_volatility,
+        contract_type=leg.contract_type,
+    )
+    weight = float(leg.quantity)
+    return _LegResult(
+        weighted_greeks=Greeks(
+            delta=weight * leg_greeks.delta,
+            gamma=weight * leg_greeks.gamma,
+            theta=weight * leg_greeks.theta,
+            vega=weight * leg_greeks.vega,
+        ),
+        iv=iv_result.implied_volatility,
+        iv_source=iv_result.source,
+    )
+
+
+def _sum_leg_greeks(leg_results: Sequence[_LegResult]) -> Greeks:
+    return Greeks(
+        delta=math.fsum(r.weighted_greeks.delta for r in leg_results),
+        gamma=math.fsum(r.weighted_greeks.gamma for r in leg_results),
+        theta=math.fsum(r.weighted_greeks.theta for r in leg_results),
+        vega=math.fsum(r.weighted_greeks.vega for r in leg_results),
+    )
+
+
+def _effective_buffer_fraction(config: LibraryConfig) -> float:
+    multiplier = _REGIME_BUFFER_MULTIPLIERS.get(config.active_regime, 1.0)
+    return (config.conservative_buffer_pct * multiplier) / 100.0
+
+
+def _mean_iv(leg_results: Sequence[_LegResult]) -> float:
+    return math.fsum(r.iv for r in leg_results) / len(leg_results)
+
+
+def _aggregate_iv_source(leg_results: Sequence[_LegResult]) -> IvSource:
+    """``REALIZED_VOL_FALLBACK`` if any leg fell back; ``SURFACE`` only when
+    every leg was surfaced."""
+    if any(r.iv_source is IvSource.REALIZED_VOL_FALLBACK for r in leg_results):
+        return IvSource.REALIZED_VOL_FALLBACK
+    return IvSource.SURFACE
