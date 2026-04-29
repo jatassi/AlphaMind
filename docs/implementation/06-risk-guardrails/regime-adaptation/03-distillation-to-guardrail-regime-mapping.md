@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-29
+commit_id: 8e318bb
 ---
 
 # 03 — Distillation→guardrail regime mapping

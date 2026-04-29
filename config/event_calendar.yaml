@@ -1,0 +1,24 @@
+# Operator-curated catalog of scheduled high-impact catalysts.
+# Drives the pre-event tightening overlay (config/overlays/pre-event.yaml).
+# Updated quarterly per docs/design/06-risk-guardrails/regime-adaptation.md
+# § Scheduled high-impact events. Each entry's event_type must match an
+# EventType enum member (config/models/overlays.py). Timestamps are UTC
+# ISO-8601; the overlay activator combines them with config/scheduler.yaml's
+# trigger schedule to determine "N invocations before the event".
+#
+# To add an event: remove the leading `# ` from one of the example blocks
+# below (and uncomment the `entries:` line). When no entries are commented in,
+# the loader treats the calendar as empty.
+
+# entries:
+#   - event_type: fomc
+#     event_timestamp_utc: 2026-06-17T18:00:00Z
+#     label: "FOMC June 2026"
+#
+#   - event_type: cpi
+#     event_timestamp_utc: 2026-05-13T12:30:00Z
+#     label: "CPI April 2026 release"
+#
+#   - event_type: earnings
+#     event_timestamp_utc: 2026-04-29T20:00:00Z
+#     label: "NVDA Q1 earnings"
