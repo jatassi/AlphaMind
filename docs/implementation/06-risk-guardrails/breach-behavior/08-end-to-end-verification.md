@@ -33,7 +33,6 @@ Land golden tests reproducing the breach-behavior scenarios from `scenario-tests
 - 04b (cumulative drawdown tier)
 - 04c (hard rejection payload)
 - 04d (position selection)
-- 04e (regime-transition breach detection)
 - 05a (halt state computation)
 - 05b (secondary breach check)
 - 05c (emergency invocation triggers)
@@ -335,7 +334,7 @@ def test_a10_regime_jump_low_vol_to_crisis_fires_emergency() -> None:
     assert context_or_none.normal_cadence_minutes == 120.0
 ```
 
-A second A10 test reproduces the regime-transition breach detection (story 04e):
+A second A10 test reproduces the regime-transition breach detection. The detector and the `RegimeTransitionBreach` typed record are owned by the regime-adaptation work tree (story 07 there); this test imports both from `alphamind.risk_guardrails.regime_adaptation`. The test is included in this work tree's E2E suite because it covers the full A10 walkthrough end-to-end alongside the breach-behavior emergency-invocation trigger:
 
 ```python
 def test_a10_regime_transition_introduces_breaches() -> None:
@@ -353,24 +352,21 @@ def test_a10_regime_transition_introduces_breaches() -> None:
         rule_values={"net_long_pct": 30.0, "gross_exposure_pct": 60.0, "portfolio_theta_pct_per_day": 0.05, ...},
     )
 
+    # detect_regime_transition_breaches and RegimeTransitionBreach come from regime_adaptation.
+    # See regime-adaptation story 07 for the detector contract and 02 for the typed record.
     breaches = detect_regime_transition_breaches(
-        open_positions=positions,
-        sector_resolver=sector_resolver,
-        sector_exposure_pct={"tech": 24.0, "semis": 19.0, ...},
-        net_long_pct=65.0, net_short_pct=10.0,
-        gross_exposure_pct=118.0, options_delta_pct=22.0,
-        prior_active_risk_parameters=pre_params,
-        current_active_risk_parameters=post_params,
+        held_positions=positions,
+        risk_budget=risk_budget_snapshot,
+        new_effective_limits=post_params_effective_limits,
+        transition_state=RegimeTransitionState.TIGHTENING,
+        rule_metadata=rule_metadata,
     )
 
     assert len(breaches) >= 3  # net long, gross, options delta all breach crisis but not low-vol
-    rule_ids = {b.rule_breached for b in breaches}
+    rule_ids = {b.rule_id for b in breaches}                    # regime-adaptation field name
     assert "net_long_pct" in rule_ids
     assert "gross_exposure_pct" in rule_ids
     assert "options_delta_pct" in rule_ids
-    # Each carries the regime label
-    for b in breaches:
-        assert b.regime_label == RegimeLabel.CRISIS
 ```
 
 ### 7. Scenario A11 — synchronized HTB buy-in (no engine envelope)
@@ -460,7 +456,7 @@ Out of scope:
 - [ ] A7 secondary-deferred test: same orchestrator returns a single-envelope tuple with `secondary_breach_check_result.result == "deferred_to_pm"` and notes naming the secondary rule.
 - [ ] A8 test: `classify_cumulative_drawdown_tier` returns HEAVILY_CONSTRAINED at 10% drawdown; `apply_progressive_tier_overrides` produces a parameter set with position_max_size 2% and gross 60% with the `cumulative_drawdown_tier_2` overlay.
 - [ ] A10 emergency test: `evaluate_emergency_invocation` returns a context with `trigger=REGIME_JUMP` and the documented descriptive text for low-vol → crisis.
-- [ ] A10 regime-transition-breach test: `detect_regime_transition_breaches` returns at least 3 breaches (net_long_pct, gross_exposure_pct, options_delta_pct) with `regime_label=CRISIS`.
+- [ ] A10 regime-transition-breach test: `detect_regime_transition_breaches` (imported from `regime_adaptation`) returns at least 3 breaches with `rule_id` ∈ {net_long_pct, gross_exposure_pct, options_delta_pct} given the documented A10 inputs. (Cross-feature: requires regime-adaptation's stories 02 and 07 to be `done` before this assertion can run; otherwise the test is skipped with a TODO comment until the gate clears.)
 - [ ] A11 emergency test: `evaluate_emergency_invocation` returns `None` for the A11 conditions (no trigger).
 - [ ] A11 halt test: `compute_halt_state` returns `None` for the A11 conditions (drawdown below limit).
 - [ ] Determinism: each scenario test runs 5 times in a row producing identical outputs; verified by a parametrized `repetition_count=5` decorator or equivalent.

@@ -1,4 +1,4 @@
-You are orchestrating completion of the AlphaMind risk-guardrails breach-behavior layer. Thirteen user stories live at `docs/implementation/06-risk-guardrails/breach-behavior/` (files `01-...md` through `08-...md`, with `04a`–`04e` and `05a`–`05c` parallel-eligible groups). Each story is self-contained — read it before you act on it.
+You are orchestrating completion of the AlphaMind risk-guardrails breach-behavior layer. Twelve user stories live at `docs/implementation/06-risk-guardrails/breach-behavior/` (files `01-...md` through `08-...md`, with `04a`–`04d` and `05a`–`05c` parallel-eligible groups). Each story is self-contained — read it before you act on it.
 
 ## Cross-feature gates (read first)
 
@@ -28,11 +28,11 @@ Cumulative drawdown's progressive-tier configuration is sourced from `config/gua
 **Model selection.** Per CLAUDE.md, mechanical changes go to Sonnet and everything else to Opus. The split here:
 
 - **Sonnet:** 01 (one-line README link).
-- **Opus:** 02 through 08. Story 02 (package skeleton + minimal config) is borderline-mechanical, but the YAML loader shape and `BreachBehaviorConfig` Pydantic model want judgment; default to Opus to avoid coordination cost. Stories 03 (canonical types), 04a–04e, 05a–05c, 06, 07 carry algorithmic, schema-conformance, or composition nuance that warrants Opus. Story 08 (E2E) involves fixture construction and integration-test design — Opus.
+- **Opus:** 02 through 08. Story 02 (package skeleton + minimal config) is borderline-mechanical, but the YAML loader shape and `BreachBehaviorConfig` Pydantic model want judgment; default to Opus to avoid coordination cost. Stories 03 (canonical types), 04a–04d, 05a–05c, 06, 07 carry algorithmic, schema-conformance, or composition nuance that warrants Opus. Story 08 (E2E) involves fixture construction and integration-test design — Opus.
 
 Tag the model name in every `Agent` tool `description` per CLAUDE.md (`feedback_subagent_title_model_name`).
 
-**Run independent stories in parallel.** Stories 01 and 02 dispatch immediately in one batch. After 02 lands, story 03 dispatches alone (every downstream story depends on the canonical types). After 03 lands, stories 04a, 04b, 04c, 04d, and 04e dispatch in parallel (five concurrent subagents, each in its own worktree). After 04* land, stories 05a, 05b, 05c dispatch in parallel (three concurrent — 05a depends on 04b; 05b on 04a + 04d; 05c on 04a). After 05* land, story 06 dispatches alone (depends on 04d + 05b). After 06 lands, story 07 dispatches alone. Story 08 dispatches last, after every prior story is `done`.
+**Run independent stories in parallel.** Stories 01 and 02 dispatch immediately in one batch. After 02 lands, story 03 dispatches alone (every downstream story depends on the canonical types). After 03 lands, stories 04a, 04b, 04c, 04d dispatch in parallel (four concurrent subagents, each in its own worktree). After 04* land, stories 05a, 05b, 05c dispatch in parallel (three concurrent — 05a depends on 04b; 05b on 04a + 04d; 05c on 04a). After 05* land, story 06 dispatches alone (depends on 04d + 05b). After 06 lands, story 07 dispatches alone. Story 08 dispatches last, after every prior story is `done`.
 
 **Each story runs in its own worktree.** With `isolation: "worktree"`, the harness creates a fresh branch + checkout from current `main`, runs the subagent there, and returns the branch name and worktree path on completion (or auto-cleans if no changes were made). Subagents commit on that branch; you merge into `main` after verification. Never run subagents on the main checkout — parallel stories would collide.
 
@@ -82,7 +82,7 @@ Each cycle:
      b. Update frontmatter on `main` (`status: done`, `completed_date`, `commit_id` = the SHA now on `main` for this story's final commit), commit (`chore: mark story <ID> done`).
      c. Clean up: `git branch -d <branch>` and `git worktree remove <path>`.
    - On fail: remove the worktree (`git worktree remove --force <path>` and `git branch -D <branch>`) and re-dispatch with the specific gap noted; a fresh worktree will be created.
-4. **Repeat** until all 13 are `done`.
+4. **Repeat** until all 12 are `done`.
 
 ## Critical-path note
 
@@ -94,30 +94,32 @@ The dependency graph for this work tree:
               ↓
               03 (canonical types & enums)
               ↓
-        ┌─────┼─────┬─────┬─────┐
-       04a   04b   04c   04d   04e         (parallel: zone, drawdown-tier, hard-rejection, position-selection, regime-transition)
-        └────┬┴─────┘     │      
-             ↓            │      
-       ┌─────┼─────┐      │      
-      05a   05b   05c     │            (parallel after 04*: halt-state, secondary-breach, emergency-triggers)
-       └────┬┴─────────────┘      
-            ↓                    
-            06                    (engine-originated envelope assembler — needs 04d + 05b)
-            ↓                    
-            07                    (margin-call cascade — needs 06)
-            ↓                    
-            08                    (E2E verification — needs everything)
+        ┌─────┼─────┬─────┐
+       04a   04b   04c   04d              (parallel: zone, drawdown-tier, hard-rejection, position-selection)
+        └────┬┴─────┘     │
+             ↓            │
+       ┌─────┼─────┐      │
+      05a   05b   05c     │             (parallel after 04*: halt-state, secondary-breach, emergency-triggers)
+       └────┬┴─────────────┘
+            ↓
+            06                            (engine-originated envelope assembler — needs 04d + 05b)
+            ↓
+            07                            (margin-call cascade — needs 06)
+            ↓
+            08                            (E2E verification — needs everything)
 ```
 
 Wave 1 dispatches stories 01 and 02 in parallel.
 Wave 2 dispatches story 03 alone.
-Wave 3 dispatches stories 04a, 04b, 04c, 04d, 04e in parallel — five concurrent subagents.
+Wave 3 dispatches stories 04a, 04b, 04c, 04d in parallel — four concurrent subagents.
 Wave 4 dispatches stories 05a, 05b, 05c in parallel — three concurrent subagents.
 Wave 5 dispatches story 06 alone.
 Wave 6 dispatches story 07 alone.
 Wave 7 dispatches story 08 alone.
 
-Critical path: 02 → 03 → 04d (or any 04* on the path) → 05b → 06 → 07 → 08 = 7 sequential subagent runs. The widest parallel batch is 5 concurrent subagents in wave 3.
+Regime-transition breach detection (originally scoped here as story 04e) is owned by the regime-adaptation work tree (story 07 there). Breach-behavior consumers import `RegimeTransitionBreach` from `alphamind.risk_guardrails.regime_adaptation.types` directly; this work tree does not redeclare it.
+
+Critical path: 02 → 03 → 04d (or any 04* on the path) → 05b → 06 → 07 → 08 = 7 sequential subagent runs. The widest parallel batch is 4 concurrent subagents in wave 3.
 
 ## Communication with the user
 
@@ -153,5 +155,5 @@ For everything else, delegate.
 - Do not pick up a story whose dependencies are not all `done` — and for story 05b, confirm the cross-feature gate too.
 - Do not let a subagent disable a linter rule in any form (`ignore`, `per-file-ignores`, `# noqa`, `# type: ignore`) without triaging per `feedback_lint_suppression_triage`. If the subagent reports having suppressed without warrant, treat the story as failed verification and re-dispatch with explicit instructions to remove the suppression.
 - Do not let any breach-behavior primitive perform I/O, persist to a database, write to the activity log, or call the broker. The primitives are pure functions over typed inputs returning typed outputs; persistence and side effects are the continuous monitor's and the OMS's responsibilities. Any I/O in a primitive is an architectural error and the story re-dispatches with the purity invariant emphasized.
-- Do not let a subagent invent a typed value object that duplicates an existing `portfolio_state.records.*`, `config.models.guardrails.*`, or `state_delivery.types.*` type. Per `feedback_no_inventing_component_names`, every typed input mirrors an existing upstream record; new types only land when they encode a breach-behavior-specific concept (`HaltState`, `EmergencyContext`, `EngineEnvelope`, `EngineGuardrailTriggerRecord`, `HardRejectionPayload`, `RegimeTransitionBreach`, `PositionSelectionResult`, `CascadeContext`, etc.) absent upstream. The canonical types module is story 03's territory; subsequent stories add their own internal value objects (e.g., `PositionLiquidity`, `MarginCallEvent`, `DrawdownSample`) only when no upstream equivalent exists.
+- Do not let a subagent invent a typed value object that duplicates an existing `portfolio_state.records.*`, `config.models.guardrails.*`, `regime_adaptation.types.*`, or `state_delivery.types.*` type. Per `feedback_no_inventing_component_names`, every typed input mirrors an existing upstream record; new types only land when they encode a breach-behavior-specific concept (`HaltState`, `EmergencyContext`, `EngineEnvelope`, `EngineGuardrailTriggerRecord`, `HardRejectionPayload`, `PositionSelectionResult`, `CascadeContext`, etc.) absent upstream. `RegimeTransitionBreach` lives in `regime_adaptation.types` (story 02 of that work tree); breach-behavior consumers import directly from there. The canonical types module is story 03's territory; subsequent stories add their own internal value objects (e.g., `PositionLiquidity`, `MarginCallEvent`, `DrawdownSample`) only when no upstream equivalent exists.
 - Do not let primitives embed numeric thresholds (70/85/95 zone boundaries, 8/10/12 cumulative drawdown tiers, 30-minute cooldown, 60% velocity threshold, 30-minute window, 95% short trim target, 110% total-short immediate threshold, 3-rule multi-rule breach count, 8-step cascade max). All come from configuration (`BreachBehaviorConfig` and `config/guardrails.yaml`). Per `feedback_avoid_numeric_anchors`. Suppress hardcoding by reviewing changed code against these thresholds and re-dispatching if any constant slips through.

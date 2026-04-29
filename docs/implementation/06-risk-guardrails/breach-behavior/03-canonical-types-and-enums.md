@@ -23,8 +23,8 @@ This story formalizes the package's public type surface in one place so the para
   - § Hard rejection semantics — `HardRejectionPayload` shape (rule(s) breached, current state, limit, overage, suggested modification, headroom after).
   - § Traceability for engine-originated actions — `EngineGuardrailTriggerRecord` shape (rule, breach details, trigger timestamp, regime at breach, position selection rationale, optional cascade_id, optional secondary breach check result).
 - `docs/design/05-execution-layer/engine-envelope-schema.md` — the formal JSON Schema for engine-originated envelopes. The Python types defined here mirror that schema; field names, types, and invariants must match what the schema enforces. Note `commands` is a single-element array (the schema's `maxItems: 1`); the Python `EngineEnvelope` exposes `command: OmsCloseCommand` as a single field with the array-shape preserved at JSON serialization time via a custom serializer or post-validator (see Notes below).
-- `docs/design/06-risk-guardrails/state-delivery.md` — confirms `HaltState`, `EmergencyContext`, `RegimeTransitionBreach` are inputs to the rendering layer; the state-delivery package imports these from `breach_behavior` rather than redefining them.
-- `docs/design/06-risk-guardrails/regime-adaptation.md` — confirms `RegimeTransitionBreach` is the typed surface that flows from the regime-tightening event to the strategist/PM via state-delivery.
+- `docs/design/06-risk-guardrails/state-delivery.md` — confirms `HaltState` and `EmergencyContext` are inputs to the rendering layer; the state-delivery package imports `HaltState` and `EmergencyContext` from `breach_behavior` rather than redefining them. `RegimeTransitionBreach` is owned by `regime_adaptation` (see below); state-delivery imports it from there directly.
+- `docs/design/06-risk-guardrails/regime-adaptation.md` — confirms `RegimeTransitionBreach` is the typed surface that flows from the regime-tightening event to the strategist/PM via state-delivery. Detection and the typed record are owned by the regime-adaptation work tree (`docs/implementation/06-risk-guardrails/regime-adaptation/02-package-skeleton-and-types.md` § 2c, `regime-adaptation/07-regime-transition-breach-detector.md`); breach-behavior does not duplicate them.
 - `docs/design/05-execution-layer/oms-command-schema.md` — the OMS command schema; `EngineEnvelope.command` is a `Close` command with `close_rationale_type=risk_management` and `risk_management_subtype=engine_guardrail`. The Python type for the embedded command can be a `TypedDict` or a Pydantic alias of the OMS-side command class once that lands; for this story, declare it as a `BaseModel` with the structural fields the schema requires (the engine-envelope-schema's `commands[0]` constraint).
 - `src/alphamind/portfolio_state/records/capital.py` — already-shipped `RiskZone`, `DrawdownTier`, `RegimeLabel`, `RegimeTransitionState` enums and `DrawdownState`, `RiskBudgetEntry`, `RiskBudgetConsumption`, `ActiveRiskParameterSet` records. This story imports — does NOT redefine — these.
 - `src/alphamind/portfolio_state/records/positions.py` — already-shipped `PositionRecord`, `Direction`, `InstrumentType`. This story imports for type annotations.
@@ -347,42 +347,15 @@ class HardRejectionPayload(BaseModel):
         return self
 ```
 
-### 7. Regime-transition breach record
+### 7. Regime-transition breach record — owned by regime_adaptation
+
+`RegimeTransitionBreach` is **not** declared here. The regime-adaptation work tree owns this typed record (per `docs/implementation/06-risk-guardrails/regime-adaptation/02-package-skeleton-and-types.md` § 2c) and the breach detector (per `regime-adaptation/07-regime-transition-breach-detector.md`). Breach-behavior consumers that need the type import directly:
 
 ```python
-class RegimeTransitionBreach(BaseModel):
-    """A position breaching a newly-tightened limit after a regime transition.
-
-    Per regime-adaptation.md § Position handling when tightening creates breaches and
-    state-delivery.md § Strategist guardrail state header — Regime-transition breaches.
-    Detection is owned by breach_behavior; state-delivery renders these into the strategist
-    and PM headers; the strategist proposes remedies and the PM executes.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    position_id: str
-    rule_breached: str                              # canonical rule ID
-    current_value: float                            # the position's contribution to the rule (e.g., 4.5% of portfolio)
-    new_regime_limit: float                         # the post-transition limit (e.g., 3.5% under elevated)
-    overage: float                                  # current_value - new_regime_limit; always positive
-    regime_label: RegimeLabel                       # the new (post-transition) regime label
-    unit: str
-
-    @model_validator(mode="after")
-    def _validate_overage_arithmetic(self) -> RegimeTransitionBreach:
-        expected = self.current_value - self.new_regime_limit
-        if not math.isclose(self.overage, expected, abs_tol=1e-9):
-            msg = (
-                f"overage ({self.overage}) must equal current_value - new_regime_limit "
-                f"({expected})"
-            )
-            raise ValueError(msg)
-        if self.overage <= 0:
-            msg = f"overage must be positive (in-breach by definition); got {self.overage}"
-            raise ValueError(msg)
-        return self
+from alphamind.risk_guardrails.regime_adaptation.types import RegimeTransitionBreach
 ```
+
+This story does not re-export it via `breach_behavior.types` — re-exporting would create two import paths for the same type and risk drift if the regime-adaptation schema evolves. State-delivery's renderers and the breach-behavior E2E story (08) both import directly from regime-adaptation.
 
 ### 8. Per-breach-type position selection result
 
@@ -473,7 +446,6 @@ from alphamind.risk_guardrails.breach_behavior.types import (
     HardRejectionPayload,
     PositionSelectionAction,
     PositionSelectionResult,
-    RegimeTransitionBreach,
     RejectionRuleEntry,
     RiskManagementSubtype,
     SecondaryBreachCheckResult,
@@ -492,11 +464,11 @@ Out of scope:
 
 **Cross-feature integration with state-delivery.** State-delivery's stories 05 (halt-mode wrappers) and 06 (emergency-invocation block) currently declare `HaltState`, `EmergencyTrigger`, and `EmergencyContext` inline within `state_delivery/halt_mode.py` and `state_delivery/emergency.py`. When state-delivery lands after this work tree, those local declarations become imports from `alphamind.risk_guardrails.breach_behavior`. The orchestrator surfaces this dependency at dispatch time. Until the state-delivery stories are revised, the two work trees may carry parallel definitions; the schema and field set are designed to match exactly so the cutover is mechanical (replace local class with `from … import …`).
 
-**Why a single canonical-types story rather than embedding types in their using stories.** The state-delivery work tree spreads typed records across using stories (`HaltState` in 05, `EmergencyContext` in 06, `RegimeTransitionBreach` in 04b). For breach-behavior, multiple primitive stories (04a–04e, 05a–05c, 06, 07) consume overlapping subsets — `EngineEnvelope` is used by 06 and 07; `HaltState` is used by 05a and emerges into state-delivery; `RegimeTransitionBreach` is used by 04e and emerges into state-delivery. Centralizing the types in story 03 lets the wave-3 parallel batch dispatch cleanly without ordering pain.
+**Why a single canonical-types story rather than embedding types in their using stories.** The state-delivery work tree spreads typed records across using stories (`HaltState` in 05, `EmergencyContext` in 06). For breach-behavior, multiple primitive stories (04a–04d, 05a–05c, 06, 07) consume overlapping subsets — `EngineEnvelope` is used by 06 and 07; `HaltState` is used by 05a and emerges into state-delivery. Centralizing the types in story 03 lets the wave-3 parallel batch dispatch cleanly without ordering pain.
 
 **Pydantic v2 conventions.** Every model is `model_config = ConfigDict(frozen=True)`. Field validators are `@field_validator` with `@classmethod`; cross-field invariants are `@model_validator(mode="after")`. Datetime fields are `datetime` (not `str`); tz-awareness is enforced where the design calls for it (envelope and trigger timestamps are tz-aware; halt-state drawdown numbers are floats with no time component).
 
-**Per `feedback_no_inventing_component_names.md`,** every type name maps to a documented design-doc concept. `HaltState` ← state-delivery 05's local class; `EmergencyContext` ← state-delivery 06's local class; `EmergencyTrigger` ← state-delivery 06's local enum; `EngineEnvelope` ← engine-envelope-schema's "Engine-originated command envelope" title; `EngineGuardrailTriggerRecord` ← engine-envelope-schema's `guardrail_trigger_record` $def; `BreachDetails` ← engine-envelope-schema's `breach_details` field; `SecondaryBreachCheckResult` ← engine-envelope-schema's `secondary_breach_check_result` field; `SecondaryBreachOutcome` ← engine-envelope-schema's `secondary_breach_check_result.result` enum; `HardRejectionPayload` and `RejectionRuleEntry` ← breach-behavior § Hard rejection semantics's bullet list; `RegimeTransitionBreach` ← state-delivery's strategist-header "Regime-transition breaches" block + regime-adaptation § Position handling. `PositionSelectionResult` and `PositionSelectionAction` are package-internal — they encode the "full close" / "trim to 95%" distinction the design specifies, with names paraphrasing the design's per-breach-type prescriptions.
+**Per `feedback_no_inventing_component_names.md`,** every type name maps to a documented design-doc concept. `HaltState` ← state-delivery 05's local class; `EmergencyContext` ← state-delivery 06's local class; `EmergencyTrigger` ← state-delivery 06's local enum; `EngineEnvelope` ← engine-envelope-schema's "Engine-originated command envelope" title; `EngineGuardrailTriggerRecord` ← engine-envelope-schema's `guardrail_trigger_record` $def; `BreachDetails` ← engine-envelope-schema's `breach_details` field; `SecondaryBreachCheckResult` ← engine-envelope-schema's `secondary_breach_check_result` field; `SecondaryBreachOutcome` ← engine-envelope-schema's `secondary_breach_check_result.result` enum; `HardRejectionPayload` and `RejectionRuleEntry` ← breach-behavior § Hard rejection semantics's bullet list. `PositionSelectionResult` and `PositionSelectionAction` are package-internal — they encode the "full close" / "trim to 95%" distinction the design specifies, with names paraphrasing the design's per-breach-type prescriptions. `RegimeTransitionBreach` is owned by the regime-adaptation work tree; this story does not redeclare it.
 
 **Per `feedback_per_producer_schema.md`,** each typed record has a single producer (the story that owns the corresponding primitive — 04a–04e, 05a–05c, 06, 07). This story declares the schema; the producer story populates it.
 
@@ -522,7 +494,6 @@ Out of scope:
 - [ ] `EngineEnvelope.trigger_timestamp` and `EngineGuardrailTriggerRecord.trigger_timestamp` reject naive (non-tz-aware) datetimes.
 - [ ] `EngineCloseCommand` rejects `quantity_or_all=0`, `-5`, etc. (strictly-positive when not `"all"`).
 - [ ] `EngineCloseCommand` requires `limit_price` when `execution_method="limit"` and forbids it when `"market"`.
-- [ ] `RegimeTransitionBreach._validate_overage_arithmetic` rejects mismatched `overage` vs. `current_value - new_regime_limit` (within 1e-9 tolerance) and rejects non-positive `overage`.
 - [ ] `PositionSelectionResult._validate_action_target_consistency` requires `target_post_action_size_pct_of_portfolio` non-None for `PARTIAL_TRIM` and None for `FULL_CLOSE`.
 - [ ] `HardRejectionPayload._validate_at_least_one_breaching_rule` rejects empty `breaching_rules`.
 - [ ] Re-exports of upstream enums (`RiskZone`, `DrawdownTier`, `BreachResponse`, `EnforcementTier`, `EscalationZones`, `ProgressiveTier`, `RegimeLabel`, `RegimeTransitionState`) reference the same enum classes as their upstream modules (`enum is enum` identity check passes).
