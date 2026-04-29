@@ -1,7 +1,8 @@
 ---
-status: not_started
+status: blocked
 completed_date:
 commit_id:
+blocked_on: regime-adaptation/02-package-skeleton-and-types.md (canonical `RegimeTransitionBreach` not yet shipped). Set to `not_started` and dispatch when regime-adaptation story 02 is `done`.
 ---
 
 # 04c — Portfolio manager guardrail state header renderer
