@@ -22,6 +22,9 @@ from alphamind.risk_guardrails.regime_adaptation.persistence import (
     insert_state,
     select_most_recent_state,
 )
+from alphamind.risk_guardrails.regime_adaptation.pre_event_activator import (
+    evaluate_pre_event_overlay,
+)
 from alphamind.risk_guardrails.regime_adaptation.regime_mapping import (
     from_regime_classification,
     map_distillation_to_guardrail_regime,
@@ -67,6 +70,7 @@ __all__ = [
     "VixBoundaryThresholds",
     "compute_next_transition",
     "detect_regime_transition_breaches",
+    "evaluate_pre_event_overlay",
     "evaluate_stress_overlay",
     "fetch_composite_alert_state",
     "from_regime_classification",
