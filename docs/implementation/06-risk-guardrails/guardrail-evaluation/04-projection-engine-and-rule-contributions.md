@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-29
+commit_id: c751a5a
 ---
 
 # 04 — Projection engine and rule-contribution registry
