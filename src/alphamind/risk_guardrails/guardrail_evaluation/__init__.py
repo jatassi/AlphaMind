@@ -8,6 +8,13 @@ boundary contract every later story builds on.
 """
 
 from alphamind.risk_guardrails.guardrail_evaluation.black_scholes import bs_greeks
+from alphamind.risk_guardrails.guardrail_evaluation.effective_limits import (
+    EffectiveLimitAdapterError,
+    from_resolved_config,
+)
+from alphamind.risk_guardrails.guardrail_evaluation.feature_gate import (
+    classify_feature_gate,
+)
 from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import (
     FixtureIvProvider,
     IvLookupError,
@@ -43,7 +50,7 @@ from alphamind.risk_guardrails.guardrail_evaluation.types import (
 # ``dir(...)`` reflects the documented re-export list verbatim — the
 # acceptance test asserts the surface is exactly the names below and nothing
 # more.
-for _submodule in ("black_scholes", "iv_sourcing", "types"):
+for _submodule in ("black_scholes", "effective_limits", "feature_gate", "iv_sourcing", "types"):
     globals().pop(_submodule, None)
 del _submodule
 
@@ -53,6 +60,7 @@ __all__ = [
     "ContractType",
     "DeltaAdjustedExposure",
     "Direction",
+    "EffectiveLimitAdapterError",
     "EscalationZones",
     "ExistingPosition",
     "FeatureDisabledRejection",
@@ -75,4 +83,6 @@ __all__ = [
     "RuleProjection",
     "Status",
     "bs_greeks",
+    "classify_feature_gate",
+    "from_resolved_config",
 ]
