@@ -40,7 +40,7 @@ Cross-cutting policies and reference specs that constrain implementation but are
 - [ ] **Guardrail evaluation primitives** — _stories drafted_ — [design](design/06-risk-guardrails/guardrail-evaluation.md), [stories](implementation/06-risk-guardrails/guardrail-evaluation/)
 - [ ] **State delivery** — _stories drafted_ — [design](design/06-risk-guardrails/state-delivery.md), [stories](implementation/06-risk-guardrails/state-delivery/)
 - [ ] **Regime adaptation** — _stories drafted_ — [design](design/06-risk-guardrails/regime-adaptation.md), [stories](implementation/06-risk-guardrails/regime-adaptation/)
-- [ ] **Breach behavior** — _requirements pending_ — [design](design/06-risk-guardrails/breach-behavior.md)
+- [ ] **Breach behavior** — _stories drafted_ — [design](design/06-risk-guardrails/breach-behavior.md), [stories](implementation/06-risk-guardrails/breach-behavior/)
 
 ### Analysis layer
 
