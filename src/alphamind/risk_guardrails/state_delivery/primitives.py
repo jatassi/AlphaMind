@@ -46,11 +46,12 @@ def format_pct(value: float) -> str:
 def render_envelope_open(invocation_id: str, timestamp: datetime) -> str:
     """Render the opening line of the ``=== GUARDRAIL STATE ===`` envelope.
 
-    *timestamp* must be a tz-aware UTC datetime; it is rendered in ISO-8601 with
-    seconds precision and a trailing ``Z``.
+    *timestamp* must carry a UTC offset of zero (``UTC``, ``timezone.utc``, or
+    any equivalent tzinfo); rendered in ISO-8601 with seconds precision and a
+    trailing ``Z``.
     """
     if timestamp.tzinfo is None or timestamp.utcoffset() != UTC.utcoffset(None):
-        msg = "timestamp must be a tz-aware UTC datetime"
+        msg = "timestamp must have a UTC offset of zero"
         raise ValueError(msg)
     iso = timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
     return f"=== GUARDRAIL STATE (invocation {invocation_id}, {iso}) ==="

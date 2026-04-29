@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, date, datetime
 from types import MappingProxyType
 
 import pytest
 
+from alphamind.portfolio_state.records.capital import (
+    ActiveRiskParameterSet,
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskBudgetConsumption,
+)
 from alphamind.portfolio_state.records.positions import Direction, InstrumentType
 from alphamind.risk_guardrails.guardrail_evaluation import (
     ContractType,
@@ -158,6 +164,28 @@ def _market(underlyings: Sequence[str] = ("AAPL", "NVDA", "ABC")) -> MarketInput
     )
 
 
+def _risk_budget() -> RiskBudgetConsumption:
+    """Empty RiskBudgetConsumption — the validation tool does not read it; the
+    renderer-side header consumes it in story 04a's tests, not here."""
+    return RiskBudgetConsumption(entries=())
+
+
+def _active_risk_parameters() -> ActiveRiskParameterSet:
+    return ActiveRiskParameterSet(
+        regime_label=RegimeLabel.NORMAL,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        parameter_change_flag=False,
+        entries=(),
+        active_overlays=(),
+    )
+
+
+def _sector_resolver(ticker: str) -> str:
+    """Test-fixture sector resolver — every fixture ticker is in tech."""
+    return {"AAPL": "tech", "NVDA": "tech", "ABC": "tech"}.get(ticker, "tech")
+
+
 def _state(
     *,
     snapshot: PortfolioStateSnapshot | None = None,
@@ -165,12 +193,19 @@ def _state(
     market: MarketInputs | None = None,
     accumulated_deltas: tuple[ProjectedDelta, ...] = (),
     invocation_id: str = "INV-001",
+    sector_resolver: Callable[[str], str] | None = None,
+    feature_flags: FeatureFlagsView | None = None,
 ) -> ValidationToolState:
+    library_config = config or _config()
     return ValidationToolState(
         invocation_id=invocation_id,
         starting_snapshot=snapshot or _snapshot(),
-        starting_config=config or _config(),
+        starting_risk_budget=_risk_budget(),
+        starting_active_risk_parameters=_active_risk_parameters(),
+        profile_feature_flags=feature_flags or library_config.feature_flags,
+        starting_config=library_config,
         starting_market=market or _market(),
+        sector_resolver=sector_resolver or _sector_resolver,
         accumulated_deltas=accumulated_deltas,
     )
 
@@ -191,7 +226,6 @@ def _equity_request(
         ),
         size=ValidationSize(quantity=quantity, dollar_value=dollar_value),
         action=action,
-        sector="tech",
     )
 
 
@@ -220,7 +254,6 @@ def _option_request(
             premium_at_risk_usd=premium_at_risk_usd,
         ),
         action=action,
-        sector="tech",
     )
 
 
@@ -687,10 +720,18 @@ def test_failure_guidance_single_net_long_includes_substitute_suggestion(
 def test_failure_guidance_capital_includes_dollar_amounts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # min_cash_reserve_pct: limit 10, projected 8 (cash dropped under reserve).
+    """Inverse rule ``min_cash_reserve_pct``: limit 10% (floor), projected 8%
+    (cash dropped under reserve). The agent must see the *deployable capital
+    above the floor*, not the floor itself.
+
+    Snapshot: portfolio $100K, cash $70K → current cash is 70%. Floor is 10%,
+    so deployable capital above floor = 60% of $100K = $60,000.
+    The proposal would push cash to 8% (a 2-point shortfall, $2K below floor);
+    given a $5K proposal, the suggested smaller size is $5K - $2K = $3K.
+    """
     proj = _fail_proj(
         rule="min_cash_reserve_pct",
-        current=12.0,
+        current=70.0,  # cash is 70% of portfolio
         limit=10.0,
         projected_after=8.0,
         unit="% of portfolio",
@@ -698,8 +739,96 @@ def test_failure_guidance_capital_includes_dollar_amounts(
     _patch_library(monkeypatch, (proj,), signed_notional_usd=5_000.0)
     result = validate_guardrail(request=_equity_request(), state=_state())
     assert result.failure_guidance is not None
+    # The deployable capital available (above the floor) is $60K, NOT the
+    # floor's $10K. Pre-fix bug: framed $10K as "available".
+    assert "$60,000" in result.failure_guidance
+    assert "$3,000" in result.failure_guidance
     assert "Insufficient deployable capital" in result.failure_guidance
-    assert "$" in result.failure_guidance
+
+
+def test_failure_guidance_capital_pending_order_non_inverse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-inverse capital rule ``pending_order_capital_pct``: limit 20% (cap),
+    current 15%, projected 25%. Available below cap = (20-15)*100K/100 = $5K.
+    Excess = (25-20)*100K/100 = $5K. Suggested smaller = max(0, |5K| - 5K) = $0.
+    """
+    proj = _fail_proj(
+        rule="pending_order_capital_pct",
+        current=15.0,
+        limit=20.0,
+        projected_after=25.0,
+        unit="% of portfolio",
+    )
+    _patch_library(monkeypatch, (proj,), signed_notional_usd=5_000.0)
+    result = validate_guardrail(request=_equity_request(), state=_state())
+    assert result.failure_guidance is not None
+    assert "$5,000" in result.failure_guidance
+    assert "$0" in result.failure_guidance
+
+
+def test_failure_guidance_multi_rule_inverse_primary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When an inverse-rule failure is the largest-magnitude breach, it must
+    be selected as the primary. Pre-fix bug: ``projected_after - limit`` was
+    negative for inverse rules, so the inverse rule was silently deprioritized.
+
+    Setup: sector overage = +1 (small breach); inverse cash overage = -3
+    (large breach by absolute magnitude). Primary should be the cash rule.
+    """
+    sector = _fail_proj(
+        rule="sector_concentration_tech",
+        current=23.0,
+        limit=25.0,
+        projected_after=26.0,  # over by 1
+        unit="% of portfolio (delta-adjusted)",
+    )
+    cash = _fail_proj(
+        rule="min_cash_reserve_pct",
+        current=12.0,
+        limit=10.0,
+        projected_after=7.0,  # under by 3 (largest by magnitude)
+        unit="% of portfolio",
+    )
+    _patch_library(monkeypatch, (sector, cash), signed_notional_usd=5_000.0)
+    result = validate_guardrail(request=_equity_request(), state=_state())
+    assert result.failure_guidance is not None
+    assert "Multiple rules would breach" in result.failure_guidance
+    # Primary must be the inverse rule (largest magnitude breach).
+    assert "addresses min_cash_reserve_pct" in result.failure_guidance
+
+
+@pytest.mark.parametrize(
+    "projected_after,limit,expected_pct",
+    [
+        # 13.5 → 14 (Python's round-half-to-even rounds 13.5 up to even 14)
+        (100.0, 86.5, 14),
+        # 14.5 → 14 (round-half-to-even rounds 14.5 down to even 14)
+        (200.0, 171.0, 14),
+        # Plain rounding (not on a half-boundary)
+        (29.0, 25.0, 14),
+    ],
+)
+def test_reduction_pct_rounds_half_to_even(
+    monkeypatch: pytest.MonkeyPatch,
+    projected_after: float,
+    limit: float,
+    expected_pct: int,
+) -> None:
+    """``_reduction_pct`` uses Python's banker's rounding; both halves of
+    round-half-to-even must produce the documented integer."""
+    proj = _fail_proj(
+        rule="sector_concentration_tech",
+        current=limit - 1.0,
+        limit=limit,
+        projected_after=projected_after,
+        unit="% of portfolio (delta-adjusted)",
+    )
+    _patch_library(monkeypatch, (proj,))
+    result = validate_guardrail(request=_equity_request(), state=_state())
+    assert result.failure_guidance is not None
+    assert f"~{expected_pct}%" in result.failure_guidance
 
 
 def test_failure_guidance_multi_rule_lists_all_with_primary_reduction(
@@ -813,7 +942,6 @@ def test_strategy_action_returns_populated_greeks(monkeypatch: pytest.MonkeyPatc
         ),
         size=ValidationSize(quantity=1, dollar_value=500.0, premium_at_risk_usd=500.0),
         action=ValidationAction.OPEN,
-        sector="tech",
     )
     result = validate_guardrail(request=request, state=_state())
     assert result.greeks == greeks
@@ -822,6 +950,32 @@ def test_strategy_action_returns_populated_greeks(monkeypatch: pytest.MonkeyPatc
 # ---------------------------------------------------------------------------
 # Determinism
 # ---------------------------------------------------------------------------
+
+
+def test_non_marketable_limit_reserves_capital_when_flagged() -> None:
+    """``pending_order_capital_pct`` rule contributes only when
+    ``reserves_capital=True``. A marketable order (default) reserves nothing;
+    a non-marketable limit reserves its dollar value."""
+    snapshot = _snapshot()
+    state = _state(snapshot=snapshot)
+
+    marketable = validate_guardrail(
+        request=_equity_request(dollar_value=15_000.0),
+        state=state,
+    )
+    non_marketable_request = _equity_request(dollar_value=15_000.0).model_copy(
+        update={"reserves_capital": True}
+    )
+    non_marketable = validate_guardrail(request=non_marketable_request, state=state)
+
+    by_rule_marketable = {p.rule: p for p in marketable.per_rule}
+    by_rule_non_marketable = {p.rule: p for p in non_marketable.per_rule}
+    pending_rule = "pending_order_capital_pct"
+    # Both proposals see the same starting state for the rule, but only the
+    # non-marketable one contributes to projected_after.
+    assert by_rule_marketable[pending_rule].projected_after == pytest.approx(0.0)
+    # Non-marketable: contributes 15_000 / 100_000 * 100 = 15.0% to the rule.
+    assert by_rule_non_marketable[pending_rule].projected_after == pytest.approx(15.0)
 
 
 def test_repeated_calls_produce_identical_results() -> None:

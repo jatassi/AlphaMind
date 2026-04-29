@@ -19,12 +19,17 @@ the next call.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, SkipValidation, model_validator
 
+from alphamind.portfolio_state.records.capital import (
+    ActiveRiskParameterSet,
+    RiskBudgetConsumption,
+)
 from alphamind.portfolio_state.records.positions import Direction, InstrumentType
 from alphamind.risk_guardrails.guardrail_evaluation import (
     Action as LibraryAction,
@@ -135,16 +140,32 @@ class ValidationAction(StrEnum):
 
 
 class ValidationRequest(BaseModel):
-    """A single proposal to validate."""
+    """A single proposal to validate.
+
+    The minimal-by-design surface mirrors the spec's
+    ``validate_guardrail(instrument, size, action)`` signature. Fields not in
+    that triplet are tool-internal concerns:
+
+    * ``sector`` is resolved by ``ValidationToolState.sector_resolver`` from the
+      instrument's ticker.
+    * ``existing_position_id`` is auto-resolved from the snapshot via the
+      ticker/direction/asset-type lookup pattern (see
+      ``_lookup_existing_position``).
+    * ``daily_borrow_cost_usd`` is required only by the library's short-equity
+      OPEN/ADD validation; the tool surfaces it as an optional field that the
+      caller sets only when proposing those actions.
+    * ``reserves_capital`` flags non-marketable limit OPENs that contribute to
+      ``pending_order_capital_pct``; defaults to ``False`` so marketable orders
+      need not opt out explicitly.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     instrument: ValidationInstrument
     size: ValidationSize
     action: ValidationAction
-    sector: str
-    existing_position_id: str | None = None
     daily_borrow_cost_usd: float | None = None
+    reserves_capital: bool = False
 
 
 class ValidationResult(BaseModel):
@@ -162,7 +183,12 @@ class ValidationResult(BaseModel):
 
 
 class ProjectedDelta(BaseModel):
-    """A previously-validated proposal's projected impact, for cumulative tracking."""
+    """A previously-validated proposal's projected impact, for cumulative tracking.
+
+    Mirrors the ``ValidationRequest`` surface plus the cached projection result
+    so subsequent calls can replay the proposal without re-running the
+    library's projection math for the prior call's sector resolution.
+    """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
@@ -173,17 +199,39 @@ class ProjectedDelta(BaseModel):
     delta_adjusted_exposure: float
     greeks: Greeks | None
     proposal_index: int
+    daily_borrow_cost_usd: float | None = None
+    reserves_capital: bool = False
+    existing_position_id: str | None = None
 
 
 class ValidationToolState(BaseModel):
-    """Per-invocation state passed across multiple ``validate_guardrail`` calls."""
+    """Per-invocation state passed across multiple ``validate_guardrail`` calls.
+
+    Carries the spec-mandated renderer-shared fields (``starting_risk_budget``,
+    ``starting_active_risk_parameters``, ``profile_feature_flags``) so the
+    state header rendering and the validation tool can be driven from one
+    snapshot. ``starting_config`` and ``starting_market`` carry the library's
+    input shapes; the agent runtime constructs both at invocation start.
+
+    ``sector_resolver`` maps an instrument's ticker to its sector key — the
+    tool resolves the proposal's sector internally so the public
+    ``ValidationRequest`` shape can match the spec's
+    ``validate_guardrail(instrument, size, action)`` signature.
+    """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     invocation_id: str
-    starting_snapshot: SkipValidation[PortfolioStateSnapshot]
-    starting_config: SkipValidation[LibraryConfig]
+    starting_snapshot: PortfolioStateSnapshot
+    starting_risk_budget: RiskBudgetConsumption
+    starting_active_risk_parameters: ActiveRiskParameterSet
+    profile_feature_flags: FeatureFlagsView
+    starting_config: LibraryConfig
+    # ``MarketInputs`` carries an ``IvProvider`` Protocol that Pydantic cannot
+    # generate validation for; ``SkipValidation`` prevents recursion into the
+    # dataclass while ``arbitrary_types_allowed=True`` keeps the field assignable.
     starting_market: SkipValidation[MarketInputs]
+    sector_resolver: Callable[[str], str]
     accumulated_deltas: tuple[ProjectedDelta, ...] = ()
 
     def with_accepted_proposal(self, delta: ProjectedDelta) -> ValidationToolState:
@@ -211,7 +259,7 @@ def validate_guardrail(
     counted toward subsequent calls.
     """
     proposal_index = len(state.accumulated_deltas) + 1
-    flags = state.starting_config.feature_flags
+    flags = state.profile_feature_flags
     is_options = request.instrument.asset_type in (
         InstrumentType.OPTIONS,
         InstrumentType.STRATEGY,
@@ -231,7 +279,7 @@ def validate_guardrail(
 
     proposals = (
         *(_projected_delta_to_library(d) for d in state.accumulated_deltas),
-        _request_to_library_proposal(request, _THIS_PROPOSAL_ID),
+        _request_to_library_proposal(request, _THIS_PROPOSAL_ID, state=state),
     )
 
     output = evaluate_proposals(
@@ -340,30 +388,86 @@ def _format_cumulative_impact_note(state: ValidationToolState) -> str:
     )
 
 
-def _request_to_library_proposal(request: ValidationRequest, proposal_id: str) -> ProposedDelta:
-    """Convert a ``ValidationRequest`` to the library's ``ProposedDelta`` shape."""
+def _request_to_library_proposal(
+    request: ValidationRequest,
+    proposal_id: str,
+    *,
+    state: ValidationToolState,
+) -> ProposedDelta:
+    """Convert a ``ValidationRequest`` to the library's ``ProposedDelta`` shape.
+
+    Resolves the proposal's sector via ``state.sector_resolver`` and looks up
+    any matching existing position from ``state.starting_snapshot`` based on
+    ticker / direction / asset-type. The library validates that ADD/CLOSE/
+    ADJUST actions carry a position id; the lookup returns ``None`` for
+    OPEN actions.
+
+    TODO(state-delivery follow-up): pipe ``size.premium_at_risk_usd`` through
+    for OPTIONS/STRATEGY so the library's options-handling can distinguish
+    premium from notional. Currently only ``size.dollar_value`` reaches the
+    library as ``notional_usd``.
+    """
+    instrument = request.instrument
+    sector = state.sector_resolver(instrument.ticker)
+    existing_id = _lookup_existing_position(request, snapshot=state.starting_snapshot)
     return ProposedDelta(
         id=proposal_id,
-        underlying=request.instrument.ticker,
-        sector=request.sector,
-        direction=_DIRECTION_TO_LIBRARY[request.instrument.direction],
-        asset_type=_INSTRUMENT_TO_ASSET_TYPE[request.instrument.asset_type],
+        underlying=instrument.ticker,
+        sector=sector,
+        direction=_DIRECTION_TO_LIBRARY[instrument.direction],
+        asset_type=_INSTRUMENT_TO_ASSET_TYPE[instrument.asset_type],
         notional_usd=request.size.dollar_value,
         quantity=float(request.size.quantity),
-        option_legs=_build_option_legs(request),
+        option_legs=_build_option_legs(instrument, request.size.quantity),
         action=_ACTION_TO_LIBRARY[request.action],
-        existing_position_id=request.existing_position_id,
+        existing_position_id=existing_id,
         daily_borrow_cost_usd=request.daily_borrow_cost_usd,
+        reserves_capital=request.reserves_capital,
     )
 
 
-def _build_option_legs(request: ValidationRequest) -> tuple[OptionLeg, ...] | None:
-    """Build the library's ``OptionLeg`` tuple from the request's instrument shape.
+_POSITION_LOOKUP_ACTIONS = frozenset(
+    {ValidationAction.ADD, ValidationAction.CLOSE, ValidationAction.ADJUST}
+)
+
+
+def _lookup_existing_position(
+    request: ValidationRequest, *, snapshot: PortfolioStateSnapshot
+) -> str | None:
+    """Resolve an existing position id from the snapshot for ADD/CLOSE/ADJUST.
+
+    OPEN actions never reference an existing position (the library validates
+    this). For other actions, scans ``snapshot.existing_positions`` for a
+    single position matching the proposal's ticker / direction / asset-type;
+    returns its id if exactly one matches, else ``None``. The library raises
+    a structured input error when ``None`` is returned for an action that
+    requires it, surfacing the caller-side ambiguity at the right layer.
+    """
+    if request.action not in _POSITION_LOOKUP_ACTIONS:
+        return None
+    target_underlying = request.instrument.ticker
+    target_direction = _DIRECTION_TO_LIBRARY[request.instrument.direction]
+    target_asset_type = _INSTRUMENT_TO_ASSET_TYPE[request.instrument.asset_type]
+    matches = [
+        pos
+        for pos in snapshot.existing_positions.values()
+        if pos.underlying == target_underlying
+        and pos.direction == target_direction
+        and pos.asset_type == target_asset_type
+    ]
+    if len(matches) == 1:
+        return matches[0].position_id
+    return None
+
+
+def _build_option_legs(
+    instrument: ValidationInstrument, quantity: int
+) -> tuple[OptionLeg, ...] | None:
+    """Build the library's ``OptionLeg`` tuple from an instrument shape.
 
     ``ValidationInstrument`` validators guarantee the per-asset-type fields
     populated, so each branch's None-narrowing reads are sound.
     """
-    instrument = request.instrument
     if instrument.asset_type == InstrumentType.EQUITY:
         return None
     if instrument.asset_type == InstrumentType.OPTIONS:
@@ -373,7 +477,7 @@ def _build_option_legs(request: ValidationRequest) -> tuple[OptionLeg, ...] | No
                 strike=instrument.strike,
                 expiration=instrument.expiration,
                 contract_type=instrument.contract_type,
-                quantity=request.size.quantity,
+                quantity=quantity,
             ),
         )
     # STRATEGY: validator guarantees legs is non-None and non-empty.
@@ -412,14 +516,28 @@ def _make_option_leg(
 
 
 def _projected_delta_to_library(delta: ProjectedDelta) -> ProposedDelta:
-    """Convert a previously-accepted proposal back to the library shape."""
-    request = ValidationRequest(
-        instrument=delta.instrument,
-        size=delta.size,
-        action=delta.action,
+    """Convert a previously-accepted proposal back to the library shape.
+
+    Replays the cached sector / position-id / borrow-cost values without
+    re-resolving them. The caller stored these on ``ProjectedDelta`` when it
+    accepted the prior proposal, so subsequent calls reproduce the prior
+    library inputs deterministically.
+    """
+    instrument = delta.instrument
+    return ProposedDelta(
+        id=f"prior_{delta.proposal_index}",
+        underlying=instrument.ticker,
         sector=delta.sector,
+        direction=_DIRECTION_TO_LIBRARY[instrument.direction],
+        asset_type=_INSTRUMENT_TO_ASSET_TYPE[instrument.asset_type],
+        notional_usd=delta.size.dollar_value,
+        quantity=float(delta.size.quantity),
+        option_legs=_build_option_legs(instrument, delta.size.quantity),
+        action=_ACTION_TO_LIBRARY[delta.action],
+        existing_position_id=delta.existing_position_id,
+        daily_borrow_cost_usd=delta.daily_borrow_cost_usd,
+        reserves_capital=delta.reserves_capital,
     )
-    return _request_to_library_proposal(request, f"prior_{delta.proposal_index}")
 
 
 # ---------------------------------------------------------------------------
@@ -429,14 +547,39 @@ def _projected_delta_to_library(delta: ProjectedDelta) -> ProposedDelta:
 
 _DIRECTIONAL_RULES = frozenset({"net_long_pct", "net_short_pct", "gross_exposure_pct"})
 _CAPITAL_RULES = frozenset({"min_cash_reserve_pct", "pending_order_capital_pct"})
+# Inverse rules' ``limit`` is a floor: ``projected_after < limit`` is FAIL.
+# Mirrors ``RuleSpec(inverse=True)`` declarations in
+# ``guardrail_evaluation/rules/capital.py``.
+_INVERSE_RULES = frozenset({"min_cash_reserve_pct"})
+
+
+def _breach_magnitude(projection: RuleProjection) -> float:
+    """Absolute distance from the limit, positive for any failed projection.
+
+    Standard rules breach above the cap (``projected_after > limit``); inverse
+    rules breach below the floor (``projected_after < limit``). Both directions
+    map to a positive magnitude so multi-rule primary selection compares like
+    quantities.
+    """
+    return abs(projection.projected_after - projection.limit)
 
 
 def _reduction_pct(projection: RuleProjection) -> int:
-    """Compute the percent reduction needed to bring projected_after below limit."""
-    overage = projection.projected_after - projection.limit
-    if projection.projected_after == 0:
+    """Percent reduction needed to bring the projection back inside the limit.
+
+    For standard rules: reduction relative to ``projected_after`` (how much of
+    the projected exposure must be shed). For inverse rules: relative to the
+    floor (how much extra cash, as a fraction of the floor, must be preserved).
+    Both branches return a non-negative integer.
+    """
+    magnitude = _breach_magnitude(projection)
+    if projection.rule in _INVERSE_RULES:
+        denominator = projection.limit
+    else:
+        denominator = projection.projected_after
+    if denominator == 0:
         return 0
-    return round(overage / projection.projected_after * 100)
+    return round(magnitude / abs(denominator) * 100)
 
 
 def _format_failure_guidance(
@@ -459,22 +602,50 @@ def _single_rule_guidance(
 ) -> str:
     rule = projection.rule
     if rule in _CAPITAL_RULES:
-        portfolio = state.starting_snapshot.portfolio_value_usd
-        available_usd = projection.limit * portfolio / 100.0
-        shortfall_usd = (projection.limit - projection.projected_after) * portfolio / 100.0
-        suggested_usd = max(0.0, abs(this_dae_usd) - shortfall_usd)
-        return (
-            f"Insufficient deployable capital (${available_usd:,.0f}); "
-            f"reduce dollar value to ~${suggested_usd:,.0f} or fewer"
-        )
+        return _capital_rule_guidance(projection, state=state, this_dae_usd=this_dae_usd)
     pct = _reduction_pct(projection)
     if rule in _DIRECTIONAL_RULES:
         return f"Reduce size by ~{pct}% to pass {rule}, or substitute a lower-delta instrument"
     return f"Reduce size by ~{pct}% to pass {rule}"
 
 
+def _capital_rule_guidance(
+    projection: RuleProjection,
+    *,
+    state: ValidationToolState,
+    this_dae_usd: float,
+) -> str:
+    """Format the capital-rule failure message.
+
+    Inverse rules (``min_cash_reserve_pct``): ``limit`` is a floor on cash %.
+    Available capital above the floor is ``(current - limit) * portfolio /
+    100``; the proposal pushed cash ``(limit - projected_after) * portfolio /
+    100`` USD below the floor.
+
+    Standard rules (``pending_order_capital_pct``): ``limit`` is a cap on
+    reserved %. Available capital below the cap is ``(limit - current) *
+    portfolio / 100``; the proposal exceeded the cap by ``(projected_after -
+    limit) * portfolio / 100`` USD.
+
+    In both cases the suggested smaller dollar value is the proposal's
+    absolute notional minus the breach magnitude in USD.
+    """
+    portfolio = state.starting_snapshot.portfolio_value_usd
+    if projection.rule in _INVERSE_RULES:
+        available_usd = max(0.0, (projection.current - projection.limit)) * portfolio / 100.0
+        shortfall_usd = (projection.limit - projection.projected_after) * portfolio / 100.0
+    else:
+        available_usd = max(0.0, (projection.limit - projection.current)) * portfolio / 100.0
+        shortfall_usd = (projection.projected_after - projection.limit) * portfolio / 100.0
+    suggested_usd = max(0.0, abs(this_dae_usd) - shortfall_usd)
+    return (
+        f"Insufficient deployable capital (${available_usd:,.0f}); "
+        f"reduce dollar value to ~${suggested_usd:,.0f} or fewer"
+    )
+
+
 def _multi_rule_guidance(*, failed: tuple[RuleProjection, ...]) -> str:
-    primary = max(failed, key=lambda p: p.projected_after - p.limit)
+    primary = max(failed, key=_breach_magnitude)
     pct = _reduction_pct(primary)
     rules = ", ".join(p.rule for p in failed)
     return (
