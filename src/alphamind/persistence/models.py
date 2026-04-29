@@ -21,7 +21,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from alphamind.config.models.regimes import Regime
 from alphamind.distillation.calibration import CALIBRATION_STATE_VALUES
+from alphamind.portfolio_state.records.capital import RegimeTransitionState
 
 
 class Base(DeclarativeBase):
@@ -690,6 +692,12 @@ _REGIME_LABELS = (
 _TRANSITION_STATES = ("stable", "early-weak", "early-strong", "confirmed")
 _COMPOSITE_KINDS = ("funding_stress", "market_liquidity")
 
+# Risk-guardrail regime-adaptation vocabulary — story 06-risk-guardrails/04a.
+# Kept adjacent to ``_REGIME_LABELS`` and ``_TRANSITION_STATES`` so a reader
+# sees both the distillation-side and guardrail-side label sets in one place.
+_GUARDRAIL_REGIMES = ("low_vol", "normal", "elevated", "crisis")
+_GUARDRAIL_TRANSITION_STATES = ("STABLE", "TIGHTENING", "LOOSENING")
+
 
 def _check_in(column: str, values: tuple[str, ...], name: str) -> CheckConstraint:
     """Build a portable ``column IN (...)`` CHECK constraint."""
@@ -896,3 +904,97 @@ class DistillationCompositeState(Base):
             "ck_distillation_composite_state_calibration_state",
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Risk guardrails — regime adaptation state — story 06-risk-guardrails/04a
+# ---------------------------------------------------------------------------
+
+
+class RegimeAdaptationStateRow(Base):
+    """Forward-only per-invocation regime adaptation state.
+
+    Mirrors ``DistillationRegimeState``'s shape (primary key on ``as_of``,
+    indexed for ``order by as_of desc limit 1`` reads). The row carries the
+    full state the orchestrator (story 09) needs to reconstruct the
+    interpolation context on the next invocation: the active regime, the
+    transition state machine fields, the active overlays, and the
+    distillation-layer passthrough fields the activity log surfaces.
+
+    See ``docs/implementation/06-risk-guardrails/regime-adaptation/
+    04a-regime-adaptation-state-persistence.md`` for the full schema and
+    invariant documentation.
+    """
+
+    __tablename__ = "regime_adaptation_state"
+
+    as_of: Mapped[str] = mapped_column(Text, primary_key=True)
+    invocation_id: Mapped[str] = mapped_column(Text)
+    active_regime: Mapped[str] = mapped_column(Text)
+    prior_regime: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transition_state: Mapped[str] = mapped_column(Text)
+    transition_invocations_remaining: Mapped[int] = mapped_column(Integer)
+    transition_started_invocation_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    transition_origin_regime: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Comma-separated overlay names; "" when the tuple is empty.
+    active_overlays_csv: Mapped[str] = mapped_column(Text)
+    distillation_regime_label: Mapped[str] = mapped_column(Text)
+    distillation_vix_level: Mapped[float] = mapped_column(Float)
+    # 0 or 1; SQLite has no native BOOLEAN.  Mirrors ``alert_active`` on
+    # ``DistillationCompositeState``.
+    regime_skip_emergency: Mapped[int] = mapped_column(Integer)
+    ingested_at: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (
+        _check_in(
+            "active_regime",
+            _GUARDRAIL_REGIMES,
+            "ck_regime_adaptation_state_active_regime",
+        ),
+        _check_in(
+            "transition_state",
+            _GUARDRAIL_TRANSITION_STATES,
+            "ck_regime_adaptation_state_transition_state",
+        ),
+        # ``prior_regime`` and ``transition_origin_regime`` use the same
+        # vocabulary, but are nullable; ``_check_in`` cannot express the
+        # ``IS NULL OR ... IN (...)`` shape, so the SQL is spelled out.
+        CheckConstraint(
+            "prior_regime IS NULL OR prior_regime IN ('low_vol', 'normal', 'elevated', 'crisis')",
+            name="ck_regime_adaptation_state_prior_regime",
+        ),
+        CheckConstraint(
+            "transition_origin_regime IS NULL OR transition_origin_regime IN "
+            "('low_vol', 'normal', 'elevated', 'crisis')",
+            name="ck_regime_adaptation_state_origin_regime",
+        ),
+        CheckConstraint(
+            "regime_skip_emergency IN (0, 1)",
+            name="ck_regime_adaptation_state_skip_emergency",
+        ),
+        # Mirror the typed-record invariant: STABLE -> remaining == 0.
+        CheckConstraint(
+            "(transition_state = 'STABLE' AND transition_invocations_remaining = 0) "
+            "OR transition_state != 'STABLE'",
+            name="ck_regime_adaptation_state_stable_zero_remaining",
+        ),
+        # Mirror the typed-record invariant: LOOSENING requires both
+        # ``transition_origin_regime`` and ``transition_started_invocation_id``.
+        CheckConstraint(
+            "transition_state != 'LOOSENING' OR "
+            "(transition_origin_regime IS NOT NULL AND "
+            " transition_started_invocation_id IS NOT NULL)",
+            name="ck_regime_adaptation_state_loosening_populated",
+        ),
+        Index("ix_regime_adaptation_state_as_of_desc", "as_of"),
+    )
+
+
+# Compile-time guards that the typed-record enums and the schema CHECK
+# vocabulary stay in sync. The assertion fails fast if either side drifts.
+assert {member.value for member in Regime} == set(_GUARDRAIL_REGIMES), (
+    "Regime and persistence._GUARDRAIL_REGIMES must list the same labels"
+)
+assert {member.value for member in RegimeTransitionState} == set(_GUARDRAIL_TRANSITION_STATES), (
+    "RegimeTransitionState and persistence._GUARDRAIL_TRANSITION_STATES must list the same states"
+)
