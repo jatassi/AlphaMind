@@ -39,7 +39,7 @@ In scope:
   - **Below bounds.** Equity at `lower - 1` (where lower > 0; e.g., the small profile's lower bound) — returns `ProfileBoundaryStatus.below`.
   - **Boundary inclusivity.** Equity equal to `lower_bound` is `within`, not `below`. Equity equal to `upper_bound` is `within`, not `above`.
   - **Negative equity raises.** `total_equity_usd = -1.0` raises `ValueError` whose message names the offending value.
-  - **Returned dataclass content.** `evaluate_profile_boundary(total_equity_usd=10000.0, profile=medium)` returns an evaluation whose `total_equity_usd == 10000.0`, `lower_bound_usd == medium.capital_range_usd[0]`, `upper_bound_usd == medium.capital_range_usd[1]`.
+  - **Returned dataclass content.** `evaluate_profile_boundary(total_equity_usd=10000.0, profile=small)` returns an evaluation whose `status == ProfileBoundaryStatus.within` (10000 is the midpoint of the shipped small `capital_range_usd`), `total_equity_usd == 10000.0`, `lower_bound_usd == small.capital_range_usd[0]`, `upper_bound_usd == small.capital_range_usd[1]`.
   - **Across all four shipped profiles.** Parametrize a test that constructs the four shipped profile configs (loaded via `load_profiles`) and asserts the function returns `within` for an equity value at the midpoint of each profile's range.
 
 Out of scope:
@@ -68,7 +68,7 @@ Out of scope:
 - [ ] `src/alphamind/risk_guardrails/rules_and_limits/profile_boundary.py` exists and defines `ProfileBoundaryStatus`, `ProfileBoundaryEvaluation`, `evaluate_profile_boundary`.
 - [ ] `ProfileBoundaryEvaluation` is a `dataclass(frozen=True, slots=True)`.
 - [ ] `src/alphamind/risk_guardrails/rules_and_limits/__init__.py` re-exports the three names.
-- [ ] A unit test asserts `evaluate_profile_boundary(total_equity_usd=10000.0, profile=<medium>)` returns `ProfileBoundaryStatus.within` (10000 sits inside the shipped medium `capital_range_usd`).
+- [ ] A unit test asserts `evaluate_profile_boundary(total_equity_usd=10000.0, profile=<small>)` returns `ProfileBoundaryStatus.within` (10000 is the midpoint of the shipped small `capital_range_usd`).
 - [ ] A unit test asserts equity at the lower bound (e.g., `0.0` for micro) returns `within`.
 - [ ] A unit test asserts equity at the upper bound (e.g., `4999.0` for micro) returns `within`.
 - [ ] A unit test asserts equity above the upper bound (e.g., `5000.0` for micro) returns `above`.

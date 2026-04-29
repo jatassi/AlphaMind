@@ -96,13 +96,14 @@ def test_negative_equity_raises_value_error_naming_offending_value(
 def test_returned_evaluation_carries_inputs(
     profiles: Mapping[Profile, ProfileConfig],
 ) -> None:
-    medium = profiles[Profile.medium]
+    small = profiles[Profile.small]
 
-    result = evaluate_profile_boundary(total_equity_usd=10000.0, profile=medium)
+    result = evaluate_profile_boundary(total_equity_usd=10000.0, profile=small)
 
+    assert result.status is ProfileBoundaryStatus.within
     assert result.total_equity_usd == 10000.0
-    assert result.lower_bound_usd == medium.capital_range_usd[0]
-    assert result.upper_bound_usd == medium.capital_range_usd[1]
+    assert result.lower_bound_usd == small.capital_range_usd[0]
+    assert result.upper_bound_usd == small.capital_range_usd[1]
 
 
 @pytest.mark.parametrize("profile_name", list(Profile))
