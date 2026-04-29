@@ -9,9 +9,9 @@ a :class:`SliceReplayResult` for the aggregator (story 06) and the
 report renderer (story 07) to consume in-memory.
 
 State isolation is the central invariant: the engine MUST NOT read from or
-write to the runtime distillation database at
-``%USERPROFILE%/AlphaMind/data/alphamind.db``. Every call uses a fresh
-temporary SQLite file under :func:`tempfile.TemporaryDirectory`, and the
+write to the runtime distillation database (resolved via the
+``DATABASE_PATH`` environment variable). Every call uses a fresh temporary
+SQLite file under :func:`tempfile.TemporaryDirectory`, and the
 orchestrator's archive/provenance writes are redirected into the same
 temp directory so the operator's archive root is never touched.
 

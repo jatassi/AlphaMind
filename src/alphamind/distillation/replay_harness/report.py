@@ -27,6 +27,8 @@ from alphamind.distillation.replay_harness.aggregation import (
 )
 from alphamind.distillation.replay_harness.candidate_config import LoadedCandidateConfig
 
+# Mode literals — must match the bare strings in
+# ``alphamind.distillation.replay_harness.aggregation``.
 _MODE_SINGLE = "single"
 _MODE_DIFF = "diff"
 
@@ -295,6 +297,9 @@ def _render_calibration_breakdown(aggregated: AggregatedReport) -> str:
         header = ["regime", "calibration_state", "count"]
     lines: list[str] = [
         "## Calibration-state breakdown",
+        "",
+        "*Event-history rows have no calibration_state column; the harness "
+        "records them as `calibrated`.*",
         "",
         _md_row(header),
         _md_row(["---"] * len(header)),

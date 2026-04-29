@@ -6,7 +6,7 @@ without importing the rest of the package.
 Advances when harness algorithm changes — a new aggregation, a new
 fixture-loading rule, or a Class B baseline computation switching to a new
 code path. See `docs/design/02-distillation-layer/replay-harness.md`
-S Versioning.
+§ Versioning.
 """
 
 from __future__ import annotations
