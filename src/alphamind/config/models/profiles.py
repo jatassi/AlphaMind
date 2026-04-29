@@ -43,6 +43,22 @@ class FeatureFlags(BaseModel):
     fractional_shares_required: bool
 
 
+class ThesisPerformanceReviewConfig(BaseModel):
+    """Per-profile threshold pair for the thesis-performance-review trigger.
+
+    Populated for the micro profile only; absent (None) on small/medium/large.
+    The trigger fires for the operator-pause workflow when either gate is met
+    (completed-trade count or cumulative-realized-loss as a fraction of starting
+    capital). See `docs/design/06-risk-guardrails/rules-and-limits.md`
+    § Profile: Micro.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    trade_count_threshold: int = Field(gt=0)
+    loss_pct_threshold: float = Field(gt=0.0, le=1.0)
+
+
 class TokenBudgetRange(BaseModel):
     """`(lower, upper)` ranges for context and output token budgets.
 
@@ -76,6 +92,7 @@ class ProfileConfig(BaseModel):
     min_position_size_usd: int = Field(ge=1)
     rule_values: dict[str, float]
     agent_token_budgets: dict[str, TokenBudgetRange]
+    thesis_performance_review: ThesisPerformanceReviewConfig | None = None
 
     @field_validator("capital_range_usd")
     @classmethod
