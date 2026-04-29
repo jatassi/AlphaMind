@@ -376,6 +376,10 @@ def test_public_api_surface_matches_documented_re_exports() -> None:
         "RealizedVolEntry",
         # Black-Scholes core (story 02a)
         "bs_greeks",
+        # Effective-limit adapter and feature-flag gate (story 02c)
+        "EffectiveLimitAdapterError",
+        "classify_feature_gate",
+        "from_resolved_config",
     }
 
     public = {name for name in dir(module) if not name.startswith("_")}
