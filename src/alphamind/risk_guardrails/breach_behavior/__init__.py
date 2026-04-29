@@ -13,6 +13,7 @@ from alphamind.risk_guardrails.breach_behavior.drawdown_tiers import (
     apply_progressive_tier_overrides,
     classify_cumulative_drawdown_tier,
 )
+from alphamind.risk_guardrails.breach_behavior.halt_state import compute_halt_state
 from alphamind.risk_guardrails.breach_behavior.hard_rejection import (
     LibraryOutputProtocol,
     RuleProjectionProtocol,
@@ -101,6 +102,7 @@ __all__ = [
     "classify_cumulative_drawdown_tier",
     "classify_zone",
     "compose_hard_rejection_payload",
+    "compute_halt_state",
     "load_breach_behavior_config",
     "select_for_drawdown_breach",
     "select_for_margin_call",
