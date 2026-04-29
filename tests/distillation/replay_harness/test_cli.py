@@ -12,7 +12,6 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import pytest
 import yaml
@@ -24,7 +23,10 @@ from alphamind.distillation.replay_harness.cli import (
     _resolve_git_sha,
     main,
 )
-from tests.distillation.replay_harness.conftest import build_synthesized_slice
+from tests.distillation.replay_harness.conftest import (
+    FrozenDatetime,
+    build_synthesized_slice,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CANONICAL_CONFIG_PATH = REPO_ROOT / "config" / "distillation.yaml"
@@ -183,7 +185,7 @@ def test_existing_report_directory_exits_one_without_overwriting(
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(
             "alphamind.distillation.replay_harness.cli.datetime",
-            _FrozenDatetime(fixed_now),
+            FrozenDatetime(fixed_now),
         )
         first_code = main(args)
         capsys.readouterr()  # discard
@@ -193,16 +195,6 @@ def test_existing_report_directory_exits_one_without_overwriting(
     assert second_code == EXIT_ERROR
     assert "already exists" in second_captured.err
     assert "refusing to overwrite" in second_captured.err
-
-
-class _FrozenDatetime:
-    """Tiny stand-in for ``datetime`` so ``datetime.now(UTC)`` returns a fixed value."""
-
-    def __init__(self, fixed: datetime) -> None:
-        self._fixed = fixed
-
-    def now(self, tz: Any = None) -> datetime:
-        return self._fixed
 
 
 def test_replay_failure_exits_one_without_writing_report(
