@@ -7,6 +7,15 @@ combined-set check, and the engine T3 enforcement check); story 01 lays the
 boundary contract every later story builds on.
 """
 
+from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import (
+    FixtureIvProvider,
+    IvLookupError,
+    IvLookupResult,
+    IvProvider,
+    IvQuote,
+    IvSurfaceEntry,
+    RealizedVolEntry,
+)
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
     Action,
     AssetType,
@@ -18,7 +27,6 @@ from alphamind.risk_guardrails.guardrail_evaluation.types import (
     FeatureDisabledRejection,
     FeatureFlagsView,
     Greeks,
-    IvProvider,
     IvSource,
     LibraryConfig,
     LibraryOutput,
@@ -30,11 +38,13 @@ from alphamind.risk_guardrails.guardrail_evaluation.types import (
     Status,
 )
 
-# Drop the implicit ``types`` submodule attribute the import system populates,
-# so ``dir(...)`` reflects the documented re-export list verbatim — story 01's
+# Drop the implicit submodule attributes the import system populates, so
+# ``dir(...)`` reflects the documented re-export list verbatim — story 01's
 # acceptance test asserts the surface is exactly the names below and nothing
 # more.
-globals().pop("types", None)
+for _submodule in ("iv_sourcing", "types"):
+    globals().pop(_submodule, None)
+del _submodule
 
 __all__ = [
     "Action",
@@ -46,15 +56,21 @@ __all__ = [
     "ExistingPosition",
     "FeatureDisabledRejection",
     "FeatureFlagsView",
+    "FixtureIvProvider",
     "Greeks",
+    "IvLookupError",
+    "IvLookupResult",
     "IvProvider",
+    "IvQuote",
     "IvSource",
+    "IvSurfaceEntry",
     "LibraryConfig",
     "LibraryOutput",
     "MarketInputs",
     "OptionLeg",
     "PortfolioStateSnapshot",
     "ProposedDelta",
+    "RealizedVolEntry",
     "RuleProjection",
     "Status",
 ]
