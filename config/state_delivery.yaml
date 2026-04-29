@@ -1,0 +1,9 @@
+state_delivery:
+  recent_engine_actions:
+    lookback_invocations: 1               # PM "Recent engine-originated actions" — invocations of activity-log scope to render
+  correlation_state:
+    min_position_count: 3                 # PM Correlation state block — omit below this position count
+  dependency_risk_flag:
+    min_position_count: 3                 # PM Dependency risk flag block — omit below this position count
+  abandoned_window:
+    lookback_invocations: 1               # Analyst / strategist abandoned-* sections — only the prior invocation

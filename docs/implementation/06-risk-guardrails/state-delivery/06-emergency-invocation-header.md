@@ -1,7 +1,8 @@
 ---
-status: not_started
+status: blocked
 completed_date:
 commit_id:
+blocked_on: breach-behavior/03-canonical-types-and-enums.md (canonical `EmergencyTrigger` enum and `EmergencyContext` typed record not yet shipped). Set to `not_started` and dispatch when breach-behavior story 03 is `done`.
 ---
 
 # 06 — Emergency invocation header
