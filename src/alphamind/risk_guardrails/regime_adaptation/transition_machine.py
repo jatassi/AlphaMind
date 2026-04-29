@@ -50,6 +50,9 @@ def compute_next_transition(
     a one-step tightening to ``STABLE``. Regime changes produce ``TIGHTENING``
     (volatility up) or ``LOOSENING`` (volatility down), with tightening always
     overriding any in-flight loosening.
+
+    The tightening-overrides-loosening rule is tested by
+    ``tests/risk_guardrails/regime_adaptation/test_transition_machine.py::test_tightening_overrides_loosening_dropping_residue``.
     """
     if prior_state is None:
         return _stable_decision(active_regime=new_regime, prior_regime=None)
@@ -127,6 +130,9 @@ def _loosening_decision(
     loosening *resets* the interpolation, with the prior state's
     ``active_regime`` (not its prior ``transition_origin_regime``) as the
     new origin.
+
+    Tested by ``tests/risk_guardrails/regime_adaptation/test_transition_machine.py``
+    :: ``test_loosening_during_loosening_resets_interpolation_with_prior_active_as_origin``.
     """
     return NextTransitionDecision(
         active_regime=new_regime,
