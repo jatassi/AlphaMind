@@ -5,6 +5,10 @@ subsequent stories drop function modules into this package and add their own
 re-exports below.
 """
 
+from alphamind.risk_guardrails.regime_adaptation.interpolation import (
+    interpolate_loosening_multipliers,
+    resolve_active_multipliers,
+)
 from alphamind.risk_guardrails.regime_adaptation.types import (
     LOOSENING_INVOCATIONS,
     CompositeAlertState,
@@ -36,5 +40,7 @@ __all__ = [
     "RuleMetadata",
     "StaleCalendarReport",
     "VixBoundaryThresholds",
+    "interpolate_loosening_multipliers",
     "overlays_to_strings",
+    "resolve_active_multipliers",
 ]
