@@ -5,6 +5,12 @@ subsequent stories drop function modules into this package and add their own
 re-exports below.
 """
 
+from alphamind.risk_guardrails.regime_adaptation.event_calendar import (
+    EventCalendarParseError,
+    load_event_calendar,
+    select_events_within_window,
+    warn_on_stale_calendar,
+)
 from alphamind.risk_guardrails.regime_adaptation.types import (
     LOOSENING_INVOCATIONS,
     CompositeAlertState,
@@ -27,6 +33,7 @@ __all__ = [
     "CompositeAlertState",
     "EventCalendar",
     "EventCalendarEntry",
+    "EventCalendarParseError",
     "NextTransitionDecision",
     "OverlayActivationDecision",
     "RegimeAdaptationAuditEntry",
@@ -36,5 +43,8 @@ __all__ = [
     "RuleMetadata",
     "StaleCalendarReport",
     "VixBoundaryThresholds",
+    "load_event_calendar",
     "overlays_to_strings",
+    "select_events_within_window",
+    "warn_on_stale_calendar",
 ]
