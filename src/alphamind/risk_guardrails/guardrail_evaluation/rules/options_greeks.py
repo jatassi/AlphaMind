@@ -120,24 +120,30 @@ def _greek_contribution(
 ) -> float:
     """Signed change in greek-dollars as % of portfolio.
 
-    For OPEN/ADD on options: ``after`` from ``dae.net_greeks``, ``before`` from
-    the existing position (zero for OPEN). For CLOSE: ``after`` is zero,
-    ``before`` from existing greeks. Equity proposals contribute zero.
+    For OPEN/ADD on options: contribution is the new contracts' greeks scaled
+    by ``proposal.quantity`` — the existing position's greeks are *not*
+    subtracted, mirroring ``gross_exposure_pct``'s ADD path which adds the new
+    exposure without an existing-side term. For CLOSE: contribution is the
+    negative of the existing position's greeks scaled by the *existing
+    position's* quantity (not the proposal's). Equity proposals contribute
+    zero.
 
     ``divisor`` adjusts the BS-native units to the rule's reporting unit
     (1 for theta-per-day; 100 for vega-per-1-IV-point).
     """
     if proposal.asset_type is AssetType.EQUITY:
         return 0.0
-    after = _proposal_greek_dollars(greek, proposal, dae) / divisor
-    before = _existing_greek_dollars(greek, proposal, state) / divisor
-    return (after - before) / state.portfolio_value_usd * 100.0
+    if proposal.action is Action.CLOSE:
+        contribution_dollars = -_existing_greek_dollars(greek, proposal, state)
+    else:
+        contribution_dollars = _proposal_greek_dollars(greek, proposal, dae)
+    return contribution_dollars / divisor / state.portfolio_value_usd * 100.0
 
 
 def _proposal_greek_dollars(
     greek: _GreekName, proposal: ProposedDelta, dae: DeltaAdjustedExposure
 ) -> float:
-    if proposal.action is Action.CLOSE or dae.net_greeks is None:
+    if dae.net_greeks is None:
         return 0.0
     return _greek_dollars(dae.net_greeks, greek, proposal.quantity)
 
@@ -148,11 +154,11 @@ def _existing_greek_dollars(
     existing = existing_position(proposal, state)
     if existing is None or existing.current_greeks is None:
         return 0.0
-    return _greek_dollars(existing.current_greeks, greek, proposal.quantity)
+    return _greek_dollars(existing.current_greeks, greek, existing.quantity)
 
 
 def _greek_dollars(greeks: Greeks, greek: _GreekName, quantity: float) -> float:
-    """Greek-per-leg → strategy-level dollar terms via quantity * contract multiplier."""
+    """Per-contract greek → position-level dollar terms via quantity * contract multiplier."""
     value = greeks.theta if greek == "theta" else greeks.vega
     return value * quantity * _CONTRACT_MULTIPLIER
 
