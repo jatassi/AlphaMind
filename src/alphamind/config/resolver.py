@@ -96,7 +96,9 @@ class ResolvedConfig:
     """
 
     profile: ProfileConfig
+    profile_label: str
     regime: RegimeConfig
+    regime_label: str
     mode: ModeConfig
     active_overlays: tuple[PreEventOverlay | StressOverlay, ...]
     run_type: RunTypeConfig
@@ -135,7 +137,9 @@ class ResolvedConfig:
         return hash(
             (
                 self.profile.model_dump_json(),
+                self.profile_label,
                 self.regime.model_dump_json(),
+                self.regime_label,
                 self.mode.model_dump_json(),
                 tuple(o.model_dump_json() for o in self.active_overlays),
                 self.run_type.model_dump_json(),
@@ -331,7 +335,9 @@ def compose_config(inputs: LoadedConfig, runtime: RuntimeDimensions) -> Resolved
 
     return ResolvedConfig(
         profile=profile,
+        profile_label=inputs.main.active_profile.value,
         regime=regime,
+        regime_label=runtime.active_regime.value,
         mode=mode,
         active_overlays=active_overlay_configs,
         run_type=run_type,

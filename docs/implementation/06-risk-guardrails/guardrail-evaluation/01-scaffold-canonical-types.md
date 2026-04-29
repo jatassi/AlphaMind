@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 67cc3c7
 ---
 
 # 01 — Scaffold and canonical types

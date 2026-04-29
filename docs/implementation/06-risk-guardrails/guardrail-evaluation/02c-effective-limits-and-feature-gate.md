@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 589df02
 ---
 
 # 02c — Effective-limit adapter and feature-flag gate
@@ -40,12 +40,12 @@ In scope:
   ```python
   def from_resolved_config(resolved: ResolvedConfig) -> LibraryConfig:
   ```
-  Reads `resolved.rule_values`, `resolved.guardrails.rules`, `resolved.feature_flags`, `resolved.profile.active_sectors`, `resolved.regime.label`, `resolved.profile.label`, and `resolved.execution.conservative_delta_buffer_pct` to produce a `LibraryConfig`. Behavior:
+  Reads `resolved.rule_values`, `resolved.guardrails.rules`, `resolved.feature_flags`, `resolved.profile.active_sectors`, `resolved.regime_label`, `resolved.profile_label`, and `resolved.execution.conservative_delta_buffer_pct` to produce a `LibraryConfig`. Behavior:
   - **`effective_limits`.** Copy `rule_values` verbatim. The cascade is upstream's responsibility; the adapter does not re-multiply or override.
   - **`escalation_zones`.** For every rule ID present in `effective_limits`, look up its `escalation_zones` block in `resolved.guardrails.rules` and convert to the library's `EscalationZones` dataclass. Rules in `effective_limits` but missing from `guardrails.rules` are a structural error (raises `EffectiveLimitAdapterError`) — should not happen post-cross-reference validation.
   - **`feature_flags`.** Carve `FeatureFlagsView(options_enabled=resolved.feature_flags.options_enabled, short_selling_enabled=resolved.feature_flags.short_selling_enabled)` — narrower than `ResolvedConfig.feature_flags` (which carries `fractional_shares_required` the library does not consult).
   - **`active_sectors`.** Copy `resolved.profile.active_sectors` as a `tuple[str, ...]`. Order preserved.
-  - **`active_regime` / `active_profile`.** Read the labels from the regime/profile entries; carry through as plain strings.
+  - **`active_regime` / `active_profile`.** Copy `resolved.regime_label` / `resolved.profile_label` as plain strings.
   - **`conservative_buffer_pct`.** Copy `resolved.execution.conservative_delta_buffer_pct`.
   - The adapter is pure — equal `ResolvedConfig` produces equal `LibraryConfig`.
 - `EffectiveLimitAdapterError(Exception)` — raised when the adapter detects a structural inconsistency (rule in `rule_values` missing from `guardrails.rules`, sector in `active_sectors` missing from `assets.sectors`, conservative buffer outside `[0, 100]`). Each instance carries a single failure with a message naming the offending field.

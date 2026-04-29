@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-29
+commit_id: d87a3a0
 ---
 
 # 06 — End-to-end golden tests
