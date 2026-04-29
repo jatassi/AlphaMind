@@ -9,6 +9,10 @@ from alphamind.risk_guardrails.breach_behavior.config import (
     BreachBehaviorConfig,
     load_breach_behavior_config,
 )
+from alphamind.risk_guardrails.breach_behavior.drawdown_tiers import (
+    apply_progressive_tier_overrides,
+    classify_cumulative_drawdown_tier,
+)
 from alphamind.risk_guardrails.breach_behavior.types import (
     ActiveRiskParameterSet,
     BreachDetails,
@@ -74,5 +78,7 @@ __all__ = [
     "RiskZone",
     "SecondaryBreachCheckResult",
     "SecondaryBreachOutcome",
+    "apply_progressive_tier_overrides",
+    "classify_cumulative_drawdown_tier",
     "load_breach_behavior_config",
 ]
