@@ -37,7 +37,7 @@ Cross-cutting policies and reference specs that constrain implementation but are
 ### Risk guardrails
 
 - [ ] **Rules & limits** — _stories drafted_ — [design](design/06-risk-guardrails/rules-and-limits.md), [stories](implementation/06-risk-guardrails/rules-and-limits/)
-- [ ] **Guardrail evaluation primitives** — _requirements pending_ — [design](design/06-risk-guardrails/guardrail-evaluation.md)
+- [ ] **Guardrail evaluation primitives** — _stories drafted_ — [design](design/06-risk-guardrails/guardrail-evaluation.md), [stories](implementation/06-risk-guardrails/guardrail-evaluation/)
 - [ ] **State delivery** — _requirements pending_ — [design](design/06-risk-guardrails/state-delivery.md)
 - [ ] **Regime adaptation** — _requirements pending_ — [design](design/06-risk-guardrails/regime-adaptation.md)
 - [ ] **Breach behavior** — _requirements pending_ — [design](design/06-risk-guardrails/breach-behavior.md)
