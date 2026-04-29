@@ -96,6 +96,7 @@ from alphamind.config.models.profiles import (
     FeatureFlags,
     ProfileConfig,
     RiskPriority,
+    ThesisPerformanceReviewConfig,
     TokenBudgetRange,
 )
 from alphamind.config.models.regimes import (
@@ -259,6 +260,7 @@ __all__ = [
     "StressActivation",
     "StressOverlay",
     "StressTrigger",
+    "ThesisPerformanceReviewConfig",
     "TightenOnEntry",
     "TokenBudgetRange",
     "TransitionPolicy",

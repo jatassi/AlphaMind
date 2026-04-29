@@ -22,6 +22,11 @@ from alphamind.risk_guardrails.rules_and_limits.registry import (
     build_rule_registry,
     iter_active_rules,
 )
+from alphamind.risk_guardrails.rules_and_limits.thesis_performance_review import (
+    ReviewTriggerCause,
+    ReviewTriggerSignal,
+    evaluate_thesis_performance_review_trigger,
+)
 
 __all__ = [
     "MinPositionSizeResult",
@@ -31,11 +36,14 @@ __all__ = [
     "ProfileNotFoundError",
     "ProfileSwitchOutcome",
     "ResolvedRule",
+    "ReviewTriggerCause",
+    "ReviewTriggerSignal",
     "RuleRegistry",
     "build_profile_switch_activity_log_entry",
     "build_rule_registry",
     "check_min_position_size",
     "evaluate_profile_boundary",
+    "evaluate_thesis_performance_review_trigger",
     "iter_active_rules",
     "switch_active_profile",
 ]
