@@ -27,6 +27,15 @@ from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import (
     IvSurfaceEntry,
     RealizedVolEntry,
 )
+from alphamind.risk_guardrails.guardrail_evaluation.projection import (
+    ProjectionError,
+    project_rule,
+)
+from alphamind.risk_guardrails.guardrail_evaluation.rules import (
+    RuleSpec,
+    build_active_specs,
+    project_all,
+)
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
     Action,
     AssetType,
@@ -59,6 +68,8 @@ for _submodule in (
     "effective_limits",
     "feature_gate",
     "iv_sourcing",
+    "projection",
+    "rules",
     "types",
 ):
     globals().pop(_submodule, None)
@@ -88,12 +99,17 @@ __all__ = [
     "MarketInputs",
     "OptionLeg",
     "PortfolioStateSnapshot",
+    "ProjectionError",
     "ProposedDelta",
     "RealizedVolEntry",
     "RuleProjection",
+    "RuleSpec",
     "Status",
     "bs_greeks",
+    "build_active_specs",
     "classify_feature_gate",
     "compute_delta_adjusted_exposure",
     "from_resolved_config",
+    "project_all",
+    "project_rule",
 ]
