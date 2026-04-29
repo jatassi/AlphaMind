@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 589df02
 ---
 
 # 02c — Effective-limit adapter and feature-flag gate
