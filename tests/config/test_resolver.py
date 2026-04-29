@@ -195,6 +195,26 @@ def test_resolver_is_pure_same_inputs_yield_equal_and_hash_equal_outputs() -> No
 
 
 # ---------------------------------------------------------------------------
+# Active profile/regime label propagation (consumed by the guardrail-evaluation
+# library's LibraryConfig adapter — story 02c reads these to populate
+# LibraryConfig.active_profile and LibraryConfig.active_regime)
+# ---------------------------------------------------------------------------
+
+
+def test_resolver_propagates_active_profile_and_regime_labels() -> None:
+    resolved = _compose(profile_override=Profile.medium, regime=Regime.elevated)
+    assert resolved.profile_label == "medium"
+    assert resolved.regime_label == "elevated"
+
+
+def test_resolver_label_changes_distinguish_hash() -> None:
+    medium_normal = _compose(profile_override=Profile.medium, regime=Regime.normal)
+    medium_elevated = _compose(profile_override=Profile.medium, regime=Regime.elevated)
+    assert medium_normal != medium_elevated
+    assert hash(medium_normal) != hash(medium_elevated)
+
+
+# ---------------------------------------------------------------------------
 # Structural error: missing rule in regime multiplier map
 # ---------------------------------------------------------------------------
 
