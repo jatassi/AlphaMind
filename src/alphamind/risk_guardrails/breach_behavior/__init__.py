@@ -5,6 +5,15 @@ later stories) the primitives that compose them. Re-exports below give every
 downstream consumer a single import path.
 """
 
+from alphamind.risk_guardrails.breach_behavior.cascade import (
+    CascadeContext,
+    CascadeStepLimitExceeded,
+    FollowUpBreachSelectorProtocol,
+    generate_cascade_id,
+    orchestrate_breach_cascade,
+    orchestrate_margin_call_cascade,
+    search_for_alternate_position,
+)
 from alphamind.risk_guardrails.breach_behavior.config import (
     BreachBehaviorConfig,
     load_breach_behavior_config,
@@ -91,6 +100,8 @@ __all__ = [
     "BreachBehaviorConfig",
     "BreachDetails",
     "BreachResponse",
+    "CascadeContext",
+    "CascadeStepLimitExceeded",
     "CloseRationaleType",
     "Direction",
     "DrawdownSample",
@@ -104,6 +115,7 @@ __all__ = [
     "EngineGuardrailTriggerRecord",
     "EscalationZones",
     "EvaluateProposalsCallable",
+    "FollowUpBreachSelectorProtocol",
     "HaltState",
     "HardRejectionPayload",
     "InstrumentType",
@@ -145,7 +157,11 @@ __all__ = [
     "evaluate_margin_call",
     "evaluate_multi_rule_breach",
     "evaluate_regime_jump",
+    "generate_cascade_id",
     "load_breach_behavior_config",
+    "orchestrate_breach_cascade",
+    "orchestrate_margin_call_cascade",
+    "search_for_alternate_position",
     "select_for_drawdown_breach",
     "select_for_margin_call",
     "select_for_position_max_loss",
