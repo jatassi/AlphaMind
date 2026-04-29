@@ -35,3 +35,7 @@ agent_token_budgets:
   analyst:           { context: [1500, 2500], output: [1200, 2500] }
   strategist:        { context: [1500, 2500], output: [1200, 2500] }
   portfolio_manager: { context: [1500, 2500], output: [1200, 2500] }
+
+thesis_performance_review:
+  trade_count_threshold: 20
+  loss_pct_threshold:    0.15

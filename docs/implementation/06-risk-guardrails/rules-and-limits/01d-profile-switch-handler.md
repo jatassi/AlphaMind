@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-28
+commit_id: 565cfa9
 ---
 
 # 01d — Profile switch handler

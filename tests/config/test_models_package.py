@@ -100,6 +100,7 @@ _EXPECTED_PUBLIC_NAMES = {
     "StressActivation",
     "StressOverlay",
     "StressTrigger",
+    "ThesisPerformanceReviewConfig",
     "TightenOnEntry",
     "TokenBudgetRange",
     "TransitionPolicy",
