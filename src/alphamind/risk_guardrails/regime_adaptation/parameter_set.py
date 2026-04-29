@@ -92,6 +92,7 @@ def assemble_active_risk_parameter_set(
             f"{sorted(set(active_regime_multipliers).symmetric_difference(interpolated_multipliers))!r}"
         )
         raise ValueError(msg)
+    # Defensive: the orchestrator never trips this branch by construction; guards direct callers.
     extra_overlay_keys = set(overlay_multipliers_composed).difference(interpolated_multipliers)
     if extra_overlay_keys:
         msg = (
