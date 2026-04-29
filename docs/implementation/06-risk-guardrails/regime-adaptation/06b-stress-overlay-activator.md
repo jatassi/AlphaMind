@@ -64,16 +64,13 @@ def fetch_composite_alert_state(
 ) -> CompositeAlertState
 ```
 
+`CompositeAlertState` is the canonical typed record declared in `02-package-skeleton-and-types.md` § 2i. Imported here:
+
 ```python
-@dataclass(frozen=True, slots=True)
-class CompositeAlertState:
-    funding_stress_alert_active: bool
-    funding_stress_calibration_state: CalibrationState
-    market_liquidity_alert_active: bool
-    market_liquidity_calibration_state: CalibrationState
-    funding_stress_as_of: str | None         # None when no funding_stress row exists
-    market_liquidity_as_of: str | None       # None when no market_liquidity row exists
+from alphamind.risk_guardrails.regime_adaptation.types import CompositeAlertState
 ```
+
+Canonical fields: `funding_stress_alert_active: bool`, `funding_stress_calibration_state: CalibrationState`, `market_liquidity_alert_active: bool`, `market_liquidity_calibration_state: CalibrationState`, `funding_stress_as_of: str | None`, `market_liquidity_as_of: str | None`.
 
 Implementation:
 - For each composite kind in `("funding_stress", "market_liquidity")`, select the most-recent `DistillationCompositeState` row (ordered by `as_of` descending, limit 1).
@@ -156,8 +153,8 @@ The decision to skip activation when the alert is uncalibrated is conservative: 
 
 ## Acceptance criteria
 
-- [ ] `src/alphamind/risk_guardrails/regime_adaptation/stress_activator.py` exists and defines `evaluate_stress_overlay`, `fetch_composite_alert_state`, `CompositeAlertState`, `_COMPOSITE_KIND_TO_OVERLAY_TRIGGER`.
-- [ ] `evaluate_stress_overlay`, `fetch_composite_alert_state`, `CompositeAlertState` are re-exported from `src/alphamind/risk_guardrails/regime_adaptation/__init__.py`.
+- [ ] `src/alphamind/risk_guardrails/regime_adaptation/stress_activator.py` exists and defines `evaluate_stress_overlay`, `fetch_composite_alert_state`, `_COMPOSITE_KIND_TO_OVERLAY_TRIGGER`. `CompositeAlertState` is imported from `alphamind.risk_guardrails.regime_adaptation.types` (canonical declaration in story 02); not redeclared here.
+- [ ] `evaluate_stress_overlay` and `fetch_composite_alert_state` are re-exported from `src/alphamind/risk_guardrails/regime_adaptation/__init__.py`. (`CompositeAlertState` is already re-exported via story 02.)
 - [ ] No alerts active returns `is_active=False`, `pre_event_block_new_positions=False`, `rationale=""`.
 - [ ] Single calibrated alert (either kind) activates the overlay; rationale mentions the kind and "CALIBRATED".
 - [ ] Both calibrated alerts active returns `is_active=True`; rationale mentions both.

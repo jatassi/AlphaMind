@@ -101,22 +101,45 @@ class RegimeAdaptationOutput:
 
 The orchestrator does not perform persistence side-effects itself; it returns the new state and the audit log entries for the pipeline runtime to commit alongside the rest of the invocation's writes.
 
-#### 2c. `RegimeTransitionBreach` — per-position breach record
+#### 2c. `RegimeTransitionBreach` — per-position or per-rule breach record
 
 ```python
 @dataclass(frozen=True, slots=True)
 class RegimeTransitionBreach:
-    """A held position now exceeding a tightened regime limit."""
-    position_id: str
-    rule_id: str                             # e.g., "position_max_size_pct"
+    """A rule now exceeding a tightened regime limit.
+
+    Two flavors, distinguished by `position_id`:
+
+    1. **Per-position rule breach** (`position_id` is set): a rule whose limit applies
+       per-position has at least one position above the tightened limit. One record per
+       breaching position. Examples: `position_max_size_pct` (each position checked
+       individually against the per-position size cap), `single_short_max_pct` (each
+       short position checked individually).
+
+    2. **Aggregate rule breach** (`position_id` is None): a rule whose limit applies to a
+       portfolio-level aggregate has the aggregate above the tightened limit. One record
+       per breaching rule. Examples: `sector_concentration_*` (sector total),
+       `net_long_pct` / `net_short_pct` / `gross_exposure_pct` (directional totals),
+       `options_delta_pct` (options delta-adjusted total).
+
+    For aggregate breaches the strategist consults the `Sector exposure breakdown
+    (per position)` block in its state header to identify which positions contribute and
+    plan trims. The breach record names the rule and the overage; per-position attribution
+    is not invented at the breach-record layer (the source data — per-position
+    contributions — is already in the strategist's bundle via the sector breakdown).
+    """
+    position_id: str | None                  # set for per-position rules; None for aggregate rules
+    rule_id: str                             # e.g., "position_max_size_pct" or "sector_concentration_tech"
     rule_label: str                          # e.g., "Per-position max size"
-    current_value: float                     # the position's current contribution to the rule
+    current_value: float                     # for per-position: the position's contribution; for aggregate: the rule's total
     new_limit_value: float                   # the post-tightening limit
     overage: float                           # current_value - new_limit_value (always > 0)
     unit: str                                # mirrors RiskBudgetEntry.unit (e.g., "% of portfolio")
 ```
 
 Consumed by state-delivery's strategist guardrail state header (`Regime-transition breaches` block) and PM guardrail state header (same block).
+
+The detector (story 07) emits at most one record per `(rule_id, position_id)` pair for per-position rules and exactly one record per breaching aggregate rule.
 
 #### 2d. `EventCalendarEntry` and `EventCalendar`
 
@@ -162,23 +185,144 @@ class RegimeAdaptationAuditEntry:
 
 Activity-log persistence is not in scope for this work tree (the activity-log table is forthcoming under the execution layer per the state-delivery cross-feature gates note); the orchestrator returns these entries as typed records and the caller decides when persistence wires up.
 
+#### 2g. `VixBoundaryThresholds` — VIX classification boundaries
+
+```python
+@dataclass(frozen=True, slots=True)
+class VixBoundaryThresholds:
+    """The three VIX-band boundaries that classify the current VIX into a guardrail regime.
+
+    Sourced from `RegimeClassification` in distillation config; consumed by
+    `regime_mapping.map_distillation_to_guardrail_regime` (story 03) and the orchestrator (09).
+    """
+    low_vol_vix_max: float
+    normal_vix_max: float
+    elevated_vix_max: float
+```
+
+Construction invariant: `0 < low_vol_vix_max < normal_vix_max < elevated_vix_max`. `__post_init__` raises `ValueError` naming all three fields when the ordering is violated or any value is non-positive.
+
+Story 03 (`regime_mapping.py`) imports the type and supplies a `from_regime_classification(rc: RegimeClassification) -> VixBoundaryThresholds` adapter that bridges the upstream Pydantic config to this dataclass. The adapter lives in `regime_mapping.py`, not here — story 02 ships only the typed record.
+
+#### 2h. `NextTransitionDecision` — transition-state-machine output
+
+```python
+@dataclass(frozen=True, slots=True)
+class NextTransitionDecision:
+    """The transition-state-machine output the orchestrator persists.
+
+    Produced by `transition_machine.compute_next_transition` (story 04b); consumed by
+    `parameter_set.assemble_active_risk_parameter_set` (story 08) and the orchestrator (09).
+    """
+    active_regime: Regime
+    prior_regime: Regime | None                       # passthrough of new_regime's predecessor for audit
+    transition_state: RegimeTransitionState
+    transition_invocations_remaining: int
+    transition_started_invocation_id: str | None
+    transition_origin_regime: Regime | None
+```
+
+The orchestrator (story 09) constructs the full `RegimeAdaptationState` by combining this decision with the auxiliary passthrough fields (`distillation_regime_label`, `distillation_vix_level`, `regime_skip_emergency`, `active_overlays`, `as_of`).
+
+#### 2i. `CompositeAlertState` — funding/liquidity composite alert snapshot
+
+```python
+@dataclass(frozen=True, slots=True)
+class CompositeAlertState:
+    """The funding-stress and market-liquidity composite alert flags read from the
+    distillation layer's persisted state, used by the stress overlay activator (06b).
+    """
+    funding_stress_alert_active: bool
+    funding_stress_calibration_state: CalibrationState
+    market_liquidity_alert_active: bool
+    market_liquidity_calibration_state: CalibrationState
+    funding_stress_as_of: str | None         # None when no funding_stress row exists
+    market_liquidity_as_of: str | None       # None when no market_liquidity row exists
+```
+
+Populated by `stress_activator.fetch_composite_alert_state(session)` (story 06b's DB-read helper). Consumed by `evaluate_stress_overlay` (story 06b) and the orchestrator (story 09).
+
+#### 2j. `RuleMetadata` — minimal rule metadata for breach rendering
+
+```python
+@dataclass(frozen=True, slots=True)
+class RuleMetadata:
+    """Minimal per-rule metadata for the breach detector's render-context emission.
+
+    Constructed from `RuleRegistry` (rules-and-limits work tree) by the orchestrator (story 09)
+    and passed through to the breach detector (story 07). Decouples the breach detector from
+    the full `RuleEntry` shape so the registry's evolution does not ripple through.
+    """
+    rule_id: str
+    label: str          # human-readable, mirrors the registry's rule_label
+    unit: str           # mirrors RiskBudgetEntry.unit (e.g., "% of portfolio (delta-adjusted)")
+```
+
+#### 2k. `StaleCalendarReport` — event-calendar freshness signal
+
+```python
+@dataclass(frozen=True, slots=True)
+class StaleCalendarReport:
+    """Output of the event-calendar staleness check.
+
+    Produced by `event_calendar.warn_on_stale_calendar` (story 05); consumed by the
+    orchestrator (story 09) which surfaces the report via the `stale_event_calendar`
+    audit-log entry. An empty calendar is `is_stale=False, days_until_latest=None`.
+    """
+    is_stale: bool
+    latest_event_timestamp_utc: datetime | None
+    days_until_latest: float | None         # negative if latest is in the past; None if calendar is empty
+```
+
+#### 2l. `LOOSENING_INVOCATIONS` constant
+
+```python
+LOOSENING_INVOCATIONS: int = 3
+```
+
+The number of invocations over which a loosening transition's per-rule limits linearly interpolate from origin to destination. Mirrors `regimes/*.yaml`'s `transition.loosen_on_exit: linear_over_invocations_3` design directive. Declared once here and imported by the state machine (story 04b) and the interpolation primitive (story 04c) — single source of truth. The value is mechanical (matches the design's `_3` suffix), not operator-tunable per regime; if a future per-regime loosening duration emerges, this constant becomes a default and the state machine accepts an override parameter.
+
+#### 2m. `overlays_to_strings` helper
+
+```python
+def overlays_to_strings(overlays: tuple[Overlay, ...]) -> tuple[str, ...]:
+    """Convert an Overlay-enum tuple to the string-tuple shape required by
+    `portfolio_state.records.capital.ActiveRiskParameterSet.active_overlays`.
+
+    Returns the conversion alphabetically sorted by string value, matching the
+    sort invariant the parameter-set assembler (story 08) and the orchestrator
+    (story 09) depend on. Single source of truth for the conversion — both
+    callers import this helper rather than open-coding the lambda.
+    """
+    return tuple(sorted(overlay.value for overlay in overlays))
+```
+
+The helper exists because two consumers (`08-active-risk-parameter-set-assembler` and `09-resolve-regime-adaptation-orchestrator`) need the same enum→sorted-strings transform; lifting it here removes the open-coded lambda and gives the conversion a single, testable home. The result tuple is alphabetically sorted; downstream `breach_behavior/04b`'s tier-override appender (which inserts `cumulative_drawdown_tier_{N}`) preserves the sort by re-sorting after appending (per `breach_behavior/04b` § Override identity).
+
 ### 3. Re-exports
 
 `src/alphamind/risk_guardrails/regime_adaptation/__init__.py` re-exports every typed record from `types.py`:
 
 ```python
 from alphamind.risk_guardrails.regime_adaptation.types import (
+    CompositeAlertState,
     EventCalendar,
     EventCalendarEntry,
+    LOOSENING_INVOCATIONS,
+    NextTransitionDecision,
     OverlayActivationDecision,
     RegimeAdaptationAuditEntry,
     RegimeAdaptationOutput,
     RegimeAdaptationState,
     RegimeTransitionBreach,
+    RuleMetadata,
+    StaleCalendarReport,
+    VixBoundaryThresholds,
+    overlays_to_strings,
 )
 ```
 
-Subsequent stories add their own re-exports.
+Subsequent stories add their own re-exports for callable surfaces.
 
 ### 4. Import smoke test
 
@@ -193,9 +337,16 @@ Subsequent stories add their own re-exports.
 - `RegimeAdaptationState` rejects construction when `transition_state == LOOSENING` and `transition_origin_regime is None`; raises `ValueError` naming the field.
 - `RegimeTransitionBreach` rejects construction when `overage` is not strictly positive (i.e., `current_value <= new_limit_value`); raises `ValueError` naming the rule_id and the computed overage.
 - `RegimeTransitionBreach` rejects construction when `overage` is not equal to `current_value - new_limit_value` (within `1e-9` absolute tolerance); raises `ValueError`.
+- `RegimeTransitionBreach` accepts both `position_id="POS-..."` (per-position rule case) and `position_id=None` (aggregate rule case); both flavors construct without error and serialize identically.
 - `EventCalendarEntry.event_timestamp_utc` rejects naive datetimes; raises `ValueError` mentioning the field name.
 - `OverlayActivationDecision` rejects `pre_event_block_new_positions=True` when `overlay != Overlay.pre_event`; raises `ValueError`.
 - `OverlayActivationDecision` rejects `pre_event_block_new_positions=True` when `overlay == Overlay.pre_event` and `is_active is False`; raises `ValueError` (cannot block on an inactive overlay).
+- `VixBoundaryThresholds` rejects construction when bounds are not strictly ordered (`low_vol_vix_max=14, normal_vix_max=10, elevated_vix_max=35` raises `ValueError` naming all three) or when any value is non-positive.
+- `NextTransitionDecision` is constructible with all valid combinations; its invariants are exercised indirectly via `RegimeAdaptationState` (which the orchestrator builds from the decision).
+- `CompositeAlertState` is constructible with valid scalar inputs; its `*_as_of` fields tolerate `None` for absent composite rows.
+- `RuleMetadata` is constructible with non-empty `rule_id`, `label`, and `unit` strings.
+- `StaleCalendarReport` is constructible with `is_stale=False, latest_event_timestamp_utc=None, days_until_latest=None` (the empty-calendar case) and with the populated case.
+- `overlays_to_strings(())` returns `()`. `overlays_to_strings((Overlay.stress, Overlay.pre_event))` returns `("pre_event", "stress")` — alphabetically sorted by string value. `overlays_to_strings((Overlay.pre_event,))` returns `("pre_event",)`.
 
 Out of scope:
 
@@ -225,16 +376,18 @@ The `audit_log_entries: tuple[RegimeAdaptationAuditEntry, ...]` field on `Regime
 
 ## Acceptance criteria
 
-- [ ] `src/alphamind/risk_guardrails/regime_adaptation/__init__.py` exists and re-exports `EventCalendar`, `EventCalendarEntry`, `OverlayActivationDecision`, `RegimeAdaptationAuditEntry`, `RegimeAdaptationOutput`, `RegimeAdaptationState`, `RegimeTransitionBreach`.
-- [ ] `src/alphamind/risk_guardrails/regime_adaptation/types.py` exists and defines all seven typed records with the documented field lists.
-- [ ] All seven records are `dataclass(frozen=True, slots=True)`.
+- [ ] `src/alphamind/risk_guardrails/regime_adaptation/__init__.py` exists and re-exports `CompositeAlertState`, `EventCalendar`, `EventCalendarEntry`, `NextTransitionDecision`, `OverlayActivationDecision`, `RegimeAdaptationAuditEntry`, `RegimeAdaptationOutput`, `RegimeAdaptationState`, `RegimeTransitionBreach`, `RuleMetadata`, `StaleCalendarReport`, `VixBoundaryThresholds`.
+- [ ] `src/alphamind/risk_guardrails/regime_adaptation/types.py` exists and defines all twelve typed records with the documented field lists.
+- [ ] All twelve records are `dataclass(frozen=True, slots=True)`.
 - [ ] Empty submodule files exist at the documented paths (`regime_mapping.py`, `persistence.py`, `transition_machine.py`, `interpolation.py`, `event_calendar.py`, `pre_event_activator.py`, `stress_activator.py`, `breach_detector.py`, `parameter_set.py`, `orchestrator.py`).
 - [ ] `tests/risk_guardrails/regime_adaptation/__init__.py` exists.
-- [ ] `tests/risk_guardrails/regime_adaptation/test_imports.py` imports `alphamind.risk_guardrails.regime_adaptation` and `alphamind.risk_guardrails.regime_adaptation.types` successfully and asserts the seven public symbols are reachable from the top-level package.
+- [ ] `tests/risk_guardrails/regime_adaptation/test_imports.py` imports `alphamind.risk_guardrails.regime_adaptation` and `alphamind.risk_guardrails.regime_adaptation.types` successfully and asserts the twelve public symbols are reachable from the top-level package.
 - [ ] `RegimeAdaptationState` raises `ValueError` when `transition_state == STABLE` and `transition_invocations_remaining != 0`, with both field names in the message.
 - [ ] `RegimeAdaptationState` raises `ValueError` when `transition_state == LOOSENING` and `transition_started_invocation_id is None`, naming the field.
 - [ ] `RegimeAdaptationState` raises `ValueError` when `transition_state == LOOSENING` and `transition_origin_regime is None`, naming the field.
-- [ ] `RegimeTransitionBreach` raises `ValueError` when `overage <= 0` or when `overage` does not equal `current_value - new_limit_value` within `1e-9` tolerance.
+- [ ] `RegimeTransitionBreach` raises `ValueError` when `overage <= 0` or when `overage` does not equal `current_value - new_limit_value` within `1e-9` tolerance. Accepts both `position_id="POS-..."` and `position_id=None` constructions.
 - [ ] `EventCalendarEntry` raises `ValueError` on a naive (tz-unaware) `event_timestamp_utc` argument.
 - [ ] `OverlayActivationDecision` raises `ValueError` when `pre_event_block_new_positions=True` and `overlay != Overlay.pre_event`, or when `pre_event_block_new_positions=True` and `is_active is False`.
+- [ ] `VixBoundaryThresholds` raises `ValueError` when bounds are not strictly ordered or when any value is non-positive.
+- [ ] `NextTransitionDecision`, `CompositeAlertState`, `RuleMetadata`, `StaleCalendarReport` are constructible with valid inputs (including the empty-calendar `StaleCalendarReport(is_stale=False, latest_event_timestamp_utc=None, days_until_latest=None)`).
 - [ ] `uv run ruff check . && uv run ruff format . && uv run mypy && uv run pytest -n auto` all pass.

@@ -23,14 +23,17 @@ Land the function that produces the complete PM guardrail state header — the f
 - `src/alphamind/portfolio_state/records/activity_log.py` — `ActivityLogEntry`, `EventType`; the renderer reads engine-originated action entries from the changelog.
 - `02-package-skeleton-and-config.md` — `state_delivery/portfolio_manager.py` is the target module; `StateDeliveryConfig` carries `recent_engine_actions.lookback_invocations`, `correlation_state.min_position_count`, `dependency_risk_flag.min_position_count`.
 - `03-shared-rendering-primitives.md` — primitives reused.
-- `04b-strategist-header-renderer.md` — sibling renderer; the per-position proximity and per-sector breakdown blocks plus `RegimeTransitionBreach` value object are reused. If 04b promotes `RegimeTransitionBreach` and the per-position helpers to a shared types module (story 04b's notes flag this as a possible follow-up), this story imports from there. Otherwise this story imports directly from `state_delivery/strategist.py` (the import direction is `pm -> strategist` for shared helpers; both ultimately depend on `primitives.py`).
+- `04b-strategist-header-renderer.md` — sibling renderer; the per-position proximity and per-sector breakdown blocks live there and are imported. The import direction is `pm -> strategist` for shared helpers; both ultimately depend on `primitives.py`.
+- `../regime-adaptation/02-package-skeleton-and-types.md` § 2c — canonical declaration of `RegimeTransitionBreach`; imported here, not redeclared (same as 04b).
+- `../regime-adaptation/07-regime-transition-breach-detector.md` — the producer of the records this renderer consumes.
 
 ## Depends on
 
 - 02 (package skeleton + config)
 - 03 (shared rendering primitives)
-- 04b (strategist header renderer — the per-position proximity and per-sector breakdown blocks live there; the `RegimeTransitionBreach` value object lives there)
+- 04b (strategist header renderer — the per-position proximity and per-sector breakdown blocks live there)
 - **Cross-feature dependency:** the rules-and-limits work tree's populated `RiskBudgetConsumption` and `ActiveRiskParameterSet`, plus the proposal pre-processor work tree's `combined_set_impact` typed shape (or the renderer accepts a hand-shaped input matching the documented schema in story 04c's typed inputs and integration with the real pre-processor lands in a follow-up wiring story).
+- **Cross-feature dependency:** the regime-adaptation work tree's `regime_adaptation/02-package-skeleton-and-types.md` ships the canonical `RegimeTransitionBreach` typed record this renderer imports.
 
 ## Scope
 

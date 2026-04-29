@@ -403,7 +403,6 @@ Cover every model's:
 - For `EngineEnvelope`: envelope_id pattern matches `MON.{session}.{trigger}` with digit-only trigger_id; embedded command_id starts with `{envelope_id}.`; top-level trigger_timestamp matches the embedded record's; tz-aware-ness enforced.
 - For `HaltState`: at least one of daily/cumulative-full-halt must be active; both can be active simultaneously.
 - For `EmergencyContext`: positive minutes-since-last-invocation and normal-cadence-minutes; trigger enum values match the four documented cases.
-- For `RegimeTransitionBreach`: overage arithmetic identity holds; overage must be strictly positive.
 - For `PositionSelectionResult`: FULL_CLOSE requires None target; PARTIAL_TRIM requires non-None target.
 - For `HardRejectionPayload`: at least one breaching rule.
 - Re-export sanity: `from alphamind.risk_guardrails.breach_behavior import RiskZone, DrawdownTier, BreachResponse` succeeds and references the same enum classes as the upstream modules.

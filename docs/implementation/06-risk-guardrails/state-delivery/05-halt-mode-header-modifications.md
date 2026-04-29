@@ -18,6 +18,8 @@ Land the wrappers that transform each audience's normal guardrail state header i
 - `docs/design/06-risk-guardrails/breach-behavior.md` § Cumulative drawdown response — the progressive-tier trigger; tier 3 (12%+) is the full-halt mode. Tiers 1 and 2 are NOT halt modes; the cumulative-tier line in the strategist/PM normal headers covers tiers 1 and 2 already (story 04b/04c).
 - `docs/design/configuration-management.md` § `modes/halt.yaml` — the mode-overlay file's behavioral contract (action vocabulary restrictions, output-mode flags) that the resolver applies when halt mode is active. The renderer reads upstream-resolved state, not the YAML directly.
 - `02-package-skeleton-and-config.md`, `03-shared-rendering-primitives.md`, `04a-analyst-header-renderer.md`, `04b-strategist-header-renderer.md`, `04c-pm-header-renderer.md` — the foundations this story wraps.
+- `../breach-behavior/03-canonical-types-and-enums.md` § 4 — canonical declaration of `HaltState`; imported here, not redeclared.
+- `../breach-behavior/05a-halt-state-computation.md` — the producer of the `HaltState` records this story's wrappers consume.
 
 ## Depends on
 
@@ -26,6 +28,7 @@ Land the wrappers that transform each audience's normal guardrail state header i
 - 04a (analyst renderer to wrap)
 - 04b (strategist renderer to wrap)
 - 04c (PM renderer to wrap)
+- **Cross-feature dependency:** the breach-behavior work tree's `breach_behavior/03-canonical-types-and-enums.md` ships the canonical `HaltState` typed record this story imports. For dispatch, that story must be `done`. Test fixtures construct `HaltState` instances directly via the canonical class.
 
 ## Scope
 
@@ -37,24 +40,15 @@ Halt mode is active when EITHER:
 - Daily drawdown ≥ 100% of limit (i.e., `drawdown.intraday_drawdown_pct ≥ daily_drawdown_pct` from `active_risk_parameters`), OR
 - Cumulative drawdown ≥ tier 3 threshold (`drawdown.cumulative_tier == DrawdownTier.FULL_HALT`).
 
-The renderer's wrappers do not classify — they take a typed `HaltState` input that the upstream pipeline computes and passes through. This decouples trigger detection (breach-behavior layer) from rendering (state-delivery layer):
+The renderer's wrappers do not classify — they take a typed `HaltState` input that the upstream pipeline computes and passes through. This decouples trigger detection (breach-behavior layer) from rendering (state-delivery layer).
+
+`HaltState` is the canonical frozen Pydantic v2 model owned by the breach-behavior work tree (declared in `breach_behavior/types.py` per `breach_behavior/03-canonical-types-and-enums.md` § 4). Imported here:
 
 ```python
-class HaltState(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    daily_halt_active: bool
-    cumulative_full_halt_active: bool
-    daily_drawdown_pct: float       # current drawdown, for the banner
-    daily_drawdown_limit_pct: float # the limit, for the banner
-
-    @model_validator(mode="after")
-    def _validate_one_active(self) -> HaltState:
-        if not (self.daily_halt_active or self.cumulative_full_halt_active):
-            msg = "HaltState should not be constructed unless at least one halt is active"
-            raise ValueError(msg)
-        return self
+from alphamind.risk_guardrails.breach_behavior import HaltState
 ```
+
+Canonical fields the wrappers read: `daily_halt_active: bool`, `cumulative_full_halt_active: bool`, `daily_drawdown_pct: float`, `daily_drawdown_limit_pct: float`. The canonical model carries two validators: `_validate_at_least_one_active` (rejects construction unless at least one halt flag is `True`) and `_require_non_negative` (on the two drawdown-pct fields). State-delivery uses both unchanged.
 
 When halt mode is not active, the caller does not construct a `HaltState` — they call the audience's normal renderer directly. The wrappers in this story are invoked only when halt mode is active.
 
@@ -258,7 +252,7 @@ Out of scope:
 
 ## Notes
 
-The three halt-mode wrappers share the banner helper and the `HaltState` value object but are otherwise distinct compositions. Per `feedback_simplify_before_building.md`, the wrappers do not factor common scaffolding through a shared "`render_halt_mode_audience` switch" — each audience's halt-mode contract has different block-level substitutions, and a switch would obscure those differences. Three separate functions, one per audience, mirror the design's three subsections.
+The three halt-mode wrappers share the banner helper and the canonical `HaltState` value object (imported from `breach_behavior`) but are otherwise distinct compositions. Per `feedback_simplify_before_building.md`, the wrappers do not factor common scaffolding through a shared "`render_halt_mode_audience` switch" — each audience's halt-mode contract has different block-level substitutions, and a switch would obscure those differences. Three separate functions, one per audience, mirror the design's three subsections.
 
 The post-render injection pattern (`_inject_halt_mode_hard_block_lines`) is a localized exception to the otherwise-pure composition style. It exists because adding `additional_lines` to `render_hard_blocks_block` retroactively modifies story 03's contract, which violates the orchestrator's "do not modify story files" boundary unless cross-feature coordination is explicit. This story owns the injection helper; if multiple wrappers need similar primitive extensions in the future, the cleaner refactor is to extend the primitive (in a new story or a coordinated edit) rather than spread injection helpers across wrappers.
 
@@ -273,7 +267,7 @@ Cross-feature dependency callout: when the breach-behavior work tree ships halt-
 ## Acceptance criteria
 
 - [ ] `src/alphamind/risk_guardrails/state_delivery/halt_mode.py` exists with `render_analyst_header_halt_mode`, `render_strategist_header_halt_mode`, `render_pm_header_halt_mode` exposed (re-exported from `state_delivery/__init__.py`).
-- [ ] `HaltState` frozen Pydantic v2 model exists with the documented fields and the `_validate_one_active` post-validator.
+- [ ] `HaltState` is imported from `alphamind.risk_guardrails.breach_behavior` (the canonical source); no local declaration in state-delivery.
 - [ ] `_render_halt_mode_banner(halt_state)` produces the documented `** HALT MODE ACTIVE ... **` line.
 - [ ] Analyst halt-mode wrapper: banner inserted after envelope-open; capital block replaced with `New positions: BLOCKED (halt active)` and `Per-position max size: not applicable (halt mode)` rows; all other blocks preserved verbatim from `render_analyst_header`.
 - [ ] Strategist halt-mode wrapper: banner with `Mode: DEFENSIVE POSTURE — focus on risk reduction for existing positions` line inserted; all other blocks preserved verbatim from `render_strategist_header`.
@@ -281,7 +275,7 @@ Cross-feature dependency callout: when the breach-behavior work tree ships halt-
 - [ ] PM halt-mode pending orders empty → `  None` line; missing current price → `ValueError`.
 - [ ] PM halt-mode hard-blocks no-breaches no-disabled-features case → block emitted with just halt-mode action lines (not omitted).
 - [ ] All three wrappers' inputs and signatures match the documented keyword-only parameter lists.
-- [ ] Constructing `HaltState(daily_halt_active=False, cumulative_full_halt_active=False, ...)` raises `ValueError`.
+- [ ] Constructing `HaltState(daily_halt_active=False, cumulative_full_halt_active=False, ...)` raises `ValueError` (validator inherited from the canonical breach-behavior model).
 - [ ] No two consecutive blank lines; no trailing blank; closing `===` is immediately preceded by a non-blank line for each wrapper's output.
 - [ ] Repeated calls with the same inputs produce byte-identical output for each wrapper.
 - [ ] Regression: line-by-line comparison between halt-mode wrapper output and normal renderer output (with banner/replacements stripped) confirms no unintended block changes.

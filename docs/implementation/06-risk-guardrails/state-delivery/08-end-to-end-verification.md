@@ -31,8 +31,8 @@ Land the integration test that exercises every state-delivery surface against a 
 - 07 (guardrail validation tool)
 - **Cross-feature dependencies (load-bearing for this story specifically):**
   - The `rules-and-limits` work tree's stories that produce a populated `RiskBudgetConsumption` and `ActiveRiskParameterSet` from a real snapshot. For story 08, hand-constructed `RiskBudgetConsumption` / `ActiveRiskParameterSet` fixtures are acceptable — the test's job is to verify state-delivery's composition, not to depend on the production guardrail-evaluation pipeline.
-  - The `guardrail-evaluation` work tree's `evaluate_per_rule_projection` primitive used by the validation tool. Same fixture-substitution rule applies for the validation-tool portion of this test.
-  - When BOTH cross-feature work trees are `done`, this story's tests can additionally include a real-snapshot-end-to-end variant that uses production `RiskBudgetConsumption` and `evaluate_per_rule_projection`. Until then, the story tests against typed fixtures.
+  - The `guardrail-evaluation` work tree's `evaluate_proposals` entry point used by the validation tool. Same fixture-substitution rule applies for the validation-tool portion of this test.
+  - When BOTH cross-feature work trees are `done`, this story's tests can additionally include a real-snapshot-end-to-end variant that uses production `RiskBudgetConsumption` and `evaluate_proposals`. Until then, the story tests against typed fixtures.
 
 ## Scope
 
@@ -104,14 +104,14 @@ Tests exercising the emergency wrapper:
 
 ### 6. Test class: `TestValidationTool`
 
-Tests exercising the validation tool against a stubbed `evaluate_per_rule_projection` (the cross-feature gate from the guardrail-evaluation work tree may not be `done` at story-08 implementation time):
+Tests exercising the validation tool against a stubbed `evaluate_proposals` (the cross-feature gate from the guardrail-evaluation work tree may not be `done` at story-08 implementation time):
 
 - `test_validation_tool_pass_path` — a single proposal validates as PASS; `proposal_index_in_invocation=1`; `cumulative_impact_note` reads "No prior proposals affect headroom calculations."; `failure_guidance is None`.
 - `test_validation_tool_fail_path` — a proposal triggering a sector-concentration FAIL returns `overall="FAIL"`, `failure_guidance` containing `"Reduce size by"` and the rule label; `greeks is None` for an equity proposal.
 - `test_validation_tool_cumulative_tracking` — three sequential proposals that individually pass but cumulatively breach: first PASS, second PASS, third FAIL; `accumulated_deltas` correctly grows.
-- `test_validation_tool_feature_flag_early_exit` — option OPEN on a profile with `options_enabled=False` returns FAIL with no per-rule entries; the stubbed `evaluate_per_rule_projection` was not called.
+- `test_validation_tool_feature_flag_early_exit` — option OPEN on a profile with `options_enabled=False` returns FAIL with no per-rule entries; the stubbed `evaluate_proposals` was not called.
 - `test_validation_tool_state_immutability` — `state.with_accepted_proposal(delta)` returns a new state; the original state's `accumulated_deltas` is unchanged.
-- `test_validation_tool_options_greeks_populated` — option OPEN returns a populated `ValidationGreeks`; the stub returns deterministic greek values.
+- `test_validation_tool_options_greeks_populated` — option OPEN returns a populated `Greeks` (from `guardrail_evaluation`); the stub returns deterministic greek values.
 
 ### 7. Test class: `TestComposition`
 
@@ -142,7 +142,7 @@ Out of scope:
 - Performance benchmarks (rendering throughput, token-count measurement) — the design's token budgets are operator-tunable infrastructure; benchmarks are deferred to a feedback-loop story that measures real invocation token usage.
 - Renderer behavior under malformed snapshots (e.g., a snapshot missing required fields) — the typed Pydantic models enforce structural invariants at construction; the renderer's `ValueError` paths are exercised in per-story unit tests.
 - Production wiring of the validation tool into the analyst/strategist/PM agent's tool registration — that lives in each agent's runtime story, not here.
-- A real-snapshot integration test using production `RiskBudgetConsumption` populator and `evaluate_per_rule_projection` — gated on the cross-feature work trees landing; promotable from this story's deferred-test list once both gates clear.
+- A real-snapshot integration test using production `RiskBudgetConsumption` populator and `evaluate_proposals` — gated on the cross-feature work trees landing; promotable from this story's deferred-test list once both gates clear.
 - A property-based test (Hypothesis-style) generating arbitrary snapshots — the deterministic fixture-based tests cover the documented contract; property-based testing is a follow-up if regressions emerge.
 
 ## Notes
@@ -157,7 +157,7 @@ Per `feedback_avoid_numeric_anchors.md`, the master fixture's specific numeric v
 
 Per `feedback_subagent_must_commit.md`, this story's implementation involves a substantial test file plus committed `.txt` fixture files. The implementing subagent must commit the test file AND the fixture files in a single commit (or sequential commits within the same branch); fixture files are required at verification time and the orchestrator's spot-check step verifies they exist on the merged branch.
 
-Cross-feature dependency callout: the test stubs `evaluate_per_rule_projection` from the guardrail-evaluation library. When the library's stories are `done`, this story can be re-dispatched (or an addendum story files) to replace the stub with the real call and confirm end-to-end behavior against the production library. Recording this as a follow-up at orchestration time, not as a v1 acceptance criterion.
+Cross-feature dependency callout: the test stubs `evaluate_proposals` from the guardrail-evaluation library. When the library's stories are `done`, this story can be re-dispatched (or an addendum story files) to replace the stub with the real call and confirm end-to-end behavior against the production library. Recording this as a follow-up at orchestration time, not as a v1 acceptance criterion.
 
 The committed fixture files (`tests/risk_guardrails/state_delivery/fixtures/*.txt`) are the format spec's tangible artifact in the repository. A reviewer can `cat` the fixture and confirm it matches the design doc's worked example — making the design ↔ implementation pairing easy to audit.
 

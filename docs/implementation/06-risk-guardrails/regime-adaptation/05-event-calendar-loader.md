@@ -149,15 +149,15 @@ def warn_on_stale_calendar(
     """
 ```
 
+`StaleCalendarReport` is the canonical typed record declared in `02-package-skeleton-and-types.md` § 2k. Imported here:
+
 ```python
-@dataclass(frozen=True, slots=True)
-class StaleCalendarReport:
-    is_stale: bool
-    latest_event_timestamp_utc: datetime | None
-    days_until_latest: float | None  # negative if latest is in the past; None if calendar is empty
+from alphamind.risk_guardrails.regime_adaptation.types import StaleCalendarReport
 ```
 
-`_DEFAULT_STALE_THRESHOLD: timedelta = timedelta(days=7)` — module-level constant. Mirrors the stale-vendor-data alerting pattern: warn the operator if the calendar runs out within a week so they can populate the next quarter's entries.
+Canonical fields: `is_stale: bool`, `latest_event_timestamp_utc: datetime | None`, `days_until_latest: float | None` (negative if latest is in the past; `None` if calendar is empty).
+
+`_DEFAULT_STALE_THRESHOLD: timedelta = timedelta(days=7)` — module-level constant in this story. Mirrors the stale-vendor-data alerting pattern: warn the operator if the calendar runs out within a week so they can populate the next quarter's entries.
 
 The orchestrator (09) calls `warn_on_stale_calendar` and surfaces the report through its audit-log entries; an empty calendar is `is_stale=False, days_until_latest=None` (no events means nothing to be stale).
 
@@ -208,8 +208,8 @@ Per `feedback_per_producer_schema.md`, the calendar is one schema with one write
 ## Acceptance criteria
 
 - [ ] `config/event_calendar.yaml` exists with `entries: []` (or one commented-out example) and the documented header comment.
-- [ ] `src/alphamind/risk_guardrails/regime_adaptation/event_calendar.py` exists and defines `EventCalendarFile`, `EventCalendarFileEntry`, `load_event_calendar`, `select_events_within_window`, `warn_on_stale_calendar`, `StaleCalendarReport`, `EventCalendarParseError`, `_DEFAULT_STALE_THRESHOLD`.
-- [ ] `load_event_calendar`, `select_events_within_window`, `warn_on_stale_calendar`, `StaleCalendarReport`, `EventCalendarParseError` are re-exported from `src/alphamind/risk_guardrails/regime_adaptation/__init__.py`.
+- [ ] `src/alphamind/risk_guardrails/regime_adaptation/event_calendar.py` exists and defines `EventCalendarFile`, `EventCalendarFileEntry`, `load_event_calendar`, `select_events_within_window`, `warn_on_stale_calendar`, `EventCalendarParseError`, `_DEFAULT_STALE_THRESHOLD`. `StaleCalendarReport` is imported from `alphamind.risk_guardrails.regime_adaptation.types` (canonical declaration in story 02); not redeclared here.
+- [ ] `load_event_calendar`, `select_events_within_window`, `warn_on_stale_calendar`, `EventCalendarParseError` are re-exported from `src/alphamind/risk_guardrails/regime_adaptation/__init__.py`. (`StaleCalendarReport` is already re-exported via story 02.)
 - [ ] The shipped `config/event_calendar.yaml` parses into `EventCalendar(entries=())`.
 - [ ] Multi-entry YAML parses with entries sorted ascending by `event_timestamp_utc`.
 - [ ] Naive or non-UTC `event_timestamp_utc` raises `EventCalendarParseError` mentioning the field.

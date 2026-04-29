@@ -64,40 +64,43 @@ def evaluate_regime_jump(
     prior_regime_label: RegimeLabel,
     current_regime_label: RegimeLabel,
 ) -> tuple[EmergencyTrigger | None, str | None]:
-    """Detect whether the regime classification skipped a level.
+    """Detect whether the regime classification tightened by skipping a level.
 
-    Regimes are ordered: LOW_VOL < NORMAL < ELEVATED < CRISIS. A "skip" is any transition
-    where |new_index - prior_index| ≥ 2. Adjacent transitions (LOW_VOL → NORMAL,
-    NORMAL → ELEVATED, etc.) do NOT trigger — they are the normal regime-adaptation path.
+    Regimes are ordered: LOW_VOL < NORMAL < ELEVATED < CRISIS (increasing volatility).
+    A "tightening jump" is a transition where new_index − prior_index ≥ 2. Adjacent
+    tightening transitions (LOW_VOL → NORMAL, NORMAL → ELEVATED, ELEVATED → CRISIS) do
+    NOT trigger — they are the normal regime-adaptation path. Loosening transitions of
+    any magnitude do NOT trigger — sudden loosening creates no time-critical breach
+    surface; the next scheduled invocation captures it.
 
-    Returns (EmergencyTrigger.REGIME_JUMP, descriptive_text) if a jump fires, else (None, None).
+    Returns (EmergencyTrigger.REGIME_JUMP, descriptive_text) if a tightening jump fires,
+    else (None, None).
 
-    Skip-detection cases that fire:
+    Tightening-jump cases that fire (per breach-behavior.md § Emergency invocation trigger):
       LOW_VOL → ELEVATED      (skip NORMAL)
       LOW_VOL → CRISIS        (skip NORMAL, ELEVATED)
       NORMAL → CRISIS         (skip ELEVATED)
-      ELEVATED → LOW_VOL      (rapid loosening; per design table, only "low-vol → elevated"
-                               and "normal → crisis" and "low-vol → crisis" are listed but
-                               the design's "Classification skips a level" wording covers
-                               directionless skips; this primitive treats both directions
-                               as triggers, since rapid recovery to LOW_VOL from ELEVATED
-                               or CRISIS is also a sudden environment shift)
-      CRISIS → NORMAL         (skip ELEVATED)
-      CRISIS → LOW_VOL        (skip ELEVATED, NORMAL)
 
-    Cases that do NOT fire (adjacent):
-      LOW_VOL ↔ NORMAL
-      NORMAL ↔ ELEVATED
-      ELEVATED ↔ CRISIS
+    Cases that do NOT fire:
+      LOW_VOL → NORMAL, NORMAL → ELEVATED, ELEVATED → CRISIS  (adjacent tightening)
+      Any loosening transition (CRISIS → ELEVATED, CRISIS → NORMAL, CRISIS → LOW_VOL,
+        ELEVATED → NORMAL, ELEVATED → LOW_VOL, NORMAL → LOW_VOL)
       same regime (no transition)
 
     The descriptive text is "Regime jump: {prior} → {current}". The continuous monitor
     augments with VIX values when available (e.g., "Regime jump: low-vol → crisis (VIX 12 → 38)");
     that augmentation is caller-side, not part of this primitive.
+
+    Rationale for tightening-only: the design's three listed examples are all tightening
+    (low-vol → elevated, normal → crisis, low-vol → crisis), and the rationale ("immediate
+    strategist/PM reasoning") applies to tightening — existing positions may immediately
+    breach the new tighter limits; defensive action is time-critical. A sudden loosening
+    creates no equivalent urgency: looser limits never cause breaches, and the next
+    scheduled invocation captures the regime change without action being time-critical.
     """
 ```
 
-Order encoding: a `_REGIME_INDEX` mapping locally translates `RegimeLabel` to integer rank for the abs-difference check.
+Order encoding: a `_REGIME_INDEX` mapping locally translates `RegimeLabel` to integer rank for the directed-difference check (`current_index − prior_index ≥ 2` triggers; loosening is `new_index − prior_index < 0` and never triggers).
 
 #### 1.2 Multi-rule breach
 
@@ -287,9 +290,10 @@ Tests at `tests/risk_guardrails/breach_behavior/test_emergency_triggers.py`:
 
 #### Regime jump
 
-- **Adjacent transitions do not fire:** LOW_VOL → NORMAL, NORMAL → ELEVATED, ELEVATED → CRISIS, NORMAL → LOW_VOL each return (None, None).
-- **Skip-one-level fires:** LOW_VOL → ELEVATED, NORMAL → CRISIS, ELEVATED → LOW_VOL, CRISIS → NORMAL each return (REGIME_JUMP, descriptive_text). The text contains both regime labels.
-- **Skip-multiple-levels fires:** LOW_VOL → CRISIS and CRISIS → LOW_VOL fire; descriptive text spans both.
+- **Adjacent tightening does not fire:** LOW_VOL → NORMAL, NORMAL → ELEVATED, ELEVATED → CRISIS each return (None, None).
+- **Skip-one-level tightening fires:** LOW_VOL → ELEVATED, NORMAL → CRISIS each return (REGIME_JUMP, descriptive_text). The text contains both regime labels.
+- **Skip-multiple-levels tightening fires:** LOW_VOL → CRISIS returns (REGIME_JUMP, descriptive_text).
+- **All loosening transitions return (None, None):** parametrized over `[NORMAL → LOW_VOL, ELEVATED → NORMAL, ELEVATED → LOW_VOL, CRISIS → ELEVATED, CRISIS → NORMAL, CRISIS → LOW_VOL]` — adjacent and skip-level loosening alike never fire.
 - **Same-regime no-op:** prior == current returns (None, None).
 
 #### Multi-rule breach
@@ -395,9 +399,10 @@ Any cooldown-suppressed margin call would let the broker's deadline pass without
   - `DrawdownSample`, `MarginCallEvent` typed inputs
 - [ ] All public functions and types are re-exported from `src/alphamind/risk_guardrails/breach_behavior/__init__.py`.
 - [ ] All evaluators and the composer are pure functions (no I/O, no clock reads except inputs).
-- [ ] Adjacent regime transitions (LOW_VOL ↔ NORMAL, NORMAL ↔ ELEVATED, ELEVATED ↔ CRISIS) do not fire `REGIME_JUMP`.
-- [ ] Skip-one-level transitions in either direction (LOW_VOL → ELEVATED, NORMAL → CRISIS, ELEVATED → LOW_VOL, CRISIS → NORMAL) fire `REGIME_JUMP`.
-- [ ] Skip-multiple-levels transitions (LOW_VOL → CRISIS, CRISIS → LOW_VOL) fire `REGIME_JUMP`.
+- [ ] Adjacent tightening transitions (LOW_VOL → NORMAL, NORMAL → ELEVATED, ELEVATED → CRISIS) do not fire `REGIME_JUMP`.
+- [ ] Skip-one-level tightening (LOW_VOL → ELEVATED, NORMAL → CRISIS) fires `REGIME_JUMP`.
+- [ ] Skip-multiple-levels tightening (LOW_VOL → CRISIS) fires `REGIME_JUMP`.
+- [ ] All loosening transitions (any of NORMAL → LOW_VOL, ELEVATED → NORMAL, ELEVATED → LOW_VOL, CRISIS → ELEVATED, CRISIS → NORMAL, CRISIS → LOW_VOL) do not fire `REGIME_JUMP`.
 - [ ] Same regime (no transition) does not fire.
 - [ ] Multi-rule breach: 2 BLOCKED deferred rules with default threshold 3 → no fire; 3 → fire; 5 → fire (with all 5 rule_ids in description).
 - [ ] Multi-rule breach excludes BLOCKED non-deferred rules from the count (only `rules_with_deferred_response` contribute).

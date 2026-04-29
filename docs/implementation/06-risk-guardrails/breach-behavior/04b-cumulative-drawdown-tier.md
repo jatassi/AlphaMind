@@ -132,11 +132,13 @@ def apply_progressive_tier_overrides(
     """
 ```
 
-**Override identity.** The override replaces the `value` and `regime_multiplier_applied` fields of the matching `ActiveRiskParameterEntry` (the latter is reset to a synthetic `1.0` because the override is a tier-level replacement, not a regime multiplier; the `base_value` field stays at its original base — operator-tunable per `rules-and-limits.md`'s base values). A separate `active_overlays` member is appended:
+**Override identity.** The override replaces the `value` and `regime_multiplier_applied` fields of the matching `ActiveRiskParameterEntry` (the latter is reset to a synthetic `1.0` because the override is a tier-level replacement, not a regime multiplier; the `base_value` field stays at its original base — operator-tunable per `rules-and-limits.md`'s base values). The `active_overlays` member is extended with the tier tag and re-sorted alphabetically:
 
-- `tier=CONSTRAINED` → `active_overlays = (..., "cumulative_drawdown_tier_1")`
-- `tier=HEAVILY_CONSTRAINED` → `active_overlays = (..., "cumulative_drawdown_tier_2")`
-- `tier=FULL_HALT` → `active_overlays = (..., "cumulative_drawdown_tier_3")`
+- `tier=CONSTRAINED` → tag `"cumulative_drawdown_tier_1"` appended; resulting tuple sorted ascending by string value.
+- `tier=HEAVILY_CONSTRAINED` → tag `"cumulative_drawdown_tier_2"`; sorted.
+- `tier=FULL_HALT` → tag `"cumulative_drawdown_tier_3"`; sorted.
+
+**`active_overlays` ordering.** Per `regime_adaptation/08`'s convention, `active_overlays: tuple[str, ...]` is alphabetically sorted by string value. The override applier preserves this invariant: after appending the tier tag, the resulting tuple is re-sorted via `tuple(sorted(combined_tags))`. For example, an input `("pre_event", "stress")` with tier 1 produces `("cumulative_drawdown_tier_1", "pre_event", "stress")`, not `("pre_event", "stress", "cumulative_drawdown_tier_1")`.
 
 The overlay name surfaces in state-delivery's PM header `Active regime overrides:` block (per state-delivery story 04c), making the tier visible to the agent.
 
@@ -197,6 +199,8 @@ Out of scope:
 
 **The `active_overlays` extension.** The shipped `ActiveRiskParameterSet.active_overlays` already carries strings naming active overlays (e.g., `"pre_event_tightening"`, `"stress_overlay"`). This story's tag format `cumulative_drawdown_tier_{N}` follows the same convention. State-delivery's PM header surfaces overlays in its `Active regime overrides:` block; the tag flows through automatically once both stories land.
 
+**Integration site (called by).** `apply_progressive_tier_overrides` is consumed by the Phase 1 enforcement-layer composition step described in `state-delivery.md § Portfolio state ingestion payload` ("Guardrail state is computed by the enforcement layer at the start of Phase 1"). That composition layer is not yet a feature in this repo — it lands as a future story under the execution-layer / continuous-monitor work tree. **Until that feature ships, the integration is a documented gap:** the canonical sequence is `regime_adaptation.resolve_regime_adaptation()` → `breach_behavior.classify_cumulative_drawdown_tier()` → `breach_behavior.apply_progressive_tier_overrides()`, with the resulting `ActiveRiskParameterSet` flowing into state-delivery and engine T3. Consumers needing the composition before the dedicated feature lands (e.g., the breach-behavior E2E story 08, scenario tests) compose the two function calls inline. See `docs/project-tracker.md § Backlog` for the tracking entry on the missing wiring.
+
 ## Acceptance criteria
 
 - [ ] `src/alphamind/risk_guardrails/breach_behavior/drawdown_tiers.py` exists and defines `classify_cumulative_drawdown_tier` and `apply_progressive_tier_overrides` with the documented signatures.
@@ -219,5 +223,6 @@ Out of scope:
 - [ ] `KeyError` raised when input set lacks `position_max_size_pct` or `gross_exposure_pct` entries.
 - [ ] `ValueError` raised when `tier=HEAVILY_CONSTRAINED` but `progressive_tiers` has only one entry (insufficient coverage).
 - [ ] Idempotency: applying tier 1 twice yields output equal to applying once (no duplicate overlay tag; values stable).
+- [ ] `active_overlays` ordering invariant preserved: applying tier 1 to an input set with `active_overlays=("pre_event", "stress")` produces `("cumulative_drawdown_tier_1", "pre_event", "stress")` (alphabetically sorted), not `("pre_event", "stress", "cumulative_drawdown_tier_1")`.
 - [ ] Determinism: 100 repeated calls with identical inputs produce identical outputs.
 - [ ] `uv run ruff check . && uv run ruff format . && uv run mypy && uv run pytest -n auto` all pass.

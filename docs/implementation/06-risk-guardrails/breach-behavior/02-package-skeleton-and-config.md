@@ -40,7 +40,6 @@ In scope:
       drawdown_tiers.py        # 04b — cumulative drawdown tier classifier + progressive overrides
       hard_rejection.py        # 04c — hard rejection payload assembler
       position_selection.py    # 04d — forced-reduction position-selection primitives
-      regime_transition.py     # 04e — regime-transition breach detection
       halt_state.py            # 05a — halt state computation
       secondary_breach.py      # 05b — secondary breach check
       emergency_triggers.py    # 05c — emergency invocation trigger evaluation

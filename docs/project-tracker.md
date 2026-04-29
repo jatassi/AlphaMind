@@ -225,6 +225,10 @@ _Single-line spec edits, config additions, doc cross-references, or deferrals._
 
 _Schema additions, well-scoped multi-file edits, or single-component contributions._
 
+#### Phase 1 enforcement-layer composition wiring _(Risk guardrails)_
+
+- [ ] Build the per-invocation Phase 1 composition step that produces the final `ActiveRiskParameterSet` consumed by state-delivery's renderers and the engine's T3 check. Sequence (per `state-delivery.md § Portfolio state ingestion payload`): `regime_adaptation.resolve_regime_adaptation()` produces the regime-resolved + overlay-applied `ActiveRiskParameterSet`; `breach_behavior.classify_cumulative_drawdown_tier()` reads `DrawdownState.current_drawdown_pct`; `breach_behavior.apply_progressive_tier_overrides()` further-tightens position-size / gross-exposure values when a tier is active. The composed result is what state-delivery renders and what engine T3 checks against. _Source: surfaced by the risk-guardrails story-review audit on 2026-04-28; the regime-adaptation work tree's orchestrator (story 09) explicitly does NOT call into breach-behavior, and breach-behavior's `apply_progressive_tier_overrides` (story 04b) names no caller. Both stories carry an "integration site" note pointing here. Likely home: a new story under the execution-layer / continuous-monitor work tree once that work tree's scope is drafted. Until this lands, scenario tests and the breach-behavior E2E story 08 inline the composition._
+
 ### Substantial
 
 _New infrastructure, cross-cutting consolidations, or UI surfaces._

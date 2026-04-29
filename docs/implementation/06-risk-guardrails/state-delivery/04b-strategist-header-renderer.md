@@ -25,12 +25,15 @@ Land the function that produces the complete strategist guardrail state header �
 - `02-package-skeleton-and-config.md` — `state_delivery/strategist.py` is the target module; `StateDeliveryConfig` carries `abandoned_window.lookback_invocations`
 - `03-shared-rendering-primitives.md` — primitives reused
 - `04a-analyst-header-renderer.md` — sibling pattern for header-renderer composition; the shared shape is intentional
+- `../regime-adaptation/02-package-skeleton-and-types.md` § 2c — canonical declaration of `RegimeTransitionBreach` (frozen dataclass with `position_id`, `rule_id`, `rule_label`, `current_value`, `new_limit_value`, `overage`, `unit`); imported here, not redeclared
+- `../regime-adaptation/07-regime-transition-breach-detector.md` — the producer of the records this renderer consumes
 
 ## Depends on
 
 - 02 (package skeleton + config)
 - 03 (shared rendering primitives)
 - **Cross-feature dependency:** same as 04a — the rules-and-limits work tree ships the populated `RiskBudgetConsumption`. For dispatch, that work tree's stories that produce a populated `RiskBudgetConsumption` and `ActiveRiskParameterSet` must be `done`; the renderer's tests use hand-constructed fixtures.
+- **Cross-feature dependency:** the regime-adaptation work tree's `regime_adaptation/02-package-skeleton-and-types.md` ships the canonical `RegimeTransitionBreach` typed record this renderer imports. For dispatch, that story must be `done`. Test fixtures construct `RegimeTransitionBreach` instances directly via the canonical class.
 
 ## Scope
 
@@ -61,19 +64,15 @@ def render_strategist_header(
 - `sector_resolver` — `Callable[[PositionRecord], str | None]` (already a type alias from `portfolio_state.computations.exposure`). Maps a position to its sector key for the per-position sector-breakdown block. Mirrors the resolver used at projection time.
 - `regime_transition_breaches` — tuple of `RegimeTransitionBreach` records; empty default. When empty, the `Regime-transition breaches (if any):` block is omitted entirely (no header, no `(none)` line — matches the design's `(if any)` parenthetical).
 
-`RegimeTransitionBreach` is a frozen Pydantic v2 model declared in `state_delivery/strategist.py`:
+`RegimeTransitionBreach` is the canonical frozen dataclass owned by the regime-adaptation work tree (declared in `regime_adaptation/types.py` per `regime-adaptation/02-package-skeleton-and-types.md` § 2c). Imported here:
 
 ```python
-class RegimeTransitionBreach(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    position_id: str
-    current_pct: float       # current position weight, % of portfolio
-    regime_limit_pct: float  # active-regime per-position limit, % of portfolio
-    overage_pct: float       # current_pct - regime_limit_pct, > 0 when breaching
+from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 ```
 
-The breaches input is provided by the caller — the regime-adaptation work tree owns detection (this is documented in `regime-adaptation.md` § Strategist and PM context for regime-transition breaches). Here, the renderer takes the typed input and emits the documented format.
+Canonical fields the renderer reads: `position_id`, `rule_id`, `rule_label`, `current_value` (the position's contribution), `new_limit_value` (the post-tightening limit), `overage` (`current_value - new_limit_value`), and `unit` (mirrors `RiskBudgetEntry.unit`, e.g., `"% of portfolio"`).
+
+The breaches input is provided by the caller — the regime-adaptation work tree owns detection (per `regime-adaptation.md` § Strategist and PM context for regime-transition breaches and `regime_adaptation/07-regime-transition-breach-detector.md`). Here, the renderer takes the typed input and emits the documented format.
 
 Returns the complete header text, terminated by the closing `===` line. No trailing newline.
 
@@ -154,12 +153,18 @@ Helper `_render_drawdown_state_block(...)` — pure private function.
 ```
 Regime-transition breaches (if any):
   POS-NVDA-001: 4.2% exceeds elevated regime limit of 3.5% — overage 0.7%
+  Sector concentration (Tech): 28.0% exceeds elevated regime limit of 20.0% — overage 8.0%
   ...
 ```
 
+The first row shows a per-position breach; the second shows an aggregate breach.
+
 - Header line + one row per `RegimeTransitionBreach` entry.
 - The regime label in the row matches `active_risk_parameters.regime_label`'s display string (`elevated`, `crisis`, etc.).
-- Per-row format: position ID, `:`, single space, `current_pct` (one decimal place), `% exceeds {regime} regime limit of `, `regime_limit_pct` (one decimal place), `% — overage `, `overage_pct` (one decimal place), `%`.
+- The renderer emits two distinct row shapes based on `breach.position_id`:
+  - **Per-position rule (`position_id` is set):** `{position_id}: {current_value:.1f}% exceeds {regime} regime limit of {new_limit_value:.1f}% — overage {overage:.1f}%`. Matches the design example verbatim. For breaches on non-`position_max_size_pct` per-position rules (e.g., `single_short_max_pct`), the row appends ` [{rule_label}]` so the strategist can disambiguate.
+  - **Aggregate rule (`position_id` is None):** `{rule_label}: {current_value:.1f}% exceeds {regime} regime limit of {new_limit_value:.1f}% — overage {overage:.1f}%`. The position ID slot is replaced with the rule's display label. The strategist consults the `Sector exposure breakdown (per position)` block (rendered earlier in the same header) to identify which positions contribute to the breach.
+- The trailing `%` is rendered literally; `breach.unit` is read for invariant checking (the renderer raises `ValueError` if `unit` is not a percentage form) but does not appear in the output for either row shape — both row formats use bare `%`.
 - When `regime_transition_breaches` is empty, the entire block (header included) is omitted — the design's `(if any)` parenthetical means absence is silent, not announced.
 
 Helper `_render_regime_transition_breaches_block(...)` — pure private function.
@@ -238,6 +243,10 @@ Tests at `tests/risk_guardrails/state_delivery/test_strategist.py`:
 - **Position zone tag compression:** a position with weight < 70% of max produces no trailing zone tag; ≥70% produces `[⚠ WARNING]`; ≥85% produces `[🔴 CRITICAL]`; ≥95% produces `[BLOCKED]`.
 - **Daily drawdown source field:** the renderer reads `intraday_drawdown_pct` for daily and `current_drawdown_pct` for cumulative; mismatching the field surfaces in the rendered output.
 - **Regime transition block omitted when empty:** `regime_transition_breaches=()` produces no `Regime-transition breaches` block whatsoever (no header, no `(none)`); the surrounding blank-line discipline holds.
+- **Per-position breach row format:** a `RegimeTransitionBreach(position_id="POS-NVDA-001", rule_id="position_max_size_pct", current_value=4.2, new_limit_value=3.5, overage=0.7, ...)` renders to `POS-NVDA-001: 4.2% exceeds elevated regime limit of 3.5% — overage 0.7%` (matching the design example verbatim, no rule-label suffix for `position_max_size_pct`).
+- **Aggregate breach row format:** a `RegimeTransitionBreach(position_id=None, rule_id="sector_concentration_tech", rule_label="Sector concentration (Tech)", current_value=28.0, new_limit_value=20.0, overage=8.0, ...)` renders to `Sector concentration (Tech): 28.0% exceeds elevated regime limit of 20.0% — overage 8.0%` (the rule label fills the position-id slot).
+- **Per-position non-`position_max_size_pct` breach:** a per-position breach on `single_short_max_pct` renders with a trailing `[Single short max size]` rule-label suffix to disambiguate.
+- **Mixed breach types in one block:** a tuple containing per-position and aggregate breaches renders both row formats in input order; no spurious blank lines between them.
 - **Determinism:** same inputs, byte-identical output across repeated calls.
 - **Feature-flag closure invariants:** same as 04a (options drift raises `ValueError`; short_selling drift raises `ValueError`; encountering an options position when `options_enabled=False` raises `ValueError`).
 - **Missing required rule:** missing `daily_drawdown_pct`, `cumulative_drawdown_pct`, `position_max_size_pct`, `net_long_pct`, `gross_exposure_pct`, or any expected sector entry raises `ValueError` with the rule_id in the message.
@@ -260,7 +269,7 @@ Per the design's "Why position-level detail" rationale, the per-position proximi
 
 The `regime_transition_breaches` argument exists because the regime-adaptation work tree owns breach detection — at story-write time, that detection layer is not yet implemented. The strategist header renderer accepts the typed input from any source (production, test fixture, replay-harness scenario). When the regime-adaptation work tree ships, the upstream piping passes the detected breaches to this renderer; no change here.
 
-Per `feedback_simplify_before_building.md`, `RegimeTransitionBreach` is declared inline in `strategist.py` rather than promoted to a shared types module. It is strategist-and-PM-only (the PM header also uses it — see story 04c), so when the PM renderer lands, the type can be promoted to `state_delivery/types.py` if both renderers depend on it. Alternatively, story 04c can re-import from `state_delivery/strategist.py`. Resolve at 04c time.
+Per `feedback_no_inventing_component_names.md`, `RegimeTransitionBreach` is owned by `regime_adaptation` (single source of truth) and imported here unchanged. The PM renderer (story 04c) imports from the same source. No state-delivery-local declaration; no shared `state_delivery/types.py` for this type.
 
 Per `feedback_no_inventing_component_names.md`, the helper names mirror the design's section names directly (`Position-level constraint proximity`, `Sector exposure breakdown (per position)`, `Drawdown state`, `Regime-transition breaches`, etc.). No new conceptual names introduced.
 
@@ -273,7 +282,7 @@ Cross-feature dependency callout: same as 04a — once the rules-and-limits work
 ## Acceptance criteria
 
 - [ ] `src/alphamind/risk_guardrails/state_delivery/strategist.py` exists with `render_strategist_header` exposed (re-exported from `state_delivery/__init__.py`).
-- [ ] `RegimeTransitionBreach` frozen Pydantic v2 model with `position_id`, `current_pct`, `regime_limit_pct`, `overage_pct` fields exists in `state_delivery/strategist.py` (or a shared types module if convenient).
+- [ ] `RegimeTransitionBreach` is imported from `alphamind.risk_guardrails.regime_adaptation` (the canonical source); no local declaration in state-delivery.
 - [ ] The function signature matches the documented keyword-only parameter list, including `total_portfolio_value_usd`, `available_for_new_positions_usd`, `sector_resolver`, and `regime_transition_breaches` defaulting to `()`.
 - [ ] Full-system fixture (4 sectors, 8 positions, 1 regime-transition breach, 1 abandoned action of each type, CONSTRAINED tier) renders to a fixture string line-by-line.
 - [ ] Micro fixture (no options, no shorts, no breaches, no abandoned, normal drawdown) renders to a fixture string with all conditional blocks omitted or `None`-filled per spec.

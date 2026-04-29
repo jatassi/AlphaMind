@@ -46,18 +46,22 @@ def map_distillation_to_guardrail_regime(
 
 Returns the matching `Regime`. The function is total over its input domain — every `(distillation_label, vix_level)` combination produces exactly one guardrail `Regime`.
 
-### 2. `VixBoundaryThresholds` dataclass
+### 2. `VixBoundaryThresholds` adapter
+
+The `VixBoundaryThresholds` typed record itself is declared canonically in `02-package-skeleton-and-types.md` (story 02's `types.py`). This story imports it:
 
 ```python
-@dataclass(frozen=True, slots=True)
-class VixBoundaryThresholds:
-    low_vol_vix_max: float
-    normal_vix_max: float
-    elevated_vix_max: float
+from alphamind.risk_guardrails.regime_adaptation.types import VixBoundaryThresholds
 ```
 
-- Validates on construction that `0 < low_vol_vix_max < normal_vix_max < elevated_vix_max`. Raises `ValueError` with all three field names in the message.
-- An adapter helper `from_regime_classification(rc: RegimeClassification) -> VixBoundaryThresholds` lives in the same file. The adapter copies the three values verbatim; downstream callers (08, 09) use it to bridge the upstream Pydantic model to the dataclass.
+This story owns the **adapter helper** that bridges the upstream Pydantic `RegimeClassification` to the canonical dataclass:
+
+```python
+def from_regime_classification(rc: RegimeClassification) -> VixBoundaryThresholds:
+    """Copy the three VIX thresholds verbatim from the distillation config Pydantic model."""
+```
+
+The adapter lives in `regime_mapping.py` because it has a config-side dependency on `RegimeClassification`. Story 02 keeps `types.py` config-agnostic; the adapter is the seam. Downstream callers (08, 09) call `from_regime_classification(...)` to obtain a `VixBoundaryThresholds` from a `RegimeClassification`. Construction-time invariants (strict ordering, positive values) are enforced by the canonical dataclass's `__post_init__` per story 02.
 
 ### 3. Mapping table
 
@@ -106,9 +110,7 @@ Tests at `tests/risk_guardrails/regime_adaptation/test_regime_mapping.py`:
 - **Boundary at `vix_level=35.0` (== `elevated_vix_max`) for `VOL_EXPANSION` maps to `elevated`.**
 - **`vix_level=22.001` for `VOL_EXPANSION` maps to `elevated`.** Locks the strict-inequality semantics one tick above the boundary.
 - **Negative `vix_level` raises `ValueError` regardless of the distillation label.** Mention the field name in the message.
-- **`VixBoundaryThresholds` rejects construction when the bounds are not strictly ordered** — `low_vol_vix_max=14, normal_vix_max=10, elevated_vix_max=35` raises `ValueError` naming all three.
-- **`VixBoundaryThresholds` rejects `low_vol_vix_max <= 0`.**
-- **`VixBoundaryThresholds.from_regime_classification` mirrors all three values verbatim from a synthetic `RegimeClassification` instance.**
+- **`from_regime_classification` mirrors all three values verbatim from a synthetic `RegimeClassification` instance.** (Construction-time invariants on `VixBoundaryThresholds` are tested in story 02; this story's adapter is the bridge.)
 - **Determinism / purity:** identical inputs produce identical outputs; calling the mapper does not mutate `vix_thresholds`.
 
 Out of scope:
@@ -129,15 +131,13 @@ The mapper's strict-inequality boundary semantics (`vix_level == 22.0` → `norm
 
 ## Acceptance criteria
 
-- [ ] `src/alphamind/risk_guardrails/regime_adaptation/regime_mapping.py` exists and defines `map_distillation_to_guardrail_regime`, `VixBoundaryThresholds`, and `VixBoundaryThresholds.from_regime_classification`.
-- [ ] `VixBoundaryThresholds` is a `dataclass(frozen=True, slots=True)`.
-- [ ] `map_distillation_to_guardrail_regime` and `VixBoundaryThresholds` are re-exported from `src/alphamind/risk_guardrails/regime_adaptation/__init__.py`.
+- [ ] `src/alphamind/risk_guardrails/regime_adaptation/regime_mapping.py` exists and defines `map_distillation_to_guardrail_regime` and `from_regime_classification`. `VixBoundaryThresholds` is imported from `alphamind.risk_guardrails.regime_adaptation.types` (canonical declaration in story 02); not redeclared here.
+- [ ] `map_distillation_to_guardrail_regime` and `from_regime_classification` are re-exported from `src/alphamind/risk_guardrails/regime_adaptation/__init__.py`. (`VixBoundaryThresholds` is already re-exported via story 02.)
 - [ ] `LOW_VOL_COMPRESSION` maps to `Regime.low_vol` regardless of VIX level.
 - [ ] `CRISIS_SPIKE` maps to `Regime.crisis` regardless of VIX level.
 - [ ] `VOL_EXPANSION` and `VOL_NORMALIZATION` map by VIX band — `low_vol` below `low_vol_vix_max`, `normal` in the normal band, `elevated` in the elevated band, `crisis` above `elevated_vix_max`.
 - [ ] Boundary semantics are inclusive at the upper end of each band (`<=`), matching `classify_vix_band`.
 - [ ] Negative `vix_level` raises `ValueError`.
-- [ ] `VixBoundaryThresholds` rejects construction with non-strictly-ordered bounds; raises `ValueError` naming all three fields.
-- [ ] `VixBoundaryThresholds.from_regime_classification` produces a `VixBoundaryThresholds` whose three fields equal the input `RegimeClassification`'s `regime_low_vol_vix_max`, `regime_normal_vix_max`, and `regime_elevated_vix_max`.
+- [ ] `from_regime_classification` produces a `VixBoundaryThresholds` whose three fields equal the input `RegimeClassification`'s `regime_low_vol_vix_max`, `regime_normal_vix_max`, and `regime_elevated_vix_max`.
 - [ ] The function is pure: equal inputs produce equal outputs; the input dataclass is not mutated.
 - [ ] `uv run ruff check . && uv run ruff format . && uv run mypy && uv run pytest -n auto` all pass.

@@ -2,20 +2,24 @@ You are orchestrating completion of the AlphaMind risk-guardrails state-delivery
 
 ## Cross-feature gates (read first)
 
-State-delivery sits on top of two sibling work trees. Their stories must clear before specific stories here can dispatch:
+State-delivery sits on top of four sibling work trees. Their stories must clear before specific stories here can dispatch:
 
 - **`rules-and-limits` work tree** ships the production populator for `RiskBudgetConsumption` and `ActiveRiskParameterSet` (the typed records that flow into `PortfolioStateSnapshot.risk_budget` and `.active_risk_parameters`). The portfolio-state Protocol surface is already typed; the production implementation lives in the rules-and-limits tree. Stories 04a, 04b, 04c, and 08 take these as inputs. **Until the rules-and-limits stories that produce a populated `RiskBudgetConsumption` are `done`, dispatch stories 04a–04c and 08 against hand-constructed fixtures only — the unit tests work fine; the optional real-snapshot variant in story 08 is gated.**
-- **`guardrail-evaluation` work tree** ships the deterministic primitives the validation tool composes: per-rule projection (`evaluate_per_rule_projection` or whatever final name), regime parameter resolution, feature-flag early-exit, Black-Scholes greeks, and the canonical `PerRuleResult` typed output. Story 07 (validation tool) and story 08 (E2E) consume these. **Until the guardrail-evaluation stories that produce these primitives are `done`, dispatch story 07 against a stub library — the cumulative-tracking, typed-I/O, and failure-guidance behavior are testable in isolation; replace the stub with the real library in a re-dispatch (or follow-up) once the gate clears.**
+- **`guardrail-evaluation` work tree** ships the deterministic primitives the validation tool composes: the `evaluate_proposals` entry point, the `RuleProjection` and `Greeks` canonical typed records, `LibraryConfig` and the `from_resolved_config` adapter, regime parameter resolution, feature-flag early-exit, Black-Scholes greeks. Story 07 (validation tool) and story 08 (E2E) consume these. **Until the guardrail-evaluation stories that produce these primitives are `done`, dispatch story 07 against a stub library — the cumulative-tracking, typed-I/O, and failure-guidance behavior are testable in isolation; replace the stub with the real library in a re-dispatch (or follow-up) once the gate clears.**
+- **`breach-behavior` work tree** owns the canonical declarations of `HaltState` (consumed by story 05's halt-mode wrappers) and `EmergencyTrigger` / `EmergencyContext` (consumed by story 06's emergency-invocation wrapper). State-delivery imports these from `breach_behavior.types` and does not redeclare them. **Until breach-behavior story 03 (canonical types) is `done`, dispatch stories 05 and 06 against fixtures constructed via the canonical class — the import is the only coupling, so the fixture-pattern is identical pre- and post-gate.**
+- **`regime-adaptation` work tree** owns the canonical declaration of `RegimeTransitionBreach` (consumed by stories 04b and 04c renderers via the strategist's and PM's headers). State-delivery imports the type from `regime_adaptation` and does not redeclare. **Until regime-adaptation story 02 (package skeleton + types) is `done`, dispatch stories 04b and 04c against hand-constructed `RegimeTransitionBreach` fixtures via the canonical dataclass.**
 
-Survey both sibling work trees' frontmatter via:
+Survey all four sibling work trees' frontmatter via:
 
 ```bash
 rg "^status:" docs/implementation/06-risk-guardrails/rules-and-limits/[0-9]*.md \
               docs/implementation/06-risk-guardrails/guardrail-evaluation/[0-9]*.md \
+              docs/implementation/06-risk-guardrails/breach-behavior/[0-9]*.md \
+              docs/implementation/06-risk-guardrails/regime-adaptation/[0-9]*.md \
    2>/dev/null
 ```
 
-If either work tree's stories are absent (no implementation directory exists yet), dispatch this work tree's stories against fixtures and stubs as documented. The orchestrator alerts the user before dispatching stories 04a–04c, 07, or 08 if the upstream work trees are not yet `done`, and confirms the operator wants to proceed against fixtures.
+If any sibling work tree's stories are absent (no implementation directory exists yet), dispatch this work tree's stories against fixtures and stubs as documented. The orchestrator alerts the user before dispatching stories 04a–04c, 05, 06, 07, or 08 if the relevant upstream work trees are not yet `done`, and confirms the operator wants to proceed against fixtures.
 
 ## Operating posture
 
@@ -116,11 +120,12 @@ Terse. After each batch dispatch returns: one line per story — ID, status, com
 
 Surface blockers immediately, do not work around them:
 
-- Either cross-feature work tree (rules-and-limits or guardrail-evaluation) being absent or its required stories not `done`. Surface and pause; the operator decides whether to proceed against fixtures/stubs or wait.
-- Schema drift between this work tree's expected typed inputs (e.g., `RiskBudgetConsumption`, `ActiveRiskParameterSet`, `PerRuleResult`) and the upstream work tree's actual produced shape. Surface; coordinate a follow-up edit before re-dispatching.
+- Any of the four cross-feature work trees (rules-and-limits, guardrail-evaluation, breach-behavior, regime-adaptation) being absent or its required stories not `done`. Surface and pause; the operator decides whether to proceed against fixtures/stubs or wait.
+- Schema drift between this work tree's expected typed inputs (e.g., `RiskBudgetConsumption`, `ActiveRiskParameterSet`, `RuleProjection`, `Greeks`, `HaltState`, `EmergencyContext`, `RegimeTransitionBreach`) and the upstream work tree's actual produced shape. Surface; coordinate a follow-up edit before re-dispatching.
 - Test failures the subagent could not resolve.
 - Subagent reports of disabled linter rules (`ignore`, `per-file-ignores`, `# noqa`, `# type: ignore`) that aren't trivially-fixable. Per `feedback_lint_suppression_triage`, assess each suppression: trivial-fix unwarranted ones yourself; dispatch for nontrivial fixes; accept warranted ones with a note in the verification report. Do not pause to ask the user except for genuinely ambiguous cases.
-- Subagent reports of an untyped or shape-mismatched cross-feature dependency (e.g., the validation tool stub doesn't match the production `PerRuleResult` shape after the guardrail-evaluation work tree lands). Surface; the resolution is a coordinated edit between the two work trees, not a unilateral change here.
+- Subagent reports of an untyped or shape-mismatched cross-feature dependency (e.g., the validation tool stub doesn't match the production `RuleProjection`/`Greeks` shape after the guardrail-evaluation work tree lands; the halt-mode renderer's `HaltState` import doesn't resolve because breach-behavior story 03 hasn't shipped). Surface; the resolution is a coordinated edit between the two work trees, not a unilateral change here.
+- Subagent attempting to redeclare a typed value object that another work tree owns (`HaltState`, `EmergencyContext`, `EmergencyTrigger`, `RegimeTransitionBreach`, `RuleProjection`, `Greeks`). Treat as failed verification and re-dispatch with explicit instructions to import from the canonical source per the cross-feature gates above.
 
 ## When you handle work directly
 
@@ -141,7 +146,7 @@ For everything else, delegate.
 - Do not dispatch a subagent without `isolation: "worktree"` — parallel work on the main checkout corrupts state.
 - Do not declare a story `done` without `uv run pytest -n auto` green, `uv run ruff check .` clean, `uv run mypy` clean, and a spot-check of every acceptance criterion.
 - Do not modify story files except for frontmatter updates after verification.
-- Do not pick up a story whose dependencies are not all `done` — and for stories 04a–04c, 07, and 08, confirm the cross-feature gates too.
+- Do not pick up a story whose dependencies are not all `done` — and for stories 04a–04c, 05, 06, 07, and 08, confirm the cross-feature gates too.
 - Do not let a subagent disable a linter rule in any form (`ignore`, `per-file-ignores`, `# noqa`, `# type: ignore`) without triaging per `feedback_lint_suppression_triage`. If the subagent reports having suppressed without warrant, treat the story as failed verification and re-dispatch with explicit instructions to remove the suppression.
 - Do not let any renderer touch the runtime database, the live distillation tables, or the engine's OMS state. The renderers are pure functions over typed snapshots; any I/O in a renderer is an architectural error and the story re-dispatches with the isolation invariant emphasized.
-- Do not let a subagent invent a typed value object that duplicates an existing `portfolio_state.records.*` or `portfolio_state.snapshot` type. Per `feedback_no_inventing_component_names`, every typed input mirrors an existing upstream record; new types only land when they encode a state-delivery-specific concept (`HaltState`, `EmergencyContext`, `RegimeTransitionBreach`, `CrossConstraintImpact`, `ValidationToolState`, etc.) absent upstream.
+- Do not let a subagent invent a typed value object that duplicates an existing `portfolio_state.records.*`, `portfolio_state.snapshot`, `breach_behavior.*`, `regime_adaptation.*`, or `guardrail_evaluation.*` type. Per `feedback_no_inventing_component_names`, every typed input mirrors an existing upstream record. The canonical owners: `HaltState`, `EmergencyTrigger`, `EmergencyContext` ← `breach_behavior` (story 03); `RegimeTransitionBreach` ← `regime_adaptation` (story 02); `RuleProjection`, `Greeks`, `LibraryOutput`, `LibraryConfig`, `DeltaAdjustedExposure`, `FeatureDisabledRejection`, `ProposedDelta`, `MarketInputs`, `PortfolioStateSnapshot` ← `guardrail_evaluation` (story 01). New types only land when they encode a state-delivery-specific concept absent upstream (`CrossConstraintImpact`, `RegimeOverride`, `CorrelationState`, `DependencyRiskFlag`, `ValidationToolState`, `ValidationRequest`, `ValidationResult`, `ProjectedDelta`, etc.).

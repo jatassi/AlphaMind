@@ -1,8 +1,10 @@
 ---
-status: not_started
-completed_date:
+status: done
+completed_date: 2026-04-28
 commit_id:
 ---
+
+> **Resolution note (2026-04-28):** the README link was added directly during the risk-guardrails story-review session, alongside the parallel links for `rules-and-limits` and `guardrail-evaluation` (which had no story scaffolding of their own). This story's acceptance criteria are satisfied by that edit. `commit_id` will be filled when the session's PR lands on `main`.
 
 # 01 — Add regime-adaptation implementation link to risk-guardrails README
 

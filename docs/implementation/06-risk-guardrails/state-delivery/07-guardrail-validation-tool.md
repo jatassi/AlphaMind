@@ -21,11 +21,14 @@ Land the deterministic agent-callable validation tool that the analyst, strategi
 - `src/alphamind/portfolio_state/records/capital.py` — `RiskZone`, `RegimeLabel` typed enums.
 - `src/alphamind/portfolio_state/records/positions.py` — `Direction`, `InstrumentType` typed enums.
 - `02-package-skeleton-and-config.md` — `state_delivery/validation_tool.py` is the target module; `StateDeliveryConfig` is loaded but does not currently carry tool-specific knobs.
+- `../guardrail-evaluation/01-scaffold-canonical-types.md` — canonical declarations of `RuleProjection`, `Greeks`, `LibraryOutput`, `LibraryConfig`, `ProposedDelta`, `MarketInputs`, `PortfolioStateSnapshot`, `DeltaAdjustedExposure`, `FeatureDisabledRejection`; imported here, not redeclared.
+- `../guardrail-evaluation/02c-effective-limits-and-feature-gate.md` — `from_resolved_config` adapter the tool uses to build `LibraryConfig` from upstream `ResolvedConfig`.
+- `../guardrail-evaluation/05-evaluate-proposals-entry-point.md` — `evaluate_proposals(...)` entry point the tool composes against.
 
 ## Depends on
 
 - 02 (package skeleton + config)
-- **Cross-feature dependency:** the `guardrail-evaluation` work tree ships the per-rule projection primitive (`evaluate_per_rule(...)`), the active regime parameter resolution primitive, the feature-flag early-exit primitive, and the Black-Scholes greeks computation. The library's typed `PerRuleResult` output object is the same shape this tool emits per-rule. For story 07 to dispatch, the guardrail-evaluation work tree's stories that produce these primitives and the `PerRuleResult` shape must be `done`. The orchestrator (this work tree's `ORCHESTRATOR.md`) calls out this gate.
+- **Cross-feature dependency:** the `guardrail-evaluation` work tree ships the entry-point function (`evaluate_proposals(...)`), the per-rule projection primitive (`project_rule(...)`), the active regime parameter resolution primitive, the feature-flag early-exit primitive, and the Black-Scholes greeks computation. The library's typed `RuleProjection` output object is the canonical per-rule shape this tool emits in its `per_rule` field; the library's `Greeks` is the canonical greeks shape. For story 07 to dispatch, the guardrail-evaluation work tree's stories that produce these primitives, the `RuleProjection` and `Greeks` types, and the `evaluate_proposals` entry point must be `done`. The orchestrator (this work tree's `ORCHESTRATOR.md`) calls out this gate.
 
 (03/04*/05/06 are NOT dependencies — story 07 is independently composable on top of 02 and the guardrail-evaluation library.)
 
@@ -92,6 +95,15 @@ class ValidationSize(BaseModel):
 
 
 class ValidationAction(StrEnum):
+    """Action subset accepted by the validation tool.
+
+    Deliberate subset of `guardrail_evaluation.Action` (which also has CANCEL).
+    The validation tool does not validate CANCEL commands — they release reserved
+    capital but do not propose new exposure, so the per-rule projection is a no-op
+    and there is nothing to validate. Type-narrowing here prevents a CANCEL command
+    from reaching the tool's projection step.
+    """
+
     OPEN = "OPEN"
     ADD = "ADD"
     CLOSE = "CLOSE"
@@ -110,35 +122,32 @@ The renderer-side typed input mirrors the design's `validate_guardrail(instrumen
 
 ### 2. Output contract — typed value objects
 
-The output's per-rule shape is the canonical `PerRuleResult` from the guardrail-evaluation library. This story re-exports it (or imports it under the same name); it does not redeclare:
+The per-rule shape and the greeks shape are the canonical types from the guardrail-evaluation library. This story imports them; it does not redeclare:
 
 ```python
-from alphamind.risk_guardrails.guardrail_evaluation import PerRuleResult
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    FeatureFlagsView,
+    Greeks,
+    RuleProjection,
+)
 ```
 
-If the guardrail-evaluation library defines its canonical type with a different name (e.g., `RuleProjection`), this story imports it under that name and the output contract uses the library's name. Resolve at implementation time once the library's stories land.
+`RuleProjection` (from `guardrail_evaluation/01-scaffold-canonical-types.md`) carries `rule, status, current, limit, projected_after, headroom_remaining, unit`. `Greeks` carries `delta, gamma, theta, vega`. `FeatureFlagsView` carries `options_enabled, short_selling_enabled` and is consumed by `ValidationToolState` (defined in section 3). All three are frozen dataclasses; the validation tool surfaces them verbatim.
 
 ```python
-class ValidationGreeks(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    delta: float
-    gamma: float
-    theta: float
-    vega: float
-
-
 class ValidationResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     overall: Literal["PASS", "FAIL"]
-    per_rule: tuple[PerRuleResult, ...]
+    per_rule: tuple[RuleProjection, ...]
     delta_adjusted_exposure: float
-    greeks: ValidationGreeks | None              # populated for OPTION and STRATEGY actions only
+    greeks: Greeks | None                        # populated for OPTION and STRATEGY actions only
     cumulative_impact_note: str
     failure_guidance: str | None                 # populated only when overall == "FAIL"
     proposal_index_in_invocation: int            # 1-indexed; first call returns 1, second returns 2, ...
 ```
+
+(The `arbitrary_types_allowed=True` setting lets Pydantic v2 hold the library's frozen-dataclass types as fields without trying to validate them as Pydantic models.)
 
 The output's `proposal_index_in_invocation` is part of the cumulative-tracking surface — exposed so the agent can see how many calls have run and reason about the cumulative-impact note.
 
@@ -154,7 +163,7 @@ class ValidationToolState(BaseModel):
     starting_snapshot: PortfolioStateSnapshot
     starting_risk_budget: RiskBudgetConsumption
     starting_active_risk_parameters: ActiveRiskParameterSet
-    profile_feature_flags: ProfileFeatureFlags
+    profile_feature_flags: FeatureFlagsView                  # canonical guardrail_evaluation.FeatureFlagsView
     accumulated_deltas: tuple[ProjectedDelta, ...] = ()      # one entry per validated proposal so far
 
     def with_accepted_proposal(self, delta: ProjectedDelta) -> ValidationToolState:
@@ -163,22 +172,17 @@ class ValidationToolState(BaseModel):
 
 class ProjectedDelta(BaseModel):
     """A previously-validated proposal's projected impact, used for cumulative tracking."""
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     instrument: ValidationInstrument
     size: ValidationSize
     action: ValidationAction
     delta_adjusted_exposure: float
-    greeks: ValidationGreeks | None
+    greeks: Greeks | None                        # canonical guardrail_evaluation.Greeks
     proposal_index: int
-
-
-class ProfileFeatureFlags(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    options_enabled: bool
-    short_selling_enabled: bool
 ```
+
+`FeatureFlagsView` is imported alongside `RuleProjection` and `Greeks` in section 2's import block — no separate import needed.
 
 The state is **frozen** — every accepted proposal returns a new state via `with_accepted_proposal(...)`. This avoids mutation surprises and keeps the call chain deterministic.
 
@@ -214,14 +218,14 @@ Procedure:
    ```
    Same for `direction == SHORT` when `short_selling_enabled is False`. The early-exit produces no per-rule entries — disabled features are blocking by feature, not by rule.
 
-2. **Compose with the guardrail-evaluation library.** Call the library's `evaluate_per_rule_projection(...)` (or whatever the library exposes; resolve naming at implementation time) with:
-   - `current_state` derived from `state.starting_snapshot` (positions, sector exposure, directional exposure, drawdown, capital).
-   - `proposed_deltas` = `state.accumulated_deltas + (this_request_as_delta,)` — the cumulative set including this call's request.
-   - `active_regime_parameters` = `state.starting_active_risk_parameters`.
-   - `profile_feature_flags` = `state.profile_feature_flags`.
-   The library returns the canonical `tuple[PerRuleResult, ...]` plus the per-instrument `delta_adjusted_exposure` and `greeks` (for options/strategies).
+2. **Compose with the guardrail-evaluation library.** Call the library's `evaluate_proposals(...)` entry point (per `guardrail_evaluation/05-evaluate-proposals-entry-point.md`) with:
+   - `state` — a `PortfolioStateSnapshot` derived from `state.starting_snapshot` (positions, sector exposure, directional exposure, drawdown, capital).
+   - `proposals` — `state.accumulated_deltas + (this_request_as_delta,)` translated to the library's `ProposedDelta` shape; the cumulative set including this call's request.
+   - `config` — a `LibraryConfig` adapted via `from_resolved_config(...)` (per `guardrail_evaluation/02c-effective-limits-and-feature-gate.md`); carries `effective_limits`, `escalation_zones`, `feature_flags`, `active_sectors`, `active_regime`, `active_profile`, `conservative_buffer_pct`.
+   - `market` — `MarketInputs` with underlying prices, IV provider, risk-free rate, snapshot timestamp.
+   The library returns a `LibraryOutput` carrying `per_rule: tuple[RuleProjection, ...]`, the per-proposal `delta_adjusted: Mapping[str, DeltaAdjustedExposure]`, and `feature_disabled: tuple[FeatureDisabledRejection, ...]`. The validation tool reads `per_rule` directly into its output and extracts the `delta_adjusted_exposure` and `greeks` for *this* proposal from `delta_adjusted[this_request.id]`.
 
-3. **Determine `overall`.** PASS if every `PerRuleResult.status == PASS`; FAIL if any is FAIL. WARNING-status entries do not flip overall to FAIL — the design's WARNING zone is informational, not blocking.
+3. **Determine `overall`.** PASS if every `RuleProjection.status == Status.PASS`; FAIL if any is `Status.FAIL`. `Status.WARNING` entries do not flip overall to FAIL — the design's WARNING zone is informational, not blocking.
 
 4. **Populate `cumulative_impact_note`.** Always present. Helper:
 
@@ -262,7 +266,7 @@ Internal helper that converts a `ValidationRequest` to a `ProjectedDelta` value 
 def _request_as_projected_delta(
     request: ValidationRequest,
     delta_adjusted_exposure: float,
-    greeks: ValidationGreeks | None,
+    greeks: Greeks | None,
     proposal_index: int,
 ) -> ProjectedDelta
 ```
@@ -292,10 +296,11 @@ Tests at `tests/risk_guardrails/state_delivery/test_validation_tool.py`:
 
 - **State reset across agents:** the test constructs a `ValidationToolState`, runs three accepted proposals, then constructs a fresh `ValidationToolState` (simulating analyst → strategist boundary) and confirms the new state's `accumulated_deltas` is empty and `proposal_index_in_invocation` for the first call is `1`.
 
-- **Library composition (mock):** a stub `evaluate_per_rule_projection` returning hand-crafted `PerRuleResult` tuples confirms the validation tool correctly:
-  - Sets `overall="PASS"` when every entry is PASS (or PASS + WARNING).
-  - Sets `overall="FAIL"` when any entry is FAIL.
+- **Library composition (mock):** a stub `evaluate_proposals` returning a hand-crafted `LibraryOutput` (with `per_rule: tuple[RuleProjection, ...]`, `delta_adjusted: Mapping[str, DeltaAdjustedExposure]`, `feature_disabled: ()`) confirms the validation tool correctly:
+  - Sets `overall="PASS"` when every `RuleProjection.status` is `PASS` (or `PASS + WARNING`).
+  - Sets `overall="FAIL"` when any entry is `FAIL`.
   - Surfaces the library's per-rule values verbatim in the output.
+  - Pulls `delta_adjusted_exposure` and `greeks` from the library's `delta_adjusted[this_request.id]` entry.
 
 - **Failure guidance:**
   - Single sector-concentration failure → guidance includes `"Reduce size by ~X%"` and the rule label.
@@ -306,8 +311,8 @@ Tests at `tests/risk_guardrails/state_delivery/test_validation_tool.py`:
 
 - **Greeks population:**
   - `asset_type=EQUITY` actions return `greeks=None`.
-  - `asset_type=OPTION` actions return a populated `ValidationGreeks` (mocked from the library's response).
-  - `asset_type=STRATEGY` actions return a populated `ValidationGreeks` (net values from the library's response).
+  - `asset_type=OPTION` actions return a populated `Greeks` (mocked from the library's response).
+  - `asset_type=STRATEGY` actions return a populated `Greeks` (net values from the library's response).
 
 - **Determinism:** identical `(request, state)` inputs produce byte-identical `ValidationResult` outputs.
 
@@ -329,15 +334,15 @@ The frozen-state-with-copy pattern (`ValidationToolState.with_accepted_proposal`
 
 Per `feedback_simplify_before_building.md`, the `failure_guidance` helper handles only the documented templates. Generic catch-all guidance ("Try a different size or instrument") is worse than a null guidance — surfacing nothing is the failure-guidance's null state. When a new failure mode emerges from feedback-loop data, this helper is extended with a new template, not preemptively over-generalized.
 
-Per `feedback_no_inventing_component_names.md`, the typed I/O names mirror the design's section labels: `validate_guardrail` is the design's tool name; `ValidationResult` is the output contract's documented shape; the per-rule entry uses the guardrail-evaluation library's canonical type without rename. The `ValidationToolState` and `ProjectedDelta` typed records exist because the design's "Cumulative tracking" behavior requires a state object — the names follow from the behavior.
+Per `feedback_no_inventing_component_names.md`, the typed I/O names mirror the design's section labels: `validate_guardrail` is the design's tool name; `ValidationResult` is the output contract's documented shape; the per-rule entry uses the guardrail-evaluation library's canonical `RuleProjection` type without rename, and the greeks shape uses the library's canonical `Greeks` type. The `ValidationToolState` and `ProjectedDelta` typed records exist because the design's "Cumulative tracking" behavior requires a state object — the names follow from the behavior.
 
 Per `feedback_avoid_numeric_anchors.md`, no zone thresholds, regime multipliers, or rule limit values appear in this story's code. The validation tool composes typed inputs from `state.starting_active_risk_parameters` and the guardrail-evaluation library's per-rule output. Every numeric value in the output flows from upstream typed inputs.
 
-Per `feedback_per_producer_schema.md`, the validation tool's typed I/O is its own per-producer contract, separate from the proposal pre-processor's bundle schema and the engine's T3 envelope schema. All three callers compose the same `PerRuleResult` from the library; each wraps it in its own framing per-producer.
+Per `feedback_per_producer_schema.md`, the validation tool's typed I/O is its own per-producer contract, separate from the proposal pre-processor's bundle schema and the engine's T3 envelope schema. All three callers compose the same `RuleProjection` from the library; each wraps it in its own framing per-producer.
 
 Per `feedback_no_decision_trails.md`, the validation tool emits failure guidance positively. The guidance text says what to do ("Reduce size by ~15%"), not what failed historically or which rules conflicted in the past. The guidance is forward-looking and actionable.
 
-Cross-feature dependency callout (load-bearing): this story depends on the guardrail-evaluation work tree's stories that produce `evaluate_per_rule_projection`, the `PerRuleResult` canonical output, the regime parameter resolution primitive, the feature-flag early-exit primitive, and the Black-Scholes greeks computation. Until those land, story 07 is implementable against a stub library — but the production implementation must wire to the real library before story 08's end-to-end verification runs. The orchestrator surfaces this gate before dispatching story 07.
+Cross-feature dependency callout (load-bearing): this story depends on the guardrail-evaluation work tree's stories that produce `evaluate_proposals`, the `RuleProjection` canonical output, the `Greeks` canonical record, the regime parameter resolution primitive, the feature-flag early-exit primitive, and the Black-Scholes greeks computation. Until those land, story 07 is implementable against a stub library — but the production implementation must wire to the real library before story 08's end-to-end verification runs. The orchestrator surfaces this gate before dispatching story 07.
 
 The design's "shared math" property is preserved through library composition: a proposal passing the validation tool also passes the engine's T3 check (barring state drift between T1 reasoning and T3 execution, which the synchronous-rejection feedback path handles). The validation tool does not duplicate the math — it composes the same primitives.
 
@@ -345,7 +350,9 @@ The activity log integration referenced in `state-delivery.md` § Cross-constrai
 
 ## Acceptance criteria
 
-- [ ] `src/alphamind/risk_guardrails/state_delivery/validation_tool.py` exists with `validate_guardrail`, `ValidationRequest`, `ValidationResult`, `ValidationToolState`, `ValidationInstrument`, `ValidationStrategyLeg`, `ValidationSize`, `ValidationAction`, `ValidationGreeks`, `ProjectedDelta`, `ProfileFeatureFlags` exposed (re-exported from `state_delivery/__init__.py`).
+- [ ] `src/alphamind/risk_guardrails/state_delivery/validation_tool.py` exists with `validate_guardrail`, `ValidationRequest`, `ValidationResult`, `ValidationToolState`, `ValidationInstrument`, `ValidationStrategyLeg`, `ValidationSize`, `ValidationAction`, `ProjectedDelta` exposed (re-exported from `state_delivery/__init__.py`).
+- [ ] `RuleProjection`, `Greeks`, and `FeatureFlagsView` are imported from `alphamind.risk_guardrails.guardrail_evaluation` (the canonical source); no local declarations of any in state-delivery. The state-delivery `__init__.py` may re-export them as a convenience surface but does not redeclare.
+- [ ] `ValidationAction` is a `StrEnum` with members `OPEN`, `ADD`, `CLOSE`, `ADJUST` only (deliberate subset of `guardrail_evaluation.Action`, which also has `CANCEL`).
 - [ ] All typed value objects are frozen Pydantic v2 models with the documented fields and validators.
 - [ ] `ValidationInstrument(asset_type=OPTION, ...)` requires `strike` / `expiration` / `contract_type`; raises `ValueError` if any is missing.
 - [ ] `ValidationInstrument(asset_type=STRATEGY, legs=None)` raises `ValueError`.

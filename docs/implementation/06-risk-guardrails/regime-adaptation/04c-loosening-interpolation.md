@@ -34,7 +34,7 @@ def interpolate_loosening_multipliers(
     origin_multipliers: Mapping[str, float],
     destination_multipliers: Mapping[str, float],
     transition_invocations_remaining: int,
-    loosening_invocations: int = _LOOSENING_INVOCATIONS,  # default 3
+    loosening_invocations: int = LOOSENING_INVOCATIONS,  # default 3, imported from types.py
 ) -> Mapping[str, float]
 ```
 
@@ -67,15 +67,17 @@ The formula is deliberately symmetric for an unchanging multiplier (`origin == d
 - Raises `ValueError` if `origin_multipliers` and `destination_multipliers` have different key sets (the function does not silently drop or invent rules; the caller must align the maps before calling).
 - Raises `ValueError` if any multiplier value is non-positive (zero or negative — both invalid for a guardrail multiplier per the existing `RegimeConfig` validator).
 
-### 4. The `_LOOSENING_INVOCATIONS` constant
+### 4. `LOOSENING_INVOCATIONS` import
+
+`LOOSENING_INVOCATIONS` is the canonical constant declared in `02-package-skeleton-and-types.md` § 2l. Imported here:
 
 ```python
-_LOOSENING_INVOCATIONS: int = 3
+from alphamind.risk_guardrails.regime_adaptation.types import LOOSENING_INVOCATIONS
 ```
 
-Mirrors the constant in `transition_machine.py` (story 04b). Both modules expose it as a module-level constant; both reference it for the same semantic. The duplication is deliberate — neither module should depend on the other for this constant, and the value is fixed by `regimes/*.yaml`'s `transition.loosen_on_exit: linear_over_invocations_3` enum member rather than by config injection.
+Used as the default value for the `loosening_invocations` parameter on `interpolate_loosening_multipliers(...)`. The state machine (story 04b) imports the same constant — single source of truth, no duplication.
 
-If a future per-regime loosening-duration policy lands, both constants become parameters and the resolver passes the per-regime value through. Until then, both modules carry the literal `3`.
+If a future per-regime loosening-duration policy lands, this constant becomes a default and the resolver passes the per-regime value through as the `loosening_invocations` argument. Until then, the literal `3` lives in `types.py` and only there.
 
 ### 5. Helper for the orchestrator
 
@@ -134,7 +136,7 @@ The interpolation formula's `+1` offset (`(loosening_invocations - remaining + 1
 
 A reader noticing the `+1` offset and wondering whether the formula should be `(loosening_invocations - remaining) / loosening_invocations` (which would give `0`, `1/3`, `2/3` and never reach `1` during interpolation) should refer back to story 04b's countdown semantic: `remaining=1` is the *last* interpolation invocation, not a "two-thirds" intermediate; the next invocation is already `STABLE`. The `+1` offset is what makes that consistent.
 
-Per `feedback_avoid_numeric_anchors.md`, the only literal in the module is the `_LOOSENING_INVOCATIONS = 3` constant, and it is named and traceable to the design doc and to `regimes/*.yaml`'s `transition.loosen_on_exit` enum value. No other thresholds.
+Per `feedback_avoid_numeric_anchors.md`, the only literal in the module is the `LOOSENING_INVOCATIONS` default, and that constant lives canonically in `types.py` (story 02 § 2l), traceable to the design doc and to `regimes/*.yaml`'s `transition.loosen_on_exit` enum value. No other thresholds.
 
 Per `feedback_simplify_before_building.md`, the function does not implement non-linear interpolation curves (sigmoid, ease-in-out, etc.). Linear is what the design specifies and the simplest option that satisfies the contract. If an operator later argues for a different curve, that is a follow-up — the function signature accommodates the change without breaking callers.
 
@@ -146,8 +148,8 @@ The `resolve_active_multipliers` helper is the only place in the orchestrator th
 
 ## Acceptance criteria
 
-- [ ] `src/alphamind/risk_guardrails/regime_adaptation/interpolation.py` exists and defines `interpolate_loosening_multipliers`, `resolve_active_multipliers`, `_LOOSENING_INVOCATIONS`.
-- [ ] `interpolate_loosening_multipliers` and `resolve_active_multipliers` are re-exported from `src/alphamind/risk_guardrails/regime_adaptation/__init__.py`.
+- [ ] `src/alphamind/risk_guardrails/regime_adaptation/interpolation.py` exists and defines `interpolate_loosening_multipliers` and `resolve_active_multipliers`. `LOOSENING_INVOCATIONS` is imported from `alphamind.risk_guardrails.regime_adaptation.types` (canonical declaration in story 02 § 2l); not redeclared here.
+- [ ] `interpolate_loosening_multipliers` and `resolve_active_multipliers` are re-exported from `src/alphamind/risk_guardrails/regime_adaptation/__init__.py`. (`LOOSENING_INVOCATIONS` is already re-exported via story 02.)
 - [ ] At `remaining=3, loosening=3`, the interpolation produces fraction `1/3` (one-third of the way from origin to destination).
 - [ ] At `remaining=2`, fraction `2/3`.
 - [ ] At `remaining=1`, fraction `1` (full destination value).

@@ -79,7 +79,7 @@ In execution order:
 4. **Resolve active overlays.**
    - `pre_event_decision = evaluate_pre_event_overlay(now_utc=..., event_calendar=..., scheduler_config=loaded_config.scheduler, pre_event_overlay=loaded_config.overlays[Overlay.pre_event])`
    - `stress_decision = evaluate_stress_overlay(funding_stress_alert_active=composite_alert_state.funding_stress_alert_active, ..., stress_overlay=loaded_config.overlays[Overlay.stress])`
-   - `active_overlays = tuple(d.overlay for d in (pre_event_decision, stress_decision) if d.is_active)` — sorted alphabetically by `Overlay.value` for determinism.
+   - `active_overlays = tuple(d.overlay for d in (pre_event_decision, stress_decision) if d.is_active)` — typed as `tuple[Overlay, ...]`. Sort/conversion to the portfolio-state shape happens later via the canonical `overlays_to_strings` helper (story 02 § 2m); the orchestrator passes the enum-typed tuple to `assemble_active_risk_parameter_set` (story 08), which calls `overlays_to_strings` internally. For the persisted `RegimeAdaptationState.active_overlays` (which is also typed `tuple[Overlay, ...]`), the orchestrator stores the enum-typed tuple sorted alphabetically by `Overlay.value` via `tuple(sorted((d.overlay for d in ... if d.is_active), key=lambda o: o.value))` — keeps the persisted field deterministic without crossing the enum→string boundary.
 
 5. **Resolve interpolated multipliers.**
    - `active_regime_multipliers = loaded_config.regimes[next_transition.active_regime].multipliers`
@@ -107,7 +107,7 @@ In execution order:
 
 The orchestrator returns `audit_log_entries: tuple[RegimeAdaptationAuditEntry, ...]` covering the events worth tracing through the activity log:
 
-- **`regime_transition`** — emitted whenever `next_transition.transition_state != STABLE` AND prior_state's transition_state was `STABLE` (a fresh transition just started). Payload: `{prior_regime, new_regime, direction, prior_multipliers_snapshot, new_multipliers_snapshot, transition_invocations_remaining}`. The `direction` is `tightening` or `loosening` derived from `regime_ladder_index` comparison.
+- **`regime_transition`** — emitted whenever the active regime *changed* this invocation: `prior_state is not None AND next_transition.active_regime != prior_state.active_regime`. The predicate fires for fresh transitions from `STABLE`, for tightening that overrides an in-flight loosening (prior `LOOSENING`, new `TIGHTENING`), and for re-issued loosening starts (prior `LOOSENING`, new origin/destination). It does NOT fire on bootstrap (`prior_state is None`), on stable continuation (regime unchanged), or on loosening countdowns (regime unchanged across the 3-invocation interpolation). Payload: `{prior_regime, new_regime, direction, prior_multipliers_snapshot, new_multipliers_snapshot, transition_invocations_remaining}`. The `direction` is `tightening` or `loosening` derived from `regime_ladder_index` comparison.
 - **`overlay_activated`** — emitted for each overlay whose `is_active` flipped from `False` (in prior state's `active_overlays`) to `True` in this invocation. One entry per newly-activated overlay. Payload: `{overlay, rationale}` from the `OverlayActivationDecision`.
 - **`overlay_deactivated`** — emitted for each overlay whose `is_active` flipped from `True` (in prior state) to `False`. Payload: `{overlay}` (no rationale needed for deactivation; absence is the reason).
 - **`regime_skip_emergency`** — emitted when `distillation_regime_skip_emergency is True`. Payload: `{distillation_regime_label, distillation_vix_level, prior_distillation_regime_label}`. Surfaces the upstream emergency flag for activity-log review.
@@ -158,6 +158,8 @@ Out of scope:
 
 The orchestrator's I/O footprint is small: one DB read (`select_most_recent_state`). All other inputs are passed in by the caller. This keeps the function unit-testable with simple fixture inputs and preserves the project's "pure-function-where-possible" discipline.
 
+**Output is regime-resolved, not tier-overridden.** The returned `ActiveRiskParameterSet` reflects regime multipliers, loosening interpolation, and overlay multipliers — but does NOT yet reflect cumulative-drawdown progressive-tier overrides. When cumulative drawdown is at tier 1 or tier 2 (per `breach_behavior/04b-cumulative-drawdown-tier.md`), `position_max_size_pct` and `gross_exposure_pct` are further-tightened by the tier override, and an extra `cumulative_drawdown_tier_{N}` tag is appended to `active_overlays`. That refinement is the responsibility of the Phase 1 enforcement-layer composition step (a future feature; see `state-delivery.md § Portfolio state ingestion payload` and `breach_behavior/04b`'s integration-site note). **The orchestrator does not call `apply_progressive_tier_overrides` itself** — keeping regime-adaptation focused on regime/overlay resolution and breach-behavior focused on breach response. Until the Phase 1 composition feature ships, downstream consumers needing the fully-composed parameter set (e.g., scenario tests, breach-behavior E2E story 08) compose the two function calls inline. See `docs/project-tracker.md § Backlog` for the tracking entry on the missing wiring.
+
 The `audit_log_entries` field is a typed-record tuple, not a database write. The caller (the pipeline runtime, which today does not exist as a single home; the activity-log table is forthcoming under the execution layer) decides when to persist. Until persistence wires up, the orchestrator's audit entries are runtime-visible but not persisted; the test suite asserts the entries are emitted with the right shape.
 
 Per `feedback_no_inventing_component_names.md`, `resolve_regime_adaptation` is the only new function name; it mirrors `compose_config` in shape and naming convention. All other names are existing primitives.
@@ -186,7 +188,7 @@ The 5-event audit surface is a deliberate choice — each event reflects a state
 - [ ] Loosening transition emits a `regime_transition` audit entry with `direction="loosening"`, and the orchestrator returns `transition_invocations_remaining=3` on the first invocation.
 - [ ] Loosening countdown decrements `transition_invocations_remaining` and does not emit a fresh `regime_transition` audit entry.
 - [ ] Loosening completion (after 3 invocations) returns STABLE with no audit entry.
-- [ ] Tightening overrides loosening: prior LOOSENING + new tightening returns TIGHTENING in the new regime.
+- [ ] Tightening overrides loosening: prior LOOSENING + new tightening returns TIGHTENING in the new regime AND emits a fresh `regime_transition` audit entry with `direction="tightening"` (the override is a regime change, so the audit predicate fires).
 - [ ] Pre-event overlay activation surfaces in `runtime_dimensions_active_overlays`, in `effective_limits` (multiplied by overlay multipliers), and emits `overlay_activated`.
 - [ ] Stress overlay activation surfaces similarly with the appropriate multipliers.
 - [ ] Both overlays active produce sorted-alphabetically `runtime_dimensions_active_overlays` and both `overlay_activated` audit entries.

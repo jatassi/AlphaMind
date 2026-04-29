@@ -104,7 +104,15 @@ The entry list is sorted alphabetically by `rule_id`. Determinism — and the ex
 
 #### 2f. `active_overlays` — strings, not enum
 
-The portfolio-state `ActiveRiskParameterSet.active_overlays: tuple[str, ...]` is typed as plain strings (the portfolio-state package does not import the `Overlay` enum). The assembler passes `tuple(sorted(overlay.value for overlay in active_overlays))` — alphabetically sorted, string-encoded.
+The portfolio-state `ActiveRiskParameterSet.active_overlays: tuple[str, ...]` is typed as plain strings (the portfolio-state package does not import the `Overlay` enum). The assembler calls the canonical `overlays_to_strings` helper from `regime_adaptation/types.py` (story 02 § 2m) to perform the enum→sorted-strings conversion:
+
+```python
+from alphamind.risk_guardrails.regime_adaptation.types import overlays_to_strings
+
+active_overlays_strings = overlays_to_strings(active_overlays)
+```
+
+Single source of truth for the conversion — the orchestrator (story 09) imports the same helper rather than open-coding `tuple(sorted(o.value for o in ...))` inline.
 
 ### 3. Validation
 

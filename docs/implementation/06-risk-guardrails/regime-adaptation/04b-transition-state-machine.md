@@ -39,19 +39,13 @@ def compute_next_transition(
 ) -> NextTransitionDecision
 ```
 
-Returns a small typed record:
+Returns a `NextTransitionDecision` — the canonical typed record declared in `02-package-skeleton-and-types.md` § 2h. Imported here:
 
 ```python
-@dataclass(frozen=True, slots=True)
-class NextTransitionDecision:
-    """The transition-state-machine output the orchestrator persists."""
-    active_regime: Regime
-    prior_regime: Regime | None                       # passthrough of new_regime's predecessor for audit
-    transition_state: RegimeTransitionState
-    transition_invocations_remaining: int
-    transition_started_invocation_id: str | None
-    transition_origin_regime: Regime | None
+from alphamind.risk_guardrails.regime_adaptation.types import NextTransitionDecision
 ```
+
+Canonical fields: `active_regime: Regime`, `prior_regime: Regime | None`, `transition_state: RegimeTransitionState`, `transition_invocations_remaining: int`, `transition_started_invocation_id: str | None`, `transition_origin_regime: Regime | None`.
 
 The orchestrator (story 09) constructs the full `RegimeAdaptationState` by combining this decision with the auxiliary passthrough fields (`distillation_regime_label`, `distillation_vix_level`, `regime_skip_emergency`, `active_overlays`, `as_of`).
 
@@ -137,7 +131,7 @@ The "tightening overrides loosening" rule is the core asymmetry. A real-world ex
 
 Per `feedback_no_inventing_component_names.md`, `RegimeTransitionState` (STABLE/TIGHTENING/LOOSENING) is the existing portfolio-state enum; this story does not introduce a sibling enum. The `NextTransitionDecision` typed record is the only new name; it mirrors the structure of the existing state record minus the passthrough fields the orchestrator wires in.
 
-Per `feedback_avoid_numeric_anchors.md`, the function uses one numeric constant (`3` invocations of loosening interpolation), and that constant lives in the regime-adaptation design doc and is mirrored in `regimes/*.yaml`'s `transition.loosen_on_exit: linear_over_invocations_3`. The state machine reads it from a module-level constant `_LOOSENING_INVOCATIONS = 3` rather than from YAML — the value is mechanical, not operator-tunable per regime, and matches the spec name. If a future regime config wants a different loosening duration per regime, the constant becomes a parameter; the function signature accepts the change without breaking callers.
+Per `feedback_avoid_numeric_anchors.md`, the function uses one numeric constant (`3` invocations of loosening interpolation), and that constant lives in the regime-adaptation design doc and is mirrored in `regimes/*.yaml`'s `transition.loosen_on_exit: linear_over_invocations_3`. The constant is declared once in `regime_adaptation/types.py` as `LOOSENING_INVOCATIONS: int = 3` and imported by both the state machine (this story) and the interpolation primitive (04c) — single source of truth, no duplication. The value is mechanical, not operator-tunable per regime, and matches the spec name. If a future regime config wants a different loosening duration per regime, `LOOSENING_INVOCATIONS` becomes a parameter passed by the resolver; the function signature accepts the change without breaking callers.
 
 Per `feedback_simplify_before_building.md`, the state machine does not implement a "freeze loosening on overlay activation" or "extend loosening duration during high stress" mechanism. Such heuristics would mask the underlying signal — the design says loosening is mechanical and stress overlays apply on top. If real operating data later argues for blending the two, that is a follow-up design decision, not a preemptive feature.
 
@@ -151,8 +145,8 @@ The `remaining=1` invocation is the last invocation operating under interpolatio
 
 ## Acceptance criteria
 
-- [ ] `src/alphamind/risk_guardrails/regime_adaptation/transition_machine.py` exists and defines `compute_next_transition`, `NextTransitionDecision`, `regime_ladder_index`, `_REGIME_VOLATILITY_LADDER`.
-- [ ] `compute_next_transition` and `NextTransitionDecision` are re-exported from `src/alphamind/risk_guardrails/regime_adaptation/__init__.py`.
+- [ ] `src/alphamind/risk_guardrails/regime_adaptation/transition_machine.py` exists and defines `compute_next_transition`, `regime_ladder_index`, `_REGIME_VOLATILITY_LADDER`. `NextTransitionDecision` is imported from `alphamind.risk_guardrails.regime_adaptation.types` (canonical declaration in story 02); not redeclared here.
+- [ ] `compute_next_transition` is re-exported from `src/alphamind/risk_guardrails/regime_adaptation/__init__.py`. (`NextTransitionDecision` is already re-exported via story 02.)
 - [ ] Bootstrap (no prior state) returns `STABLE`, `remaining=0`, both Optionals `None`.
 - [ ] No-change `STABLE` returns `STABLE`, `remaining=0`.
 - [ ] No-change `TIGHTENING` returns `STABLE`, `remaining=0`.

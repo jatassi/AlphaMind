@@ -17,55 +17,37 @@ Land the small wrapper that prepends the emergency-invocation block to any audie
 - `docs/design/06-risk-guardrails/breach-behavior.md` § Agent context for emergency invocations — the worked example showing the emergency block followed by `[...normal guardrail state header follows...]`.
 - `02-package-skeleton-and-config.md`, `03-shared-rendering-primitives.md` — foundation this story extends.
 - `04a-analyst-header-renderer.md`, `04b-strategist-header-renderer.md`, `04c-pm-header-renderer.md` — sibling renderers whose output is wrapped.
+- `../breach-behavior/03-canonical-types-and-enums.md` § 2, § 5 — canonical declarations of `EmergencyTrigger` and `EmergencyContext`; imported here, not redeclared.
+- `../breach-behavior/05c-emergency-invocation-triggers.md` — the producer of the `EmergencyContext` records this story's wrapper consumes.
 
 ## Depends on
 
 - 02 (package skeleton)
 - 03 (shared rendering primitives)
+- **Cross-feature dependency:** the breach-behavior work tree's `breach_behavior/03-canonical-types-and-enums.md` ships the canonical `EmergencyTrigger` enum and `EmergencyContext` typed record this story imports. For dispatch, that story must be `done`. Test fixtures construct `EmergencyContext` instances directly via the canonical class.
 
-(Implementation independent of 04a/b/c — the wrapper takes a pre-rendered header string and prepends a block. Tests use stub header strings for unit testing; integration with real audience renderers is exercised in story 08.)
+(Implementation independent of 04a/b/c at the source-code level — the wrapper takes a pre-rendered header string and prepends a block. Tests use stub header strings for unit testing; integration with real audience renderers is exercised in story 08.)
 
 ## Scope
 
 In scope, all under `src/alphamind/risk_guardrails/state_delivery/emergency.py`. Tests at `tests/risk_guardrails/state_delivery/test_emergency.py`.
 
-### 1. Trigger types
+### 1. Trigger types and context
 
-The emergency-invocation trigger taxonomy comes from breach-behavior § Emergency invocation trigger. Declared in `state_delivery/emergency.py` as a string enum:
-
-```python
-class EmergencyTrigger(StrEnum):
-    REGIME_JUMP = "regime_jump"
-    MULTI_RULE_BREACH = "multi_rule_breach"
-    DAILY_DRAWDOWN_VELOCITY = "daily_drawdown_velocity"
-    MARGIN_CALL = "margin_call"
-```
-
-The four values match the design's trigger table verbatim. Adding a new trigger requires updating both this enum and `config/guardrails.yaml`'s `emergency_invocation.triggers` list.
-
-### 2. Trigger context value object
+`EmergencyTrigger` and `EmergencyContext` are the canonical types owned by the breach-behavior work tree (declared in `breach_behavior/types.py` per `breach_behavior/03-canonical-types-and-enums.md` § 2 and § 5). Imported here:
 
 ```python
-class EmergencyContext(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    trigger: EmergencyTrigger
-    trigger_detail: str            # human-readable; e.g., "Regime jump: low-vol → crisis (VIX 12 → 38)"
-    minutes_since_last_invocation: float
-    normal_cadence_minutes: float  # configured scheduler cadence; e.g., 120 for the 2-hour rolling default
-
-    @field_validator("minutes_since_last_invocation", "normal_cadence_minutes")
-    @classmethod
-    def _require_positive(cls, v: float) -> float:
-        if v <= 0:
-            msg = f"value must be positive; got {v}"
-            raise ValueError(msg)
-        return v
+from alphamind.risk_guardrails.breach_behavior import EmergencyContext, EmergencyTrigger
 ```
 
-The `trigger_detail` is opaque to the renderer — the upstream layer (continuous monitor + breach-behavior) constructs the human-readable string per trigger type. This story does not encode per-trigger detail templates; it surfaces whatever the upstream constructs.
+Canonical shapes the renderer reads:
 
-### 3. Block renderer
+- `EmergencyTrigger` (StrEnum): `REGIME_JUMP="regime_jump"`, `MULTI_RULE_BREACH="multi_rule_breach"`, `DAILY_DRAWDOWN_VELOCITY="daily_drawdown_velocity"`, `MARGIN_CALL="margin_call"`. Adding a new trigger requires updating the canonical declaration in `breach_behavior/03` and `config/guardrails.yaml`'s `emergency_invocation.triggers` list.
+- `EmergencyContext` (frozen Pydantic v2): `trigger: EmergencyTrigger`, `trigger_detail: str`, `minutes_since_last_invocation: float`, `normal_cadence_minutes: float`. Field validator `_require_positive` rejects non-positive minute values.
+
+The `trigger_detail` is opaque to the renderer — the upstream layer (continuous monitor + breach-behavior's `evaluate_emergency_triggers` in story 05c) constructs the human-readable string per trigger type. This story does not encode per-trigger detail templates; it surfaces whatever the upstream constructs.
+
+### 2. Block renderer
 
 ```python
 def render_emergency_block(context: EmergencyContext) -> str
@@ -85,7 +67,7 @@ Time since last invocation: {minutes}m (normal cadence: ~{cadence}m)
 
 The block is exactly three lines plus a trailing blank line that separates it from the next block in the assembled header. Total: four lines counting the trailing blank.
 
-### 4. Composition wrapper
+### 3. Composition wrapper
 
 ```python
 def prepend_emergency_block(*, header: str, context: EmergencyContext) -> str
@@ -101,7 +83,7 @@ Procedure:
 
 The wrapper does not interpret or modify any other line of the header. It is intentionally a string-level operation because the audience renderers (04a/b/c) and halt-mode wrappers (05) all return assembled strings; treating their output as opaque keeps the dependency direction one-way.
 
-### 5. Halt-mode + emergency co-occurrence
+### 4. Halt-mode + emergency co-occurrence
 
 When both halt mode and emergency invocation are active, the call sequence is:
 
@@ -126,12 +108,12 @@ Mode: WATCHLIST ONLY — do not generate trade proposals
 
 This ordering matches the design's note that "Emergency invocations and halt mode are independent states that can co-occur. When both are active, agents receive both header blocks; halt-mode restrictions (no OPEN/ADD) take precedence." The emergency block signals urgency; the halt-mode banner signals action vocabulary restrictions. Both are visible.
 
-### 6. Tests
+### 5. Tests
 
 Tests at `tests/risk_guardrails/state_delivery/test_emergency.py`:
 
-- **EmergencyTrigger enum coverage:** all four trigger values present; each maps to a non-empty string.
-- **EmergencyContext validator:** non-positive `minutes_since_last_invocation` or `normal_cadence_minutes` raises `ValueError`.
+- **EmergencyTrigger import sanity:** `from alphamind.risk_guardrails.breach_behavior import EmergencyTrigger` succeeds; all four trigger values present; each maps to a non-empty string. The enum is the same class identity as the breach-behavior canonical declaration (`is` check passes).
+- **EmergencyContext validator:** non-positive `minutes_since_last_invocation` or `normal_cadence_minutes` raises `ValueError` (the validator inherits from the canonical breach-behavior model).
 - **render_emergency_block — happy path:** for each `EmergencyTrigger` value, the rendered block contains the documented three lines with correct content.
 - **render_emergency_block — minute formatting:** non-integer minutes (e.g., `27.4`) round to `27m`; cadence `120.0` renders as `120m`.
 - **prepend_emergency_block — happy path:** given a stub header containing the envelope-open line plus dummy content, the wrapper inserts the emergency block at the correct position and adds a blank line before the next block.
@@ -154,7 +136,7 @@ The emergency block is a string-level prepender rather than another full rendere
 
 Per `feedback_simplify_before_building.md`, the wrapper does not parse the header into structured blocks. It does the smallest line-level operation that satisfies the design (insert after envelope-open). If a future requirement demands structural composition (e.g., emergency block needs to inject into the middle of a specific block), the architecture migrates to a structured composition pass; for v1, the simpler shape is correct.
 
-Per `feedback_no_inventing_component_names.md`, `EmergencyTrigger` and `EmergencyContext` mirror the design's `Emergency invocation trigger` and `Trigger detail` / `Time since last invocation` field labels. The function names use the design's `Emergency invocation header` phrasing directly.
+Per `feedback_no_inventing_component_names.md`, `EmergencyTrigger` and `EmergencyContext` are owned by `breach_behavior` (single source of truth) and imported here unchanged. The function names use the design's `Emergency invocation header` phrasing directly.
 
 Per `feedback_avoid_numeric_anchors.md`, the `normal_cadence_minutes` field carries the scheduler's configured cadence as data; the renderer surfaces it. The 120-minute default in the design's worked example is illustrative, not an embedded threshold.
 
@@ -164,9 +146,9 @@ Cross-feature dependency callout: when the breach-behavior + continuous-monitor 
 
 ## Acceptance criteria
 
-- [ ] `src/alphamind/risk_guardrails/state_delivery/emergency.py` exists with `EmergencyTrigger`, `EmergencyContext`, `render_emergency_block`, `prepend_emergency_block` exposed (re-exported from `state_delivery/__init__.py`).
-- [ ] `EmergencyTrigger` is a `StrEnum` with the four documented values matching `config/guardrails.yaml`'s `emergency_invocation.triggers` list.
-- [ ] `EmergencyContext` is a frozen Pydantic v2 model with the four documented fields and the `_require_positive` validator on the two minute fields.
+- [ ] `src/alphamind/risk_guardrails/state_delivery/emergency.py` exists with `render_emergency_block` and `prepend_emergency_block` exposed (re-exported from `state_delivery/__init__.py`).
+- [ ] `EmergencyTrigger` and `EmergencyContext` are imported from `alphamind.risk_guardrails.breach_behavior` (the canonical source); no local declarations in state-delivery. The state-delivery `__init__.py` may re-export them as a convenience surface but does not redeclare.
+- [ ] Tests verify that `EmergencyContext._require_positive` (inherited from the canonical breach-behavior model) rejects non-positive `minutes_since_last_invocation` or `normal_cadence_minutes`.
 - [ ] `render_emergency_block(context)` produces the documented three-line block with correct content for every trigger value.
 - [ ] Minute values render with whole-minute precision (`27.4` → `27m`).
 - [ ] `prepend_emergency_block(header, context)` inserts the emergency block immediately after the envelope-open line, followed by exactly one blank line.

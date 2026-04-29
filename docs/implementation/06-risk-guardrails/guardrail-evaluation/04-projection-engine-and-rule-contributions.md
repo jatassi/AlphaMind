@@ -47,19 +47,27 @@ In scope:
       effective_limit: float,
       zones: EscalationZones,
       unit: str,
+      magnitude: bool = False,
+      inverse: bool = False,
   ) -> RuleProjection:
   ```
-  - `projected_after = current + sum(contributions)`
-  - `headroom_remaining = effective_limit - projected_after`
-  - `status` classification — uniform across rules:
-    - `consumption_pct = projected_after / effective_limit × 100` for non-negative limits and projected values; the rule-contribution layer converts native units (e.g., USD) to the same scale before calling.
-    - **Edge convention.** Consumption is computed against `effective_limit` (positive). Rules where `current` and `contributions` are signed (e.g., directional exposure under net-short profile) supply absolute values for the projection step; the contribution layer normalizes.
-    - `consumption_pct < zones.warning` → `Status.PASS`
-    - `zones.warning ≤ consumption_pct < zones.hard_block` → `Status.WARNING` (covers both Warning and Critical zones from breach-behavior)
-    - `consumption_pct ≥ zones.hard_block` → `Status.FAIL`
-    - `effective_limit == 0`: defensive — raises `ProjectionError` (zero limits are blocked by the configuration semantic-self-test; this is a structural-error guard).
+  - `projected_after = current + sum(contributions)` — the contribution layer's outputs flow through unchanged (signed for theta/vega/net-long, absolute for gross/sector, etc., per each rule's contribution function).
+  - `headroom_remaining = effective_limit - projected_after`.
+  - `consumption_pct` derivation:
+    - If `magnitude=True`: `consumption_pct = |projected_after| / effective_limit × 100`. Theta and vega use this — signed contributions sum to a signed projected value; the rule cap is on absolute magnitude.
+    - Else: `consumption_pct = projected_after / effective_limit × 100`. Negative consumption (e.g., net-long rule against a net-short book) is a valid result and classifies as PASS.
+  - `status` classification:
+    - **Standard rules** (`inverse=False`):
+      - `consumption_pct < zones.warning` → `Status.PASS`
+      - `zones.warning ≤ consumption_pct < zones.hard_block` → `Status.WARNING` (covers both Warning and Critical zones from breach-behavior)
+      - `consumption_pct ≥ zones.hard_block` → `Status.FAIL`
+    - **Inverse rules** (`inverse=True`, e.g., `min_cash_reserve_pct`): the limit is a *minimum*, so "below the limit" is the failure direction. Classification flips:
+      - `projected_after ≥ effective_limit` → `Status.PASS`
+      - `projected_after` in the inverse warning band (within `(100 − zones.warning)%` of the limit on the deficit side) → `Status.WARNING`
+      - `projected_after < effective_limit × (1 − (100 − zones.hard_block) / 100)` → `Status.FAIL`. Concretely: with `zones.hard_block=95`, FAIL fires when `projected_after < effective_limit × 0.95` — i.e., the cash reserve has fallen 5%+ below the minimum.
+  - `effective_limit == 0`: defensive — raises `ProjectionError` (zero limits are blocked by the configuration semantic-self-test; this is a structural-error guard).
   - Returns `RuleProjection(rule=rule_id, status, current, limit=effective_limit, projected_after, headroom_remaining, unit)`.
-  - The engine does not know about rule names beyond pass-through. Adding a rule = adding a `RuleSpec` to the registry; no projection-engine change.
+  - The engine does not know about rule names beyond pass-through. Adding a rule = adding a `RuleSpec` to the registry; no projection-engine change. The two flags (`magnitude`, `inverse`) are the only general-purpose dispatch axes; rules with novel classification needs require either a new flag (rare, design-doc-driven) or a custom contribution function that pre-shapes the inputs to one of the existing flag combinations.
 - `ProjectionError(Exception)` — defensive structural-error class.
 
 ### Rule-contribution registry (`rules/__init__.py`, `rules/exposure.py`, `rules/options_greeks.py`, `rules/shorts.py`, `rules/capital.py`)
@@ -75,9 +83,13 @@ In scope:
       effective_limit_key: str  # the key into LibraryConfig.effective_limits
       requires_options: bool
       requires_shorts: bool
+      magnitude: bool = False    # True for theta and vega; engine classifies on |projected_after|
+      inverse: bool = False      # True for min_cash_reserve_pct; engine classifies "below limit = FAIL"
   ```
   - `requires_options=True` means the rule is only in scope when `feature_flags.options_enabled=True` (the rule's `effective_limit_key` is dropped from `effective_limits` upstream, so this flag is structural — but the registry filter is the cleanest expression).
   - `requires_shorts=True` is the parallel for short-specific rules.
+  - `magnitude=True` means the rule constrains absolute magnitude (signed contributions sum to a signed `projected_after`; the engine takes `|projected_after|` before computing `consumption_pct`). Theta and vega use this.
+  - `inverse=True` means the rule is a *minimum* (e.g., `min_cash_reserve_pct`); the engine classifies `projected_after < effective_limit` as FAIL rather than `>`. Min-cash-reserve uses this.
   - For sector concentration (per active sector), one `RuleSpec` per sector is generated dynamically by the registry's `build_active_specs(config)` function.
 - `build_active_specs(config: LibraryConfig) -> tuple[RuleSpec, ...]`:
   - Returns the registry filtered to rules in scope under `config`. Rules absent from `config.effective_limits` are dropped. Rules requiring options/shorts are dropped if the corresponding feature flag is False.
@@ -98,8 +110,8 @@ In scope:
   - `unit = "% of portfolio (delta-adjusted)"`
 - **`net_long_pct`** (T1+T2+T3):
   - `read_current(state, config)` — returns `state.net_long_pct`.
-  - `contribute(proposal, dae, state, config)` — returns `max(0, dae.signed_notional_usd) / state.portfolio_value_usd × 100`. Long contributions add to net long; short contributions don't (they would *reduce* net long but the rule's projection caps net long, not net short, so a short reducing net long is irrelevant). Wait — re-reading: net long is `total_long - total_short`. Adding a long increases net long; closing a long decreases it; adding a short decreases net long; closing a short increases net long. So contribution is `+dae.signed_notional_usd / state.portfolio_value_usd × 100` if positive (long add or short close); negative if negative (short add or long close). For the rule's *upper limit* check, a negative contribution is fine (reduces consumption). Contribution = `dae.signed_notional_usd / state.portfolio_value_usd × 100` — signed.
-  - Actually, looking again: `state.net_long_pct` could be negative if the book is net short. The rule's `effective_limit` is positive ("max net long"). The `consumption_pct` computed by the projection engine against a negative `current` produces a negative percentage → the engine classifies as `PASS`. Correct behavior.
+  - `contribute(proposal, dae, state, config)` — returns `dae.signed_notional_usd / state.portfolio_value_usd × 100` (signed). Net long is `total_long − total_short`: a positive `signed_notional_usd` (long add or short close) increases net long; a negative `signed_notional_usd` (short add or long close) decreases it. The contribution is signed in the same direction as the underlying net-long change.
+  - **Negative `current` semantics.** When the book is net short, `state.net_long_pct` is negative. The rule's `effective_limit` is positive (`max net long`); `consumption_pct = projected_after / effective_limit × 100` is negative; the projection engine classifies as `PASS`. This is correct — a net-short book is trivially not breaching a max-net-long cap.
   - `unit = "% of portfolio (delta-adjusted)"`
 - **`net_short_pct`** (T1+T2+T3):
   - `read_current(state, config)` — returns `state.net_short_pct` (positive number representing net short magnitude when net direction is short, else 0 — the convention is documented in `PortfolioStateSnapshot`).
@@ -118,11 +130,10 @@ In scope:
   - `read_current(state, config)` — returns `state.options_delta_pct`.
   - `contribute(proposal, dae, state, config)` — for options/strategies (`asset_type != EQUITY`), returns `dae.signed_notional_usd / state.portfolio_value_usd × 100` (options-only delta-adjusted exposure). For equity: 0.
   - `unit = "% of portfolio (delta-adjusted)"`
-- **`portfolio_theta_pct_per_day`** (T1+T2+T3):
+- **`portfolio_theta_pct_per_day`** (T1+T2+T3, `magnitude=True`):
   - `read_current(state, config)` — returns `state.portfolio_theta_pct_per_day`.
-  - `contribute(proposal, dae, state, config)` — for options/strategies, theta in dollar terms is `dae.net_greeks.theta × proposal.quantity × 100` (per calendar day, $ terms). Convert to % portfolio: `theta_dollars / state.portfolio_value_usd × 100`. The library's BS theta is per-calendar-day per leg; the strategy's net theta is sum-of-leg-thetas; multiplied by `quantity` (number of strategies) and contract multiplier (100). For equity: 0. For CLOSE on options: contribution is `-existing_position.current_greeks.theta × ...` (closing removes the theta footprint). Reuses the same before/after pattern as gross.
-  - **Edge.** Theta is signed: long options have negative theta (premium decays daily); short options have positive theta. The rule constrains absolute magnitude (`max daily theta`), so the contribution returns the **absolute change** in absolute theta: `|theta_after_proposal_set| - |theta_before_proposal_set|`. But this is hard to express as a per-proposal contribution; instead, contribute `theta_dollars` as signed, and the rule's `current + Σ contributions` produces a signed `projected_theta`; the projection engine sees `|projected_theta|` against the limit. The contribution function returns signed; the projection engine takes absolute value before classification. Special-cased in the engine: rules with `magnitude_classification=True` flag this; alternatively, the contribution function for theta returns `|signed_theta_change|` directly.
-  - **Decision:** keep the contribution function signed; the engine reads the rule spec's `magnitude=True` flag and classifies on `|projected_after|`. Add `magnitude: bool = False` to `RuleSpec`. Theta sets it True; vega sets it True.
+  - `contribute(proposal, dae, state, config)` — for options/strategies, theta in dollar terms is `dae.net_greeks.theta × proposal.quantity × 100` (BS theta is per-calendar-day per leg; strategy net theta is sum-of-leg-thetas; multiplied by `quantity` (number of strategies) and contract multiplier 100). Convert to % portfolio: `theta_dollars / state.portfolio_value_usd × 100`. **Signed contribution.** For equity: 0. For CLOSE/ADD on options: same before/after pattern as gross — contribution is the signed change in theta footprint, computed via `state.existing_positions[proposal.existing_position_id].current_greeks.theta`.
+  - **Magnitude classification.** Theta is signed (long options decay → negative theta; short options earn theta → positive theta). The rule constrains absolute magnitude (`max daily theta`). The contribution function returns the *signed* theta change; `current + Σ contributions` produces a signed `projected_theta`; the projection engine takes `|projected_after|` before computing `consumption_pct`. The dispatch is keyed on the rule's `magnitude` flag in `RuleSpec` (see § Rule-contribution registry — `RuleSpec` definition below). Theta sets `magnitude=True`; vega sets `magnitude=True`; all other rules default to `magnitude=False`.
   - `unit = "% of portfolio per day"`
 - **`portfolio_vega_pct_per_iv_point`** (T1+T2+T3):
   - `read_current(state, config)` — returns `state.portfolio_vega_pct_per_iv_point`.
