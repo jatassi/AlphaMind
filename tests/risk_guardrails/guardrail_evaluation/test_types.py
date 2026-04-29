@@ -376,6 +376,8 @@ def test_public_api_surface_matches_documented_re_exports() -> None:
         "RealizedVolEntry",
         # Black-Scholes core (story 02a)
         "bs_greeks",
+        # Delta-adjusted exposure (story 03)
+        "compute_delta_adjusted_exposure",
     }
 
     public = {name for name in dir(module) if not name.startswith("_")}
