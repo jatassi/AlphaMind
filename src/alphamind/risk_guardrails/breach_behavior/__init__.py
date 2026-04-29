@@ -41,6 +41,7 @@ from alphamind.risk_guardrails.breach_behavior.types import (
     SecondaryBreachCheckResult,
     SecondaryBreachOutcome,
 )
+from alphamind.risk_guardrails.breach_behavior.zones import classify_zone
 
 __all__ = [
     "ActiveRiskParameterSet",
@@ -74,5 +75,6 @@ __all__ = [
     "RiskZone",
     "SecondaryBreachCheckResult",
     "SecondaryBreachOutcome",
+    "classify_zone",
     "load_breach_behavior_config",
 ]
