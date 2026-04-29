@@ -12,12 +12,29 @@ import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from alphamind.distillation.replay_harness.engine import _migrate_isolated_db
 from alphamind.distillation.replay_harness.fixtures import (
     FixtureSlice,
     load_fixture_slice,
 )
+
+
+class FrozenDatetime:
+    """Stand-in for ``datetime`` whose ``now`` returns a fixed UTC instant.
+
+    Patched against ``alphamind.distillation.replay_harness.cli.datetime``
+    so the CLI's ``datetime.now(UTC)`` resolves identically across tests
+    that depend on a stable ``report_id`` / ``generated_at``.
+    """
+
+    def __init__(self, fixed: datetime) -> None:
+        self._fixed = fixed
+
+    def now(self, tz: Any = None) -> datetime:
+        return self._fixed
+
 
 SECTOR_TICKERS: dict[str, tuple[str, str, str]] = {
     "NVDA": ("semis", "tech_semis", "SMH"),
