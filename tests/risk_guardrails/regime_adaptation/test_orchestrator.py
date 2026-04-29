@@ -15,7 +15,7 @@ all other inputs are passed in. Tests exercise:
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -84,6 +84,17 @@ CONFIG_DIR = REPO_ROOT / "config"
 
 def _read_yaml(name: str) -> dict[str, Any]:
     return cast(dict[str, Any], yaml.safe_load((CONFIG_DIR / name).read_text()))
+
+
+def _multiplier_snapshot(payload: Mapping[str, object], key: str) -> dict[str, float]:
+    """Cast a multiplier-snapshot field on an audit payload to ``dict[str, float]``.
+
+    The orchestrator stores per-rule multiplier maps under ``Mapping[str, object]``
+    payloads; this helper hides the cast at the test boundary so individual
+    assertions stay readable.
+    """
+    snapshot = payload[key]
+    return dict(cast(Mapping[str, float], snapshot))
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +422,38 @@ class TestTighteningTransition:
         assert payload["prior_regime"] == "normal"
         assert payload["new_regime"] == "crisis"
 
+    def test_payload_carries_static_and_applied_multipliers(self, session: Session) -> None:
+        """Tightening from STABLE: applied_prior == static_prior; applied_new == static_new."""
+        _persist_prior(session, active_regime=Regime.normal)
+        inputs = _build_inputs(
+            distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,
+            distillation_vix_level=40.0,
+        )
+
+        output = resolve_regime_adaptation(
+            invocation_id="INV-TIGHT-MULTS",
+            now_utc=_NOW,
+            inputs=inputs,
+            session=session,
+        )
+
+        transition_entries = [
+            entry for entry in output.audit_log_entries if entry.event_kind == "regime_transition"
+        ]
+        assert len(transition_entries) == 1
+        payload = transition_entries[0].payload
+
+        config = _loaded_config()
+        static_prior = dict(config.regimes[Regime.normal].multipliers)
+        static_new = dict(config.regimes[Regime.crisis].multipliers)
+
+        assert _multiplier_snapshot(payload, "static_prior_multipliers_snapshot") == static_prior
+        assert _multiplier_snapshot(payload, "static_new_multipliers_snapshot") == static_new
+        # Tightening from STABLE: applied prior equals static prior.
+        assert _multiplier_snapshot(payload, "applied_prior_multipliers_snapshot") == static_prior
+        # Tightening applies the destination regime's multipliers immediately.
+        assert _multiplier_snapshot(payload, "applied_new_multipliers_snapshot") == static_new
+
 
 class TestTighteningWithBreaches:
     """Tightening transition with held positions over the new tighter limit."""
@@ -566,6 +609,67 @@ class TestTighteningOverridesLoosening:
         ]
         assert len(transition_entries) == 1
         assert transition_entries[0].payload["direction"] == "tightening"
+
+    def test_applied_prior_reflects_loosening_interpolation(self, session: Session) -> None:
+        """Prior LOOSENING: applied_prior_multipliers_snapshot is the interpolated map.
+
+        With prior state ``LOOSENING(remaining=2, origin=elevated, active=normal)``,
+        the prior invocation ran at the interpolation between elevated and normal at
+        invocation 2 of 3 — i.e. fraction = (3 - 2 + 1) / 3 = 2/3 along the path
+        from elevated → normal.
+        """
+        from alphamind.risk_guardrails.regime_adaptation.interpolation import (
+            interpolate_loosening_multipliers,
+        )
+
+        _persist_prior(
+            session,
+            active_regime=Regime.normal,
+            transition_state=RegimeTransitionState.LOOSENING,
+            transition_invocations_remaining=2,
+            transition_started_invocation_id="INV-OLD",
+            transition_origin_regime=Regime.elevated,
+        )
+        inputs = _build_inputs(
+            distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,
+            distillation_vix_level=40.0,
+        )
+
+        output = resolve_regime_adaptation(
+            invocation_id="INV-LOOSE-TIGHT",
+            now_utc=_NOW,
+            inputs=inputs,
+            session=session,
+        )
+
+        transition_entries = [
+            entry for entry in output.audit_log_entries if entry.event_kind == "regime_transition"
+        ]
+        assert len(transition_entries) == 1
+        payload = transition_entries[0].payload
+
+        config = _loaded_config()
+        static_prior = dict(config.regimes[Regime.normal].multipliers)
+        static_new = dict(config.regimes[Regime.crisis].multipliers)
+        expected_applied_prior = dict(
+            interpolate_loosening_multipliers(
+                origin_multipliers=config.regimes[Regime.elevated].multipliers,
+                destination_multipliers=config.regimes[Regime.normal].multipliers,
+                transition_invocations_remaining=2,
+            )
+        )
+
+        assert _multiplier_snapshot(payload, "static_prior_multipliers_snapshot") == static_prior
+        assert _multiplier_snapshot(payload, "static_new_multipliers_snapshot") == static_new
+        assert (
+            _multiplier_snapshot(payload, "applied_prior_multipliers_snapshot")
+            == expected_applied_prior
+        )
+        # Tightening: applied new equals the static destination immediately.
+        assert _multiplier_snapshot(payload, "applied_new_multipliers_snapshot") == static_new
+        # Sanity: applied prior should differ from static prior because we were
+        # mid-loosening from elevated → normal.
+        assert _multiplier_snapshot(payload, "applied_prior_multipliers_snapshot") != static_prior
 
 
 # ---------------------------------------------------------------------------

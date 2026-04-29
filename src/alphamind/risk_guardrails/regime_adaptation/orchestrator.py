@@ -178,6 +178,7 @@ def resolve_regime_adaptation(
         prior_state=prior_state,
         next_transition=next_transition,
         active_regime_multipliers=active_regime_multipliers,
+        applied_new_multipliers=interpolated_multipliers,
         overlay_decisions=overlay_decisions,
         inputs=inputs,
         now_utc=now_utc,
@@ -280,6 +281,7 @@ def _emit_audit_log(
     prior_state: RegimeAdaptationState | None,
     next_transition: NextTransitionDecision,
     active_regime_multipliers: Mapping[str, float],
+    applied_new_multipliers: Mapping[str, float],
     overlay_decisions: tuple[OverlayActivationDecision, ...],
     inputs: RegimeAdaptationInputs,
     now_utc: datetime,
@@ -291,6 +293,7 @@ def _emit_audit_log(
         prior_state=prior_state,
         next_transition=next_transition,
         active_regime_multipliers=active_regime_multipliers,
+        applied_new_multipliers=applied_new_multipliers,
         loaded_config=inputs.loaded_config,
     )
     if transition_entry is not None:
@@ -313,9 +316,27 @@ def _maybe_regime_transition_entry(
     prior_state: RegimeAdaptationState | None,
     next_transition: NextTransitionDecision,
     active_regime_multipliers: Mapping[str, float],
+    applied_new_multipliers: Mapping[str, float],
     loaded_config: LoadedConfig,
 ) -> RegimeAdaptationAuditEntry | None:
-    """Emit a ``regime_transition`` entry when the active regime changed."""
+    """Emit a ``regime_transition`` entry when the active regime changed.
+
+    The payload captures both the *static* per-regime multipliers (from
+    ``loaded_config.regimes``) and the *applied* per-regime multipliers
+    (after loosening interpolation, when applicable):
+
+    - ``static_prior_multipliers_snapshot`` / ``static_new_multipliers_snapshot``
+      mirror the regime YAML maps verbatim.
+    - ``applied_prior_multipliers_snapshot`` is the multiplier map the
+      orchestrator actually used at the prior invocation; equal to the static
+      prior map unless the prior state was ``LOOSENING``, in which case it is
+      reconstructed via ``resolve_active_multipliers`` over the prior state's
+      transition triple.
+    - ``applied_new_multipliers_snapshot`` is the multiplier map the
+      orchestrator is using *this* invocation; equal to the static new map for
+      tightening transitions and to the interpolated map for loosening
+      transitions' first invocation.
+    """
     if prior_state is None:
         return None
     if next_transition.active_regime == prior_state.active_regime:
@@ -324,20 +345,55 @@ def _maybe_regime_transition_entry(
     prior_index = regime_ladder_index(prior_state.active_regime)
     new_index = regime_ladder_index(next_transition.active_regime)
     direction = "tightening" if new_index > prior_index else "loosening"
-    prior_multipliers = loaded_config.regimes[prior_state.active_regime].multipliers
+
+    static_prior_multipliers = loaded_config.regimes[prior_state.active_regime].multipliers
+    applied_prior_multipliers = _reconstruct_prior_applied_multipliers(
+        prior_state=prior_state,
+        loaded_config=loaded_config,
+    )
     payload: Mapping[str, object] = MappingProxyType(
         {
             "prior_regime": prior_state.active_regime.value,
             "new_regime": next_transition.active_regime.value,
             "direction": direction,
-            "prior_multipliers_snapshot": MappingProxyType(dict(prior_multipliers)),
-            "new_multipliers_snapshot": MappingProxyType(dict(active_regime_multipliers)),
+            "static_prior_multipliers_snapshot": MappingProxyType(dict(static_prior_multipliers)),
+            "static_new_multipliers_snapshot": MappingProxyType(dict(active_regime_multipliers)),
+            "applied_prior_multipliers_snapshot": MappingProxyType(dict(applied_prior_multipliers)),
+            "applied_new_multipliers_snapshot": MappingProxyType(dict(applied_new_multipliers)),
             "transition_invocations_remaining": next_transition.transition_invocations_remaining,
         }
     )
     return RegimeAdaptationAuditEntry(
         event_kind=RegimeAdaptationAuditEventKind.regime_transition,
         payload=payload,
+    )
+
+
+def _reconstruct_prior_applied_multipliers(
+    *,
+    prior_state: RegimeAdaptationState,
+    loaded_config: LoadedConfig,
+) -> Mapping[str, float]:
+    """Reconstruct the multiplier map the orchestrator applied at the prior invocation.
+
+    For prior states whose ``transition_state`` was ``STABLE`` or
+    ``TIGHTENING``, the applied map equals the static destination regime map.
+    For prior ``LOOSENING`` states, the orchestrator interpolated between
+    ``transition_origin_regime`` and ``active_regime`` at
+    ``transition_invocations_remaining``; we redo that computation here via
+    ``resolve_active_multipliers``.
+    """
+    prior_active_multipliers = loaded_config.regimes[prior_state.active_regime].multipliers
+    transition_origin_multipliers = (
+        loaded_config.regimes[prior_state.transition_origin_regime].multipliers
+        if prior_state.transition_origin_regime is not None
+        else None
+    )
+    return resolve_active_multipliers(
+        transition_state=prior_state.transition_state,
+        transition_invocations_remaining=prior_state.transition_invocations_remaining,
+        active_regime_multipliers=prior_active_multipliers,
+        transition_origin_multipliers=transition_origin_multipliers,
     )
 
 
