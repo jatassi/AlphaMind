@@ -31,6 +31,7 @@ from alphamind.risk_guardrails.regime_adaptation import (
     NextTransitionDecision,
     OverlayActivationDecision,
     RegimeAdaptationAuditEntry,
+    RegimeAdaptationAuditEventKind,
     RegimeAdaptationOutput,
     RegimeAdaptationState,
     RegimeTransitionBreach,
@@ -193,7 +194,9 @@ _RECORD_BUILDERS: tuple[tuple[type, Callable[[], object]], ...] = (
     (OverlayActivationDecision, _build_overlay_activation_decision),
     (
         RegimeAdaptationAuditEntry,
-        lambda: RegimeAdaptationAuditEntry(event_kind="regime_transition", payload={}),
+        lambda: RegimeAdaptationAuditEntry(
+            event_kind=RegimeAdaptationAuditEventKind.regime_transition, payload={}
+        ),
     ),
     (RegimeAdaptationOutput, _build_regime_adaptation_output),
     (RegimeAdaptationState, _baseline_stable_state),
@@ -672,10 +675,10 @@ def test_stale_calendar_report_supports_negative_days_until() -> None:
 
 def test_regime_adaptation_audit_entry_constructible() -> None:
     entry = RegimeAdaptationAuditEntry(
-        event_kind="regime_transition",
+        event_kind=RegimeAdaptationAuditEventKind.regime_transition,
         payload=MappingProxyType({"prior": "normal", "new": "elevated"}),
     )
-    assert entry.event_kind == "regime_transition"
+    assert entry.event_kind == RegimeAdaptationAuditEventKind.regime_transition
     assert entry.payload["new"] == "elevated"
 
 

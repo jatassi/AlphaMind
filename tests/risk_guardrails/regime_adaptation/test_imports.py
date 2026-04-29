@@ -28,6 +28,7 @@ def test_top_level_reexports_every_typed_record() -> None:
         "NextTransitionDecision",
         "OverlayActivationDecision",
         "RegimeAdaptationAuditEntry",
+        "RegimeAdaptationAuditEventKind",
         "RegimeAdaptationOutput",
         "RegimeAdaptationState",
         "RegimeTransitionBreach",

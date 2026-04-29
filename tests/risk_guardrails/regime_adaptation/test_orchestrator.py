@@ -68,6 +68,7 @@ from alphamind.risk_guardrails.regime_adaptation import (
     CompositeAlertState,
     EventCalendar,
     EventCalendarEntry,
+    RegimeAdaptationAuditEventKind,
     RegimeAdaptationInputs,
     RegimeAdaptationOutput,
     RegimeAdaptationState,
@@ -985,3 +986,43 @@ class TestNoCompositeAlerts:
             entry for entry in activations if entry.payload["overlay"] == Overlay.stress
         ]
         assert stress_activations == []
+
+
+# ---------------------------------------------------------------------------
+# Audit event-kind enum
+# ---------------------------------------------------------------------------
+
+
+class TestAuditEventKindEnum:
+    """``event_kind`` is a ``RegimeAdaptationAuditEventKind`` member, not a bare string."""
+
+    def test_enum_members_cover_every_kind_emitted(self) -> None:
+        kinds = {member.value for member in RegimeAdaptationAuditEventKind}
+        assert kinds == {
+            "regime_transition",
+            "overlay_activated",
+            "overlay_deactivated",
+            "regime_skip_emergency",
+            "stale_event_calendar",
+        }
+
+    def test_orchestrator_emits_enum_members(self, session: Session) -> None:
+        _persist_prior(session, active_regime=Regime.normal)
+        inputs = _build_inputs(
+            distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,
+            distillation_vix_level=40.0,
+            distillation_regime_skip_emergency=True,
+        )
+
+        output = resolve_regime_adaptation(
+            invocation_id="INV-ENUM",
+            now_utc=_NOW,
+            inputs=inputs,
+            session=session,
+        )
+
+        for entry in output.audit_log_entries:
+            assert isinstance(entry.event_kind, RegimeAdaptationAuditEventKind)
+        kinds = {entry.event_kind for entry in output.audit_log_entries}
+        assert RegimeAdaptationAuditEventKind.regime_transition in kinds
+        assert RegimeAdaptationAuditEventKind.regime_skip_emergency in kinds

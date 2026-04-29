@@ -64,19 +64,11 @@ from alphamind.risk_guardrails.regime_adaptation.types import (
     NextTransitionDecision,
     OverlayActivationDecision,
     RegimeAdaptationAuditEntry,
+    RegimeAdaptationAuditEventKind,
     RegimeAdaptationInputs,
     RegimeAdaptationOutput,
     RegimeAdaptationState,
 )
-
-# Audit-log event kinds emitted by the orchestrator. The closed vocabulary lives
-# here (the only producer); the activity-log table CHECK constraint will mirror
-# these strings when the table ships per the story file's Notes.
-_EVENT_REGIME_TRANSITION = "regime_transition"
-_EVENT_OVERLAY_ACTIVATED = "overlay_activated"
-_EVENT_OVERLAY_DEACTIVATED = "overlay_deactivated"
-_EVENT_REGIME_SKIP_EMERGENCY = "regime_skip_emergency"
-_EVENT_STALE_EVENT_CALENDAR = "stale_event_calendar"
 
 
 def resolve_regime_adaptation(
@@ -343,7 +335,10 @@ def _maybe_regime_transition_entry(
             "transition_invocations_remaining": next_transition.transition_invocations_remaining,
         }
     )
-    return RegimeAdaptationAuditEntry(event_kind=_EVENT_REGIME_TRANSITION, payload=payload)
+    return RegimeAdaptationAuditEntry(
+        event_kind=RegimeAdaptationAuditEventKind.regime_transition,
+        payload=payload,
+    )
 
 
 def _overlay_change_entries(
@@ -360,7 +355,7 @@ def _overlay_change_entries(
         if is_active and not was_active:
             entries.append(
                 RegimeAdaptationAuditEntry(
-                    event_kind=_EVENT_OVERLAY_ACTIVATED,
+                    event_kind=RegimeAdaptationAuditEventKind.overlay_activated,
                     payload=MappingProxyType(
                         {"overlay": decision.overlay, "rationale": decision.rationale}
                     ),
@@ -369,7 +364,7 @@ def _overlay_change_entries(
         elif was_active and not is_active:
             entries.append(
                 RegimeAdaptationAuditEntry(
-                    event_kind=_EVENT_OVERLAY_DEACTIVATED,
+                    event_kind=RegimeAdaptationAuditEventKind.overlay_deactivated,
                     payload=MappingProxyType({"overlay": decision.overlay}),
                 )
             )
@@ -391,7 +386,10 @@ def _regime_skip_emergency_entry(
             ),
         }
     )
-    return RegimeAdaptationAuditEntry(event_kind=_EVENT_REGIME_SKIP_EMERGENCY, payload=payload)
+    return RegimeAdaptationAuditEntry(
+        event_kind=RegimeAdaptationAuditEventKind.regime_skip_emergency,
+        payload=payload,
+    )
 
 
 def _maybe_stale_calendar_entry(
@@ -409,4 +407,7 @@ def _maybe_stale_calendar_entry(
             "days_until_latest": report.days_until_latest,
         }
     )
-    return RegimeAdaptationAuditEntry(event_kind=_EVENT_STALE_EVENT_CALENDAR, payload=payload)
+    return RegimeAdaptationAuditEntry(
+        event_kind=RegimeAdaptationAuditEventKind.stale_event_calendar,
+        payload=payload,
+    )

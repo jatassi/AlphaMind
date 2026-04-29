@@ -21,6 +21,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 
 from alphamind.config.models.overlays import EventType, Overlay
 from alphamind.config.models.regimes import Regime
@@ -230,19 +231,31 @@ class OverlayActivationDecision:
 # ---------------------------------------------------------------------------
 
 
+class RegimeAdaptationAuditEventKind(StrEnum):
+    """Closed vocabulary of audit-log event kinds the orchestrator emits.
+
+    The orchestrator is the only producer; the activity-log table CHECK
+    constraint will mirror these member values when the table ships.
+    """
+
+    regime_transition = "regime_transition"
+    overlay_activated = "overlay_activated"
+    overlay_deactivated = "overlay_deactivated"
+    regime_skip_emergency = "regime_skip_emergency"
+    stale_event_calendar = "stale_event_calendar"
+
+
 @dataclass(frozen=True, slots=True)
 class RegimeAdaptationAuditEntry:
     """An activity-log entry the orchestrator emits for review-surface visibility.
 
-    ``event_kind`` is one of ``"regime_transition"``, ``"overlay_activated"``,
-    ``"overlay_deactivated"``, ``"regime_skip_emergency"``.
-
+    ``event_kind`` is a :class:`RegimeAdaptationAuditEventKind` member.
     Activity-log persistence is not in scope for this work tree — the
     orchestrator returns these entries as typed records and the caller
     decides when persistence wires up.
     """
 
-    event_kind: str
+    event_kind: RegimeAdaptationAuditEventKind
     payload: Mapping[str, object]
 
 
