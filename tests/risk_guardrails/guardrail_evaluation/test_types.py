@@ -27,6 +27,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     FeatureDisabledRejection,
     FeatureFlagsView,
     Greeks,
+    IvLookupResult,
     IvProvider,
     IvSource,
     LibraryConfig,
@@ -166,16 +167,22 @@ def _build_portfolio_snapshot() -> PortfolioStateSnapshot:
 
 
 class _FakeIvProvider:
-    """Minimal stand-in for the story-02b ``IvProvider`` Protocol."""
+    """Minimal stand-in conforming to the story-02b ``IvProvider`` Protocol."""
 
-    def lookup(
+    def lookup_iv(
         self,
+        *,
         underlying: str,
         strike: float,
         expiration: date,
+        contract_type: ContractType,
         as_of: datetime,
-    ) -> tuple[float, IvSource]:
-        return 0.30, IvSource.SURFACE
+    ) -> IvLookupResult:
+        return IvLookupResult(
+            implied_volatility=0.30,
+            source=IvSource.SURFACE,
+            notes=None,
+        )
 
 
 def _build_market_inputs() -> MarketInputs:
@@ -359,8 +366,14 @@ def test_public_api_surface_matches_documented_re_exports() -> None:
         "FeatureDisabledRejection",
         "RuleProjection",
         "LibraryOutput",
-        # Forward-declared protocol from story 02b
+        # IV-sourcing surface from story 02b
+        "FixtureIvProvider",
+        "IvLookupError",
+        "IvLookupResult",
         "IvProvider",
+        "IvQuote",
+        "IvSurfaceEntry",
+        "RealizedVolEntry",
         # Black-Scholes core (story 02a)
         "bs_greeks",
     }
@@ -372,11 +385,11 @@ def test_public_api_surface_matches_documented_re_exports() -> None:
 
 
 def test_iv_provider_protocol_typing() -> None:
-    """``MarketInputs.iv_provider`` is typed against the forward ``IvProvider``
-    Protocol declaration. A class with the protocol-required ``lookup``
-    signature is structurally compatible (mypy enforces this; at runtime we
-    just confirm the protocol is importable and the field accepts the value).
-    """
+    """``MarketInputs.iv_provider`` is typed against the implemented
+    ``IvProvider`` Protocol from story 02b. A class with the protocol-required
+    ``lookup_iv`` signature is structurally compatible (mypy enforces this; at
+    runtime we just confirm the protocol is importable and the field accepts
+    the value)."""
     assert typing.get_type_hints(MarketInputs)["iv_provider"] is IvProvider
 
     market = _build_market_inputs()

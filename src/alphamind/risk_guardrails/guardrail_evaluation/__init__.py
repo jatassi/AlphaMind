@@ -8,6 +8,15 @@ boundary contract every later story builds on.
 """
 
 from alphamind.risk_guardrails.guardrail_evaluation.black_scholes import bs_greeks
+from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import (
+    FixtureIvProvider,
+    IvLookupError,
+    IvLookupResult,
+    IvProvider,
+    IvQuote,
+    IvSurfaceEntry,
+    RealizedVolEntry,
+)
 from alphamind.risk_guardrails.guardrail_evaluation.types import (
     Action,
     AssetType,
@@ -19,7 +28,6 @@ from alphamind.risk_guardrails.guardrail_evaluation.types import (
     FeatureDisabledRejection,
     FeatureFlagsView,
     Greeks,
-    IvProvider,
     IvSource,
     LibraryConfig,
     LibraryOutput,
@@ -35,8 +43,9 @@ from alphamind.risk_guardrails.guardrail_evaluation.types import (
 # ``dir(...)`` reflects the documented re-export list verbatim — the
 # acceptance test asserts the surface is exactly the names below and nothing
 # more.
-globals().pop("black_scholes", None)
-globals().pop("types", None)
+for _submodule in ("black_scholes", "iv_sourcing", "types"):
+    globals().pop(_submodule, None)
+del _submodule
 
 __all__ = [
     "Action",
@@ -48,15 +57,21 @@ __all__ = [
     "ExistingPosition",
     "FeatureDisabledRejection",
     "FeatureFlagsView",
+    "FixtureIvProvider",
     "Greeks",
+    "IvLookupError",
+    "IvLookupResult",
     "IvProvider",
+    "IvQuote",
     "IvSource",
+    "IvSurfaceEntry",
     "LibraryConfig",
     "LibraryOutput",
     "MarketInputs",
     "OptionLeg",
     "PortfolioStateSnapshot",
     "ProposedDelta",
+    "RealizedVolEntry",
     "RuleProjection",
     "Status",
     "bs_greeks",

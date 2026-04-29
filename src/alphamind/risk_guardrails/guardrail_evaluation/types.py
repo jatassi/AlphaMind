@@ -21,7 +21,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import IvProvider
 
 # ---------------------------------------------------------------------------
 # Classification enums
@@ -100,32 +103,6 @@ class OptionLeg:
     strike: float
     expiration: date
     quantity: int
-
-
-# ---------------------------------------------------------------------------
-# IV provider — forward Protocol declaration
-# ---------------------------------------------------------------------------
-
-
-@runtime_checkable
-class IvProvider(Protocol):
-    """Forward declaration of the IV-sourcing protocol implemented in story 02b.
-
-    Story 02b replaces this declaration with the implemented protocol; the
-    boundary contract here only needs the type to be referenceable so
-    ``MarketInputs.iv_provider`` type-checks. The signature is the minimal
-    surface the Black-Scholes path needs: lookup an IV for an underlying at a
-    given strike/expiration as of a snapshot, and report which source supplied
-    it.
-    """
-
-    def lookup(
-        self,
-        underlying: str,
-        strike: float,
-        expiration: date,
-        as_of: datetime,
-    ) -> tuple[float, IvSource]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -401,3 +378,10 @@ class LibraryOutput:
                 self.feature_disabled,
             )
         )
+
+
+# ``IvProvider`` is bound into this module's runtime namespace by
+# ``iv_sourcing`` (story 02b) after that module finishes loading, so
+# ``typing.get_type_hints(MarketInputs)`` resolves the forward
+# ``"IvProvider"`` annotation against this module's globals. The Protocol's
+# canonical definition lives there.
