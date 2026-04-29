@@ -19,6 +19,10 @@ from alphamind.risk_guardrails.regime_adaptation.regime_mapping import (
     from_regime_classification,
     map_distillation_to_guardrail_regime,
 )
+from alphamind.risk_guardrails.regime_adaptation.stress_activator import (
+    evaluate_stress_overlay,
+    fetch_composite_alert_state,
+)
 from alphamind.risk_guardrails.regime_adaptation.transition_machine import (
     compute_next_transition,
 )
@@ -55,6 +59,8 @@ __all__ = [
     "StaleCalendarReport",
     "VixBoundaryThresholds",
     "compute_next_transition",
+    "evaluate_stress_overlay",
+    "fetch_composite_alert_state",
     "from_regime_classification",
     "interpolate_loosening_multipliers",
     "load_event_calendar",
