@@ -382,6 +382,12 @@ def test_public_api_surface_matches_documented_re_exports() -> None:
         "from_resolved_config",
         # Delta-adjusted exposure (story 03)
         "compute_delta_adjusted_exposure",
+        # Projection engine and rule-contribution registry (story 04)
+        "ProjectionError",
+        "RuleSpec",
+        "build_active_specs",
+        "project_all",
+        "project_rule",
     }
 
     public = {name for name in dir(module) if not name.startswith("_")}
