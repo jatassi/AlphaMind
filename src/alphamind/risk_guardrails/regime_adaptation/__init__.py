@@ -18,6 +18,9 @@ from alphamind.risk_guardrails.regime_adaptation.interpolation import (
     interpolate_loosening_multipliers,
     resolve_active_multipliers,
 )
+from alphamind.risk_guardrails.regime_adaptation.parameter_set import (
+    assemble_active_risk_parameter_set,
+)
 from alphamind.risk_guardrails.regime_adaptation.persistence import (
     insert_state,
     select_most_recent_state,
@@ -65,6 +68,7 @@ __all__ = [
     "RuleMetadata",
     "StaleCalendarReport",
     "VixBoundaryThresholds",
+    "assemble_active_risk_parameter_set",
     "compute_next_transition",
     "detect_regime_transition_breaches",
     "evaluate_stress_overlay",
