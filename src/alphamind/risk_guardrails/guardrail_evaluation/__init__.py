@@ -15,6 +15,10 @@ from alphamind.risk_guardrails.guardrail_evaluation.effective_limits import (
     EffectiveLimitAdapterError,
     from_resolved_config,
 )
+from alphamind.risk_guardrails.guardrail_evaluation.evaluate import (
+    LibraryInputError,
+    evaluate_proposals,
+)
 from alphamind.risk_guardrails.guardrail_evaluation.feature_gate import (
     classify_feature_gate,
 )
@@ -66,6 +70,7 @@ for _submodule in (
     "black_scholes",
     "delta_adjusted",
     "effective_limits",
+    "evaluate",
     "feature_gate",
     "iv_sourcing",
     "projection",
@@ -95,6 +100,7 @@ __all__ = [
     "IvSource",
     "IvSurfaceEntry",
     "LibraryConfig",
+    "LibraryInputError",
     "LibraryOutput",
     "MarketInputs",
     "OptionLeg",
@@ -109,6 +115,7 @@ __all__ = [
     "build_active_specs",
     "classify_feature_gate",
     "compute_delta_adjusted_exposure",
+    "evaluate_proposals",
     "from_resolved_config",
     "project_all",
     "project_rule",
