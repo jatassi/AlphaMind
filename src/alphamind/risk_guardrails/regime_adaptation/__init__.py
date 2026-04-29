@@ -15,6 +15,10 @@ from alphamind.risk_guardrails.regime_adaptation.interpolation import (
     interpolate_loosening_multipliers,
     resolve_active_multipliers,
 )
+from alphamind.risk_guardrails.regime_adaptation.persistence import (
+    insert_state,
+    select_most_recent_state,
+)
 from alphamind.risk_guardrails.regime_adaptation.regime_mapping import (
     from_regime_classification,
     map_distillation_to_guardrail_regime,
@@ -62,11 +66,13 @@ __all__ = [
     "evaluate_stress_overlay",
     "fetch_composite_alert_state",
     "from_regime_classification",
+    "insert_state",
     "interpolate_loosening_multipliers",
     "load_event_calendar",
     "map_distillation_to_guardrail_regime",
     "overlays_to_strings",
     "resolve_active_multipliers",
     "select_events_within_window",
+    "select_most_recent_state",
     "warn_on_stale_calendar",
 ]
