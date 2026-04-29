@@ -249,7 +249,9 @@ def _invoke_library(
         raise ValueError(msg) from exc
 
 
-def _build_close_delta(proposed_close: ProposedClose) -> ProposedDeltaProtocol:
+def _build_close_delta(
+    proposed_close: ProposedClose, *, id_prefix: str = "secondary_check"
+) -> ProposedDeltaProtocol:
     """Translate a ``ProposedClose`` into a ``ProposedDelta``-shaped object.
 
     The library's ``ProposedDelta`` dataclass is frozen with ``slots=True``, so
@@ -257,9 +259,14 @@ def _build_close_delta(proposed_close: ProposedClose) -> ProposedDeltaProtocol:
     construction (which would couple this primitive to the upstream module
     path). Production callers using the real library will type-check via
     structural compatibility with ``ProposedDeltaProtocol``.
+
+    ``id_prefix`` distinguishes the synthetic delta's id namespace; the
+    secondary-breach primitive uses the default, while the cascade orchestrator
+    passes ``"cascade_followup"`` so library callers can disambiguate the two
+    projection sources in audit traces.
     """
     return _CloseDelta(
-        id=f"secondary_check.{proposed_close.position_id}",
+        id=f"{id_prefix}.{proposed_close.position_id}",
         existing_position_id=proposed_close.position_id,
         underlying=proposed_close.ticker,
         notional_usd=proposed_close.close_size_usd,

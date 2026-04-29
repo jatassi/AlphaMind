@@ -289,6 +289,14 @@ class ScriptedLibrary:
     Returns ``outputs[i]`` on the i-th call, repeating the last entry for
     additional calls. Records every invocation so tests can assert call
     counts and proposal shapes.
+
+    Note this fixture is *not* input-aware: identical inputs across two calls
+    produce different outputs if scripted that way. For tests that need to
+    *enforce* the orchestrator's projection plumbing, use
+    :class:`InputAwareLibrary` instead — it dispatches based on the proposals
+    tuple (specifically by the position-ids in the ``existing_position_id``
+    field) and raises when the orchestrator skips a close it should have
+    threaded through.
     """
 
     outputs: list[StubLibraryOutput]
@@ -314,3 +322,52 @@ class ScriptedLibrary:
         )
         idx = min(len(self.calls) - 1, len(self.outputs) - 1)
         return self.outputs[idx]
+
+
+@dataclass
+class InputAwareLibrary:
+    """Input-aware ``evaluate_proposals`` stub for cascade-projection tests.
+
+    Returns ``baseline_output`` on calls with ``proposals=()``; otherwise
+    looks up an output keyed by the frozen set of ``existing_position_id``
+    values in the proposals tuple. Used to enforce that the cascade
+    orchestrator actually plumbs CLOSE-action ProposedDeltas through the
+    library — a no-op call with ``proposals=()`` after the first close has
+    been emitted will hit the baseline branch and the test will detect the
+    bug.
+    """
+
+    baseline_output: StubLibraryOutput
+    post_close_outputs: dict[frozenset[str], StubLibraryOutput]
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    def __call__(
+        self,
+        *,
+        state: Any,
+        proposals: Sequence[Any],
+        config: Any,
+        market: Any,
+        delta_buffer_factor: float = 1.0,
+    ) -> StubLibraryOutput:
+        proposals_tuple = tuple(proposals)
+        self.calls.append(
+            {
+                "state": state,
+                "proposals": proposals_tuple,
+                "config": config,
+                "market": market,
+                "delta_buffer_factor": delta_buffer_factor,
+            }
+        )
+        if not proposals_tuple:
+            return self.baseline_output
+        position_ids = frozenset(p.existing_position_id for p in proposals_tuple)
+        if position_ids in self.post_close_outputs:
+            return self.post_close_outputs[position_ids]
+        msg = (
+            f"InputAwareLibrary: no scripted output for proposals "
+            f"{[p.existing_position_id for p in proposals_tuple]!r}; "
+            f"available keys: {sorted(map(sorted, self.post_close_outputs))!r}"
+        )
+        raise AssertionError(msg)

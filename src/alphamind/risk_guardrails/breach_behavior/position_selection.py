@@ -83,6 +83,9 @@ def _ticker_of(position: PositionRecord) -> str:
 
     Equity positions carry a ticker directly; options/strategies surface their
     underlying or label so the rationale string remains intelligible to the PM.
+    Falls through to ``position_id`` when none of the instrument-specific
+    detail records is populated; this keeps callers (rationale strings, audit
+    logs) from crashing on degenerate inputs.
     """
     if isinstance(position.equity_details, EquityPositionDetails):
         return position.equity_details.ticker

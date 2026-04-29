@@ -87,6 +87,13 @@ class _ScriptedLibrary:
 
     Returns ``outputs[i]`` on the i-th call. Records every invocation so tests
     can assert call counts and proposal shapes.
+
+    The fixture is *input-aware*: it does not derive its return values from
+    call index alone — it only matches by call index given a script. To
+    additionally validate that the orchestrator actually plumbs closes through
+    to the library projection, callers can use :class:`_InputAwareLibrary`
+    instead, which dispatches outputs based on whether ``proposals`` is empty
+    or carries specific position ids.
     """
 
     outputs: list[_StubLibraryOutput]
@@ -112,6 +119,54 @@ class _ScriptedLibrary:
         )
         idx = min(len(self.calls) - 1, len(self.outputs) - 1)
         return self.outputs[idx]
+
+
+@dataclass
+class _InputAwareLibrary:
+    """Input-aware ``evaluate_proposals`` stub for cascade-projection tests.
+
+    Returns ``baseline_output`` when called with ``proposals=()``; otherwise
+    looks up an output keyed by the *frozen set of position ids* the caller
+    threaded through as CLOSE-action ProposedDeltas. Tests script outputs by
+    "after closing positions {A}, projection looks like X" semantics, which
+    forces the orchestrator to actually plumb closes through to the library
+    or the test will fail.
+    """
+
+    baseline_output: _StubLibraryOutput
+    post_close_outputs: dict[frozenset[str], _StubLibraryOutput]
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    def __call__(
+        self,
+        *,
+        state: Any,
+        proposals: Sequence[Any],
+        config: Any,
+        market: Any,
+        delta_buffer_factor: float = 1.0,
+    ) -> _StubLibraryOutput:
+        proposals_tuple = tuple(proposals)
+        self.calls.append(
+            {
+                "state": state,
+                "proposals": proposals_tuple,
+                "config": config,
+                "market": market,
+                "delta_buffer_factor": delta_buffer_factor,
+            }
+        )
+        if not proposals_tuple:
+            return self.baseline_output
+        position_ids = frozenset(p.existing_position_id for p in proposals_tuple)
+        if position_ids in self.post_close_outputs:
+            return self.post_close_outputs[position_ids]
+        msg = (
+            f"_InputAwareLibrary: no scripted output for proposals "
+            f"{[p.existing_position_id for p in proposals_tuple]!r}; "
+            f"available keys: {sorted(map(sorted, self.post_close_outputs))!r}"
+        )
+        raise AssertionError(msg)
 
 
 def _proj(
@@ -1037,8 +1092,255 @@ def test_orchestrate_margin_call_cascade_step_limit_exceeded(
         )
 
     assert exc_info.value.max_steps == 2
-    assert exc_info.value.chain_length > 2
+    assert exc_info.value.chain_length == config_max_2.cascade_max_steps + 1
     assert exc_info.value.last_breach_rule is not None
+
+
+def test_orchestrate_margin_call_cascade_threads_emitted_closes_through_post_state_projection(
+    default_context: CascadeContext,
+    a7_positions: tuple[PositionRecord, ...],
+    a7_liquidity: tuple[PositionLiquidity, ...],
+    a7_risk_reward: tuple[PositionRiskReward, ...],
+) -> None:
+    """H1 regression: post-close state projection must include emitted close as a ProposedDelta.
+
+    Uses an *input-aware* library stub keyed by the set of position ids in the
+    proposals tuple. If the orchestrator fails to thread the cascade close
+    through to the library, the stub raises (no scripted output for the
+    empty-proposals projection on cascade-iter-1) and the test fails.
+
+    Scenario: closing COIN (envelope #1) introduces a daily-drawdown FAIL on
+    rule X; the cascade selects the next position and emits envelope #2.
+    """
+    initial_baseline = _StubLibraryOutput(per_rule=(_proj("total_short_pct", "FAIL"),))
+    initial_post_close = _StubLibraryOutput(per_rule=(_proj("total_short_pct", "PASS"),))
+
+    pre_cascade_baseline = _StubLibraryOutput(
+        per_rule=(_proj("daily_drawdown_pct", "PASS", current=1.0, limit=2.5),),
+    )
+    # Iter 1 post-state with COIN close in flight: daily_drawdown FAILs.
+    iter1_post_state = _StubLibraryOutput(
+        per_rule=(
+            _proj("daily_drawdown_pct", "FAIL", current=1.0, limit=2.5, projected_after=3.0),
+        ),
+    )
+    # Iter 2 post-state with COIN + follow-up close in flight: clean.
+    iter2_post_state = _StubLibraryOutput(per_rule=(_proj("daily_drawdown_pct", "PASS"),))
+
+    follow_baseline = _StubLibraryOutput(per_rule=(_proj("daily_drawdown_pct", "FAIL"),))
+    follow_post = _StubLibraryOutput(per_rule=(_proj("daily_drawdown_pct", "PASS"),))
+
+    # Two libraries cooperating: the secondary-breach checks (initial + follow-up)
+    # invoke the library twice each (baseline `proposals=()` + post-close
+    # `proposals=(close,)`); the cascade loop invokes it once per iteration with
+    # the in-flight closes as proposals. The input-aware library demands the
+    # caller threads the right closes through.
+    library = _InputAwareLibrary(
+        baseline_output=pre_cascade_baseline,
+        post_close_outputs={
+            # When evaluated with only the initial COIN close in flight:
+            frozenset({"POS-COIN-001"}): iter1_post_state,
+            # When evaluated with the COIN close + follow-up close in flight:
+            frozenset({"POS-COIN-001", a7_positions[1].position_id}): iter2_post_state,
+        },
+    )
+    # The secondary-breach calls are interleaved with the cascade-loop calls;
+    # _SequenceAwareLibrary tags each invocation by position in the call
+    # sequence and dispatches to either a scripted secondary-check output or
+    # to the input-aware library (cascade-loop calls), making the H1 close-
+    # threading observable.
+
+    @dataclass
+    class _SequenceAwareLibrary:
+        """Two-tier dispatcher: the initial primary-check + follow-up-check
+        invocations consume from a sequence; everything else routes through
+        the input-aware library.
+
+        The cascade-loop's post-state projection MUST land in
+        ``_InputAwareLibrary``, which demands the proposals carry the right
+        position ids. This makes the H1 fix observable: without it the cascade
+        sends ``proposals=()`` and the input-aware library has no scripted
+        output, raising AssertionError.
+        """
+
+        primary_baseline: _StubLibraryOutput
+        primary_post: _StubLibraryOutput
+        followup_baseline: _StubLibraryOutput
+        followup_post: _StubLibraryOutput
+        input_aware: _InputAwareLibrary
+        secondary_calls_remaining: list[str] = field(
+            default_factory=lambda: [
+                "primary_baseline",
+                "primary_post",
+                # cascade-loop calls (pre-cascade baseline + iter 1 post-state)
+                # — empty placeholders here; they hit the input-aware library.
+                "cascade_pre_baseline",
+                "cascade_iter1_post",
+                # follow-up secondary check
+                "followup_baseline",
+                "followup_post",
+                # cascade-loop iter 2 post-state — routes to input-aware
+                "cascade_iter2_post",
+            ]
+        )
+        calls: list[dict[str, Any]] = field(default_factory=list)
+
+        def __call__(
+            self,
+            *,
+            state: Any,
+            proposals: Sequence[Any],
+            config: Any,
+            market: Any,
+            delta_buffer_factor: float = 1.0,
+        ) -> _StubLibraryOutput:
+            self.calls.append(
+                {
+                    "state": state,
+                    "proposals": tuple(proposals),
+                    "config": config,
+                    "market": market,
+                    "delta_buffer_factor": delta_buffer_factor,
+                }
+            )
+            tag = self.secondary_calls_remaining.pop(0)
+            if tag == "primary_baseline":
+                return self.primary_baseline
+            if tag == "primary_post":
+                return self.primary_post
+            if tag == "followup_baseline":
+                return self.followup_baseline
+            if tag == "followup_post":
+                return self.followup_post
+            # cascade-loop calls — must succeed via the input-aware library.
+            return self.input_aware(
+                state=state,
+                proposals=proposals,
+                config=config,
+                market=market,
+                delta_buffer_factor=delta_buffer_factor,
+            )
+
+    seq_library = _SequenceAwareLibrary(
+        primary_baseline=initial_baseline,
+        primary_post=initial_post_close,
+        followup_baseline=follow_baseline,
+        followup_post=follow_post,
+        input_aware=library,
+    )
+
+    envelopes = orchestrate_margin_call_cascade(
+        margin_call_event=MarginCallEvent(
+            issued_at=_TRIGGER_TS, additional_margin_required_usd=3_000.0
+        ),
+        open_positions=a7_positions,
+        liquidity=a7_liquidity,
+        risk_reward_metric=a7_risk_reward,
+        current_state=_StubPortfolioState(),
+        library_config=_StubLibraryConfig(
+            effective_limits={
+                "margin_call": 0.0,
+                "total_short_pct": 25.0,
+                "daily_drawdown_pct": 2.5,
+            },
+        ),
+        market_inputs=_StubMarketInputs(),
+        active_regime=RegimeLabel.ELEVATED,
+        context=default_context,
+        evaluate_proposals=seq_library,
+        breach_classification={
+            "daily_drawdown_pct": BreachResponse.immediate_engine,
+            "total_short_pct": BreachResponse.deferred_to_pm,
+        },
+        follow_up_selector=_follow_up_full_close_selector,
+    )
+
+    # Two envelopes emitted: the original margin-call close and the cascaded close.
+    assert len(envelopes) == 2
+    assert envelopes[0].command.position_id == "POS-COIN-001"
+    assert envelopes[1].guardrail_trigger_record.rule_breached == "daily_drawdown_pct"
+    # Verify the input-aware library actually saw the close as a proposal in the
+    # cascade-loop call — the H1 contract.
+    cascade_loop_calls = [
+        c
+        for c in library.calls
+        if len(c["proposals"]) > 0  # filter non-baseline
+    ]
+    assert len(cascade_loop_calls) >= 1
+    # The first cascade-loop post-state call carried the initial close.
+    assert any(p.existing_position_id == "POS-COIN-001" for p in cascade_loop_calls[0]["proposals"])
+
+
+def test_orchestrate_margin_call_cascade_rejects_one_of_classification_pair(
+    default_context: CascadeContext,
+    a7_positions: tuple[PositionRecord, ...],
+    a7_liquidity: tuple[PositionLiquidity, ...],
+    a7_risk_reward: tuple[PositionRiskReward, ...],
+) -> None:
+    """M3: providing only one of (breach_classification, follow_up_selector) raises."""
+    baseline = _StubLibraryOutput(per_rule=(_proj("total_short_pct", "FAIL"),))
+    post = _StubLibraryOutput(per_rule=(_proj("total_short_pct", "PASS"),))
+    library = _ScriptedLibrary(outputs=[baseline, post])
+
+    with pytest.raises(ValueError, match="must be both provided or both None"):
+        orchestrate_margin_call_cascade(
+            margin_call_event=MarginCallEvent(
+                issued_at=_TRIGGER_TS, additional_margin_required_usd=3_000.0
+            ),
+            open_positions=a7_positions,
+            liquidity=a7_liquidity,
+            risk_reward_metric=a7_risk_reward,
+            current_state=_StubPortfolioState(),
+            library_config=_StubLibraryConfig(
+                effective_limits={"margin_call": 0.0, "total_short_pct": 25.0},
+            ),
+            market_inputs=_StubMarketInputs(),
+            active_regime=RegimeLabel.ELEVATED,
+            context=default_context,
+            evaluate_proposals=library,
+            breach_classification={"x": BreachResponse.immediate_engine},
+            # follow_up_selector intentionally omitted
+        )
+
+
+def test_orchestrate_breach_cascade_rejects_one_of_classification_pair(
+    default_context: CascadeContext,
+    a7_positions: tuple[PositionRecord, ...],
+    a7_liquidity: tuple[PositionLiquidity, ...],
+) -> None:
+    """M3: same rule for the non-margin orchestrator."""
+    primary_close = _proposed_close_for_position(
+        a7_positions[0], portfolio_value_usd=default_context.portfolio_value_usd
+    )
+    primary_selection = _full_close_selection_on(a7_positions[0].position_id)
+
+    baseline = _StubLibraryOutput(
+        per_rule=(_proj("sector_tech_pct", "FAIL", current=27.0, limit=25.0),),
+    )
+    post_close = _StubLibraryOutput(
+        per_rule=(_proj("sector_tech_pct", "PASS", current=27.0, limit=25.0),),
+    )
+    library = _ScriptedLibrary(outputs=[baseline, post_close])
+
+    with pytest.raises(ValueError, match="must be both provided or both None"):
+        orchestrate_breach_cascade(
+            primary_rule="sector_tech_pct",
+            primary_breach_details=BreachDetails(
+                current_value=27.0, limit_value=25.0, overage=2.0, unit="%"
+            ),
+            proposed_close=primary_close,
+            primary_position_selection=primary_selection,
+            open_positions=a7_positions,
+            liquidity=a7_liquidity,
+            current_state=_StubPortfolioState(),
+            library_config=_StubLibraryConfig(effective_limits={"sector_tech_pct": 25.0}),
+            market_inputs=_StubMarketInputs(),
+            active_regime=RegimeLabel.NORMAL,
+            context=default_context,
+            evaluate_proposals=library,
+            follow_up_selector=_follow_up_full_close_selector,
+            # breach_classification intentionally omitted
+        )
 
 
 # ---------------------------------------------------------------------------

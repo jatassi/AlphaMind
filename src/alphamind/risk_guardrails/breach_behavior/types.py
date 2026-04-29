@@ -174,9 +174,9 @@ class EmergencyContext(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _require_tz_aware_datetime(v: datetime) -> datetime:
+def _require_tz_aware_datetime(v: datetime, *, field_name: str) -> datetime:
     if v.tzinfo is None or v.utcoffset() is None:
-        msg = "trigger_timestamp must be timezone-aware"
+        msg = f"{field_name} must be timezone-aware"
         raise ValueError(msg)
     return v
 
@@ -233,7 +233,7 @@ class EngineGuardrailTriggerRecord(BaseModel):
     @field_validator("trigger_timestamp")
     @classmethod
     def _require_tz_aware(cls, v: datetime) -> datetime:
-        return _require_tz_aware_datetime(v)
+        return _require_tz_aware_datetime(v, field_name="trigger_timestamp")
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +326,7 @@ class EngineEnvelope(BaseModel):
     @field_validator("trigger_timestamp")
     @classmethod
     def _require_tz_aware(cls, v: datetime) -> datetime:
-        return _require_tz_aware_datetime(v)
+        return _require_tz_aware_datetime(v, field_name="trigger_timestamp")
 
     @model_validator(mode="after")
     def _validate_trigger_timestamps_match(self) -> EngineEnvelope:

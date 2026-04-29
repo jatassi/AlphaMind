@@ -78,7 +78,13 @@ def evaluate_proposals(
     Determinism: equal inputs produce equal outputs (``==`` and ``hash``
     agree). The function is pure — no I/O, no logging, no clock reads.
     """
-    _validate_inputs(state=state, proposals=proposals, config=config, market=market)
+    _validate_inputs(
+        state=state,
+        proposals=proposals,
+        config=config,
+        market=market,
+        delta_buffer_factor=delta_buffer_factor,
+    )
 
     rejections: list[FeatureDisabledRejection] = []
     proposals_with_dae: list[tuple[ProposedDelta, DeltaAdjustedExposure]] = []
@@ -119,11 +125,14 @@ def _validate_inputs(
     proposals: Sequence[ProposedDelta],
     config: LibraryConfig,
     market: MarketInputs,
+    delta_buffer_factor: float,
 ) -> None:
     """Run every cross-field invariant; raise ``LibraryInputError`` once on any failure."""
     failures: list[str] = []
     if state.portfolio_value_usd <= 0:
         failures.append(f"state.portfolio_value_usd must be > 0; got {state.portfolio_value_usd}")
+    if delta_buffer_factor <= 0:
+        failures.append(f"delta_buffer_factor must be > 0; got {delta_buffer_factor}")
 
     seen_ids: set[str] = set()
     for proposal in proposals:

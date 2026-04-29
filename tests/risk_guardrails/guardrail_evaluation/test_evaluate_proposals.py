@@ -1143,3 +1143,47 @@ def test_aggregated_errors_lists_every_violation() -> None:
     assert "REC-EQ-LEGS" in msg
     assert "REC-NO-BORROW" in msg
     assert "REC-CLOSE-NO-POS" in msg
+
+
+# ---------------------------------------------------------------------------
+# delta_buffer_factor validation (M1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad_factor", [0.0, -0.5, -1.0])
+def test_zero_or_negative_delta_buffer_factor_raises(bad_factor: float) -> None:
+    """``delta_buffer_factor`` must be > 0 — zero or negative raises ``LibraryInputError``."""
+    with pytest.raises(LibraryInputError, match=r"delta_buffer_factor.*must be > 0"):
+        evaluate_proposals(
+            state=_snapshot(),
+            proposals=(),
+            config=_full_config(),
+            market=_market(),
+            delta_buffer_factor=bad_factor,
+        )
+
+
+def test_delta_buffer_factor_scales_option_signed_notional() -> None:
+    """A larger ``delta_buffer_factor`` produces a larger ``signed_notional_usd``
+    for option proposals — verifying the scaling is actually applied."""
+    proposal = _option(proposal_id="REC-OPT-1", direction=Direction.LONG)
+
+    out_baseline = evaluate_proposals(
+        state=_snapshot(),
+        proposals=(proposal,),
+        config=_full_config(),
+        market=_market(),
+        delta_buffer_factor=1.0,
+    )
+    out_scaled = evaluate_proposals(
+        state=_snapshot(),
+        proposals=(proposal,),
+        config=_full_config(),
+        market=_market(),
+        delta_buffer_factor=1.25,
+    )
+
+    baseline_dae = out_baseline.delta_adjusted["REC-OPT-1"]
+    scaled_dae = out_scaled.delta_adjusted["REC-OPT-1"]
+    # Scaled buffer fraction > baseline buffer fraction → larger absolute signed notional.
+    assert abs(scaled_dae.signed_notional_usd) > abs(baseline_dae.signed_notional_usd)

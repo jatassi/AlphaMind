@@ -30,7 +30,6 @@ from typing import Literal, Protocol
 from alphamind.config.models.guardrails import BreachResponse
 from alphamind.portfolio_state.records.positions import (
     Direction,
-    EquityPositionDetails,
     InstrumentType,
     PositionRecord,
 )
@@ -41,6 +40,7 @@ from alphamind.risk_guardrails.breach_behavior.hard_rejection import RuleProject
 from alphamind.risk_guardrails.breach_behavior.position_selection import (
     PositionLiquidity,
     PositionRiskReward,
+    _ticker_of,
     select_for_margin_call,
 )
 from alphamind.risk_guardrails.breach_behavior.secondary_breach import (
@@ -49,6 +49,8 @@ from alphamind.risk_guardrails.breach_behavior.secondary_breach import (
     MarketInputsProtocol,
     PortfolioStateSnapshotProtocol,
     ProposedClose,
+    ProposedDeltaProtocol,
+    _build_close_delta,
     check_secondary_breach,
 )
 from alphamind.risk_guardrails.breach_behavior.types import (
@@ -155,16 +157,6 @@ class FollowUpBreachSelectorProtocol(Protocol):
 # ---------------------------------------------------------------------------
 
 
-def _ticker_of(position: PositionRecord) -> str:
-    if isinstance(position.equity_details, EquityPositionDetails):
-        return position.equity_details.ticker
-    if position.options_details is not None:
-        return position.options_details.underlying_ticker
-    if position.strategy_details is not None:
-        return position.strategy_details.strategy_type_label
-    return position.position_id
-
-
 def _asset_type_of(position: PositionRecord) -> _AssetType:
     if position.instrument_type == InstrumentType.EQUITY:
         return "equity"
@@ -191,8 +183,12 @@ def _proposed_close_from_selection(
         close_usd = pre_usd
     else:
         target_pct = selection.target_post_action_size_pct_of_portfolio
-        # PARTIAL_TRIM invariant: target_pct is non-None.
-        assert target_pct is not None
+        # PARTIAL_TRIM invariant enforced by PositionSelectionResult; guard explicitly so
+        # the error survives ``python -O`` and surfaces a clear message if the upstream
+        # invariant ever drifts.
+        if target_pct is None:
+            msg = "PARTIAL_TRIM action requires target_post_action_size_pct_of_portfolio"
+            raise ValueError(msg)
         close_pct = max(pre_pct - target_pct, 0.0)
         close_usd = close_pct / 100.0 * portfolio_value_usd
     return ProposedClose(
@@ -267,6 +263,27 @@ def _validate_inputs(
     missing = [p.position_id for p in open_positions if p.position_id not in liquidity_ids]
     if missing:
         msg = f"liquidity missing entries for position_ids: {missing}"
+        raise ValueError(msg)
+
+
+def _check_classification_selector_pair(
+    *,
+    breach_classification: Mapping[str, BreachResponse] | None,
+    follow_up_selector: FollowUpBreachSelectorProtocol | None,
+) -> None:
+    """Reject silent no-ops where only one of the optional pair is provided.
+
+    Both ``breach_classification`` and ``follow_up_selector`` enable the
+    cascade-extension follow-up loop; passing one without the other is always a
+    caller bug — the cascade would silently truncate to envelope #1 even when
+    follow-ups are intended.
+    """
+    if (breach_classification is None) != (follow_up_selector is None):
+        msg = (
+            "breach_classification and follow_up_selector must be both provided or both None; "
+            f"got breach_classification={breach_classification!r}, "
+            f"follow_up_selector={follow_up_selector!r}"
+        )
         raise ValueError(msg)
 
 
@@ -393,11 +410,15 @@ def orchestrate_margin_call_cascade(  # noqa: PLR0913 — orchestrator surface m
         ),
     ]
 
+    _check_classification_selector_pair(
+        breach_classification=breach_classification, follow_up_selector=follow_up_selector
+    )
     if breach_classification is None or follow_up_selector is None:
         return tuple(envelopes)
     _extend_with_follow_ups(
         envelopes=envelopes,
         initial_selection=selection,
+        initial_close=proposed_close,
         initial_excluded_rule=_MARGIN_CALL_RULE_ID,
         open_positions=open_positions,
         liquidity=liquidity,
@@ -432,6 +453,7 @@ def _extend_with_follow_ups(  # noqa: PLR0913 — internal helper threading casc
     *,
     envelopes: list[EngineEnvelope],
     initial_selection: PositionSelectionResult,
+    initial_close: ProposedClose,
     initial_excluded_rule: str,
     open_positions: tuple[PositionRecord, ...],
     liquidity: tuple[PositionLiquidity, ...],
@@ -444,18 +466,41 @@ def _extend_with_follow_ups(  # noqa: PLR0913 — internal helper threading casc
     breach_classification: Mapping[str, BreachResponse],
     follow_up_selector: FollowUpBreachSelectorProtocol,
 ) -> None:
-    """Walk the post-liquidation cascade; append immediate-engine follow-ups."""
+    """Walk the post-liquidation cascade; append immediate-engine follow-ups.
+
+    Each iteration's post-close projection threads every emitted envelope's
+    close through ``evaluate_proposals`` as a CLOSE-action ``ProposedDelta``,
+    so the library can project the *hypothetical* state with all cascade
+    closes applied. Comparing this projection against the pre-cascade baseline
+    (no closes applied) surfaces newly-FAIL'd rules introduced by the closes
+    themselves — the signal that drives the next cascade envelope.
+
+    Without this delta-threading the projection would be input-identical to
+    the baseline (the library is pure: equal inputs → equal outputs), so no
+    follow-up breaches would ever surface and the cascade would always
+    truncate at envelope #1.
+    """
     max_steps = context.config.cascade_max_steps
     excluded: set[str] = {initial_excluded_rule}
     current_positions = _apply_close_to_positions(open_positions, initial_selection)
     last_breach_rule = initial_excluded_rule
+    # Pre-cascade baseline: state before any cascade closes have been applied.
     pre_cascade_baseline = evaluate_proposals(
         state=current_state, proposals=(), config=library_config, market=market_inputs
     )
+    # Closes already in flight, projected as CLOSE-action ProposedDeltas. The
+    # first entry corresponds to the envelope #1 close; subsequent iterations
+    # append the follow-up close before re-projecting.
+    in_flight_closes: list[ProposedDeltaProtocol] = [
+        _build_close_delta(initial_close, id_prefix="cascade_followup")
+    ]
 
     while True:
         post_state = evaluate_proposals(
-            state=current_state, proposals=(), config=library_config, market=market_inputs
+            state=current_state,
+            proposals=tuple(in_flight_closes),
+            config=library_config,
+            market=market_inputs,
         )
         new_breaches = _newly_failed_immediate_rules(
             baseline=pre_cascade_baseline.per_rule,
@@ -511,6 +556,7 @@ def _extend_with_follow_ups(  # noqa: PLR0913 — internal helper threading casc
             )
         )
         current_positions = _apply_close_to_positions(current_positions, follow_selection)
+        in_flight_closes.append(_build_close_delta(follow_close, id_prefix="cascade_followup"))
 
 
 # ---------------------------------------------------------------------------
@@ -565,9 +611,10 @@ def orchestrate_breach_cascade(  # noqa: PLR0913 — orchestrator surface mandat
         evaluate_proposals=evaluate_proposals,
     )
 
-    final_selection, final_secondary = _resolve_primary_or_alternate(
+    final_selection, final_close, final_secondary = _resolve_primary_or_alternate(
         primary_rule=primary_rule,
         primary_position_selection=primary_position_selection,
+        primary_proposed_close=proposed_close,
         initial_secondary=initial_secondary,
         open_positions=open_positions,
         liquidity=liquidity,
@@ -595,11 +642,15 @@ def orchestrate_breach_cascade(  # noqa: PLR0913 — orchestrator surface mandat
         ),
     ]
 
+    _check_classification_selector_pair(
+        breach_classification=breach_classification, follow_up_selector=follow_up_selector
+    )
     if breach_classification is None or follow_up_selector is None:
         return tuple(envelopes)
     _extend_with_follow_ups(
         envelopes=envelopes,
         initial_selection=final_selection,
+        initial_close=final_close,
         initial_excluded_rule=primary_rule,
         open_positions=open_positions,
         liquidity=liquidity,
@@ -619,6 +670,7 @@ def _resolve_primary_or_alternate(  # noqa: PLR0913 — orchestrator-internal sw
     *,
     primary_rule: str,
     primary_position_selection: PositionSelectionResult,
+    primary_proposed_close: ProposedClose,
     initial_secondary: SecondaryBreachCheckResult,
     open_positions: tuple[PositionRecord, ...],
     liquidity: tuple[PositionLiquidity, ...],
@@ -628,10 +680,16 @@ def _resolve_primary_or_alternate(  # noqa: PLR0913 — orchestrator-internal sw
     evaluate_proposals: EvaluateProposalsCallable,
     context: CascadeContext,
     primary_rule_breach_type: _CandidateBreachType,
-) -> tuple[PositionSelectionResult, SecondaryBreachCheckResult]:
-    """Return the (selection, secondary-check-result) pair to embed in envelope #1."""
+) -> tuple[PositionSelectionResult, ProposedClose, SecondaryBreachCheckResult]:
+    """Return the (selection, close, secondary-check-result) triple for envelope #1.
+
+    The returned ``ProposedClose`` is the close that the cascade will actually
+    issue — either the original primary close or the alternate close found by
+    :func:`search_for_alternate_position`. Threading this through the cascade
+    follow-up loop is what lets the loop project post-close state correctly.
+    """
     if initial_secondary.result != SecondaryBreachOutcome.DEFERRED_TO_PM:
-        return primary_position_selection, initial_secondary
+        return primary_position_selection, primary_proposed_close, initial_secondary
 
     alternate = search_for_alternate_position(
         primary_rule=primary_rule,
@@ -647,21 +705,29 @@ def _resolve_primary_or_alternate(  # noqa: PLR0913 — orchestrator-internal sw
         primary_rule_breach_type=primary_rule_breach_type,
     )
     if alternate is None:
-        return primary_position_selection, SecondaryBreachCheckResult(
-            result=SecondaryBreachOutcome.DEFERRED_TO_PM,
-            notes=(
-                f"no clean alternate found; original close on "
-                f"{primary_position_selection.position_id} executed despite "
-                f"secondary breach: {initial_secondary.notes or 'unspecified'}"
+        return (
+            primary_position_selection,
+            primary_proposed_close,
+            SecondaryBreachCheckResult(
+                result=SecondaryBreachOutcome.DEFERRED_TO_PM,
+                notes=(
+                    f"no clean alternate found; original close on "
+                    f"{primary_position_selection.position_id} executed despite "
+                    f"secondary breach: {initial_secondary.notes or 'unspecified'}"
+                ),
             ),
         )
-    alt_selection, _alt_close = alternate
-    return alt_selection, SecondaryBreachCheckResult(
-        result=SecondaryBreachOutcome.SECONDARY_BREACH_AVOIDED,
-        notes=(
-            f"alternate {alt_selection.position_id} clears {primary_rule}; "
-            f"original {primary_position_selection.position_id} would have "
-            f"introduced: {initial_secondary.notes or 'secondary breach'}"
+    alt_selection, alt_close = alternate
+    return (
+        alt_selection,
+        alt_close,
+        SecondaryBreachCheckResult(
+            result=SecondaryBreachOutcome.SECONDARY_BREACH_AVOIDED,
+            notes=(
+                f"alternate {alt_selection.position_id} clears {primary_rule}; "
+                f"original {primary_position_selection.position_id} would have "
+                f"introduced: {initial_secondary.notes or 'secondary breach'}"
+            ),
         ),
     )
 

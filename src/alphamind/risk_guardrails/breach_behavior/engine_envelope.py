@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import re
 from datetime import datetime
 from typing import Literal
 
 from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.risk_guardrails.breach_behavior.types import (
+    _ENVELOPE_ID_PATTERN,
     BreachDetails,
     EngineCloseCommand,
     EngineEnvelope,
@@ -16,9 +16,6 @@ from alphamind.risk_guardrails.breach_behavior.types import (
     PositionSelectionResult,
     SecondaryBreachCheckResult,
 )
-
-_ENVELOPE_ID_PATTERN = re.compile(r"^MON\.[^.]+\.[0-9]+$")
-"""Engine-originated envelope ID pattern, mirrored from the engine-envelope JSON Schema."""
 
 
 def envelope_id_for(*, monitor_session_id: str, trigger_id: int) -> str:
@@ -133,7 +130,12 @@ def _quantity_or_all_for(
     if position_selection.action == PositionSelectionAction.FULL_CLOSE:
         return "all"
     target_pct = position_selection.target_post_action_size_pct_of_portfolio
-    assert target_pct is not None  # PARTIAL_TRIM invariant enforced by PositionSelectionResult
+    # PARTIAL_TRIM invariant enforced by PositionSelectionResult; guard explicitly so
+    # the error survives ``python -O`` and surfaces a clear message if the upstream
+    # invariant ever drifts.
+    if target_pct is None:
+        msg = "PARTIAL_TRIM action requires target_post_action_size_pct_of_portfolio"
+        raise ValueError(msg)
     return target_pct / 100.0 * portfolio_value_usd
 
 
