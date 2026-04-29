@@ -24,11 +24,15 @@ from datetime import datetime
 
 from alphamind.config.models.overlays import EventType, Overlay
 from alphamind.config.models.regimes import Regime
+from alphamind.config.resolver import LoadedConfig
 from alphamind.distillation.calibration import CalibrationState
+from alphamind.distillation.regime import RegimeLabel as DistillationRegimeLabel
 from alphamind.portfolio_state.records.capital import (
     ActiveRiskParameterSet,
     RegimeTransitionState,
+    RiskBudgetConsumption,
 )
+from alphamind.portfolio_state.records.positions import PositionRecord
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -393,6 +397,44 @@ class StaleCalendarReport:
     is_stale: bool
     latest_event_timestamp_utc: datetime | None
     days_until_latest: float | None
+
+
+# ---------------------------------------------------------------------------
+# RegimeAdaptationInputs — orchestrator input bundle
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RegimeAdaptationInputs:
+    """All non-clock, non-DB inputs the orchestrator (story 09) consumes.
+
+    Bundled following the ``compose_config(inputs: LoadedConfig, runtime:
+    RuntimeDimensions)`` precedent so the orchestrator's call surface stays
+    narrow. The pipeline-runtime caller constructs this record from the
+    upstream distillation classifier output, the portfolio-state assembler
+    output, the operator-loaded config, the event-calendar loader, and the
+    stress-overlay composite-alert reader.
+
+    The four ``distillation_*`` fields plus ``vix_thresholds`` are the
+    distillation layer's contribution; the next three fields
+    (``held_positions``, ``risk_budget``, ``prior_parameter_set``) come from
+    the portfolio-state layer; ``event_calendar`` and ``composite_alert_state``
+    come from the regime-adaptation feature's own loaders; ``loaded_config``
+    is the resolver's input bundle; ``rule_metadata`` is constructed by the
+    caller from ``RuleRegistry`` (rules-and-limits feature).
+    """
+
+    distillation_regime_label: DistillationRegimeLabel
+    distillation_vix_level: float
+    distillation_regime_skip_emergency: bool
+    vix_thresholds: VixBoundaryThresholds
+    held_positions: tuple[PositionRecord, ...]
+    risk_budget: RiskBudgetConsumption
+    prior_parameter_set: ActiveRiskParameterSet | None
+    event_calendar: EventCalendar
+    composite_alert_state: CompositeAlertState
+    loaded_config: LoadedConfig
+    rule_metadata: Mapping[str, RuleMetadata]
 
 
 # ---------------------------------------------------------------------------

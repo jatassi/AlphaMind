@@ -18,6 +18,7 @@ from alphamind.risk_guardrails.regime_adaptation.interpolation import (
     interpolate_loosening_multipliers,
     resolve_active_multipliers,
 )
+from alphamind.risk_guardrails.regime_adaptation.orchestrator import resolve_regime_adaptation
 from alphamind.risk_guardrails.regime_adaptation.parameter_set import (
     assemble_active_risk_parameter_set,
 )
@@ -47,6 +48,7 @@ from alphamind.risk_guardrails.regime_adaptation.types import (
     NextTransitionDecision,
     OverlayActivationDecision,
     RegimeAdaptationAuditEntry,
+    RegimeAdaptationInputs,
     RegimeAdaptationOutput,
     RegimeAdaptationState,
     RegimeTransitionBreach,
@@ -65,6 +67,7 @@ __all__ = [
     "NextTransitionDecision",
     "OverlayActivationDecision",
     "RegimeAdaptationAuditEntry",
+    "RegimeAdaptationInputs",
     "RegimeAdaptationOutput",
     "RegimeAdaptationState",
     "RegimeTransitionBreach",
@@ -84,6 +87,7 @@ __all__ = [
     "map_distillation_to_guardrail_regime",
     "overlays_to_strings",
     "resolve_active_multipliers",
+    "resolve_regime_adaptation",
     "select_events_within_window",
     "select_most_recent_state",
     "warn_on_stale_calendar",
