@@ -13,6 +13,15 @@ from alphamind.risk_guardrails.breach_behavior.drawdown_tiers import (
     apply_progressive_tier_overrides,
     classify_cumulative_drawdown_tier,
 )
+from alphamind.risk_guardrails.breach_behavior.emergency_triggers import (
+    DrawdownSample,
+    MarginCallEvent,
+    evaluate_daily_drawdown_velocity,
+    evaluate_emergency_invocation,
+    evaluate_margin_call,
+    evaluate_multi_rule_breach,
+    evaluate_regime_jump,
+)
 from alphamind.risk_guardrails.breach_behavior.hard_rejection import (
     LibraryOutputProtocol,
     RuleProjectionProtocol,
@@ -68,6 +77,7 @@ __all__ = [
     "BreachResponse",
     "CloseRationaleType",
     "Direction",
+    "DrawdownSample",
     "DrawdownState",
     "DrawdownTier",
     "EmergencyContext",
@@ -81,6 +91,7 @@ __all__ = [
     "HardRejectionPayload",
     "InstrumentType",
     "LibraryOutputProtocol",
+    "MarginCallEvent",
     "PositionLiquidity",
     "PositionRecord",
     "PositionRiskReward",
@@ -101,6 +112,11 @@ __all__ = [
     "classify_cumulative_drawdown_tier",
     "classify_zone",
     "compose_hard_rejection_payload",
+    "evaluate_daily_drawdown_velocity",
+    "evaluate_emergency_invocation",
+    "evaluate_margin_call",
+    "evaluate_multi_rule_breach",
+    "evaluate_regime_jump",
     "load_breach_behavior_config",
     "select_for_drawdown_breach",
     "select_for_margin_call",
