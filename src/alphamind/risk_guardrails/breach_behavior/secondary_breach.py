@@ -88,6 +88,7 @@ class EvaluateProposalsCallable(Protocol):
         proposals: Sequence[ProposedDeltaProtocol],
         config: LibraryConfigProtocol,
         market: MarketInputsProtocol,
+        delta_buffer_factor: float = 1.0,
     ) -> LibraryOutputProtocol: ...
 
 
@@ -177,22 +178,20 @@ def check_secondary_breach(
         ``NO_SECONDARY_BREACH`` or ``DEFERRED_TO_PM`` (this primitive never
         emits ``SECONDARY_BREACH_AVOIDED``; that's story 07's responsibility).
     """
-    # TODO: thread ``config.delta_buffer_secondary_check_buffer_factor`` through
-    # to ``evaluate_proposals`` once the library accepts a runtime delta-buffer
-    # override. Default 1.0 reproduces the library's standard buffer until then.
-    _ = config.delta_buffer_secondary_check_buffer_factor
     if primary_breach_rule_id not in library_config.effective_limits:
         msg = (
             f"primary_breach_rule_id {primary_breach_rule_id!r} is not in the "
             f"library's active effective_limits"
         )
         raise ValueError(msg)
+    delta_buffer_factor = config.delta_buffer_secondary_check_buffer_factor
     baseline = _invoke_library(
         evaluate_proposals,
         state=current_state,
         proposals=(),
         config=library_config,
         market=market_inputs,
+        delta_buffer_factor=delta_buffer_factor,
         phase="baseline",
     )
     close_delta = _build_close_delta(proposed_close)
@@ -202,6 +201,7 @@ def check_secondary_breach(
         proposals=(close_delta,),
         config=library_config,
         market=market_inputs,
+        delta_buffer_factor=delta_buffer_factor,
         phase="post-close",
     )
     introduced = _newly_failed_rules(
@@ -232,11 +232,18 @@ def _invoke_library(
     proposals: Sequence[ProposedDeltaProtocol],
     config: LibraryConfigProtocol,
     market: MarketInputsProtocol,
+    delta_buffer_factor: float,
     phase: str,
 ) -> LibraryOutputProtocol:
     """Call the guardrail-evaluation library; wrap any exception with secondary-check context."""
     try:
-        return evaluate_proposals(state=state, proposals=proposals, config=config, market=market)
+        return evaluate_proposals(
+            state=state,
+            proposals=proposals,
+            config=config,
+            market=market,
+            delta_buffer_factor=delta_buffer_factor,
+        )
     except Exception as exc:
         msg = f"secondary-breach check failed during {phase} evaluation: {exc}"
         raise ValueError(msg) from exc

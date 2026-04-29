@@ -96,9 +96,16 @@ class _ScriptedLibrary:
         proposals: Sequence[Any],
         config: Any,
         market: Any,
+        delta_buffer_factor: float = 1.0,
     ) -> _StubLibraryOutput:
         self.calls.append(
-            {"state": state, "proposals": tuple(proposals), "config": config, "market": market}
+            {
+                "state": state,
+                "proposals": tuple(proposals),
+                "config": config,
+                "market": market,
+                "delta_buffer_factor": delta_buffer_factor,
+            }
         )
         if self.raise_on_call is not None and len(self.calls) == self.raise_on_call:
             assert self.raise_exception is not None
@@ -724,16 +731,40 @@ def test_library_called_twice_baseline_then_with_close_delta(
 
 
 # ---------------------------------------------------------------------------
-# Buffer-factor TODO
+# Buffer-factor propagation
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason=(
-        "TODO: guardrail-evaluation's evaluate_proposals does not yet accept a "
-        "runtime delta_buffer override; once added, this test should assert "
-        "config.delta_buffer_secondary_check_buffer_factor != 1.0 is wired through."
-    ),
-)
-def test_buffer_factor_propagated_to_library() -> None:
-    """Pending library runtime delta-buffer override; see story 05b notes."""
+def test_buffer_factor_propagated_to_library(proposed_close: ProposedClose) -> None:
+    """``config.delta_buffer_secondary_check_buffer_factor`` reaches both library calls."""
+    config = BreachBehaviorConfig(
+        forced_reduction_short_trim_target_pct_of_limit=95.0,
+        forced_reduction_total_short_immediate_threshold_pct_of_limit=110.0,
+        drawdown_velocity_window_minutes=15,
+        drawdown_velocity_threshold_pct_of_daily_limit=80.0,
+        multi_rule_breach_simultaneous_deferred_rules_count=2,
+        cascade_max_steps=3,
+        delta_buffer_secondary_check_buffer_factor=1.25,
+    )
+    baseline = _StubLibraryOutput(per_rule=(_projection("net_long_pct", "PASS"),))
+    post_close = _StubLibraryOutput(per_rule=(_projection("net_long_pct", "PASS"),))
+    library = _ScriptedLibrary(baseline_output=baseline, post_close_output=post_close)
+
+    check_secondary_breach(
+        proposed_close=proposed_close,
+        current_state=_StubPortfolioState(),
+        library_config=_StubLibraryConfig(
+            effective_limits={
+                "net_long_pct": 25.0,
+                "position_max_loss_equity_pct": 2.0,
+            },
+        ),
+        market_inputs=_StubMarketInputs(),
+        primary_breach_rule_id="position_max_loss_equity_pct",
+        config=config,
+        evaluate_proposals=library,
+    )
+
+    assert len(library.calls) == 2
+    assert library.calls[0]["delta_buffer_factor"] == 1.25
+    assert library.calls[1]["delta_buffer_factor"] == 1.25

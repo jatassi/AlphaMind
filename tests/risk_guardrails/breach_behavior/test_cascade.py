@@ -99,9 +99,16 @@ class _ScriptedLibrary:
         proposals: Sequence[Any],
         config: Any,
         market: Any,
+        delta_buffer_factor: float = 1.0,
     ) -> _StubLibraryOutput:
         self.calls.append(
-            {"state": state, "proposals": tuple(proposals), "config": config, "market": market}
+            {
+                "state": state,
+                "proposals": tuple(proposals),
+                "config": config,
+                "market": market,
+                "delta_buffer_factor": delta_buffer_factor,
+            }
         )
         idx = min(len(self.calls) - 1, len(self.outputs) - 1)
         return self.outputs[idx]
