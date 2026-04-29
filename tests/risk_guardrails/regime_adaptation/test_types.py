@@ -136,6 +136,7 @@ def _build_regime_adaptation_output() -> RegimeAdaptationOutput:
     return RegimeAdaptationOutput(
         runtime_dimensions_active_regime=Regime.normal,
         runtime_dimensions_active_overlays=(),
+        overlay_activation_decisions=(),
         effective_limits={},
         active_risk_parameter_set=_active_risk_parameter_set_stub(),
         regime_transition_breaches=(),
@@ -687,6 +688,7 @@ def test_regime_adaptation_output_constructible() -> None:
     output = RegimeAdaptationOutput(
         runtime_dimensions_active_regime=Regime.normal,
         runtime_dimensions_active_overlays=(),
+        overlay_activation_decisions=(),
         effective_limits=MappingProxyType({"position_max_size_pct": 5.0}),
         active_risk_parameter_set=_active_risk_parameter_set_stub(),
         regime_transition_breaches=(),
