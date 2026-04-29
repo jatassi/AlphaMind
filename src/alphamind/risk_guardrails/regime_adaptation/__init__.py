@@ -5,6 +5,10 @@ subsequent stories drop function modules into this package and add their own
 re-exports below.
 """
 
+from alphamind.risk_guardrails.regime_adaptation.stress_activator import (
+    evaluate_stress_overlay,
+    fetch_composite_alert_state,
+)
 from alphamind.risk_guardrails.regime_adaptation.types import (
     LOOSENING_INVOCATIONS,
     CompositeAlertState,
@@ -36,5 +40,7 @@ __all__ = [
     "RuleMetadata",
     "StaleCalendarReport",
     "VixBoundaryThresholds",
+    "evaluate_stress_overlay",
+    "fetch_composite_alert_state",
     "overlays_to_strings",
 ]
