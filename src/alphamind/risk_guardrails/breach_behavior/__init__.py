@@ -18,6 +18,15 @@ from alphamind.risk_guardrails.breach_behavior.hard_rejection import (
     RuleProjectionProtocol,
     compose_hard_rejection_payload,
 )
+from alphamind.risk_guardrails.breach_behavior.position_selection import (
+    PositionLiquidity,
+    PositionRiskReward,
+    select_for_drawdown_breach,
+    select_for_margin_call,
+    select_for_position_max_loss,
+    select_for_single_short_max_size_breach,
+    select_for_total_short_exposure_breach,
+)
 from alphamind.risk_guardrails.breach_behavior.types import (
     ActiveRiskParameterSet,
     BreachDetails,
@@ -72,7 +81,9 @@ __all__ = [
     "HardRejectionPayload",
     "InstrumentType",
     "LibraryOutputProtocol",
+    "PositionLiquidity",
     "PositionRecord",
+    "PositionRiskReward",
     "PositionSelectionAction",
     "PositionSelectionResult",
     "ProgressiveTier",
@@ -91,4 +102,9 @@ __all__ = [
     "classify_zone",
     "compose_hard_rejection_payload",
     "load_breach_behavior_config",
+    "select_for_drawdown_breach",
+    "select_for_margin_call",
+    "select_for_position_max_loss",
+    "select_for_single_short_max_size_breach",
+    "select_for_total_short_exposure_breach",
 ]
