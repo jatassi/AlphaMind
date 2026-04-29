@@ -138,49 +138,43 @@ def session(engine: Engine) -> Iterator[Session]:
 
 # Tests load the production YAMLs so the orchestrator sees real profile/regime
 # values; this also keeps the test surface aligned with operator-facing knobs.
-_LOADED_CONFIG_CACHE: LoadedConfig | None = None
-
-
-def _loaded_config() -> LoadedConfig:
+@pytest.fixture(scope="session")
+def loaded_config_session_scoped() -> LoadedConfig:
     """Build a real ``LoadedConfig`` from the repo's ``config/`` tree.
 
-    Cached once per session so the YAML I/O (file parsing) does not dominate
-    test runtime. The orchestrator does not mutate the loaded config; sharing
-    the instance across tests is safe.
+    Session-scoped so the YAML I/O (file parsing) does not dominate test
+    runtime. The orchestrator does not mutate the loaded config; sharing the
+    instance across tests is safe.
     """
-    global _LOADED_CONFIG_CACHE
-    if _LOADED_CONFIG_CACHE is None:
-        _LOADED_CONFIG_CACHE = LoadedConfig(
-            main=MainConfig.model_validate(_read_yaml("main.yaml")),
-            scheduler=SchedulerConfig.model_validate(_read_yaml("scheduler.yaml")),
-            venue=VenueConfig.model_validate(_read_yaml("venue.yaml")),
-            execution=ExecutionConfig.model_validate(_read_yaml("execution.yaml")),
-            guardrails=GuardrailsConfig.model_validate(_read_yaml("guardrails.yaml")),
-            llm_failure=LLMFailureConfig.model_validate(_read_yaml("llm_failure.yaml")),
-            digest=DigestConfig.model_validate(_read_yaml("digest.yaml")),
-            assets=AssetsConfig.model_validate(_read_yaml("assets.yaml")),
-            agents=AgentsConfig.model_validate(_read_yaml("agents.yaml")),
-            profiles=load_profiles(CONFIG_DIR),
-            regimes=load_regimes(CONFIG_DIR),
-            modes=load_modes(CONFIG_DIR),
-            overlays=load_overlays(CONFIG_DIR),
-            run_types=load_run_types(CONFIG_DIR),
-        )
-    return _LOADED_CONFIG_CACHE
+    return LoadedConfig(
+        main=MainConfig.model_validate(_read_yaml("main.yaml")),
+        scheduler=SchedulerConfig.model_validate(_read_yaml("scheduler.yaml")),
+        venue=VenueConfig.model_validate(_read_yaml("venue.yaml")),
+        execution=ExecutionConfig.model_validate(_read_yaml("execution.yaml")),
+        guardrails=GuardrailsConfig.model_validate(_read_yaml("guardrails.yaml")),
+        llm_failure=LLMFailureConfig.model_validate(_read_yaml("llm_failure.yaml")),
+        digest=DigestConfig.model_validate(_read_yaml("digest.yaml")),
+        assets=AssetsConfig.model_validate(_read_yaml("assets.yaml")),
+        agents=AgentsConfig.model_validate(_read_yaml("agents.yaml")),
+        profiles=load_profiles(CONFIG_DIR),
+        regimes=load_regimes(CONFIG_DIR),
+        modes=load_modes(CONFIG_DIR),
+        overlays=load_overlays(CONFIG_DIR),
+        run_types=load_run_types(CONFIG_DIR),
+    )
 
 
-def _profile_rule_values() -> dict[str, float]:
+def _profile_rule_values(loaded_config: LoadedConfig) -> dict[str, float]:
     """Return the active profile's per-rule base values from the loaded config."""
-    config = _loaded_config()
-    profile = config.profiles[config.main.active_profile]
+    profile = loaded_config.profiles[loaded_config.main.active_profile]
     return dict(profile.rule_values)
 
 
-def _build_rule_metadata() -> dict[str, RuleMetadata]:
+def _build_rule_metadata(loaded_config: LoadedConfig) -> dict[str, RuleMetadata]:
     """Build rule metadata covering every rule the active profile declares."""
     return {
         rule_id: RuleMetadata(rule_id=rule_id, label=rule_id.replace("_", " "), unit="pct")
-        for rule_id in _profile_rule_values()
+        for rule_id in _profile_rule_values(loaded_config)
     }
 
 
@@ -271,6 +265,7 @@ def _equity_position(*, position_id: str, position_weight_pct: float) -> Positio
 
 def _build_inputs(
     *,
+    loaded_config: LoadedConfig,
     distillation_regime_label: DistillationRegimeLabel = (
         DistillationRegimeLabel.LOW_VOL_COMPRESSION
     ),
@@ -281,7 +276,6 @@ def _build_inputs(
     prior_parameter_set: ActiveRiskParameterSet | None = None,
     event_calendar: EventCalendar | None = None,
     composite_alert_state: CompositeAlertState | None = None,
-    loaded_config: LoadedConfig | None = None,
     rule_metadata: dict[str, RuleMetadata] | None = None,
     vix_thresholds: VixBoundaryThresholds | None = None,
 ) -> RegimeAdaptationInputs:
@@ -297,8 +291,10 @@ def _build_inputs(
         composite_alert_state=(
             composite_alert_state if composite_alert_state is not None else _quiet_alert_state()
         ),
-        loaded_config=loaded_config if loaded_config is not None else _loaded_config(),
-        rule_metadata=rule_metadata if rule_metadata is not None else _build_rule_metadata(),
+        loaded_config=loaded_config,
+        rule_metadata=(
+            rule_metadata if rule_metadata is not None else _build_rule_metadata(loaded_config)
+        ),
     )
 
 
@@ -310,8 +306,10 @@ def _build_inputs(
 class TestBootstrap:
     """No prior persisted state, low-vol distillation, no overlays."""
 
-    def test_returns_stable_low_vol_with_no_audit_entries(self, session: Session) -> None:
-        inputs = _build_inputs()
+    def test_returns_stable_low_vol_with_no_audit_entries(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
+        inputs = _build_inputs(loaded_config=loaded_config_session_scoped)
 
         output = resolve_regime_adaptation(
             invocation_id="INV-1",
@@ -373,9 +371,12 @@ def _persist_prior(
 class TestStableContinuation:
     """Prior STABLE in normal; same regime → STABLE, no transition audit."""
 
-    def test_no_regime_transition_event_emitted(self, session: Session) -> None:
+    def test_no_regime_transition_event_emitted(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         _persist_prior(session, active_regime=Regime.normal)
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
             distillation_vix_level=18.0,
         )
@@ -402,10 +403,11 @@ class TestTighteningTransition:
     """Prior STABLE in normal; new CRISIS_SPIKE → TIGHTENING in crisis."""
 
     def test_emits_regime_transition_audit_with_tightening_direction(
-        self, session: Session
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
     ) -> None:
         _persist_prior(session, active_regime=Regime.normal)
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,
             distillation_vix_level=40.0,
         )
@@ -428,10 +430,13 @@ class TestTighteningTransition:
         assert payload["prior_regime"] == "normal"
         assert payload["new_regime"] == "crisis"
 
-    def test_payload_carries_static_and_applied_multipliers(self, session: Session) -> None:
+    def test_payload_carries_static_and_applied_multipliers(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         """Tightening from STABLE: applied_prior == static_prior; applied_new == static_new."""
         _persist_prior(session, active_regime=Regime.normal)
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,
             distillation_vix_level=40.0,
         )
@@ -449,7 +454,7 @@ class TestTighteningTransition:
         assert len(transition_entries) == 1
         payload = transition_entries[0].payload
 
-        config = _loaded_config()
+        config = loaded_config_session_scoped
         static_prior = dict(config.regimes[Regime.normal].multipliers)
         static_new = dict(config.regimes[Regime.crisis].multipliers)
 
@@ -464,11 +469,14 @@ class TestTighteningTransition:
 class TestTighteningWithBreaches:
     """Tightening transition with held positions over the new tighter limit."""
 
-    def test_emits_regime_transition_breach_records(self, session: Session) -> None:
+    def test_emits_regime_transition_breach_records(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         _persist_prior(session, active_regime=Regime.normal)
         # crisis position_max_size_pct: 5.0 * 0.40 = 2.0; position is at 4.0
         breaching = _equity_position(position_id="POS-1", position_weight_pct=4.0)
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,
             distillation_vix_level=40.0,
             held_positions=(breaching,),
@@ -495,9 +503,12 @@ class TestTighteningWithBreaches:
 class TestLooseningFirstInvocation:
     """Prior STABLE in crisis; new VOL_EXPANSION at vix=18 → LOOSENING."""
 
-    def test_remaining_starts_at_three_with_origin_crisis(self, session: Session) -> None:
+    def test_remaining_starts_at_three_with_origin_crisis(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         _persist_prior(session, active_regime=Regime.crisis)
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
             distillation_vix_level=18.0,
         )
@@ -525,7 +536,9 @@ class TestLooseningFirstInvocation:
 class TestLooseningCountdown:
     """Prior LOOSENING with remaining=3, same VOL_EXPANSION reading → remaining=2."""
 
-    def test_decrements_remaining_without_new_transition_audit(self, session: Session) -> None:
+    def test_decrements_remaining_without_new_transition_audit(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         _persist_prior(
             session,
             active_regime=Regime.normal,
@@ -535,6 +548,7 @@ class TestLooseningCountdown:
             transition_origin_regime=Regime.crisis,
         )
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
             distillation_vix_level=18.0,
         )
@@ -556,7 +570,9 @@ class TestLooseningCountdown:
 class TestLooseningCompletion:
     """Prior LOOSENING with remaining=1 → STABLE arrival, no transition audit."""
 
-    def test_returns_stable_with_no_audit_entry(self, session: Session) -> None:
+    def test_returns_stable_with_no_audit_entry(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         _persist_prior(
             session,
             active_regime=Regime.normal,
@@ -566,6 +582,7 @@ class TestLooseningCompletion:
             transition_origin_regime=Regime.crisis,
         )
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
             distillation_vix_level=18.0,
         )
@@ -587,7 +604,9 @@ class TestLooseningCompletion:
 class TestTighteningOverridesLoosening:
     """Prior LOOSENING in normal from elevated; new CRISIS_SPIKE → TIGHTENING in crisis."""
 
-    def test_emits_tightening_audit_and_resets_state(self, session: Session) -> None:
+    def test_emits_tightening_audit_and_resets_state(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         _persist_prior(
             session,
             active_regime=Regime.normal,
@@ -597,6 +616,7 @@ class TestTighteningOverridesLoosening:
             transition_origin_regime=Regime.elevated,
         )
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,
             distillation_vix_level=40.0,
         )
@@ -616,7 +636,9 @@ class TestTighteningOverridesLoosening:
         assert len(transition_entries) == 1
         assert transition_entries[0].payload["direction"] == "tightening"
 
-    def test_applied_prior_reflects_loosening_interpolation(self, session: Session) -> None:
+    def test_applied_prior_reflects_loosening_interpolation(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         """Prior LOOSENING: applied_prior_multipliers_snapshot is the interpolated map.
 
         With prior state ``LOOSENING(remaining=2, origin=elevated, active=normal)``,
@@ -637,6 +659,7 @@ class TestTighteningOverridesLoosening:
             transition_origin_regime=Regime.elevated,
         )
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,
             distillation_vix_level=40.0,
         )
@@ -654,7 +677,7 @@ class TestTighteningOverridesLoosening:
         assert len(transition_entries) == 1
         payload = transition_entries[0].payload
 
-        config = _loaded_config()
+        config = loaded_config_session_scoped
         static_prior = dict(config.regimes[Regime.normal].multipliers)
         static_new = dict(config.regimes[Regime.crisis].multipliers)
         expected_applied_prior = dict(
@@ -686,7 +709,9 @@ class TestTighteningOverridesLoosening:
 class TestPreEventOverlayActivates:
     """Calendar contains a pending FOMC inside the activation window."""
 
-    def test_overlay_active_and_audit_emitted(self, session: Session) -> None:
+    def test_overlay_active_and_audit_emitted(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         # _NOW is 13:30 UTC on a Tuesday in April. The market_hours_rolling cron
         # fires at 13:30 UTC (9:30 ET), 15:30 UTC (11:30 ET), 17:30 UTC, 19:30 UTC.
         # An FOMC at _NOW + 90 minutes (15:00 UTC) means there is exactly 1 firing
@@ -704,6 +729,7 @@ class TestPreEventOverlayActivates:
             )
         )
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
             distillation_vix_level=18.0,
             event_calendar=calendar,
@@ -732,11 +758,11 @@ class TestOverlayMultiplierKeyTypoRejected:
     """Overlay declaring a multiplier for a rule_id absent from the rule space raises."""
 
     def test_orchestrator_raises_value_error_naming_overlay_and_rule(
-        self, session: Session
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
     ) -> None:
         from dataclasses import replace
 
-        base_config = _loaded_config()
+        base_config = loaded_config_session_scoped
         typo_overlay = PreEventOverlay(
             activation=PreEventActivation(
                 windows_before_event=2,
@@ -760,10 +786,10 @@ class TestOverlayMultiplierKeyTypoRejected:
             )
         )
         inputs = _build_inputs(
+            loaded_config=config_with_typo,
             distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
             distillation_vix_level=18.0,
             event_calendar=calendar,
-            loaded_config=config_with_typo,
         )
 
         with pytest.raises(ValueError, match=r"pre_event.*position_max_size_pcr"):
@@ -783,8 +809,11 @@ class TestOverlayMultiplierKeyTypoRejected:
 class TestStressOverlayActivates:
     """funding_stress alert active + CALIBRATED → stress overlay active."""
 
-    def test_overlay_surfaces_in_output_with_audit_entry(self, session: Session) -> None:
+    def test_overlay_surfaces_in_output_with_audit_entry(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
             distillation_vix_level=18.0,
             composite_alert_state=_stress_alert_state(),
@@ -814,7 +843,9 @@ class TestStressOverlayActivates:
 class TestBothOverlaysActivate:
     """Pre-event firing + stress alert → both overlays active sorted alphabetically."""
 
-    def test_overlays_sorted_and_both_audit_entries_emitted(self, session: Session) -> None:
+    def test_overlays_sorted_and_both_audit_entries_emitted(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         fomc_time = _NOW + timedelta(hours=1, minutes=30)
         calendar = EventCalendar(
             entries=(
@@ -826,6 +857,7 @@ class TestBothOverlaysActivate:
             )
         )
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
             distillation_vix_level=18.0,
             event_calendar=calendar,
@@ -855,13 +887,16 @@ class TestBothOverlaysActivate:
 class TestOverlayDeactivates:
     """Prior had stress overlay; current has none → overlay_deactivated audit."""
 
-    def test_emits_overlay_deactivated_for_stress(self, session: Session) -> None:
+    def test_emits_overlay_deactivated_for_stress(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         _persist_prior(
             session,
             active_regime=Regime.normal,
             active_overlays=(Overlay.stress,),
         )
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
             distillation_vix_level=18.0,
             composite_alert_state=_quiet_alert_state(),
@@ -889,8 +924,11 @@ class TestOverlayDeactivates:
 class TestRegimeSkipEmergencyPassthrough:
     """distillation_regime_skip_emergency=True → output flag True + audit entry."""
 
-    def test_flag_passes_through_and_audit_emitted(self, session: Session) -> None:
+    def test_flag_passes_through_and_audit_emitted(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,
             distillation_vix_level=45.0,
             distillation_regime_skip_emergency=True,
@@ -923,7 +961,9 @@ class TestRegimeSkipEmergencyPassthrough:
 class TestStaleEventCalendar:
     """Latest entry inside the 7-day staleness threshold → audit emitted."""
 
-    def test_emits_stale_calendar_audit(self, session: Session) -> None:
+    def test_emits_stale_calendar_audit(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         soon_event = _NOW + timedelta(days=5)
         calendar = EventCalendar(
             entries=(
@@ -935,6 +975,7 @@ class TestStaleEventCalendar:
             )
         )
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
             distillation_vix_level=18.0,
             event_calendar=calendar,
@@ -958,7 +999,9 @@ class TestStaleEventCalendar:
 class TestNonStaleEventCalendar:
     """Latest entry beyond the staleness threshold → no stale audit."""
 
-    def test_does_not_emit_stale_calendar_audit(self, session: Session) -> None:
+    def test_does_not_emit_stale_calendar_audit(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         far_event = _NOW + timedelta(days=30)
         calendar = EventCalendar(
             entries=(
@@ -970,6 +1013,7 @@ class TestNonStaleEventCalendar:
             )
         )
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
             distillation_vix_level=18.0,
             event_calendar=calendar,
@@ -994,9 +1038,12 @@ class TestNonStaleEventCalendar:
 class TestNoHeldPositionsNoBreaches:
     """Tightening transition with empty held positions → no breach records."""
 
-    def test_no_breaches_when_held_positions_empty(self, session: Session) -> None:
+    def test_no_breaches_when_held_positions_empty(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         _persist_prior(session, active_regime=Regime.normal)
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,
             distillation_vix_level=40.0,
         )
@@ -1019,8 +1066,10 @@ class TestNoHeldPositionsNoBreaches:
 class TestDeterminism:
     """Identical inputs produce identical outputs."""
 
-    def test_repeated_calls_produce_equal_outputs(self, session: Session) -> None:
-        inputs = _build_inputs()
+    def test_repeated_calls_produce_equal_outputs(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
+        inputs = _build_inputs(loaded_config=loaded_config_session_scoped)
         first = resolve_regime_adaptation(
             invocation_id="INV-DET",
             now_utc=_NOW,
@@ -1083,7 +1132,9 @@ class TestAggregateBreachOnTightening:
     scan branch.
     """
 
-    def test_emits_aggregate_breach_record(self, session: Session) -> None:
+    def test_emits_aggregate_breach_record(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         _persist_prior(session, active_regime=Regime.normal)
         # gross_exposure_pct base 120.0 * crisis 0.50 = 60.0; current value 80.0 breaches.
         budget = RiskBudgetConsumption(
@@ -1091,6 +1142,7 @@ class TestAggregateBreachOnTightening:
         )
         anchor = _equity_position(position_id="ANCHOR", position_weight_pct=1.0)
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,
             distillation_vix_level=40.0,
             held_positions=(anchor,),
@@ -1121,8 +1173,11 @@ class TestAggregateBreachOnTightening:
 class TestNoCompositeAlerts:
     """Quiet alert state → stress overlay inactive, no overlay_activated for stress."""
 
-    def test_stress_overlay_does_not_activate(self, session: Session) -> None:
+    def test_stress_overlay_does_not_activate(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.VOL_EXPANSION,
             distillation_vix_level=18.0,
             composite_alert_state=_quiet_alert_state(),
@@ -1163,9 +1218,12 @@ class TestAuditEventKindEnum:
             "stale_event_calendar",
         }
 
-    def test_orchestrator_emits_enum_members(self, session: Session) -> None:
+    def test_orchestrator_emits_enum_members(
+        self, session: Session, loaded_config_session_scoped: LoadedConfig
+    ) -> None:
         _persist_prior(session, active_regime=Regime.normal)
         inputs = _build_inputs(
+            loaded_config=loaded_config_session_scoped,
             distillation_regime_label=DistillationRegimeLabel.CRISIS_SPIKE,
             distillation_vix_level=40.0,
             distillation_regime_skip_emergency=True,
