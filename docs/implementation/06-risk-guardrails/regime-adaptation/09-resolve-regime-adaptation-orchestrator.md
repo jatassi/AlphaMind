@@ -1,7 +1,7 @@
 ---
-status: in_progress
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-29
+commit_id: 3b8fde7
 ---
 
 # 09 — Resolve regime adaptation orchestrator
