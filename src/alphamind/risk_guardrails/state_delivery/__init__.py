@@ -20,6 +20,7 @@ from alphamind.risk_guardrails.state_delivery.emergency import (
     prepend_emergency_block,
     render_emergency_block,
 )
+from alphamind.risk_guardrails.state_delivery.strategist import render_strategist_header
 from alphamind.risk_guardrails.state_delivery.validation_tool import (
     ProjectedDelta,
     ValidationAction,
@@ -49,5 +50,6 @@ __all__ = [
     "prepend_emergency_block",
     "render_analyst_header",
     "render_emergency_block",
+    "render_strategist_header",
     "validate_guardrail",
 ]
