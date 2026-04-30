@@ -1,8 +1,7 @@
 ---
-status: blocked
+status: not_started
 completed_date:
 commit_id:
-blocked_on: breach-behavior/03-canonical-types-and-enums.md (canonical `HaltState` not yet shipped — `from alphamind.risk_guardrails.breach_behavior import HaltState` resolves to nothing) AND state-delivery/04a-04c (halt-mode wrappers compose every audience renderer). Set to `not_started` and dispatch when breach-behavior story 03 is `done` AND state-delivery 04a/04b/04c are `done`.
 ---
 
 # 05 — Halt-mode header modifications
