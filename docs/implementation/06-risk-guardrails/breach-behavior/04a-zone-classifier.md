@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-29
+commit_id: 09cd6f1
 ---
 
 # 04a — Zone classifier
@@ -81,7 +81,7 @@ Default zones (70/85/95):
     current=120,  limit=100 → BLOCKED   (beyond limit)
 
 Daily drawdown zones (60/80/90):
-    current=1.4,  limit=2.5 → WARNING   (consumption 56% — just under warning)
+    current=1.4,  limit=2.5 → NORMAL    (consumption 56% — just under warning)
     current=1.5,  limit=2.5 → WARNING   (consumption 60% — inclusive boundary)
     current=2.0,  limit=2.5 → CRITICAL  (consumption 80%)
     current=2.25, limit=2.5 → BLOCKED   (consumption 90%)
@@ -142,7 +142,7 @@ The portfolio-state assembler currently constructs `RiskBudgetEntry` records wit
 - [ ] WARNING classification: consumption in `[zones.warning, zones.critical)` returns `RiskZone.WARNING`. The lower bound is inclusive.
 - [ ] CRITICAL classification: consumption in `[zones.critical, zones.hard_block)` returns `RiskZone.CRITICAL`. The lower bound is inclusive.
 - [ ] BLOCKED classification: consumption ≥ `zones.hard_block`, including consumption > 100% (current beyond limit), returns `RiskZone.BLOCKED`.
-- [ ] Daily-drawdown-override case (zones 60/80/90): the four documented input pairs map to WARNING / WARNING / CRITICAL / BLOCKED respectively.
+- [ ] Daily-drawdown-override case (zones 60/80/90): the four documented input pairs map to NORMAL / WARNING / CRITICAL / BLOCKED respectively.
 - [ ] Cumulative-drawdown-override case (zones 50/70/85): the three documented input pairs map to WARNING / CRITICAL / BLOCKED respectively.
 - [ ] Negative `current_value` raises `ValueError` whose message names the value.
 - [ ] Zero or negative `limit_value` raises `ValueError` whose message names the value.

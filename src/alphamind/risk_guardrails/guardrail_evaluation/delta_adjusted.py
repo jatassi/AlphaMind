@@ -49,8 +49,15 @@ def compute_delta_adjusted_exposure(
     proposal: ProposedDelta,
     market: MarketInputs,
     config: LibraryConfig,
+    delta_buffer_factor: float = 1.0,
 ) -> DeltaAdjustedExposure:
-    """Combine Black-Scholes, IV sourcing, and the conservative buffer."""
+    """Combine Black-Scholes, IV sourcing, and the conservative buffer.
+
+    ``delta_buffer_factor`` scales the effective conservative buffer at the
+    call site. Default ``1.0`` reuses the regime-resolved buffer unchanged;
+    cascade re-evaluations (breach-behavior story 05b) pass a tighter factor
+    when calibration demands extra conservatism.
+    """
     if proposal.action in (Action.ADJUST, Action.CANCEL):
         return _exposure_neutral(proposal)
 
@@ -78,7 +85,9 @@ def compute_delta_adjusted_exposure(
 
     net_greeks = _sum_leg_greeks(leg_results)
     unbuffered_abs_delta = abs(net_greeks.delta)
-    buffered_abs_delta = unbuffered_abs_delta * (1 + _effective_buffer_fraction(config))
+    buffered_abs_delta = unbuffered_abs_delta * (
+        1 + _effective_buffer_fraction(config, factor=delta_buffer_factor)
+    )
     signed_notional = sign * buffered_abs_delta * spot * _CONTRACT_MULTIPLIER * proposal.quantity
 
     return DeltaAdjustedExposure(
@@ -167,9 +176,9 @@ def _sum_leg_greeks(leg_results: Sequence[_LegResult]) -> Greeks:
     )
 
 
-def _effective_buffer_fraction(config: LibraryConfig) -> float:
+def _effective_buffer_fraction(config: LibraryConfig, *, factor: float = 1.0) -> float:
     multiplier = _REGIME_BUFFER_MULTIPLIERS.get(config.active_regime, 1.0)
-    return (config.conservative_buffer_pct * multiplier) / 100.0
+    return (config.conservative_buffer_pct * multiplier * factor) / 100.0
 
 
 def _mean_iv(leg_results: Sequence[_LegResult]) -> float:

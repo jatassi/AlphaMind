@@ -1,0 +1,13 @@
+breach_behavior:
+  forced_reduction:
+    short_trim_target_pct_of_limit: 95          # see breach-behavior.md § Position selection logic — short trims close to 95% of the applicable limit
+    total_short_immediate_threshold_pct_of_limit: 110  # breach-behavior.md § Per-rule breach response — total short > 110% of limit triggers immediate reduction
+  drawdown_velocity:
+    window_minutes: 30                          # breach-behavior.md § Emergency invocation trigger — daily drawdown crossing the threshold within this window fires
+    threshold_pct_of_daily_limit: 60            # ... at 60% of the active daily-drawdown limit
+  multi_rule_breach:
+    simultaneous_deferred_rules_count: 3        # breach-behavior.md § Emergency invocation trigger — 3+ deferred rules simultaneously breach
+  cascade:
+    max_steps: 8                                # defensive cap on cascade chain length; cascade orchestration aborts and surfaces if exceeded
+  delta_buffer:
+    secondary_check_buffer_factor: 1.0          # multiplier applied to guardrail-evaluation's buffered delta when checking secondary breaches; default 1.0 reuses the library's buffer unchanged

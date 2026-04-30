@@ -57,6 +57,7 @@ def evaluate_proposals(
     proposals: Sequence[ProposedDelta],
     config: LibraryConfig,
     market: MarketInputs,
+    delta_buffer_factor: float = 1.0,
 ) -> LibraryOutput:
     """Project a batch of proposed deltas through the guardrail rules.
 
@@ -69,10 +70,21 @@ def evaluate_proposals(
       4. Run the rule registry over the surviving proposals.
       5. Assemble ``LibraryOutput``.
 
+    ``delta_buffer_factor`` scales the conservative delta buffer at this call.
+    Default ``1.0`` reproduces the standard regime-resolved buffer; cascade
+    re-evaluations (breach-behavior story 05b) pass a tighter factor when
+    calibration demands extra conservatism.
+
     Determinism: equal inputs produce equal outputs (``==`` and ``hash``
     agree). The function is pure — no I/O, no logging, no clock reads.
     """
-    _validate_inputs(state=state, proposals=proposals, config=config, market=market)
+    _validate_inputs(
+        state=state,
+        proposals=proposals,
+        config=config,
+        market=market,
+        delta_buffer_factor=delta_buffer_factor,
+    )
 
     rejections: list[FeatureDisabledRejection] = []
     proposals_with_dae: list[tuple[ProposedDelta, DeltaAdjustedExposure]] = []
@@ -81,7 +93,12 @@ def evaluate_proposals(
         if rejection is not None:
             rejections.append(rejection)
             continue
-        dae = compute_delta_adjusted_exposure(proposal=proposal, market=market, config=config)
+        dae = compute_delta_adjusted_exposure(
+            proposal=proposal,
+            market=market,
+            config=config,
+            delta_buffer_factor=delta_buffer_factor,
+        )
         proposals_with_dae.append((proposal, dae))
 
     projections = project_all(
@@ -108,11 +125,14 @@ def _validate_inputs(
     proposals: Sequence[ProposedDelta],
     config: LibraryConfig,
     market: MarketInputs,
+    delta_buffer_factor: float,
 ) -> None:
     """Run every cross-field invariant; raise ``LibraryInputError`` once on any failure."""
     failures: list[str] = []
     if state.portfolio_value_usd <= 0:
         failures.append(f"state.portfolio_value_usd must be > 0; got {state.portfolio_value_usd}")
+    if delta_buffer_factor <= 0:
+        failures.append(f"delta_buffer_factor must be > 0; got {delta_buffer_factor}")
 
     seen_ids: set[str] = set()
     for proposal in proposals:

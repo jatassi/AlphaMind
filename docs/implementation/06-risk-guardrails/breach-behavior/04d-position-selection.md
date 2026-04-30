@@ -1,7 +1,7 @@
 ---
-status: not_started
-completed_date:
-commit_id:
+status: done
+completed_date: 2026-04-29
+commit_id: 6ecb70e
 ---
 
 # 04d — Forced-reduction position selection primitives
@@ -116,6 +116,8 @@ def select_for_position_max_loss(
     *,
     breaching_position_id: str,
     open_positions: tuple[PositionRecord, ...],
+    loss_pct: float,
+    limit_pct: float,
 ) -> PositionSelectionResult:
     """Select for a position-level max-loss breach.
 
@@ -125,6 +127,10 @@ def select_for_position_max_loss(
     Args:
         breaching_position_id: The position_id whose unrealized loss triggered the breach.
         open_positions: All currently-open positions. The breaching id must be present.
+        loss_pct: The position's unrealized loss as a percent of cost basis (negative;
+            e.g., -3.5 for a 3.5% loss). Recorded in the rationale.
+        limit_pct: The active per-position max-loss limit as a percent of cost basis
+            (negative; e.g., -3.0 for a -3.0% cap). Recorded in the rationale.
 
     Returns:
         A PositionSelectionResult with the breaching position's id, action=FULL_CLOSE, and
@@ -136,7 +142,7 @@ def select_for_position_max_loss(
     """
 ```
 
-Trivial selector: the breach identifies the position. The function exists so the position-selection module exposes a uniform per-breach-type interface, and so the rationale string is constructed in one canonical place rather than inline at the call site.
+Trivial selector: the breach identifies the position. The function exists so the position-selection module exposes a uniform per-breach-type interface, and so the rationale string is constructed in one canonical place rather than inline at the call site. `loss_pct` and `limit_pct` populate the rationale string's documented `(loss: -X.X% of cost, limit: -Y.Y%)` format. The breach detector computes these from the position's unrealized P/L and the active position-max-loss limit.
 
 ### 4. Total short exposure selector
 
