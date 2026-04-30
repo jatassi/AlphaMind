@@ -20,6 +20,14 @@ from alphamind.risk_guardrails.state_delivery.emergency import (
     prepend_emergency_block,
     render_emergency_block,
 )
+from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
+    CorrelationState,
+    CrossConstraintImpact,
+    CrossConstraintImpactPerRule,
+    DependencyRiskFlag,
+    RegimeOverride,
+    render_pm_header,
+)
 from alphamind.risk_guardrails.state_delivery.strategist import render_strategist_header
 from alphamind.risk_guardrails.state_delivery.validation_tool import (
     ProjectedDelta,
@@ -34,11 +42,16 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import (
 )
 
 __all__ = [
+    "CorrelationState",
+    "CrossConstraintImpact",
+    "CrossConstraintImpactPerRule",
+    "DependencyRiskFlag",
     "EmergencyContext",
     "EmergencyTrigger",
     "FeatureFlagsView",
     "Greeks",
     "ProjectedDelta",
+    "RegimeOverride",
     "RuleProjection",
     "ValidationAction",
     "ValidationInstrument",
@@ -50,6 +63,7 @@ __all__ = [
     "prepend_emergency_block",
     "render_analyst_header",
     "render_emergency_block",
+    "render_pm_header",
     "render_strategist_header",
     "validate_guardrail",
 ]
