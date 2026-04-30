@@ -6,12 +6,20 @@ state header rendering primitives plus the deterministic guardrail validation
 tool that the analyst, strategist, and PM compose during reasoning.
 """
 
+from alphamind.risk_guardrails.breach_behavior import (
+    EmergencyContext,
+    EmergencyTrigger,
+)
 from alphamind.risk_guardrails.guardrail_evaluation import (
     FeatureFlagsView,
     Greeks,
     RuleProjection,
 )
 from alphamind.risk_guardrails.state_delivery.analyst import render_analyst_header
+from alphamind.risk_guardrails.state_delivery.emergency import (
+    prepend_emergency_block,
+    render_emergency_block,
+)
 from alphamind.risk_guardrails.state_delivery.validation_tool import (
     ProjectedDelta,
     ValidationAction,
@@ -25,6 +33,8 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import (
 )
 
 __all__ = [
+    "EmergencyContext",
+    "EmergencyTrigger",
     "FeatureFlagsView",
     "Greeks",
     "ProjectedDelta",
@@ -36,6 +46,8 @@ __all__ = [
     "ValidationSize",
     "ValidationStrategyLeg",
     "ValidationToolState",
+    "prepend_emergency_block",
     "render_analyst_header",
+    "render_emergency_block",
     "validate_guardrail",
 ]
