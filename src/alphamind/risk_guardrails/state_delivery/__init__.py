@@ -20,6 +20,11 @@ from alphamind.risk_guardrails.state_delivery.emergency import (
     prepend_emergency_block,
     render_emergency_block,
 )
+from alphamind.risk_guardrails.state_delivery.halt_mode import (
+    render_analyst_header_halt_mode,
+    render_pm_header_halt_mode,
+    render_strategist_header_halt_mode,
+)
 from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
     CorrelationState,
     CrossConstraintImpact,
@@ -62,8 +67,11 @@ __all__ = [
     "ValidationToolState",
     "prepend_emergency_block",
     "render_analyst_header",
+    "render_analyst_header_halt_mode",
     "render_emergency_block",
     "render_pm_header",
+    "render_pm_header_halt_mode",
     "render_strategist_header",
+    "render_strategist_header_halt_mode",
     "validate_guardrail",
 ]
