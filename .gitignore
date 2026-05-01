@@ -18,3 +18,4 @@ docs/design/01-data-layer/api-keys.md
 # Runtime artifacts (created at %USERPROFILE%\AlphaMind\ — collides with repo root on this machine)
 data/
 logs/
+opencode.json
