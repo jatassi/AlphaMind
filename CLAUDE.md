@@ -42,3 +42,6 @@ If you are running on MacOS, you are on the development machine. Production data
     - `/Volumes/Users/jacks/AlphaMind/logs/collector.log`
     - `/Volumes/Users/jacks/AlphaMind/logs/collector.out.log`
 If these locations aren't accessible, alert the user
+
+## Working with Linear
+We use Linear for issue tracking in this project. Top-level components are tracked as Projects (e.g., Distillation layer), features within components are tracked as Issues (e.g., ALP-75: Replay Harness), detailed requirements for features are tracked as sub-issues using the User Story template (e.g., ALP-108: 02 — Package skeleton & CLI stub).
