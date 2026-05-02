@@ -1,0 +1,69 @@
+=== GUARDRAIL STATE (invocation inv-e2e-001, 2026-04-28T14:32:05Z) ===
+Regime: normal [unchanged]
+
+Capital:
+  Available for new positions: $5,000 (10.0% of portfolio)
+  Per-position max size: $2,500 (5.0% of portfolio, normal regime)
+
+Sector headroom (delta-adjusted):
+  Tech:       18.5% / 25.0% — room: 6.5% [⚠ WARNING]
+  Semis:      12.0% / 25.0% — room: 13.0% [NORMAL]
+  Financials: 8.5% / 25.0% — room: 16.5% [NORMAL]
+  Energy:     4.0% / 25.0% — room: 21.0% [NORMAL]
+
+Directional headroom:
+  Net long:  42.0% / 60.0% — room: 18.0%
+  Net short: 10.0% / 30.0% — room: 20.0%
+  Gross:     78.0% / 120.0% — room: 42.0%
+
+Options headroom:
+  Delta exposure: 22.0% / 40.0% — room: 18.0%
+  Theta:          0.1% / 0.2%/day
+  Vega:           0.6% / 1.0%/pt
+
+Position-level constraint proximity:
+  POS-NVDA-001:  4.0% of portfolio (max 5.0%) — P/L: -2.0% of cost (max loss: -30.0%) [⚠ WARNING]
+  POS-AAPL-002:  3.5% of portfolio (max 5.0%) — P/L: +4.0% of cost (max loss: -30.0%) [⚠ WARNING]
+  POS-MSFT-003:  2.0% of portfolio (max 5.0%) — P/L: +1.5% of cost (max loss: -80.0%)
+  POS-AMD-004:   3.0% of portfolio (max 5.0%) — P/L: +5.0% of cost (max loss: -30.0%)
+  POS-MU-005:    1.5% of portfolio (max 5.0%) — P/L: -1.0% of cost (max loss: -30.0%)
+  POS-AVGO-006:  2.5% of portfolio (max 5.0%) — P/L: +0.5% of cost (max loss: -80.0%)
+  POS-JPM-007:   3.8% of portfolio (max 5.0%) — P/L: -1.0% of cost (max loss: -30.0%) [⚠ WARNING]
+  POS-GS-008:    2.2% of portfolio (max 5.0%) — P/L: +2.5% of cost (max loss: -30.0%)
+  POS-BAC-009:   1.5% of portfolio (max 5.0%) — P/L: +1.0% of cost (max loss: -30.0%)
+  POS-XOM-010:   2.5% of portfolio (max 5.0%) — P/L: +8.0% of cost (max loss: -30.0%)
+  POS-CVX-011:   2.0% of portfolio (max 5.0%) — P/L: -3.0% of cost (max loss: -30.0%)
+  POS-MISC-012:  0.5% of portfolio (max 5.0%) — P/L: +0.0% of cost (max loss: -30.0%)
+
+Sector exposure breakdown (per position):
+  Tech (18.5% / 25.0%):
+    POS-NVDA-001: 4.0% (delta-adj)
+    POS-AAPL-002: 3.5% (delta-adj)
+    POS-MSFT-003: 2.0% (delta-adj) [options, delta 0.50]
+  Semis (12.0% / 25.0%):
+    POS-AMD-004: 3.0% (delta-adj)
+    POS-MU-005: 1.5% (delta-adj)
+    POS-AVGO-006: 2.5% (delta-adj) [options, delta 0.50]
+  Financials (8.5% / 25.0%):
+    POS-JPM-007: 3.8% (delta-adj)
+    POS-GS-008: 2.2% (delta-adj)
+    POS-BAC-009: 1.5% (delta-adj)
+  Energy (4.0% / 25.0%):
+    POS-XOM-010: 2.5% (delta-adj)
+    POS-CVX-011: 2.0% (delta-adj)
+  Unclassified:
+    POS-MISC-012: 0.5% (delta-adj)
+
+Drawdown state:
+  Daily:      0.5% / 2.5% [NORMAL]
+  Cumulative: 2.0% / 10.0% [NORMAL]
+
+Abandoned openings from prior invocation (portfolio awareness; analyst owns re-evaluation):
+  ENV-REC-1  long GOOG equity  3.0%  — abandoned at 2026-04-28T13:30:00Z (broker rejected: stale price)
+
+Abandoned position actions from prior invocation (decide on current grounds whether to re-propose):
+  ENV-SA-1: ADD on POS-NVDA-001 — abandoned at 2026-04-28T13:35:00Z (insufficient buying power)
+  ENV-SA-2: ADJUST on POS-AAPL-002 — abandoned at 2026-04-28T13:36:00Z (market closed)
+  ENV-SA-3: CLOSE on POS-AMD-004 — abandoned at 2026-04-28T13:37:00Z (route timeout)
+  ENV-SA-ORD-4: CANCEL on ORD-9001 — abandoned at 2026-04-28T13:38:00Z (order already filled)
+===
