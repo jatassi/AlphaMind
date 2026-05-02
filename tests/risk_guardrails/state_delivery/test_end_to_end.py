@@ -484,9 +484,10 @@ def _make_thesis_quality_aggregates() -> ThesisQualityAggregate:
 
 
 # ---------------------------------------------------------------------------
-# Position fixtures: 12 positions across 4 sectors + 1 unclassified
-# Spec: (position_id, ticker, direction, sector, weight_pct, pnl_pct, instrument)
-# Note: "MISC" sector → unclassified group
+# Position fixtures: 12 positions across 4 sectors + 1 unclassified.
+# Tuple shape per row: position_id, ticker, direction, sector, weight_pct,
+# pnl_pct, instrument. The "MISC" sector key routes into the unclassified
+# group at render time.
 # ---------------------------------------------------------------------------
 
 _POSITION_SPEC: tuple[
@@ -557,7 +558,7 @@ def _build_equity_position(
         position_weight_pct=weight_pct,
         position_age_hours=24.0,
         notional_exposure_usd=abs(market_value),
-        delta_adjusted_exposure_usd=market_value if not is_short else market_value,
+        delta_adjusted_exposure_usd=market_value,
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
@@ -1202,11 +1203,7 @@ class TestNormalHeaderRendering:
             "strategist owns hold/add/reduce):"
         )
         assert held_positions_header in rendered
-        # 12 held position rows
-        held_lines = [
-            line for line in rendered.splitlines() if line.startswith("  POS-") or line.startswith("  ") and "long" in line and "%" in line
-        ]
-        # Compute another way: count lines after held header until blank
+        # Count held-position rows by walking from the header until the next blank line.
         lines = rendered.splitlines()
         held_idx = lines.index(held_positions_header)
         held_count = 0

@@ -27,7 +27,7 @@ def test_emergency_context_is_canonical_breach_behavior_class() -> None:
 
 def test_state_delivery_package_reexports_emergency_surface() -> None:
     """The state-delivery package re-exports the emergency renderers and canonical types."""
-    from alphamind.risk_guardrails import state_delivery
+    import alphamind.risk_guardrails.state_delivery as state_delivery
 
     assert state_delivery.render_emergency_block is render_emergency_block
     assert state_delivery.prepend_emergency_block is prepend_emergency_block
