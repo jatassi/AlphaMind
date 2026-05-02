@@ -64,9 +64,6 @@ from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
     _render_position_proximity_block as _pm_position_proximity_block,
 )
 from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
-    _render_regime_transition_breaches_block as _pm_regime_transition_breaches_block,
-)
-from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
     _render_sector_breakdown_block as _pm_sector_breakdown_block,
 )
 from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
@@ -86,7 +83,10 @@ from alphamind.risk_guardrails.state_delivery.primitives import (
     render_regime_line,
     render_sector_headroom_block,
 )
-from alphamind.risk_guardrails.state_delivery.strategist import render_strategist_header
+from alphamind.risk_guardrails.state_delivery.strategist import (
+    _render_regime_transition_breaches_block,
+    render_strategist_header,
+)
 
 # ---------------------------------------------------------------------------
 # Mode-line constants per audience
@@ -357,7 +357,6 @@ def _render_halt_mode_cross_constraint_block(
 
 def _inject_halt_mode_hard_block_lines(
     rendered_hard_blocks_block: str | None,
-    halt_state: HaltState,
 ) -> str:
     """Inject ``OPEN: BLOCKED (halt mode)`` and ``ADD: BLOCKED (halt mode)`` lines.
 
@@ -365,7 +364,6 @@ def _inject_halt_mode_hard_block_lines(
     helper synthesizes the block from scratch with just the halt-mode action lines.
     Otherwise the lines are appended to the rendered block.
     """
-    del halt_state  # parameter kept for interface symmetry; halt-mode action lines are constant
     if rendered_hard_blocks_block is None:
         return "\n".join(
             [
@@ -487,13 +485,12 @@ def render_pm_header_halt_mode(  # noqa: PLR0913 — mirrors render_pm_header
             total_portfolio_value_usd=total_portfolio_value_usd,
         )
     )
-    if regime_transition_breaches:
-        blocks.append(
-            _pm_regime_transition_breaches_block(
-                breaches=regime_transition_breaches,
-                regime_label_display=regime_display,
-            )
-        )
+    breaches_block = _render_regime_transition_breaches_block(
+        breaches=regime_transition_breaches,
+        regime_label_display=regime_display,
+    )
+    if breaches_block is not None:
+        blocks.append(breaches_block)
     blocks.append(_render_recent_engine_actions_block(pm_view.intra_invocation_changelog))
     blocks.append(_render_active_regime_overrides_block(active_regime_overrides))
     correlation_block = _render_correlation_state_block(
@@ -516,5 +513,5 @@ def render_pm_header_halt_mode(  # noqa: PLR0913 — mirrors render_pm_header
         short_selling_enabled=short_selling_enabled,
         header_label=_PM_HARD_BLOCKS_HEADER,
     )
-    blocks.append(_inject_halt_mode_hard_block_lines(rendered_hard_blocks, halt_state))
+    blocks.append(_inject_halt_mode_hard_block_lines(rendered_hard_blocks))
     return "\n\n".join(blocks) + "\n" + render_envelope_close()

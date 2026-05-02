@@ -29,6 +29,8 @@ from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 from alphamind.risk_guardrails.state_delivery.primitives import (
+    DRAWDOWN_TIER_DISPLAY,
+    DRAWDOWN_TIER_RESTRICTIONS,
     format_dollar,
     format_pct,
     render_capital_block,
@@ -40,6 +42,9 @@ from alphamind.risk_guardrails.state_delivery.primitives import (
     render_regime_line,
     render_sector_headroom_block,
     render_zone_tag,
+)
+from alphamind.risk_guardrails.state_delivery.strategist import (
+    _render_regime_transition_breaches_block,
 )
 
 _PM_HARD_BLOCKS_HEADER = "Hard blocks (do NOT issue commands violating):"
@@ -209,15 +214,12 @@ def render_pm_header(  # noqa: PLR0913 — keyword-only signature dictated by st
             total_portfolio_value_usd=total_portfolio_value_usd,
         )
     )
-    if regime_transition_breaches:
-        blocks.append(
-            _render_regime_transition_breaches_block(
-                breaches=regime_transition_breaches,
-                regime_label_display=_REGIME_LABEL_DISPLAY[
-                    pm_view.active_risk_parameters.regime_label
-                ],
-            )
-        )
+    breaches_block = _render_regime_transition_breaches_block(
+        breaches=regime_transition_breaches,
+        regime_label_display=_REGIME_LABEL_DISPLAY[pm_view.active_risk_parameters.regime_label],
+    )
+    if breaches_block is not None:
+        blocks.append(breaches_block)
     blocks.append(_render_recent_engine_actions_block(pm_view.intra_invocation_changelog))
     blocks.append(_render_active_regime_overrides_block(active_regime_overrides))
     correlation_block = _render_correlation_state_block(
@@ -420,31 +422,9 @@ def _format_drawdown_row(label: str, body: str) -> str:
 
 
 def _format_cumulative_tier_row(tier: DrawdownTier) -> str:
-    return f"  Cumulative tier: {tier.value}"
-
-
-# ---------------------------------------------------------------------------
-# Regime-transition breaches helper (re-used from strategist when 04b lands)
-# ---------------------------------------------------------------------------
-
-
-_REGIME_TRANSITION_BREACHES_HEADER = "Regime-transition breaches (if any):"
-
-
-def _render_regime_transition_breaches_block(
-    *,
-    breaches: tuple[RegimeTransitionBreach, ...],
-    regime_label_display: str,
-) -> str:
-    rows = [_REGIME_TRANSITION_BREACHES_HEADER]
-    for breach in breaches:
-        prefix = breach.position_id if breach.position_id is not None else breach.rule_label
-        rows.append(
-            f"  {prefix}: {format_pct(breach.current_value)}% exceeds "
-            f"{regime_label_display} regime limit of "
-            f"{format_pct(breach.new_limit_value)}% — overage {format_pct(breach.overage)}%"
-        )
-    return "\n".join(rows)
+    tier_label = DRAWDOWN_TIER_DISPLAY[tier]
+    restrictions = DRAWDOWN_TIER_RESTRICTIONS[tier]
+    return f"  Cumulative tier: {tier_label} — {restrictions}"
 
 
 # ---------------------------------------------------------------------------

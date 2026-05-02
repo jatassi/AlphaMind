@@ -43,6 +43,7 @@ from alphamind.portfolio_state.records.capital import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
     DrawdownState,
+    DrawdownTier,
     RegimeLabel,
     RegimeTransitionState,
     RiskBudgetConsumption,
@@ -89,6 +90,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     MarketInputs,
     PortfolioStateSnapshot,
 )
+from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery import (
     CorrelationState,
     CrossConstraintImpact,
@@ -444,6 +446,21 @@ def _make_drawdown() -> DrawdownState:
     )
 
 
+def _make_drawdown_with_tier(tier: DrawdownTier) -> DrawdownState:
+    """Drawdown with a cumulative tier set — for parity tests across renderers."""
+    return DrawdownState(
+        current_drawdown_pct=8.5,
+        equity_high_water_mark_usd=51_000.0,
+        drawdown_duration_hours=2.0,
+        lifetime_max_drawdown_pct=10.0,
+        intraday_drawdown_pct=0.5,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.WARNING,
+        cumulative_tier=tier,
+        drawdown_by_source_pct={},
+    )
+
+
 def _make_pnl() -> PortfolioPnL:
     return PortfolioPnL(
         total_unrealized_pnl_usd=-200.0,
@@ -774,9 +791,7 @@ def _build_analyst_view() -> AnalystView:
         available_capital=AnalystAvailableCapital(
             available_for_new_positions_usd=_AVAILABLE_FOR_NEW_POSITIONS_USD,
             available_for_new_positions_pct=10.0,
-            per_position_max_size_usd=_PER_POSITION_MAX_PCT
-            * _TOTAL_PORTFOLIO_VALUE_USD
-            / 100.0,
+            per_position_max_size_usd=_PER_POSITION_MAX_PCT * _TOTAL_PORTFOLIO_VALUE_USD / 100.0,
             per_position_max_size_pct=_PER_POSITION_MAX_PCT,
         ),
         pending_orders=(),
@@ -903,9 +918,16 @@ def _render_normal_analyst_header() -> str:
     )
 
 
-def _render_normal_strategist_header() -> str:
+def _render_normal_strategist_header(
+    *,
+    drawdown: DrawdownState | None = None,
+    regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
+) -> str:
+    view = _build_strategist_view()
+    if drawdown is not None:
+        view = view.model_copy(update={"drawdown": drawdown})
     return render_strategist_header(
-        strategist_view=_build_strategist_view(),
+        strategist_view=view,
         invocation_id=_INVOCATION_ID,
         timestamp=_TIMESTAMP,
         options_enabled=True,
@@ -916,6 +938,7 @@ def _render_normal_strategist_header() -> str:
         sector_resolver=_build_sector_resolver(),
         total_portfolio_value_usd=_TOTAL_PORTFOLIO_VALUE_USD,
         available_for_new_positions_usd=_AVAILABLE_FOR_NEW_POSITIONS_USD,
+        regime_transition_breaches=regime_transition_breaches,
     )
 
 
@@ -923,9 +946,14 @@ def _render_normal_pm_header(
     *,
     correlation_state: CorrelationState | None = None,
     dependency_risk_flag: DependencyRiskFlag | None = None,
+    drawdown: DrawdownState | None = None,
+    regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
 ) -> str:
+    view = _build_pm_view()
+    if drawdown is not None:
+        view = view.model_copy(update={"drawdown": drawdown})
     return render_pm_header(
-        pm_view=_build_pm_view(),
+        pm_view=view,
         invocation_id=_INVOCATION_ID,
         timestamp=_TIMESTAMP,
         options_enabled=True,
@@ -939,6 +967,7 @@ def _render_normal_pm_header(
         cross_constraint_impact=_build_cross_constraint_impact(),
         correlation_state=correlation_state,
         dependency_risk_flag=dependency_risk_flag,
+        regime_transition_breaches=regime_transition_breaches,
     )
 
 
@@ -1256,9 +1285,7 @@ class TestNormalHeaderRendering:
         # Strategist's variant carries the "(max loss: ...)" annotation; PM's
         # variant does not. Confirm both surface the same per-position rows by
         # comparing the position_id ordering.
-        strategist_proximity = _extract_block(
-            strategist, "Position-level constraint proximity:"
-        )
+        strategist_proximity = _extract_block(strategist, "Position-level constraint proximity:")
         pm_proximity = _extract_block(pm, "Position-level constraint proximity:")
         strategist_ids = [
             row.strip().split(":")[0]
@@ -1266,9 +1293,7 @@ class TestNormalHeaderRendering:
             if row.strip().startswith("POS-")
         ]
         pm_ids = [
-            row.strip().split(":")[0]
-            for row in pm_proximity[1:]
-            if row.strip().startswith("POS-")
+            row.strip().split(":")[0] for row in pm_proximity[1:] if row.strip().startswith("POS-")
         ]
         assert strategist_ids == pm_ids
         assert len(strategist_ids) == 12
@@ -1283,6 +1308,91 @@ class TestNormalHeaderRendering:
         for label in ("  Tech (", "  Semis (", "  Financials (", "  Energy ("):
             assert any(row.startswith(label) for row in strategist_block)
             assert any(row.startswith(label) for row in pm_block)
+
+    def test_strategist_and_pm_share_cumulative_tier_line(self) -> None:
+        """Both renderers must emit the same Cumulative-tier line shape.
+
+        The PM renderer used to emit ``Cumulative tier: CONSTRAINED`` (raw
+        enum) while the strategist emitted ``Cumulative tier: constrained —
+        max position size 3%, ...`` (lowercased label + restrictions). This
+        test enforces line-by-line parity to trip future divergences.
+        """
+        drawdown = _make_drawdown_with_tier(DrawdownTier.CONSTRAINED)
+        strategist = _render_normal_strategist_header(drawdown=drawdown)
+        pm = _render_normal_pm_header(drawdown=drawdown)
+        expected_line = (
+            "  Cumulative tier: constrained — max position size 3%, "
+            "max gross 80%, positions w/ unrealized loss > 10% flagged"
+        )
+        assert expected_line in strategist.splitlines()
+        assert expected_line in pm.splitlines()
+
+    def test_strategist_and_pm_share_regime_transition_breach_rows(self) -> None:
+        """Both renderers must emit identical regime-transition-breach rows.
+
+        Asserts (a) the ``[{rule_label}]`` suffix on per-position
+        non-``position_max_size_pct`` breaches, (b) absence of the suffix on
+        per-position ``position_max_size_pct`` breaches, and (c) byte-identical
+        row text across both renderers.
+        """
+        per_pos_max = RegimeTransitionBreach(
+            position_id="POS-NVDA-001",
+            rule_id="position_max_size_pct",
+            rule_label="Per-position max size",
+            current_value=4.2,
+            new_limit_value=3.5,
+            overage=0.7,
+            unit="% of portfolio",
+        )
+        per_pos_other = RegimeTransitionBreach(
+            position_id="POS-AMD-004",
+            rule_id="single_short_max_pct",
+            rule_label="Single short max size",
+            current_value=3.2,
+            new_limit_value=3.0,
+            overage=0.2,
+            unit="% of portfolio",
+        )
+        aggregate = RegimeTransitionBreach(
+            position_id=None,
+            rule_id="sector_concentration_tech",
+            rule_label="Sector concentration (Tech)",
+            current_value=28.0,
+            new_limit_value=20.0,
+            overage=8.0,
+            unit="% of portfolio",
+        )
+        breaches = (per_pos_max, per_pos_other, aggregate)
+        strategist = _render_normal_strategist_header(regime_transition_breaches=breaches)
+        pm = _render_normal_pm_header(regime_transition_breaches=breaches)
+        strategist_block = _extract_block(strategist, "Regime-transition breaches (if any):")
+        pm_block = _extract_block(pm, "Regime-transition breaches (if any):")
+        # Byte-identical: both renderers share the helper now.
+        assert strategist_block == pm_block
+        # Confirm the per-position non-max-size rule renders the [label] suffix.
+        assert any("[Single short max size]" in row for row in strategist_block), (
+            "per-position non-max-size breach must carry [{rule_label}] suffix"
+        )
+        assert any("[Single short max size]" in row for row in pm_block)
+        # Confirm the per-position max_size rule does NOT carry the suffix.
+        max_size_row = next(row for row in strategist_block if "POS-NVDA-001:" in row)
+        assert "[Per-position max size]" not in max_size_row
+
+    def test_pm_and_strategist_reject_non_percent_unit_breach(self) -> None:
+        """The unit invariant must trip when a breach uses a non-percentage unit."""
+        bad_breach = RegimeTransitionBreach(
+            position_id="POS-NVDA-001",
+            rule_id="position_max_size_pct",
+            rule_label="Per-position max size",
+            current_value=4.2,
+            new_limit_value=3.5,
+            overage=0.7,
+            unit="USD",
+        )
+        with pytest.raises(ValueError, match="must be a percentage form"):
+            _render_normal_strategist_header(regime_transition_breaches=(bad_breach,))
+        with pytest.raises(ValueError, match="must be a percentage form"):
+            _render_normal_pm_header(regime_transition_breaches=(bad_breach,))
 
     def test_no_renderer_introduces_double_blank_lines(self) -> None:
         for renderer in (
@@ -1518,9 +1628,7 @@ class TestValidationTool:
 
     def test_validation_tool_pass_path(self) -> None:
         state = _build_validation_tool_state()
-        result = validate_guardrail(
-            request=_equity_request(dollar_value=500.0), state=state
-        )
+        result = validate_guardrail(request=_equity_request(dollar_value=500.0), state=state)
         assert result.overall == "PASS"
         assert result.proposal_index_in_invocation == 1
         assert result.cumulative_impact_note == (
@@ -1568,9 +1676,7 @@ class TestValidationTool:
             active_profile=config.active_profile,
             conservative_buffer_pct=config.conservative_buffer_pct,
         )
-        state = state.model_copy(
-            update={"starting_snapshot": snapshot, "starting_config": relaxed}
-        )
+        state = state.model_copy(update={"starting_snapshot": snapshot, "starting_config": relaxed})
         # Propose a 5K tech equity (10% of portfolio) — pushes tech 22% → 32%.
         request = _equity_request(ticker="AAPL", dollar_value=5_000.0)
         result = validate_guardrail(request=request, state=state)

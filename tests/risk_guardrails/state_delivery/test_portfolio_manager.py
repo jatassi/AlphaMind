@@ -806,7 +806,10 @@ def test_render_pm_header_drawdown_context_with_cumulative_tier() -> None:
         cross_constraint_impact=impact,
     )
     assert "  Cumulative:    8.5% from HWM (⚠ WARNING)" in rendered
-    assert "  Cumulative tier: CONSTRAINED" in rendered
+    assert (
+        "  Cumulative tier: constrained — max position size 3%, "
+        "max gross 80%, positions w/ unrealized loss > 10% flagged" in rendered
+    )
 
 
 def test_render_pm_header_regime_transition_breaches_block_present_when_breaches_exist() -> None:

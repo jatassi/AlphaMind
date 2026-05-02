@@ -16,7 +16,6 @@ from alphamind.portfolio_state.records.capital import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
     DrawdownState,
-    DrawdownTier,
     RegimeLabel,
     RiskBudgetConsumption,
     RiskBudgetEntry,
@@ -30,6 +29,8 @@ from alphamind.portfolio_state.records.positions import (
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 from alphamind.risk_guardrails.state_delivery.primitives import (
+    DRAWDOWN_TIER_DISPLAY,
+    DRAWDOWN_TIER_RESTRICTIONS,
     format_pct,
     render_capital_block,
     render_directional_headroom_block,
@@ -81,22 +82,6 @@ _INSTRUMENT_TYPE_DISPLAY: dict[InstrumentType, str] = {
     InstrumentType.EQUITY: "equity",
     InstrumentType.OPTIONS: "option",
     InstrumentType.STRATEGY: "strategy",
-}
-
-_DRAWDOWN_TIER_DISPLAY: dict[DrawdownTier, str] = {
-    DrawdownTier.CONSTRAINED: "constrained",
-    DrawdownTier.HEAVILY_CONSTRAINED: "heavily constrained",
-    DrawdownTier.FULL_HALT: "full halt",
-}
-
-_DRAWDOWN_TIER_RESTRICTIONS: dict[DrawdownTier, str] = {
-    DrawdownTier.CONSTRAINED: (
-        "max position size 3%, max gross 80%, positions w/ unrealized loss > 10% flagged"
-    ),
-    DrawdownTier.HEAVILY_CONSTRAINED: (
-        "max position size 2%, max gross 60%, positions w/ unrealized loss > 15% flagged"
-    ),
-    DrawdownTier.FULL_HALT: "no new positions; orderly reductions only",
 }
 
 _ABANDONED_OPENINGS_HEADER = (
@@ -487,8 +472,8 @@ def _render_drawdown_state_block(
         f"{format_pct(cumulative_limit)}% [{cumulative_zone_tag}]",
     ]
     if drawdown.cumulative_tier is not None:
-        tier_label = _DRAWDOWN_TIER_DISPLAY[drawdown.cumulative_tier]
-        restrictions = _DRAWDOWN_TIER_RESTRICTIONS[drawdown.cumulative_tier]
+        tier_label = DRAWDOWN_TIER_DISPLAY[drawdown.cumulative_tier]
+        restrictions = DRAWDOWN_TIER_RESTRICTIONS[drawdown.cumulative_tier]
         rows.append(f"  Cumulative tier: {tier_label} — {restrictions}")
     return "\n".join(rows)
 
