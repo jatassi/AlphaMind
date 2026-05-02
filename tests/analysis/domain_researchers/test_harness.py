@@ -409,7 +409,7 @@ async def test_auth_failure_raises_sdk_failure_naming_env_var(
     agent_config: BaseAgentConfig, archive_root: Path
 ) -> None:
     """Authentication failure raises SDKFailure with CLAUDE_CODE_OAUTH_TOKEN in message."""
-    from claude_agent_sdk._errors import CLIConnectionError
+    from claude_agent_sdk import CLIConnectionError
 
     async def _auth_fail_stub(**kwargs: Any) -> AsyncIterator[Any]:
         raise CLIConnectionError("OAuth token invalid or missing")
@@ -724,3 +724,48 @@ async def test_no_archive_root_no_crash(
     )
 
     assert isinstance(result, HarnessSuccess)
+
+
+# ---------------------------------------------------------------------------
+# 15. ClaudeAgentOptions structure — pin allowed_tools, max_turns,
+#     system_prompt, setting_sources, output-token env propagation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_harness_claude_agent_options_structure(
+    agent_config: BaseAgentConfig, archive_root: Path
+) -> None:
+    """The ClaudeAgentOptions passed to the SDK pin the autonomous-agent contract.
+
+    Catches a regression where someone "improves" the harness by enabling tools,
+    loading developer settings, or dropping the output-token cap.
+    """
+    captured_options: list[Any] = []
+
+    async def _capturing_stub(**kwargs: Any) -> AsyncIterator[Any]:
+        captured_options.append(kwargs.get("options"))
+        async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_TEXT)):
+            yield msg
+
+    await invoke_domain_researcher(
+        agent_config=agent_config,
+        sector=Sector.TECH_SEMIS,
+        user_message="Analyse.",
+        invocation_id="inv-options-001",
+        archive_root=archive_root,
+        sdk_query_fn=_capturing_stub,
+    )
+
+    assert len(captured_options) == 1
+    options = captured_options[0]
+
+    assert options.allowed_tools == []
+    assert options.max_turns == 1
+    assert isinstance(options.system_prompt, str)
+    assert options.system_prompt  # non-empty
+    # ``setting_sources=[]`` blocks .claude/settings.json from loading hooks/permissions.
+    assert options.setting_sources == []
+    # Output-token budget propagates via the env-var path (the CLI exposes no
+    # ``--max-tokens`` flag).
+    assert options.env.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS") == str(agent_config.output_token_budget)

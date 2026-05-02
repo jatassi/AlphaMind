@@ -51,21 +51,23 @@ __all__ = [
 # Per-process system-prompt cache
 # ---------------------------------------------------------------------------
 
-# Maps prompt file path (str) → loaded prompt text.
-# Populated on first call; served from memory on subsequent calls.  No
-# invalidation needed: the pipeline process restarts on agents.yaml edits
-# per the deploy-time vs. invocation-time classification in
-# configuration-management.md.
+# Maps prompt file path → loaded prompt text.  No invalidation needed:
+# the pipeline process restarts on agents.yaml edits per the deploy-time
+# vs. invocation-time classification in configuration-management.md.
+# The lock gates the read-then-write so concurrent orchestrator coroutines
+# (three sectors at once) can't redundantly re-read the same file.
 _PROMPT_CACHE: dict[str, str] = {}
+_PROMPT_CACHE_LOCK = asyncio.Lock()
 
-_REPO_ROOT = Path(__file__).parent.parent.parent.parent.parent
+_REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
-def _load_prompt(prompt_path: str) -> str:
+async def _load_prompt(prompt_path: str) -> str:
     """Load system prompt from *prompt_path*, caching per process."""
-    if prompt_path not in _PROMPT_CACHE:
-        _PROMPT_CACHE[prompt_path] = (_REPO_ROOT / prompt_path).read_text(encoding="utf-8")
-    return _PROMPT_CACHE[prompt_path]
+    async with _PROMPT_CACHE_LOCK:
+        if prompt_path not in _PROMPT_CACHE:
+            _PROMPT_CACHE[prompt_path] = (_REPO_ROOT / prompt_path).read_text(encoding="utf-8")
+        return _PROMPT_CACHE[prompt_path]
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +207,9 @@ async def _collect_response(
     cache_read_tokens = 0
     cache_write_tokens = 0
 
+    # ``max_turns=1`` (set on options) is load-bearing for this loop:
+    # we overwrite per-message usage rather than summing across turns,
+    # which is correct only when there's exactly one assistant turn.
     async for message in sdk_query_fn(prompt=prompt, options=options):
         if isinstance(message, AssistantMessage):
             for block in message.content:
@@ -399,6 +404,7 @@ def _parse_and_validate(
                 "Validation failure with stop_reason=max_tokens — context overflow, no retry",
                 agent_name=diag.agent_name,
                 invocation_id=diag.invocation_id,
+                raw_response=response,
             )
         return None, _build_retry_message_for_validation_failure(validation)
 
@@ -452,8 +458,7 @@ async def invoke_domain_researcher(
     TimeoutFailure
         Invocation exceeded ``agent_config.latency_budget_seconds``.
     """
-    from claude_agent_sdk import ClaudeAgentOptions
-    from claude_agent_sdk._errors import ClaudeSDKError, CLIConnectionError
+    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKError, CLIConnectionError
 
     if sdk_query_fn is None:
         from claude_agent_sdk import query as _real_query
@@ -461,13 +466,21 @@ async def invoke_domain_researcher(
         sdk_query_fn = _real_query
 
     agent_name = _SECTOR_TO_AGENT[sector].value
-    prompt_text = _load_prompt(agent_config.prompt)
+    prompt_text = await _load_prompt(agent_config.prompt)
 
+    # ``setting_sources=[]`` keeps the SDK from loading developer
+    # ``.claude/settings.json`` (hooks/permissions) — this agent must run
+    # system_prompt + user_message only.  ``CLAUDE_CODE_MAX_OUTPUT_TOKENS``
+    # is the only path the CLI exposes for an output-token cap (no
+    # ``max_tokens`` field on ``ClaudeAgentOptions``, no ``--max-tokens``
+    # CLI flag).
     options = ClaudeAgentOptions(
         system_prompt=prompt_text,
         model=agent_config.model,
         allowed_tools=[],
         max_turns=1,
+        setting_sources=[],
+        env={"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(agent_config.output_token_budget)},
     )
 
     diag = _DiagState(
