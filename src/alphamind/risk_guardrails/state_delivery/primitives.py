@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 
 from alphamind.portfolio_state.records.capital import (
     ActiveRiskParameterSet,
+    DrawdownTier,
     RegimeLabel,
     RiskBudgetEntry,
     RiskZone,
@@ -24,6 +25,22 @@ _REGIME_LABEL_DISPLAY: dict[RegimeLabel, str] = {
     RegimeLabel.NORMAL: "normal",
     RegimeLabel.ELEVATED: "elevated",
     RegimeLabel.CRISIS: "crisis",
+}
+
+DRAWDOWN_TIER_DISPLAY: dict[DrawdownTier, str] = {
+    DrawdownTier.CONSTRAINED: "constrained",
+    DrawdownTier.HEAVILY_CONSTRAINED: "heavily constrained",
+    DrawdownTier.FULL_HALT: "full halt",
+}
+
+DRAWDOWN_TIER_RESTRICTIONS: dict[DrawdownTier, str] = {
+    DrawdownTier.CONSTRAINED: (
+        "max position size 3%, max gross 80%, positions w/ unrealized loss > 10% flagged"
+    ),
+    DrawdownTier.HEAVILY_CONSTRAINED: (
+        "max position size 2%, max gross 60%, positions w/ unrealized loss > 15% flagged"
+    ),
+    DrawdownTier.FULL_HALT: "no new positions; orderly reductions only",
 }
 
 _DIRECTIONAL_LABEL_WIDTH = len("Net short")

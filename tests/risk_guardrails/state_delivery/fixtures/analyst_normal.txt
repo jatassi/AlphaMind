@@ -1,0 +1,40 @@
+=== GUARDRAIL STATE (invocation inv-e2e-001, 2026-04-28T14:32:05Z) ===
+Regime: normal [unchanged]
+
+Capital:
+  Available for new positions: $5,000 (10.0% of portfolio)
+  Per-position max size: $2,500 (5.0% of portfolio, normal regime)
+
+Sector headroom (delta-adjusted):
+  Tech:       18.5% / 25.0% — room: 6.5% [⚠ WARNING]
+  Semis:      12.0% / 25.0% — room: 13.0% [NORMAL]
+  Financials: 8.5% / 25.0% — room: 16.5% [NORMAL]
+  Energy:     4.0% / 25.0% — room: 21.0% [NORMAL]
+
+Directional headroom:
+  Net long:  42.0% / 60.0% — room: 18.0%
+  Net short: 10.0% / 30.0% — room: 20.0%
+  Gross:     78.0% / 120.0% — room: 42.0%
+
+Options headroom:
+  Delta exposure: 22.0% / 40.0% — room: 18.0%
+  Theta:          0.1% / 0.2%/day
+  Vega:           0.6% / 1.0%/pt
+
+Held positions (dedup — skip same underlying + direction; strategist owns hold/add/reduce):
+  NVDA  long    4.0%  Tech
+  AAPL  long    3.5%  Tech
+  MSFT  long    2.0%  Tech
+  AMD   long    3.0%  Semis
+  MU    short   1.5%  Semis
+  AVGO  long    2.5%  Semis
+  JPM   long    3.8%  Financials
+  GS    long    2.2%  Financials
+  BAC   short   1.5%  Financials
+  XOM   long    2.5%  Energy
+  CVX   long    2.0%  Energy
+  MISC  long    0.5%  Unclassified
+
+Abandoned openings from prior invocation (decide on current grounds whether to re-propose):
+  ENV-REC-1  long GOOG equity  3.0%  — abandoned at 2026-04-28T13:30:00Z (broker rejected: stale price)
+===

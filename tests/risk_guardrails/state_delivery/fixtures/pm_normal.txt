@@ -1,0 +1,76 @@
+=== GUARDRAIL STATE (invocation inv-e2e-001, 2026-04-28T14:32:05Z) ===
+Regime: normal [unchanged]
+
+Capital:
+  Available for new positions: $5,000 (10.0% of portfolio)
+  Per-position max size: $2,500 (5.0% of portfolio, normal regime)
+
+Sector headroom (delta-adjusted):
+  Tech:       18.5% / 25.0% — room: 6.5% [⚠ WARNING]
+  Semis:      12.0% / 25.0% — room: 13.0% [NORMAL]
+  Financials: 8.5% / 25.0% — room: 16.5% [NORMAL]
+  Energy:     4.0% / 25.0% — room: 21.0% [NORMAL]
+
+Directional headroom:
+  Net long:  42.0% / 60.0% — room: 18.0%
+  Net short: 10.0% / 30.0% — room: 20.0%
+  Gross:     78.0% / 120.0% — room: 42.0%
+
+Options headroom:
+  Delta exposure: 22.0% / 40.0% — room: 18.0%
+  Theta:          0.1% / 0.2%/day
+  Vega:           0.6% / 1.0%/pt
+
+Position-level constraint proximity:
+  POS-NVDA-001: 4.0% of portfolio (max 5.0%) — P/L: -2.0% of cost
+  POS-AAPL-002: 3.5% of portfolio (max 5.0%) — P/L: +4.0% of cost
+  POS-MSFT-003: 2.0% of portfolio (max 5.0%) — P/L: +1.5% of cost
+  POS-AMD-004:  3.0% of portfolio (max 5.0%) — P/L: +5.0% of cost
+  POS-MU-005:   1.5% of portfolio (max 5.0%) — P/L: -1.0% of cost
+  POS-AVGO-006: 2.5% of portfolio (max 5.0%) — P/L: +0.5% of cost
+  POS-JPM-007:  3.8% of portfolio (max 5.0%) — P/L: -1.0% of cost
+  POS-GS-008:   2.2% of portfolio (max 5.0%) — P/L: +2.5% of cost
+  POS-BAC-009:  1.5% of portfolio (max 5.0%) — P/L: +1.0% of cost
+  POS-XOM-010:  2.5% of portfolio (max 5.0%) — P/L: +8.0% of cost
+  POS-CVX-011:  2.0% of portfolio (max 5.0%) — P/L: -3.0% of cost
+  POS-MISC-012: 0.5% of portfolio (max 5.0%) — P/L: +0.0% of cost
+
+Sector exposure breakdown (per position):
+  Tech (18.5% / 25.0%):
+    POS-NVDA-001: 4.0% (delta-adj)
+    POS-AAPL-002: 3.5% (delta-adj)
+    POS-MSFT-003: 2.0% (delta-adj)
+  Semis (12.0% / 25.0%):
+    POS-AMD-004: 3.0% (delta-adj)
+    POS-MU-005: 1.5% (delta-adj)
+    POS-AVGO-006: 2.5% (delta-adj)
+  Financials (8.5% / 25.0%):
+    POS-JPM-007: 3.8% (delta-adj)
+    POS-GS-008: 2.2% (delta-adj)
+    POS-BAC-009: 1.5% (delta-adj)
+  Energy (4.0% / 25.0%):
+    POS-XOM-010: 2.5% (delta-adj)
+    POS-CVX-011: 2.0% (delta-adj)
+
+Cross-constraint impact summary:
+  If all pending proposals are approved as-sized:
+    Net long:    42.0% → 45.0% (within limit)
+    Gross:       105.0% → 108.0% (within limit)
+    Tech sector: 18.5% → 20.5% (within limit)
+    Capital:     $5,000 → $3,500
+
+Guardrail validation tool available:
+  Call validate_guardrail(instrument, direction, size) to check any proposed modification.
+  Tool tracks cumulative impact across multiple checks within this invocation.
+
+Drawdown context:
+  Daily P/L:     -0.5% (NORMAL)
+  Daily limit:   2.5% — headroom: 2.0%
+  Cumulative:    2.0% from HWM (NORMAL)
+
+Recent engine-originated actions (since last invocation):
+  2026-04-28T14:00:00Z: Engine closed POS-LEGACY-001 — reason: position_level_max_loss
+
+Active regime overrides:
+  None
+===

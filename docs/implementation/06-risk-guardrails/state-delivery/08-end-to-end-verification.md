@@ -1,8 +1,7 @@
 ---
-status: blocked
-completed_date:
-commit_id:
-blocked_on: state-delivery 04b, 04c, 05, 06 (this E2E story exercises every renderer + halt-mode wrapper + emergency block; the upstream sibling stories are themselves blocked on regime-adaptation/02 and breach-behavior/03). Set to `not_started` and dispatch when state-delivery 04b, 04c, 05, 06 are `done`.
+status: done
+completed_date: 2026-05-02
+commit_id: e112bd1
 ---
 
 # 08 — End-to-end verification

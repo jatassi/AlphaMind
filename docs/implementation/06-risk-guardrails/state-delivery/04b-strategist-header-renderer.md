@@ -1,8 +1,7 @@
 ---
-status: blocked
-completed_date:
-commit_id:
-blocked_on: regime-adaptation/02-package-skeleton-and-types.md (canonical `RegimeTransitionBreach` not yet shipped — `from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach` resolves to nothing). Set to `not_started` and dispatch when regime-adaptation story 02 is `done`.
+status: done
+completed_date: 2026-04-29
+commit_id: 4fcc064
 ---
 
 # 04b — Strategist guardrail state header renderer
