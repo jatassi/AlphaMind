@@ -16,6 +16,7 @@ import time
 from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -110,6 +111,7 @@ async def _run_domain_researcher(
     agents_config: Mapping[str, BaseAgentConfig],
     sectors_config: Mapping[str, list[str]],
     deps: _Deps,
+    archive_root: Path | None = None,
 ) -> DomainResearcherResult:
     """Run a domain researcher with injected dependencies.
 
@@ -132,6 +134,9 @@ async def _run_domain_researcher(
         Registry mapping sector-name strings to ticker lists.
     deps:
         Injectable callables — qualitative loader, bundle assembler, harness.
+    archive_root:
+        Forwarded to the harness for diagnostic-archive writes.  ``None``
+        skips archival (e.g. in tests).
     """
     wall_start = time.monotonic()
 
@@ -179,6 +184,7 @@ async def _run_domain_researcher(
         sector=sector,
         user_message=bundle.bundle_text,
         invocation_id=invocation_id,
+        archive_root=archive_root,
     )
     logger.info(
         "[%s] harness invoked (retry_count=%d, tokens=%s)",
@@ -214,6 +220,7 @@ async def run_domain_researcher(
     session: Session,
     agents_config: Mapping[str, BaseAgentConfig],
     sectors_config: Mapping[str, list[str]],
+    archive_root: Path | None = None,
 ) -> DomainResearcherResult:
     """Invoke a domain researcher and return a validated ``DomainResearcherResult``.
 
@@ -240,6 +247,9 @@ async def run_domain_researcher(
         Registry mapping agent-name strings to ``BaseAgentConfig`` instances.
     sectors_config:
         Registry mapping sector-name strings to ticker lists.
+    archive_root:
+        Forwarded to the harness for diagnostic-archive writes.  ``None``
+        skips archival.
     """
 
     def _qualitative_loader(
@@ -269,4 +279,5 @@ async def run_domain_researcher(
             bundle_assembler=assemble_input_bundle,
             harness_fn=invoke_domain_researcher,
         ),
+        archive_root=archive_root,
     )
