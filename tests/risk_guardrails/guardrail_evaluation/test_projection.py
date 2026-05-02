@@ -243,6 +243,36 @@ def test_project_rule_returns_canonical_rule_projection_shape() -> None:
     assert result.unit == "USD/day"
 
 
+def test_project_rule_default_inverse_is_false() -> None:
+    """Standard (non-inverse) rules round-trip ``inverse=False`` through to the
+    output projection so callers can distinguish floor vs cap rules without
+    maintaining a parallel registry."""
+    result = project_rule(
+        rule_id="net_long_pct",
+        current=5.0,
+        contributions=[2.0],
+        effective_limit=20.0,
+        zones=_DEFAULT_ZONES,
+        unit=_PCT_UNIT,
+    )
+    assert result.inverse is False
+
+
+def test_project_rule_inverse_true_flag_propagates_to_projection() -> None:
+    """Inverse rules round-trip ``inverse=True`` so callers can branch on the
+    canonical flag instead of a duplicate registry of rule IDs."""
+    result = project_rule(
+        rule_id="min_cash_reserve_pct",
+        current=15.0,
+        contributions=[-3.0],
+        effective_limit=10.0,
+        zones=_DEFAULT_ZONES,
+        unit="% of portfolio",
+        inverse=True,
+    )
+    assert result.inverse is True
+
+
 def test_project_rule_is_pure() -> None:
     """Equal inputs produce equal RuleProjections."""
     a = project_rule(

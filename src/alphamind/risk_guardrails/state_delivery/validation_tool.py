@@ -151,9 +151,10 @@ class ValidationRequest(BaseModel):
     * ``existing_position_id`` is auto-resolved from the snapshot via the
       ticker/direction/asset-type lookup pattern (see
       ``_lookup_existing_position``).
-    * ``daily_borrow_cost_usd`` is required only by the library's short-equity
-      OPEN/ADD validation; the tool surfaces it as an optional field that the
-      caller sets only when proposing those actions.
+    * ``daily_borrow_cost_usd`` is resolved from the state's
+      ``borrow_cost_resolver`` for short equity OPEN/ADD; the request shape
+      itself carries no borrow-cost field so the caller is not forced to know
+      when the library's validators require one.
     * ``reserves_capital`` flags non-marketable limit OPENs that contribute to
       ``pending_order_capital_pct``; defaults to ``False`` so marketable orders
       need not opt out explicitly.
@@ -164,7 +165,6 @@ class ValidationRequest(BaseModel):
     instrument: ValidationInstrument
     size: ValidationSize
     action: ValidationAction
-    daily_borrow_cost_usd: float | None = None
     reserves_capital: bool = False
 
 
@@ -187,7 +187,9 @@ class ProjectedDelta(BaseModel):
 
     Mirrors the ``ValidationRequest`` surface plus the cached projection result
     so subsequent calls can replay the proposal without re-running the
-    library's projection math for the prior call's sector resolution.
+    library's projection math for the prior call's sector resolution. Borrow
+    cost is re-resolved via ``ValidationToolState.borrow_cost_resolver``
+    rather than cached here, mirroring the request-side flow.
     """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
@@ -199,19 +201,35 @@ class ProjectedDelta(BaseModel):
     delta_adjusted_exposure: float
     greeks: Greeks | None
     proposal_index: int
-    daily_borrow_cost_usd: float | None = None
     reserves_capital: bool = False
     existing_position_id: str | None = None
+
+
+class ValidationToolError(Exception):
+    """Raised when the validation tool cannot satisfy a structural precondition.
+
+    The library validates its inputs and raises ``LibraryInputError``; this
+    error class is the tool-layer twin for preconditions the tool itself
+    enforces before calling the library — most notably that short equity
+    proposals carry a ``borrow_cost_resolver`` on state.
+    """
 
 
 class ValidationToolState(BaseModel):
     """Per-invocation state passed across multiple ``validate_guardrail`` calls.
 
-    Carries the spec-mandated renderer-shared fields (``starting_risk_budget``,
-    ``starting_active_risk_parameters``, ``profile_feature_flags``) so the
-    state header rendering and the validation tool can be driven from one
-    snapshot. ``starting_config`` and ``starting_market`` carry the library's
-    input shapes; the agent runtime constructs both at invocation start.
+    The first three projection-shaped fields ARE the spec's renderer-shared
+    inputs; callers can access them directly. They are also accessible via
+    ``starting_snapshot.<derived attribute>`` once the snapshot exposes the
+    full set — the named fields are caller ergonomics so the validation tool
+    and the state-header renderers consume one canonical shape.
+
+    The two ``library_*`` fields are library plumbing the agent runtime
+    constructs once per invocation:
+    ``library_config = from_resolved_config(resolved_config)`` and
+    ``library_market = build_market_inputs(...)``. The tool composes
+    ``evaluate_proposals`` against these without re-running adapter cost per
+    ``validate_guardrail`` call.
 
     ``sector_resolver`` maps an instrument's ticker to its sector key — the
     tool resolves the proposal's sector internally so the public
@@ -222,16 +240,27 @@ class ValidationToolState(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     invocation_id: str
+    # Spec-required (projection-shaped, shared with renderers):
     starting_snapshot: PortfolioStateSnapshot
     starting_risk_budget: RiskBudgetConsumption
     starting_active_risk_parameters: ActiveRiskParameterSet
     profile_feature_flags: FeatureFlagsView
-    starting_config: LibraryConfig
+    # Library plumbing (agent runtime constructs once via from_resolved_config
+    # + market builder; cannot be derived from projection-shaped inputs alone
+    # because ``LibraryConfig`` carries upstream-only fields like
+    # escalation_zones and conservative_buffer_pct):
+    library_config: LibraryConfig
     # ``MarketInputs`` carries an ``IvProvider`` Protocol that Pydantic cannot
     # generate validation for; ``SkipValidation`` prevents recursion into the
     # dataclass while ``arbitrary_types_allowed=True`` keeps the field assignable.
-    starting_market: SkipValidation[MarketInputs]
+    library_market: SkipValidation[MarketInputs]
+    # Tool helpers:
     sector_resolver: Callable[[str], str]
+    # Borrow-cost resolver: required for short equity OPEN/ADD; ``None`` is
+    # safe when the active profile disables short selling
+    # (``profile_feature_flags.short_selling_enabled=False``) since the library
+    # gate filters those proposals before borrow-cost lookup.
+    borrow_cost_resolver: Callable[[str], float] | None = None
     accumulated_deltas: tuple[ProjectedDelta, ...] = ()
 
     def with_accepted_proposal(self, delta: ProjectedDelta) -> ValidationToolState:
@@ -278,15 +307,15 @@ def validate_guardrail(
         )
 
     proposals = (
-        *(_projected_delta_to_library(d) for d in state.accumulated_deltas),
+        *(_projected_delta_to_library(d, state=state) for d in state.accumulated_deltas),
         _request_to_library_proposal(request, _THIS_PROPOSAL_ID, state=state),
     )
 
     output = evaluate_proposals(
         state=state.starting_snapshot,
         proposals=proposals,
-        config=state.starting_config,
-        market=state.starting_market,
+        config=state.library_config,
+        market=state.library_market,
     )
 
     this_dae = output.delta_adjusted[_THIS_PROPOSAL_ID]
@@ -402,28 +431,75 @@ def _request_to_library_proposal(
     ADJUST actions carry a position id; the lookup returns ``None`` for
     OPEN actions.
 
-    TODO(state-delivery follow-up): pipe ``size.premium_at_risk_usd`` through
-    for OPTIONS/STRATEGY so the library's options-handling can distinguish
-    premium from notional. Currently only ``size.dollar_value`` reaches the
-    library as ``notional_usd``.
+    For short equity OPEN/ADD, derives ``daily_borrow_cost_usd`` via
+    ``state.borrow_cost_resolver``. For options, the proposal's
+    ``notional_usd`` carries the premium-at-risk (``size.premium_at_risk_usd``
+    when set, else ``size.dollar_value``) — the library treats option
+    ``notional_usd`` as the cash impact / premium-at-risk for capital
+    accounting per ``rules/capital.py``.
     """
     instrument = request.instrument
-    sector = state.sector_resolver(instrument.ticker)
-    existing_id = _lookup_existing_position(request, snapshot=state.starting_snapshot)
     return ProposedDelta(
         id=proposal_id,
         underlying=instrument.ticker,
-        sector=sector,
+        sector=state.sector_resolver(instrument.ticker),
         direction=_DIRECTION_TO_LIBRARY[instrument.direction],
         asset_type=_INSTRUMENT_TO_ASSET_TYPE[instrument.asset_type],
-        notional_usd=request.size.dollar_value,
+        notional_usd=_library_notional_usd(instrument, request.size),
         quantity=float(request.size.quantity),
         option_legs=_build_option_legs(instrument, request.size.quantity),
         action=_ACTION_TO_LIBRARY[request.action],
-        existing_position_id=existing_id,
-        daily_borrow_cost_usd=request.daily_borrow_cost_usd,
+        existing_position_id=_lookup_existing_position(request, snapshot=state.starting_snapshot),
+        daily_borrow_cost_usd=_resolve_borrow_cost(
+            instrument=instrument, action=request.action, state=state
+        ),
         reserves_capital=request.reserves_capital,
     )
+
+
+def _library_notional_usd(instrument: ValidationInstrument, size: ValidationSize) -> float:
+    """Compute the library ``notional_usd`` for a proposal.
+
+    Equity: ``size.dollar_value``. Options/strategy: ``size.premium_at_risk_usd``
+    when set, else ``size.dollar_value`` as a fallback. The library's
+    ``rules/capital.py`` consumes options ``notional_usd`` as premium-at-risk
+    for cash accounting; piping the spec's ``premium_at_risk_usd`` keeps the
+    semantics aligned across the layers.
+    """
+    is_option_like = instrument.asset_type in (InstrumentType.OPTIONS, InstrumentType.STRATEGY)
+    if is_option_like and size.premium_at_risk_usd is not None:
+        return size.premium_at_risk_usd
+    return size.dollar_value
+
+
+def _resolve_borrow_cost(
+    *,
+    instrument: ValidationInstrument,
+    action: ValidationAction,
+    state: ValidationToolState,
+) -> float | None:
+    """Return the borrow cost for short equity OPEN/ADD; ``None`` otherwise.
+
+    Raises ``ValidationToolError`` when the resolver is missing on a request
+    that requires it. Other actions (LONG, options, CLOSE/ADJUST) return
+    ``None``; the library's borrow-cost rule reads the proposal field only
+    where applicable.
+    """
+    needs_borrow_cost = (
+        instrument.direction == Direction.SHORT
+        and instrument.asset_type == InstrumentType.EQUITY
+        and action in (ValidationAction.OPEN, ValidationAction.ADD)
+    )
+    if not needs_borrow_cost:
+        return None
+    resolver = state.borrow_cost_resolver
+    if resolver is None:
+        msg = (
+            f"borrow_cost_resolver is required on ValidationToolState for "
+            f"short equity {action.value} (ticker={instrument.ticker!r})"
+        )
+        raise ValidationToolError(msg)
+    return resolver(instrument.ticker)
 
 
 _POSITION_LOOKUP_ACTIONS = frozenset(
@@ -515,13 +591,16 @@ def _make_option_leg(
     )
 
 
-def _projected_delta_to_library(delta: ProjectedDelta) -> ProposedDelta:
+def _projected_delta_to_library(
+    delta: ProjectedDelta, *, state: ValidationToolState
+) -> ProposedDelta:
     """Convert a previously-accepted proposal back to the library shape.
 
-    Replays the cached sector / position-id / borrow-cost values without
-    re-resolving them. The caller stored these on ``ProjectedDelta`` when it
-    accepted the prior proposal, so subsequent calls reproduce the prior
-    library inputs deterministically.
+    Replays the cached sector / position-id values; re-resolves borrow cost
+    via ``state.borrow_cost_resolver`` so prior short equity OPEN/ADD
+    proposals reproduce identical library inputs across calls. The resolver
+    is total within an invocation (the active state object holds the same
+    resolver across all calls), so repeated lookups are deterministic.
     """
     instrument = delta.instrument
     return ProposedDelta(
@@ -530,12 +609,14 @@ def _projected_delta_to_library(delta: ProjectedDelta) -> ProposedDelta:
         sector=delta.sector,
         direction=_DIRECTION_TO_LIBRARY[instrument.direction],
         asset_type=_INSTRUMENT_TO_ASSET_TYPE[instrument.asset_type],
-        notional_usd=delta.size.dollar_value,
+        notional_usd=_library_notional_usd(instrument, delta.size),
         quantity=float(delta.size.quantity),
         option_legs=_build_option_legs(instrument, delta.size.quantity),
         action=_ACTION_TO_LIBRARY[delta.action],
         existing_position_id=delta.existing_position_id,
-        daily_borrow_cost_usd=delta.daily_borrow_cost_usd,
+        daily_borrow_cost_usd=_resolve_borrow_cost(
+            instrument=instrument, action=delta.action, state=state
+        ),
         reserves_capital=delta.reserves_capital,
     )
 
@@ -547,10 +628,6 @@ def _projected_delta_to_library(delta: ProjectedDelta) -> ProposedDelta:
 
 _DIRECTIONAL_RULES = frozenset({"net_long_pct", "net_short_pct", "gross_exposure_pct"})
 _CAPITAL_RULES = frozenset({"min_cash_reserve_pct", "pending_order_capital_pct"})
-# Inverse rules' ``limit`` is a floor: ``projected_after < limit`` is FAIL.
-# Mirrors ``RuleSpec(inverse=True)`` declarations in
-# ``guardrail_evaluation/rules/capital.py``.
-_INVERSE_RULES = frozenset({"min_cash_reserve_pct"})
 
 
 def _breach_magnitude(projection: RuleProjection) -> float:
@@ -573,10 +650,7 @@ def _reduction_pct(projection: RuleProjection) -> int:
     Both branches return a non-negative integer.
     """
     magnitude = _breach_magnitude(projection)
-    if projection.rule in _INVERSE_RULES:
-        denominator = projection.limit
-    else:
-        denominator = projection.projected_after
+    denominator = projection.limit if projection.inverse else projection.projected_after
     if denominator == 0:
         return 0
     return round(magnitude / abs(denominator) * 100)
@@ -631,7 +705,7 @@ def _capital_rule_guidance(
     absolute notional minus the breach magnitude in USD.
     """
     portfolio = state.starting_snapshot.portfolio_value_usd
-    if projection.rule in _INVERSE_RULES:
+    if projection.inverse:
         available_usd = max(0.0, (projection.current - projection.limit)) * portfolio / 100.0
         shortfall_usd = (projection.limit - projection.projected_after) * portfolio / 100.0
     else:

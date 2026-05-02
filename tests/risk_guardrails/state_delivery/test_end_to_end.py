@@ -1152,8 +1152,8 @@ def _build_validation_tool_state(
         starting_risk_budget=_make_full_risk_budget(),
         starting_active_risk_parameters=_make_active_risk_parameters(),
         profile_feature_flags=config.feature_flags,
-        starting_config=config,
-        starting_market=_build_market(),
+        library_config=config,
+        library_market=_build_market(),
         sector_resolver=_sector_for_ticker,
         accumulated_deltas=accumulated_deltas,
     )
@@ -1676,7 +1676,7 @@ class TestValidationTool:
             active_profile=config.active_profile,
             conservative_buffer_pct=config.conservative_buffer_pct,
         )
-        state = state.model_copy(update={"starting_snapshot": snapshot, "starting_config": relaxed})
+        state = state.model_copy(update={"starting_snapshot": snapshot, "library_config": relaxed})
         # Propose a 5K tech equity (10% of portfolio) — pushes tech 22% → 32%.
         request = _equity_request(ticker="AAPL", dollar_value=5_000.0)
         result = validate_guardrail(request=request, state=state)
@@ -1732,8 +1732,8 @@ class TestValidationTool:
             starting_risk_budget=_make_full_risk_budget(),
             starting_active_risk_parameters=_make_active_risk_parameters(),
             profile_feature_flags=config.feature_flags,
-            starting_config=config,
-            starting_market=_build_market(),
+            library_config=config,
+            library_market=_build_market(),
             sector_resolver=_sector_for_ticker,
         )
         # Each 1K request is 2% of the 50K portfolio.
@@ -1926,8 +1926,8 @@ class TestComposition:
             starting_risk_budget=_make_full_risk_budget(),
             starting_active_risk_parameters=_make_active_risk_parameters(),
             profile_feature_flags=config.feature_flags,
-            starting_config=config,
-            starting_market=_build_market(),
+            library_config=config,
+            library_market=_build_market(),
             sector_resolver=_sector_for_ticker,
         )
 

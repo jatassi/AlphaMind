@@ -42,6 +42,7 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import (
     ValidationResult,
     ValidationSize,
     ValidationStrategyLeg,
+    ValidationToolError,
     ValidationToolState,
     validate_guardrail,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "ValidationResult",
     "ValidationSize",
     "ValidationStrategyLeg",
+    "ValidationToolError",
     "ValidationToolState",
     "prepend_emergency_block",
     "render_analyst_header",
