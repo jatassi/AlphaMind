@@ -86,15 +86,16 @@ class _Deps:
 # ---------------------------------------------------------------------------
 
 
-def _build_sector_membership(
-    sectors_config: Mapping[str, list[str]],
-) -> dict[Sector, frozenset[str]]:
-    """Build a ``{Sector: frozenset[ticker]}`` map from *sectors_config*.
+def _validate_sectors_config(sectors_config: Mapping[str, list[str]]) -> None:
+    """Assert *sectors_config* has an entry for every registered sector.
 
-    Raises :exc:`KeyError` immediately if *sectors_config* is missing any
-    :class:`Sector` entry — surfaces config gaps before the harness call.
+    Raises :exc:`KeyError` immediately on a missing entry — surfaces
+    config gaps before the harness call.  Returns no value: this is a
+    side-effect-only precondition check.
     """
-    return {s: frozenset(sectors_config[s.value]) for s in Sector}
+    for s in Sector:
+        # Indexing raises KeyError on miss — that's the intended signal.
+        _ = sectors_config[s.value]
 
 
 # ---------------------------------------------------------------------------
@@ -174,9 +175,7 @@ async def _run_domain_researcher(
         len(bundle.bundle_text),
     )
 
-    # Raises KeyError immediately if sectors_config is missing any Sector entry,
-    # surfacing config gaps before the harness call.
-    _build_sector_membership(sectors_config)
+    _validate_sectors_config(sectors_config)
 
     # HarnessFailure propagates up unchanged; the orchestrator handles per fail-closed policy
     harness_result: HarnessSuccess = await deps.harness_fn(
