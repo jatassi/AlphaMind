@@ -45,6 +45,7 @@ from alphamind.risk_guardrails.state_delivery.primitives import (
     render_options_headroom_block,
     render_position_proximity_block,
     render_regime_line,
+    render_regime_transition_breaches_block,
     render_sector_breakdown_block,
     render_sector_headroom_block,
     render_zone_tag,
@@ -52,9 +53,6 @@ from alphamind.risk_guardrails.state_delivery.primitives import (
     require_param_entry,
     resolve_sector_entries,
     validate_feature_flag_closure,
-)
-from alphamind.risk_guardrails.state_delivery.strategist import (
-    _render_regime_transition_breaches_block,
 )
 
 _PM_HARD_BLOCKS_HEADER = "Hard blocks (do NOT issue commands violating):"
@@ -214,7 +212,7 @@ def render_pm_header(  # noqa: PLR0913 — keyword-only signature dictated by st
             total_portfolio_value_usd=total_portfolio_value_usd,
         )
     )
-    breaches_block = _render_regime_transition_breaches_block(
+    breaches_block = render_regime_transition_breaches_block(
         breaches=regime_transition_breaches,
         regime_label_display=regime_display,
     )

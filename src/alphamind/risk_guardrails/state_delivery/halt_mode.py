@@ -61,6 +61,7 @@ from alphamind.risk_guardrails.state_delivery.primitives import (
     render_options_headroom_block,
     render_position_proximity_block,
     render_regime_line,
+    render_regime_transition_breaches_block,
     render_sector_breakdown_block,
     render_sector_headroom_block,
     require_budget_entry,
@@ -69,7 +70,6 @@ from alphamind.risk_guardrails.state_delivery.primitives import (
     validate_feature_flag_closure,
 )
 from alphamind.risk_guardrails.state_delivery.strategist import (
-    _render_regime_transition_breaches_block,
     render_strategist_header,
 )
 
@@ -461,7 +461,7 @@ def render_pm_header_halt_mode(  # noqa: PLR0913 — mirrors render_pm_header
             total_portfolio_value_usd=total_portfolio_value_usd,
         )
     )
-    breaches_block = _render_regime_transition_breaches_block(
+    breaches_block = render_regime_transition_breaches_block(
         breaches=regime_transition_breaches,
         regime_label_display=regime_display,
     )

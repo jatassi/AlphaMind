@@ -42,6 +42,7 @@ from alphamind.risk_guardrails.state_delivery.primitives import (
     render_options_headroom_block,
     render_position_proximity_block,
     render_regime_line,
+    render_regime_transition_breaches_block,
     render_sector_breakdown_block,
     render_sector_headroom_block,
     render_zone_tag,
@@ -77,7 +78,6 @@ _ABANDONED_ACTIONS_HEADER = (
     "(decide on current grounds whether to re-propose):"
 )
 _DRAWDOWN_HEADER = "Drawdown state:"
-_REGIME_TRANSITION_BREACHES_HEADER = "Regime-transition breaches (if any):"
 _NONE_LINE = "  None"
 
 
@@ -188,7 +188,7 @@ def render_strategist_header(  # noqa: PLR0913 — signature dictated by story 0
             active_risk_parameters=active_risk_parameters,
         )
     )
-    breaches_block = _render_regime_transition_breaches_block(
+    breaches_block = render_regime_transition_breaches_block(
         breaches=regime_transition_breaches,
         regime_label_display=regime_display,
     )
@@ -254,38 +254,6 @@ def _render_drawdown_state_block(
         tier_label = DRAWDOWN_TIER_DISPLAY[drawdown.cumulative_tier]
         restrictions = DRAWDOWN_TIER_RESTRICTIONS[drawdown.cumulative_tier]
         rows.append(f"  Cumulative tier: {tier_label} — {restrictions}")
-    return "\n".join(rows)
-
-
-# ---------------------------------------------------------------------------
-# Regime-transition breaches (block 7 in the design)
-# ---------------------------------------------------------------------------
-
-
-def _render_regime_transition_breaches_block(
-    *,
-    breaches: tuple[RegimeTransitionBreach, ...],
-    regime_label_display: str,
-) -> str | None:
-    if not breaches:
-        return None
-    rows = [_REGIME_TRANSITION_BREACHES_HEADER]
-    for breach in breaches:
-        if not breach.unit.startswith("%"):
-            msg = (
-                f"RegimeTransitionBreach.unit must be a percentage form for "
-                f"rule_id={breach.rule_id!r}; got unit={breach.unit!r}"
-            )
-            raise ValueError(msg)
-        prefix = breach.position_id if breach.position_id is not None else breach.rule_label
-        suffix = ""
-        if breach.position_id is not None and breach.rule_id != POSITION_MAX_SIZE_RULE_ID:
-            suffix = f" [{breach.rule_label}]"
-        rows.append(
-            f"  {prefix}: {breach.current_value:.1f}% exceeds "
-            f"{regime_label_display} regime limit of {breach.new_limit_value:.1f}% "
-            f"— overage {breach.overage:.1f}%{suffix}"
-        )
     return "\n".join(rows)
 
 

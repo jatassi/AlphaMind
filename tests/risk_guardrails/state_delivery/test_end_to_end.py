@@ -1295,10 +1295,9 @@ class TestNormalHeaderRendering:
     def test_three_renderers_share_per_position_proximity_block(self) -> None:
         strategist = _render_normal_strategist_header()
         pm = _render_normal_pm_header()
-        # Per-position proximity is a shared block produced by both renderers.
-        # Strategist's variant carries the "(max loss: ...)" annotation; PM's
-        # variant does not. Confirm both surface the same per-position rows by
-        # comparing the position_id ordering.
+        # Per-position proximity is a shared block produced by both renderers
+        # via render_position_proximity_block. Confirm both surface the same
+        # per-position rows by comparing the position_id ordering.
         strategist_proximity = _extract_block(strategist, "Position-level constraint proximity:")
         pm_proximity = _extract_block(pm, "Position-level constraint proximity:")
         strategist_ids = [
@@ -1318,7 +1317,7 @@ class TestNormalHeaderRendering:
         # Both surface a sector breakdown block listing positions per sector.
         strategist_block = _extract_block(strategist, "Sector exposure breakdown (per position):")
         pm_block = _extract_block(pm, "Sector exposure breakdown (per position):")
-        # Both expose the same 4 sector groups (PM's variant skips unclassified)
+        # Both expose the same 4 sector groups via render_sector_breakdown_block.
         for label in ("  Tech (", "  Semis (", "  Financials (", "  Energy ("):
             assert any(row.startswith(label) for row in strategist_block)
             assert any(row.startswith(label) for row in pm_block)

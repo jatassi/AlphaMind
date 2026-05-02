@@ -20,6 +20,7 @@ from alphamind.portfolio_state.records.positions import (
     InstrumentType,
     PositionRecord,
 )
+from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 
 # ---------------------------------------------------------------------------
 # Display dictionaries (module-private; helpers below access them)
@@ -82,6 +83,7 @@ _DEFAULT_HARD_BLOCKS_HEADER = "Hard blocks (do NOT recommend):"
 # Block-header constants for the proximity / sector-breakdown blocks.
 _POSITION_PROXIMITY_HEADER = "Position-level constraint proximity:"
 _SECTOR_BREAKDOWN_HEADER = "Sector exposure breakdown (per position):"
+_REGIME_TRANSITION_BREACHES_HEADER = "Regime-transition breaches (if any):"
 _NONE_LINE = "  None"
 _UNCLASSIFIED_GROUP_LABEL = "Unclassified"
 
@@ -527,4 +529,43 @@ def render_sector_breakdown_block(
         rows.append(f"  {_UNCLASSIFIED_GROUP_LABEL}:")
         for view in unclassified:
             rows.append(_render_sector_row(view))
+    return "\n".join(rows)
+
+
+# ---------------------------------------------------------------------------
+# Regime-transition breaches (block 7 in the design)
+# ---------------------------------------------------------------------------
+
+
+def render_regime_transition_breaches_block(
+    *,
+    breaches: tuple[RegimeTransitionBreach, ...],
+    regime_label_display: str,
+) -> str | None:
+    """Render the ``Regime-transition breaches (if any):`` block.
+
+    Returns ``None`` when *breaches* is empty so the caller can omit the block.
+    Each breach renders as one row keyed on the position id (when present) or
+    the rule label, with a ``[<rule_label>]`` suffix added for non-position-max
+    rules so the rule context is preserved when the row is keyed by position.
+    """
+    if not breaches:
+        return None
+    rows = [_REGIME_TRANSITION_BREACHES_HEADER]
+    for breach in breaches:
+        if not breach.unit.startswith("%"):
+            msg = (
+                f"RegimeTransitionBreach.unit must be a percentage form for "
+                f"rule_id={breach.rule_id!r}; got unit={breach.unit!r}"
+            )
+            raise ValueError(msg)
+        prefix = breach.position_id if breach.position_id is not None else breach.rule_label
+        suffix = ""
+        if breach.position_id is not None and breach.rule_id != POSITION_MAX_SIZE_RULE_ID:
+            suffix = f" [{breach.rule_label}]"
+        rows.append(
+            f"  {prefix}: {breach.current_value:.1f}% exceeds "
+            f"{regime_label_display} regime limit of {breach.new_limit_value:.1f}% "
+            f"— overage {breach.overage:.1f}%{suffix}"
+        )
     return "\n".join(rows)

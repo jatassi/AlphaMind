@@ -1079,6 +1079,96 @@ def test_long_equity_open_does_not_call_borrow_cost_resolver() -> None:
     assert result.overall in {"PASS", "FAIL"}
 
 
+def test_borrow_cost_resolver_purity_replay_determinism() -> None:
+    """``borrow_cost_resolver`` purity contract: equal ticker inputs must
+    produce equal float outputs across all calls within a chain.
+
+    Replays of the same proposal sequence against fresh ``ValidationToolState``
+    instances must yield byte-identical ``ValidationResult`` outputs. The
+    resolver is invoked once per short equity OPEN/ADD per call (the current
+    proposal plus each replayed prior delta in the chain).
+    """
+    calls: list[str] = []
+
+    def tracking_resolver(ticker: str) -> float:
+        calls.append(ticker)
+        return {"AAPL": 0.40, "NVDA": 0.55}[ticker]
+
+    def fresh_state() -> ValidationToolState:
+        # Snapshot/config sized so the short-only chain stays well inside limits.
+        snapshot = _snapshot(net_long_pct=0.0, net_short_pct=0.0, gross_pct=0.0)
+        return _state(snapshot=snapshot, borrow_cost_resolver=tracking_resolver)
+
+    state = fresh_state()
+    request_a = _equity_request(ticker="AAPL", direction=Direction.SHORT, dollar_value=2_000.0)
+    request_b = _equity_request(ticker="NVDA", direction=Direction.SHORT, dollar_value=2_000.0)
+
+    # Call 1: validates request_a → resolver called once for AAPL.
+    result_a = validate_guardrail(request=request_a, state=state)
+    state = state.with_accepted_proposal(
+        ProjectedDelta(
+            instrument=request_a.instrument,
+            size=request_a.size,
+            action=ValidationAction.OPEN,
+            sector="tech",
+            delta_adjusted_exposure=result_a.delta_adjusted_exposure,
+            greeks=result_a.greeks,
+            proposal_index=1,
+        )
+    )
+    # Call 2: replays request_a (resolver call) + validates request_b.
+    result_b = validate_guardrail(request=request_b, state=state)
+    expected_calls = ["AAPL", "AAPL", "NVDA"]
+    assert calls == expected_calls
+
+    # Replay the same sequence against a fresh state with a fresh tracking list;
+    # the resolver must still be pure (same ticker → same float), so the
+    # ValidationResult outputs must be byte-identical to the first run.
+    calls.clear()
+    state2 = fresh_state()
+    replay_a = validate_guardrail(request=request_a, state=state2)
+    state2 = state2.with_accepted_proposal(
+        ProjectedDelta(
+            instrument=request_a.instrument,
+            size=request_a.size,
+            action=ValidationAction.OPEN,
+            sector="tech",
+            delta_adjusted_exposure=replay_a.delta_adjusted_exposure,
+            greeks=replay_a.greeks,
+            proposal_index=1,
+        )
+    )
+    replay_b = validate_guardrail(request=request_b, state=state2)
+    assert calls == expected_calls
+    assert replay_a == result_a
+    assert replay_b == result_b
+
+
+def test_borrow_cost_resolver_mutating_violates_replay_determinism() -> None:
+    """A mutating resolver (closure over a mutable counter) violates the
+    purity contract and produces visibly different ``ValidationResult`` outputs
+    across replays — making the contract violation tangible.
+    """
+    counter = {"n": 0}
+
+    def mutating_resolver(_ticker: str) -> float:
+        counter["n"] += 1
+        # Each call returns a different cost — clearly impure.
+        return 0.10 + 0.05 * counter["n"]
+
+    def fresh_state() -> ValidationToolState:
+        snapshot = _snapshot(net_long_pct=0.0, net_short_pct=0.0, gross_pct=0.0)
+        return _state(snapshot=snapshot, borrow_cost_resolver=mutating_resolver)
+
+    request = _equity_request(ticker="AAPL", direction=Direction.SHORT, dollar_value=2_000.0)
+
+    first = validate_guardrail(request=request, state=fresh_state())
+    second = validate_guardrail(request=request, state=fresh_state())
+    # Per-rule projections may differ via the borrow-cost rule; the divergence
+    # is the visible symptom of the contract violation.
+    assert first.per_rule != second.per_rule
+
+
 def test_validation_tool_state_uses_library_prefixed_field_names() -> None:
     """Library plumbing fields are prefixed ``library_*`` to distinguish them
     from the spec's renderer-shared starting_* fields."""
@@ -1090,6 +1180,26 @@ def test_validation_tool_state_uses_library_prefixed_field_names() -> None:
     assert state.starting_risk_budget is not None
     assert state.starting_active_risk_parameters is not None
     assert state.profile_feature_flags is not None
+
+
+def test_validation_tool_state_rejects_mismatched_feature_flags() -> None:
+    """``profile_feature_flags`` and ``library_config.feature_flags`` must agree
+    at construction time. The tool composes the library against the latter and
+    returns disabled-feature guidance against the former; silent divergence
+    yields a class of bugs where the guidance and the actual gate disagree."""
+    library_config = _config(options_enabled=True, short_selling_enabled=True)
+    mismatched_flags = FeatureFlagsView(options_enabled=False, short_selling_enabled=True)
+    with pytest.raises(ValueError, match="profile_feature_flags must equal"):
+        ValidationToolState(
+            invocation_id="INV-001",
+            starting_snapshot=_snapshot(),
+            starting_risk_budget=_risk_budget(),
+            starting_active_risk_parameters=_active_risk_parameters(),
+            profile_feature_flags=mismatched_flags,
+            library_config=library_config,
+            library_market=_market(),
+            sector_resolver=_sector_resolver,
+        )
 
 
 def test_validation_tool_state_with_accepted_proposal_preserves_all_fields() -> None:

@@ -260,8 +260,35 @@ class ValidationToolState(BaseModel):
     # safe when the active profile disables short selling
     # (``profile_feature_flags.short_selling_enabled=False``) since the library
     # gate filters those proposals before borrow-cost lookup.
+    #
+    # Purity contract: must be a pure function — equal ``ticker`` inputs must
+    # produce equal ``float`` outputs across all calls within a
+    # ``validate_guardrail`` chain. The tool re-resolves borrow cost for every
+    # accumulated short equity OPEN/ADD on each call (see
+    # ``_projected_delta_to_library``); a closure over mutable state (live
+    # ledger, network resolver without caching, mutating counter) violates this
+    # contract and produces non-deterministic guidance across replays of the
+    # same proposal sequence.
     borrow_cost_resolver: Callable[[str], float] | None = None
     accumulated_deltas: tuple[ProjectedDelta, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_feature_flags_agree(self) -> ValidationToolState:
+        """Reject construction when ``profile_feature_flags`` and
+        ``library_config.feature_flags`` diverge.
+
+        The tool returns disabled-feature guidance against the former
+        (``_disabled_feature_guidance``) and composes the library against the
+        latter; silent divergence yields guidance/gate disagreement.
+        """
+        if self.profile_feature_flags != self.library_config.feature_flags:
+            msg = (
+                f"profile_feature_flags must equal library_config.feature_flags; "
+                f"got profile={self.profile_feature_flags!r} vs "
+                f"library={self.library_config.feature_flags!r}"
+            )
+            raise ValueError(msg)
+        return self
 
     def with_accepted_proposal(self, delta: ProjectedDelta) -> ValidationToolState:
         """Return a new state with *delta* appended to ``accumulated_deltas``."""
