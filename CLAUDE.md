@@ -44,4 +44,15 @@ If you are running on MacOS, you are on the development machine. Production data
 If these locations aren't accessible, alert the user
 
 ## Working with Linear
-We use Linear for issue tracking in this project. Top-level components are tracked as Projects (e.g., Distillation layer), features within components are tracked as Issues (e.g., ALP-75: Replay Harness), detailed requirements for features are tracked as sub-issues using the User Story template (e.g., ALP-108: 02 — Package skeleton & CLI stub).
+Issue hierarchy:
+- **Project** — one per section header in `docs/project-tracker.md`.
+- **Issue** (feature, e.g., ALP-212 "Breach behavior") — one per bullet under "Ready for implementation". The body holds design-doc links, cross-feature `blockedBy`, the dependency graph, and orchestrator-specific notes.
+- **Sub-issue** (user story, e.g., ALP-230 "04a — Zone classifier") — one per implementation step, drafted via `/draft-user-stories` using the User Story format: `Goal` / `Reading` / `Depends on` / `Scope` / `Acceptance criteria` / `Verification`.
+
+### Linear MCP gotchas
+
+- **Relation fields on `save_issue` are append-only.** Passing a different `blockedBy` / `blocks` / `relatedTo` / `links` list does NOT remove existing relations — it adds. Use `removeBlockedBy` / `removeBlocks` / `removeRelatedTo` to clear. This is the most common silent-corruption hazard when updating an issue's dependency graph.
+- **Status names are case-sensitive.** AlphaMind team statuses: `Backlog`, `Todo`, `In Progress`, `In Review`, `Blocked`, `Done`, `Canceled`, `Duplicate`. Pass via the `state` parameter; `"todo"` or `"To Do"` will not match.
+- **`list_issues` truncates long descriptions** (with a `(truncated, use 'get_issue' for full description)` marker). For the full body of any issue, call `get_issue` directly.
+- **`get_issue` omits `blockedBy`/`blocks`/`relatedTo` by default.** Pass `includeRelations=true` to see the dependency graph.
+- **Linear Projects mirror `docs/project-tracker.md` section headers verbatim** — `Foundation`, `Data layer`, `Distillation layer`, `Risk guardrails`, `Analysis layer`, `Decision layer`, `Execution layer`, `Operational tooling`. Use these names directly for the `project` parameter.
