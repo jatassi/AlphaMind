@@ -51,8 +51,10 @@ Issue hierarchy:
 
 ### Linear MCP gotchas
 
-- **Relation fields on `save_issue` are append-only.** Passing a different `blockedBy` / `blocks` / `relatedTo` / `links` list does NOT remove existing relations — it adds. Use `removeBlockedBy` / `removeBlocks` / `removeRelatedTo` to clear. This is the most common silent-corruption hazard when updating an issue's dependency graph.
+- **Relation fields on `save_issue` are append-only.** Passing a different `blockedBy` / `blocks` / `relatedTo` / `links` list does NOT remove existing relations — it adds. Use `removeBlockedBy` / `removeBlocks` / `removeRelatedTo` to clear; pass both add and remove in the same call to swap atomically. Most common silent-corruption hazard when updating an issue's dependency graph.
+- **Marking a duplicate requires both `state="Duplicate"` and `duplicateOf=<canonical-id>`** on `save_issue`. The state alone leaves the issue canceled but unlinked.
 - **Status names are case-sensitive.** AlphaMind team statuses: `Backlog`, `Todo`, `In Progress`, `In Review`, `Blocked`, `Done`, `Canceled`, `Duplicate`. Pass via the `state` parameter; `"todo"` or `"To Do"` will not match.
 - **`list_issues` truncates long descriptions** (with a `(truncated, use 'get_issue' for full description)` marker). For the full body of any issue, call `get_issue` directly.
 - **`get_issue` omits `blockedBy`/`blocks`/`relatedTo` by default.** Pass `includeRelations=true` to see the dependency graph.
 - **Linear Projects mirror `docs/project-tracker.md` section headers verbatim** — `Foundation`, `Data layer`, `Distillation layer`, `Risk guardrails`, `Analysis layer`, `Decision layer`, `Execution layer`, `Operational tooling`. Use these names directly for the `project` parameter.
+- **The Linear renderer collapses sub-bullet lists nested under numbered list items**, dropping all but the first sub-bullet. When writing issue bodies, render structured detail under a numbered item as inline prose or a separate section, not as a nested bullet list.
