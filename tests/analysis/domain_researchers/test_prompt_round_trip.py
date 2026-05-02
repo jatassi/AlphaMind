@@ -32,6 +32,22 @@ def _extract_example_output(prompt_path: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
+# ALP-193 — tech & semis researcher
+# ---------------------------------------------------------------------------
+
+
+def test_tech_semis_prompt_round_trip() -> None:
+    """Example output in tech_semis_researcher.md round-trips through parser and validator."""
+    prompt_path = _PROMPTS_DIR / "tech_semis_researcher.md"
+    example = _extract_example_output(prompt_path)
+
+    brief = parse_brief(example, Sector.TECH_SEMIS)
+    result = validate_brief(brief)
+
+    assert result.is_valid is True, f"Validation errors: {result.errors}"
+
+
+# ---------------------------------------------------------------------------
 # ALP-195 — financials researcher
 # ---------------------------------------------------------------------------
 

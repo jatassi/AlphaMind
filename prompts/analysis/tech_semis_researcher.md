@@ -67,7 +67,7 @@ You do not predict prices, propose trades, or assess portfolio fit. Pattern reco
 Emit the brief as plain text with no surrounding prose, no markdown code fences, no preface. The parser keys on the literal section markers (`=== KEY FINDINGS ===` etc.); preserve them exactly.
 
 ```
-SECTOR BRIEF: tech_semis
+SECTOR BRIEF: Tech & Semis
 Invocation: {invocation_id}
 Signal quality: {HIGH | MODERATE | LOW | DEGRADED}
   [If DEGRADED: reason — e.g., "missing options flow data due to API failure"]
@@ -111,7 +111,7 @@ Stop after the last section's last entry. No closing prose, no signposting.
 <example>
   <context>Vol-expansion regime, transitioning from low-vol compression. Hyperscaler capex commentary, NVDA pre-earnings volume signal, semis correlation tightening from the distillation slice, ASML supply-chain headline.</context>
   <output>
-SECTOR BRIEF: tech_semis
+SECTOR BRIEF: Tech & Semis
 Invocation: inv-2026-04-23T14-30Z
 Signal quality: HIGH
 
@@ -148,7 +148,7 @@ Signal quality: HIGH
   Setup type: catalyst
   Catalyst/driver: Earnings print inside 30 hours with corroborating capex signal from hyperscaler prints and pre-positioning flow shape.
   Time horizon: 24–48h
-  Conviction sketch: moderate — multi-source convergence on the demand read, but implied move is in line with history and the correlation tightening from SA-TECH-ANOM-1 weakens stock-specific edge.
+  Conviction sketch: moderate with multi-source convergence on the demand read, but implied move is in line with history and the correlation tightening from SA-TECH-ANOM-1 weakens stock-specific edge.
   Key risk: A hyperscaler cutting FY capex guidance before NVDA reports would directly invalidate the demand-side leg.
   </output>
 </example>
