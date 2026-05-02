@@ -42,9 +42,9 @@ __all__ = [
     "run_domain_researchers",
 ]
 
-# Deterministic sector roster — iterating this list (rather than relying on
-# `asyncio.gather`'s arg-order preservation alone) makes the
-# Sector → result-field mapping visible at the call site.
+# Deterministic sector roster — fixes the dispatch order so the
+# positional unpack of ``asyncio.gather``'s result lines up with the
+# DomainResearchersOutput fields.
 _SECTOR_ROSTER: tuple[Sector, ...] = (Sector.TECH_SEMIS, Sector.FINANCIALS, Sector.ENERGY)
 
 
@@ -110,15 +110,16 @@ async def _run_domain_researchers(
         )
         for sector in _SECTOR_ROSTER
     ]
-    gathered = await asyncio.gather(*coroutines, return_exceptions=False)
-    by_sector = dict(zip(_SECTOR_ROSTER, gathered, strict=True))
-    results = list(by_sector.values())
+    # ``asyncio.gather`` preserves argument order, so positional indexing
+    # into ``results`` lines up with ``_SECTOR_ROSTER`` directly.
+    results = await asyncio.gather(*coroutines, return_exceptions=False)
+    tech_semis_result, financials_result, energy_result = results
     return DomainResearchersOutput(
         invocation_id=invocation_id,
         as_of=as_of,
-        tech_semis=by_sector[Sector.TECH_SEMIS],
-        financials=by_sector[Sector.FINANCIALS],
-        energy=by_sector[Sector.ENERGY],
+        tech_semis=tech_semis_result,
+        financials=financials_result,
+        energy=energy_result,
         total_tokens_used=TokensUsed(
             input_tokens=sum(r.tokens_used.input_tokens for r in results),
             output_tokens=sum(r.tokens_used.output_tokens for r in results),
