@@ -45,3 +45,19 @@ def test_financials_prompt_round_trip() -> None:
     result = validate_brief(brief)
 
     assert result.is_valid is True, f"Validation errors: {result.errors}"
+
+
+# ---------------------------------------------------------------------------
+# ALP-197 — energy researcher
+# ---------------------------------------------------------------------------
+
+
+def test_energy_prompt_round_trip() -> None:
+    """Example output in energy_researcher.md round-trips through parser and validator."""
+    prompt_path = _PROMPTS_DIR / "energy_researcher.md"
+    example = _extract_example_output(prompt_path)
+
+    brief = parse_brief(example, Sector.ENERGY)
+    result = validate_brief(brief)
+
+    assert result.is_valid is True, f"Validation errors: {result.errors}"
