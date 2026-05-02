@@ -34,7 +34,7 @@ Cross-cutting policies and reference specs that constrain implementation but are
 
 - [x] **Rules & limits** — _done_ — [design](design/06-risk-guardrails/rules-and-limits.md), [stories](implementation/06-risk-guardrails/rules-and-limits/)
 - [x] **Guardrail evaluation primitives** — _done_ — [design](design/06-risk-guardrails/guardrail-evaluation.md), [stories](implementation/06-risk-guardrails/guardrail-evaluation/)
-- [*] **State delivery** — _Partially done_ — [design](design/06-risk-guardrails/state-delivery.md), [stories](implementation/06-risk-guardrails/state-delivery/). Stories 01, 02, 03, 04a, 07 done; stories 04b, 04c, 06 in progress (canonical types `RegimeTransitionBreach`, `HaltState`, `EmergencyTrigger`, `EmergencyContext` shipped via PR #6 / #7); story 05 (halt-mode wrappers) and 08 (E2E) dispatch after the renderer + emergency stories land.
+- [x] **State delivery** — _done_ — [design](design/06-risk-guardrails/state-delivery.md), [stories](implementation/06-risk-guardrails/state-delivery/)
 - [x] **Regime adaptation** — _done_ — [design](design/06-risk-guardrails/regime-adaptation.md), [stories](implementation/06-risk-guardrails/regime-adaptation/)
 - [x] **Breach behavior** — _done_ — [design](design/06-risk-guardrails/breach-behavior.md), [stories](implementation/06-risk-guardrails/breach-behavior/)
 
