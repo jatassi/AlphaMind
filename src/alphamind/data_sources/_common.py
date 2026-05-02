@@ -18,11 +18,12 @@ import threading
 import time
 import urllib.error
 import uuid
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, ParamSpec, TypeVar
 
@@ -130,6 +131,84 @@ class RetryShape(StrEnum):
     critical = "critical"
     important = "important"
     optional = "optional"
+
+
+# ---------------------------------------------------------------------------
+# HeadlineType — canonical news-tag taxonomy
+# ---------------------------------------------------------------------------
+
+
+class HeadlineType(StrEnum):
+    """Canonical headline-type taxonomy.
+
+    Vendor tag vocabularies (Marketaux topics, Finnhub categories, SEC EDGAR
+    8-K item codes, RSS topics) are normalized into this set at the collector
+    boundary via ``config/headline_tag_mapping.yaml``. Multiple values per
+    headline are allowed.
+
+    The 14 members mirror ``docs/design/01-data-layer/schema/_common.py``
+    § ``HeadlineType``.
+    """
+
+    BREAKING = "breaking"
+    EARNINGS_RELATED = "earnings_related"
+    M_AND_A = "m_and_a"
+    ANALYST_ACTION = "analyst_action"
+    REGULATORY = "regulatory"
+    GEOPOLITICAL = "geopolitical"
+    MACRO_DATA = "macro_data"
+    INSIDER_ACTIVITY = "insider_activity"
+    SHORT_REPORT = "short_report"
+    ACTIVIST = "activist"
+    PRODUCT_LAUNCH = "product_launch"
+    SUPPLY_CHAIN = "supply_chain"
+    GUIDANCE = "guidance"
+    SECTOR_ROTATION = "sector_rotation"
+
+
+# ---------------------------------------------------------------------------
+# Vendor → canonical HeadlineType normalization
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=1)
+def _load_headline_tag_mapping() -> dict[str, dict[str, HeadlineType]]:
+    """Read ``config/headline_tag_mapping.yaml`` once and cache the result.
+
+    The yaml is keyed by vendor name (``marketaux``, ``finnhub``,
+    ``sec_edgar_8k``, ``rss_topic``). Each vendor's mapping is a dict from
+    raw vendor tag to canonical ``HeadlineType.value``. Unknown values in
+    the yaml fail loudly at load time so a typo can't silently drop tags.
+    """
+    import yaml
+
+    path = Path(__file__).parents[3] / "config" / "headline_tag_mapping.yaml"
+    with path.open() as fh:
+        raw: dict[str, dict[str, str]] = yaml.safe_load(fh) or {}
+
+    mapping: dict[str, dict[str, HeadlineType]] = {}
+    for vendor, vendor_tags in raw.items():
+        mapping[vendor] = {
+            raw_tag: HeadlineType(canonical) for raw_tag, canonical in vendor_tags.items()
+        }
+    return mapping
+
+
+def normalize_vendor_tags(vendor: str, raw_tags: Iterable[str]) -> list[HeadlineType]:
+    """Normalize vendor-raw tags into canonical ``HeadlineType`` values.
+
+    Unmapped tags drop silently — the mapping yaml is the closed vocabulary,
+    new vendor tags must be added to the yaml before they appear in
+    persisted ``news_articles.topic_tags``. An unknown vendor key returns
+    an empty list (no mapping table available).
+
+    Order is preserved; duplicates in the input are preserved (callers
+    deduplicate when they care).
+    """
+    table = _load_headline_tag_mapping().get(vendor)
+    if table is None:
+        return []
+    return [table[t] for t in raw_tags if t in table]
 
 
 # ---------------------------------------------------------------------------

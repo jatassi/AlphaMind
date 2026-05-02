@@ -25,7 +25,12 @@ from typing import Any
 import httpx
 from sqlalchemy import select
 
-from alphamind.data_sources._common import default_session_factory, resume_since, track_run
+from alphamind.data_sources._common import (
+    default_session_factory,
+    normalize_vendor_tags,
+    resume_since,
+    track_run,
+)
 from alphamind.data_sources.sec_edgar.client import SecEdgarClient
 from alphamind.persistence.models import AssetUniverse, NewsArticles, NewsArticleTickers
 
@@ -243,8 +248,8 @@ def _article_exists(session_factory: Any, accession: str) -> bool:
 
 
 def _extract_item_codes(description: str) -> list[str]:
-    """Return tags like ['8k', 'item_2.02'] extracted from a filing description."""
-    return ["8k"] + [f"item_{m.group(1)}" for m in _ITEM_RE.finditer(description)]
+    """Return raw 8-K item codes (e.g. ``['2.02', '5.02']``) from a filing description."""
+    return [m.group(1) for m in _ITEM_RE.finditer(description)]
 
 
 def _strip_html(html: str) -> str:
@@ -289,6 +294,9 @@ def _write_article(
     description = filing.get("description", "")
     date_str = filing.get("date", "")
 
+    canonical = normalize_vendor_tags("sec_edgar_8k", _extract_item_codes(description))
+    topic_tags = json.dumps([h.value for h in canonical]) if canonical else None
+
     with session_factory() as sess:
         sess.add(
             NewsArticles(
@@ -300,7 +308,7 @@ def _write_article(
                 body_path=body_path,
                 published_at=date_str,
                 ingested_at=datetime.now(UTC).isoformat(),
-                topic_tags=json.dumps(_extract_item_codes(description)),
+                topic_tags=topic_tags,
                 url=filing.get("link") or None,
             )
         )

@@ -230,10 +230,14 @@ class TestCollect8kFilingsWritesRows:
         assert "8-K" in article.headline_text
         assert _FILING_DATE in article.headline_text
 
-    def test_topic_tags_include_item_codes(
+    def test_topic_tags_canonical_after_normalization(
         self, db_with_ticker: sessionmaker[Session], tmp_path: Path
     ) -> None:
-        """topic_tags JSON includes '8k' and the item code from the description."""
+        """topic_tags JSON contains canonical HeadlineType.value for each item code.
+
+        Item 2.02 maps to ``earnings_related``; the synthetic ``"8k"`` tag is
+        no longer prepended (downstream consumers detect 8-K via event_type).
+        """
         transport = _make_http_transport(_SAMPLE_RSS, _SAMPLE_BODY_HTML)
         since = datetime(2024, 3, 1, tzinfo=UTC)
 
@@ -251,8 +255,35 @@ class TestCollect8kFilingsWritesRows:
             article = sess.execute(select(NewsArticles)).scalars().first()
         assert article is not None
         tags = json.loads(article.topic_tags or "[]")
-        assert "8k" in tags
-        assert any("2.02" in t for t in tags)
+        assert tags == ["earnings_related"]
+        assert "8k" not in tags
+
+    def test_topic_tags_multiple_item_codes_normalized(
+        self, db_with_ticker: sessionmaker[Session], tmp_path: Path
+    ) -> None:
+        """Item codes 2.02 and 5.02 normalize to ``earnings_related`` + ``insider_activity``."""
+        rss_with_two_items = _SAMPLE_RSS.replace(
+            "Item 2.02: Results of Operations and Financial Condition",
+            "Item 2.02: Results of Operations and Item 5.02: Departure of Officers",
+        )
+        transport = _make_http_transport(rss_with_two_items, _SAMPLE_BODY_HTML)
+        since = datetime(2024, 3, 1, tzinfo=UTC)
+
+        collect_8k_filings(
+            since=since,
+            session_factory=db_with_ticker,
+            user_agent="AlphaMind test@test.com",
+            _transport=transport,
+            _sleep=lambda _: None,
+            _repo=_FakeRunRepo(),
+            body_dir=tmp_path,
+        )
+
+        with db_with_ticker() as sess:
+            article = sess.execute(select(NewsArticles)).scalars().first()
+        assert article is not None
+        tags = json.loads(article.topic_tags or "[]")
+        assert tags == ["earnings_related", "insider_activity"]
 
 
 # ---------------------------------------------------------------------------

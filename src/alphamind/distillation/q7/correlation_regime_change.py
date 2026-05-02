@@ -6,6 +6,7 @@ detection blocks.
 
 from __future__ import annotations
 
+import json
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from itertools import pairwise
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from alphamind.data_sources._common import HeadlineType
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import (
     AnomalyFlag,
@@ -37,8 +39,13 @@ from alphamind.persistence.models import NewsArticles, NewsArticleTickers
 # indicator is gated on news articles whose ``topic_tags`` overlap with this
 # set so routine company news doesn't drown out the silence signal — see the
 # story 08d notes on filtering ``news_articles`` for narrative pickup.
-NARRATIVE_LAG_REGIME_TAGS: frozenset[str] = frozenset(
-    {"macro_data", "regulatory", "geopolitical", "sector_rotation"}
+NARRATIVE_LAG_REGIME_TAGS: frozenset[HeadlineType] = frozenset(
+    {
+        HeadlineType.MACRO_DATA,
+        HeadlineType.REGULATORY,
+        HeadlineType.GEOPOLITICAL,
+        HeadlineType.SECTOR_ROTATION,
+    }
 )
 
 
@@ -314,9 +321,24 @@ def _qualifying_articles_present(
     for raw_tags in rows:
         if raw_tags is None:
             continue
-        # ``topic_tags`` is stored as a comma-separated string; intersect
-        # with the regime-relevant set.
-        article_tags = {tag.strip() for tag in raw_tags.split(",") if tag.strip()}
+        # ``topic_tags`` is JSON-encoded list of canonical HeadlineType values
+        # (per ``config/headline_tag_mapping.yaml`` normalization at the
+        # collector boundary). Historical rows may carry vendor-raw text that
+        # isn't valid JSON — treat as empty rather than crash.
+        try:
+            parsed = json.loads(raw_tags)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, list):
+            continue
+        article_tags: set[HeadlineType] = set()
+        for tag in parsed:
+            if not isinstance(tag, str):
+                continue
+            try:
+                article_tags.add(HeadlineType(tag))
+            except ValueError:
+                continue
         if article_tags & NARRATIVE_LAG_REGIME_TAGS:
             return True
     return False

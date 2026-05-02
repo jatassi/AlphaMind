@@ -20,6 +20,7 @@ import yaml
 from alphamind.data_sources._common import (
     active_universe_tickers,
     default_session_factory,
+    normalize_vendor_tags,
     resume_since,
     track_run,
 )
@@ -119,8 +120,9 @@ def _ingest_articles(
         credibility_tier = outlets.get(source_outlet) if source_outlet else None
 
         topics: list[dict[str, Any]] = art.get("topics", [])
-        names = [t.get("name") for t in topics if t.get("name")]
-        topic_tags = json.dumps(names) if names else None
+        names = [name for t in topics if (name := t.get("name"))]
+        canonical = normalize_vendor_tags("marketaux", names)
+        topic_tags = json.dumps([h.value for h in canonical]) if canonical else None
 
         description = art.get("description") or ""
         body_path: str | None = None

@@ -257,6 +257,85 @@ class TestBodyPersistence:
 
 
 # ---------------------------------------------------------------------------
+# AC (story 06): topic_tags normalized through headline_tag_mapping.yaml
+# ---------------------------------------------------------------------------
+
+
+class TestTopicTagsNormalization:
+    def test_topic_tags_canonical_after_normalization(
+        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+    ) -> None:
+        """Vendor topic names are normalized to canonical HeadlineType.value strings."""
+        import json as _json
+
+        article = _article(
+            topics=[{"name": "earnings"}, {"name": "macro"}],
+        )
+        client = MagicMock()
+        client.get_news.return_value = [article]
+
+        collect_news(
+            ticker_scope=["AAPL"],
+            since="2024-01-15T00:00:00Z",
+            _client=client,
+            _session_factory=db_session,
+            _repo=fake_repo,
+            _body_dir=str(tmp_path),
+        )
+
+        with db_session() as sess:
+            row = sess.query(NewsArticles).first()
+        assert row is not None
+        assert row.topic_tags is not None
+        tags = _json.loads(row.topic_tags)
+        assert tags == ["earnings_related", "macro_data"]
+
+    def test_unmapped_vendor_topics_dropped_silently(
+        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+    ) -> None:
+        """Unmapped vendor topics drop; if all topics drop, topic_tags is None."""
+        article = _article(topics=[{"name": "unknown_vendor_topic"}])
+        client = MagicMock()
+        client.get_news.return_value = [article]
+
+        collect_news(
+            ticker_scope=["AAPL"],
+            since="2024-01-15T00:00:00Z",
+            _client=client,
+            _session_factory=db_session,
+            _repo=fake_repo,
+            _body_dir=str(tmp_path),
+        )
+
+        with db_session() as sess:
+            row = sess.query(NewsArticles).first()
+        assert row is not None
+        assert row.topic_tags is None
+
+    def test_no_topics_writes_none(
+        self, db_session: sessionmaker[Session], fake_repo: Any, tmp_path: Path
+    ) -> None:
+        """An article with no topics array still writes None for topic_tags."""
+        article = _article(topics=[])
+        client = MagicMock()
+        client.get_news.return_value = [article]
+
+        collect_news(
+            ticker_scope=["AAPL"],
+            since="2024-01-15T00:00:00Z",
+            _client=client,
+            _session_factory=db_session,
+            _repo=fake_repo,
+            _body_dir=str(tmp_path),
+        )
+
+        with db_session() as sess:
+            row = sess.query(NewsArticles).first()
+        assert row is not None
+        assert row.topic_tags is None
+
+
+# ---------------------------------------------------------------------------
 # AC: news_article_tickers populated
 # ---------------------------------------------------------------------------
 

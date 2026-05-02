@@ -347,6 +347,11 @@ class EventCalendar(Base):
     All scheduled events with an event_type discriminator.
 
     ``last_updated`` is mutable and self-maintains via onupdate.
+
+    ``sectors`` is a comma-separated list of ``Sector`` values
+    (e.g. ``"tech_semis,financials"``) used by the per-sector event filter
+    in the domain-researcher loader. NULL is the cross-sector default —
+    macro events such as FOMC carry NULL and surface to every sector.
     """
 
     __tablename__ = "event_calendar"
@@ -364,6 +369,7 @@ class EventCalendar(Base):
     source: Mapped[str] = mapped_column(Text)
     ingested_at: Mapped[str] = mapped_column(Text)
     last_updated: Mapped[str] = mapped_column(Text)
+    sectors: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index("ix_event_calendar_scheduled_at", "scheduled_at"),
