@@ -1,0 +1,585 @@
+"""LLM invocation harness for domain researcher agents — story 07 (ALP-198).
+
+Wraps the Claude Agent SDK call, runs the parser (story 04) and validator
+(story 05) on the response, executes a single corrective retry on
+parse-or-validation failure, and re-classifies failures paired with
+``stop_reason: max_tokens`` as :class:`ContextOverflowFailure`.
+
+This module is the integration point where the SDK, the system prompt,
+the input bundle, the parser, and the validator compose into a single call
+surface used by the per-sector runner (story 10).
+
+Architecture note: ``invoke_domain_researcher`` accepts ``sdk_query_fn``
+for dependency injection.  In production the default (the real
+``claude_agent_sdk.query``) is used.  Tests pass a stub so no test
+touches the Anthropic API.
+"""
+
+from __future__ import annotations
+
+# ruff: noqa: N818  # Exception class names are spec-mandated (ALP-198 story scope)
+import asyncio
+import json
+import time
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel
+
+from alphamind.analysis._shared import Sector, TokensUsed
+from alphamind.analysis.domain_researchers.models import SectorBrief
+from alphamind.analysis.domain_researchers.parser import ParseError, parse_brief
+from alphamind.analysis.domain_researchers.validation import (
+    ValidationResult,
+    validate_brief,
+)
+from alphamind.config.models.agents import AgentName, BaseAgentConfig
+
+__all__ = [
+    "ContextOverflowFailure",
+    "HarnessFailure",
+    "HarnessSuccess",
+    "MalformedOutputFailure",
+    "SDKFailure",
+    "TimeoutFailure",
+    "invoke_domain_researcher",
+]
+
+# ---------------------------------------------------------------------------
+# Per-process system-prompt cache
+# ---------------------------------------------------------------------------
+
+# Maps prompt file path (str) → loaded prompt text.
+# Populated on first call; served from memory on subsequent calls.  No
+# invalidation needed: the pipeline process restarts on agents.yaml edits
+# per the deploy-time vs. invocation-time classification in
+# configuration-management.md.
+_PROMPT_CACHE: dict[str, str] = {}
+
+_REPO_ROOT = Path(__file__).parent.parent.parent.parent.parent
+
+
+def _load_prompt(prompt_path: str) -> str:
+    """Load system prompt from *prompt_path*, caching per process."""
+    if prompt_path not in _PROMPT_CACHE:
+        _PROMPT_CACHE[prompt_path] = (_REPO_ROOT / prompt_path).read_text(encoding="utf-8")
+    return _PROMPT_CACHE[prompt_path]
+
+
+# ---------------------------------------------------------------------------
+# Agent-name derivation
+# ---------------------------------------------------------------------------
+
+_SECTOR_TO_AGENT: dict[Sector, AgentName] = {
+    Sector.TECH_SEMIS: AgentName.tech_semis_researcher,
+    Sector.FINANCIALS: AgentName.financials_researcher,
+    Sector.ENERGY: AgentName.energy_researcher,
+}
+
+
+# ---------------------------------------------------------------------------
+# Exception hierarchy
+# ---------------------------------------------------------------------------
+
+
+class HarnessFailure(Exception):
+    """Base class for all harness-level failures.
+
+    Every subclass carries *agent_name* and *invocation_id* so the caller
+    (per-sector runner, story 10) has full context for the failure log.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        agent_name: str,
+        invocation_id: str,
+    ) -> None:
+        super().__init__(message)
+        self.agent_name = agent_name
+        self.invocation_id = invocation_id
+
+
+class MalformedOutputFailure(HarnessFailure):
+    """Exhausted retries on parse / Layer-2 / Layer-3 failure.
+
+    Carries the raw response text from both attempts when a retry occurred,
+    plus the underlying error trail.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        agent_name: str,
+        invocation_id: str,
+        raw_response_initial: str | None = None,
+        raw_response_retry: str | None = None,
+        cause: Exception | None = None,
+    ) -> None:
+        super().__init__(message, agent_name=agent_name, invocation_id=invocation_id)
+        self.raw_response_initial = raw_response_initial
+        self.raw_response_retry = raw_response_retry
+        self.cause = cause
+
+
+class ContextOverflowFailure(HarnessFailure):
+    """stop_reason: max_tokens paired with any structural failure.
+
+    The pipeline aborts immediately — no corrective retry is attempted.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        agent_name: str,
+        invocation_id: str,
+        raw_response: str | None = None,
+    ) -> None:
+        super().__init__(message, agent_name=agent_name, invocation_id=invocation_id)
+        self.raw_response = raw_response
+
+
+class SDKFailure(HarnessFailure):
+    """Non-recoverable SDK error (auth, model API error, network post-retry)."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        agent_name: str,
+        invocation_id: str,
+        cause: Exception | None = None,
+    ) -> None:
+        super().__init__(message, agent_name=agent_name, invocation_id=invocation_id)
+        self.cause = cause
+
+
+class TimeoutFailure(HarnessFailure):
+    """Invocation exceeded the per-call timeout (agent_config.latency_budget_seconds)."""
+
+
+# ---------------------------------------------------------------------------
+# HarnessSuccess
+# ---------------------------------------------------------------------------
+
+
+class HarnessSuccess(BaseModel, frozen=True):
+    """Successful invocation result returned to the per-sector runner."""
+
+    brief: SectorBrief
+    raw_response: str
+    retry_count: int  # 0 or 1
+    tokens_used: TokensUsed  # imported from _shared, NOT redefined here
+    wall_clock_seconds: float
+
+
+# ---------------------------------------------------------------------------
+# SDK response accumulation helpers
+# ---------------------------------------------------------------------------
+
+
+async def _collect_response(
+    sdk_query_fn: Callable[..., AsyncIterator[Any]],
+    *,
+    prompt: str,
+    options: Any,
+) -> tuple[str, str | None, TokensUsed]:
+    """Drive the SDK generator to completion.
+
+    Returns ``(response_text, stop_reason, tokens_used)``.  ``stop_reason``
+    is ``None`` when the SDK did not surface it (treated as ``end_turn`` by
+    the harness per the spec: "missing metadata → malformed_output, not
+    context_overflow").
+    """
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    text_parts: list[str] = []
+    stop_reason: str | None = None
+    input_tokens = 0
+    output_tokens = 0
+    cache_read_tokens = 0
+    cache_write_tokens = 0
+
+    async for message in sdk_query_fn(prompt=prompt, options=options):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    text_parts.append(block.text)
+            if message.stop_reason:
+                stop_reason = message.stop_reason
+            if message.usage:
+                usage = message.usage
+                input_tokens = usage.get("input_tokens", 0)
+                output_tokens = usage.get("output_tokens", 0)
+                cache_read_tokens = usage.get("cache_read_input_tokens", 0)
+                cache_write_tokens = usage.get("cache_creation_input_tokens", 0)
+        elif isinstance(message, ResultMessage):
+            if message.stop_reason:
+                stop_reason = message.stop_reason
+            if message.usage:
+                usage = message.usage
+                input_tokens = usage.get("input_tokens", input_tokens)
+                output_tokens = usage.get("output_tokens", output_tokens)
+                cache_read_tokens = usage.get("cache_read_input_tokens", cache_read_tokens)
+                cache_write_tokens = usage.get("cache_creation_input_tokens", cache_write_tokens)
+
+    response_text = "".join(text_parts)
+    tokens = TokensUsed(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+    )
+    return response_text, stop_reason, tokens
+
+
+# ---------------------------------------------------------------------------
+# Corrective-retry message construction
+# ---------------------------------------------------------------------------
+
+_SECTION_DIRECTIVE = (
+    "Emit a single corrected sector brief. "
+    "No prose preceding or following the structured content. "
+    "Use exactly the section headers "
+    "=== KEY FINDINGS ===, === FLAGGED ANOMALIES ===, === THESIS CANDIDATES ==="
+)
+
+_CONTRACT_REF = (
+    "See docs/design/03-analysis-layer/domain-researchers/tech-semis.md "
+    "§ Domain researcher output contract."
+)
+
+
+def _build_retry_message(framing: str, error_detail: str) -> str:
+    """Construct a corrective-retry message.
+
+    Per llm-output-validation.md § Corrective-retry message construction:
+    - Explicit framing line naming which contract failed
+    - First error only (caller extracts it)
+    - Contract reference
+    - Directive with exact section headers
+    - Does NOT contain: full error list, analytical guidance, raw input data
+    """
+    return "\n\n".join([framing, error_detail, _CONTRACT_REF, _SECTION_DIRECTIVE])
+
+
+def _build_retry_message_for_parse_error(error: ParseError) -> str:
+    framing = "The prior response did not meet the parse contract for the domain researcher output."
+    error_detail = f"Field: {error.field_path}\nError: {error.message}"
+    return _build_retry_message(framing, error_detail)
+
+
+def _build_retry_message_for_validation_failure(result: ValidationResult) -> str:
+    framing = (
+        "The prior response did not meet the structural contract for the domain researcher output."
+    )
+    first_error = result.errors[0]
+    error_detail = (
+        f"Field: {first_error.field_path}\nRule: {first_error.rule}\nError: {first_error.message}"
+    )
+    return _build_retry_message(framing, error_detail)
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic state
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _DiagState:
+    """Mutable diagnostic state accumulated during an invocation."""
+
+    agent_name: str
+    invocation_id: str
+    prompt_text: str
+    user_message: str
+    model: str
+    archive_root: Path | None
+
+    response_initial: str = ""
+    response_retry: str | None = None
+    errors: list[dict[str, Any]] = field(default_factory=list)
+    tokens_used: TokensUsed = field(
+        default_factory=lambda: TokensUsed(
+            input_tokens=0, output_tokens=0, cache_read_tokens=0, cache_write_tokens=0
+        )
+    )
+    retry_count: int = 0
+
+    def write(
+        self,
+        *,
+        success: bool,
+        wall_clock_seconds: float,
+        stop_reason: str | None,
+    ) -> None:
+        """Flush the diagnostic record to disk, if archive_root is set."""
+        if self.archive_root is None:
+            return
+        diag_dir = (
+            self.archive_root / "invocations" / self.invocation_id / "analysis" / self.agent_name
+        )
+        diag_dir.mkdir(parents=True, exist_ok=True)
+
+        (diag_dir / "prompt.md").write_text(self.prompt_text, encoding="utf-8")
+        (diag_dir / "user_message.md").write_text(self.user_message, encoding="utf-8")
+        (diag_dir / "response_initial.md").write_text(self.response_initial, encoding="utf-8")
+        if self.response_retry is not None:
+            (diag_dir / "response_retry.md").write_text(self.response_retry, encoding="utf-8")
+        (diag_dir / "errors.json").write_text(json.dumps(self.errors, indent=2), encoding="utf-8")
+        metadata: dict[str, Any] = {
+            "model": self.model,
+            "retry_count": self.retry_count,
+            "tokens_used": self.tokens_used.model_dump(),
+            "wall_clock_seconds": wall_clock_seconds,
+            "stop_reason": stop_reason,
+            "success": success,
+        }
+        (diag_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Parse-and-validate helper
+# ---------------------------------------------------------------------------
+
+
+def _parse_and_validate(
+    response: str,
+    sector: Sector,
+    stop_reason: str | None,
+    attempt: int,
+    diag: _DiagState,
+) -> tuple[SectorBrief | None, str | None]:
+    """Parse *response* and validate the result.
+
+    Returns ``(brief, retry_message)``.  When the brief is ``None``, a
+    corrective-retry message is returned.  Raises
+    :class:`ContextOverflowFailure` immediately when the failure is paired
+    with ``stop_reason == 'max_tokens'``.
+    """
+    try:
+        brief = parse_brief(response, sector)
+    except ParseError as exc:
+        diag.errors.append(
+            {
+                "stage": "parse",
+                "attempt": attempt,
+                "field_path": exc.field_path,
+                "message": exc.message,
+            }
+        )
+        if stop_reason == "max_tokens":
+            raise ContextOverflowFailure(
+                "Parse failure with stop_reason=max_tokens — context overflow, no retry",
+                agent_name=diag.agent_name,
+                invocation_id=diag.invocation_id,
+                raw_response=response,
+            ) from exc
+        return None, _build_retry_message_for_parse_error(exc)
+
+    validation = validate_brief(brief)
+    if not validation.is_valid:
+        for ve in validation.errors:
+            diag.errors.append(
+                {
+                    "stage": "validation",
+                    "attempt": attempt,
+                    "field_path": ve.field_path,
+                    "rule": ve.rule,
+                    "message": ve.message,
+                }
+            )
+        if stop_reason == "max_tokens":
+            raise ContextOverflowFailure(
+                "Validation failure with stop_reason=max_tokens — context overflow, no retry",
+                agent_name=diag.agent_name,
+                invocation_id=diag.invocation_id,
+            )
+        return None, _build_retry_message_for_validation_failure(validation)
+
+    return brief, None
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+
+async def invoke_domain_researcher(
+    *,
+    agent_config: BaseAgentConfig,
+    sector: Sector,
+    user_message: str,
+    invocation_id: str,
+    archive_root: Path | None = None,
+    sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
+) -> HarnessSuccess:
+    """Invoke a domain researcher agent and return a validated :class:`HarnessSuccess`.
+
+    Parameters
+    ----------
+    agent_config:
+        Per-agent LLM configuration from agents.yaml (model, prompt path,
+        latency budget, output token budget).
+    sector:
+        Which sector this researcher is analyzing.  Used for parsing and
+        validation, and to derive the agent name.
+    user_message:
+        The input bundle passed as the user turn.
+    invocation_id:
+        Stable identifier for this pipeline invocation; used to locate
+        the diagnostic archive directory.
+    archive_root:
+        Root path for the invocation archive.  Pass ``None`` to skip
+        diagnostic writes (e.g. in testing contexts that don't need them).
+    sdk_query_fn:
+        Callable matching the signature of ``claude_agent_sdk.query``.
+        Defaults to the real SDK function.  Inject a stub in tests.
+
+    Raises
+    ------
+    MalformedOutputFailure
+        Parse or validation failure after exhausting the one allowed retry.
+    ContextOverflowFailure
+        Any structural failure paired with ``stop_reason: max_tokens``.
+    SDKFailure
+        Authentication or non-recoverable SDK error.
+    TimeoutFailure
+        Invocation exceeded ``agent_config.latency_budget_seconds``.
+    """
+    from claude_agent_sdk import ClaudeAgentOptions
+    from claude_agent_sdk._errors import ClaudeSDKError, CLIConnectionError
+
+    if sdk_query_fn is None:
+        from claude_agent_sdk import query as _real_query
+
+        sdk_query_fn = _real_query
+
+    agent_name = _SECTOR_TO_AGENT[sector].value
+    prompt_text = _load_prompt(agent_config.prompt)
+
+    options = ClaudeAgentOptions(
+        system_prompt=prompt_text,
+        model=agent_config.model,
+        allowed_tools=[],
+        max_turns=1,
+    )
+
+    diag = _DiagState(
+        agent_name=agent_name,
+        invocation_id=invocation_id,
+        prompt_text=prompt_text,
+        user_message=user_message,
+        model=str(agent_config.model),
+        archive_root=archive_root,
+    )
+    wall_start = time.monotonic()
+
+    async def _invoke(prompt: str) -> tuple[str, str | None, TokensUsed]:
+        """Run one SDK call with the configured timeout."""
+        try:
+            return await asyncio.wait_for(
+                _collect_response(sdk_query_fn, prompt=prompt, options=options),
+                timeout=float(agent_config.latency_budget_seconds),
+            )
+        except TimeoutError as exc:
+            wall_elapsed = time.monotonic() - wall_start
+            diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=None)
+            raise TimeoutFailure(
+                f"Invocation exceeded latency budget of {agent_config.latency_budget_seconds}s",
+                agent_name=agent_name,
+                invocation_id=invocation_id,
+            ) from exc
+        except CLIConnectionError as exc:
+            wall_elapsed = time.monotonic() - wall_start
+            diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=None)
+            raise SDKFailure(
+                f"Authentication or connection failure — ensure CLAUDE_CODE_OAUTH_TOKEN "
+                f"is set and valid. Underlying error: {exc}",
+                agent_name=agent_name,
+                invocation_id=invocation_id,
+                cause=exc,
+            ) from exc
+        except ClaudeSDKError as exc:
+            wall_elapsed = time.monotonic() - wall_start
+            diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=None)
+            raise SDKFailure(
+                f"Non-recoverable SDK error: {exc}",
+                agent_name=agent_name,
+                invocation_id=invocation_id,
+                cause=exc,
+            ) from exc
+
+    # ------------------------------------------------------------------
+    # Attempt 1: initial call
+    # ------------------------------------------------------------------
+    response1, stop_reason1, tokens1 = await _invoke(user_message)
+    diag.response_initial = response1
+    diag.tokens_used = tokens1
+
+    try:
+        brief, retry_message = _parse_and_validate(
+            response1, sector, stop_reason1, attempt=1, diag=diag
+        )
+    except ContextOverflowFailure:
+        diag.write(
+            success=False,
+            wall_clock_seconds=time.monotonic() - wall_start,
+            stop_reason=stop_reason1,
+        )
+        raise
+
+    if brief is not None:
+        wall_elapsed = time.monotonic() - wall_start
+        diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason1)
+        return HarnessSuccess(
+            brief=brief,
+            raw_response=response1,
+            retry_count=0,
+            tokens_used=tokens1,
+            wall_clock_seconds=wall_elapsed,
+        )
+
+    # ------------------------------------------------------------------
+    # Attempt 2: corrective retry
+    # ------------------------------------------------------------------
+    assert retry_message is not None
+    diag.retry_count = 1
+
+    response2, stop_reason2, tokens2 = await _invoke(retry_message)
+    diag.response_retry = response2
+    diag.tokens_used = TokensUsed(
+        input_tokens=tokens1.input_tokens + tokens2.input_tokens,
+        output_tokens=tokens1.output_tokens + tokens2.output_tokens,
+        cache_read_tokens=tokens1.cache_read_tokens + tokens2.cache_read_tokens,
+        cache_write_tokens=tokens1.cache_write_tokens + tokens2.cache_write_tokens,
+    )
+
+    brief2, _ = _parse_and_validate(response2, sector, stop_reason2, attempt=2, diag=diag)
+
+    wall_elapsed = time.monotonic() - wall_start
+
+    if brief2 is None:
+        diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
+        raise MalformedOutputFailure(
+            "Parse or validation failed on both initial and retry attempts. "
+            f"First retry error: {diag.errors[-1].get('message', '')}",
+            agent_name=agent_name,
+            invocation_id=invocation_id,
+            raw_response_initial=response1,
+            raw_response_retry=response2,
+        )
+
+    diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
+    return HarnessSuccess(
+        brief=brief2,
+        raw_response=response2,
+        retry_count=1,
+        tokens_used=diag.tokens_used,
+        wall_clock_seconds=wall_elapsed,
+    )
