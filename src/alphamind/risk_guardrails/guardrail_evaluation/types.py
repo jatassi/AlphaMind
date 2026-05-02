@@ -387,6 +387,10 @@ class RuleProjection:
     ``headroom_remaining`` is signed: ``limit - projected_after``, negative on
     FAIL. ``unit`` is a display string (e.g., ``"% of portfolio
     (delta-adjusted)"``, ``"% of portfolio per 1-pt IV move"``, ``"USD/day"``).
+    ``inverse`` is the canonical floor-vs-cap flag: ``True`` when ``limit`` is
+    a floor (e.g., ``min_cash_reserve_pct``) and ``False`` when ``limit`` is a
+    cap (every other rule). Callers branching on rule semantics read this flag
+    rather than maintaining a parallel registry of inverse-rule IDs.
     """
 
     rule: str
@@ -396,6 +400,7 @@ class RuleProjection:
     projected_after: float
     headroom_remaining: float
     unit: str
+    inverse: bool = False
 
 
 @dataclass(frozen=True, slots=True)

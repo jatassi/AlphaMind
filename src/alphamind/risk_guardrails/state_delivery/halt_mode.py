@@ -18,7 +18,6 @@ from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManag
 from alphamind.portfolio_state.consumers.strategist import StrategistView
 from alphamind.portfolio_state.records.capital import (
     ActiveRiskParameterSet,
-    RegimeLabel,
     RiskBudgetConsumption,
 )
 from alphamind.portfolio_state.records.orders import OrderRecord
@@ -26,20 +25,8 @@ from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery.analyst import (
-    _make_sector_label_resolver as _analyst_sector_label_resolver,
-)
-from alphamind.risk_guardrails.state_delivery.analyst import (
     _render_abandoned_openings_block,
     _render_held_positions_block,
-)
-from alphamind.risk_guardrails.state_delivery.analyst import (
-    _require_entry as _analyst_require_entry,
-)
-from alphamind.risk_guardrails.state_delivery.analyst import (
-    _resolve_sector_entries as _analyst_resolve_sector_entries,
-)
-from alphamind.risk_guardrails.state_delivery.analyst import (
-    _validate_feature_flag_closure as _analyst_validate_feature_flag_closure,
 )
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
@@ -54,37 +41,35 @@ from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
     _render_drawdown_context_block,
     _render_recent_engine_actions_block,
     _render_validation_tool_reminder_block,
-    _require_budget_entry,
-    _require_param_entry,
-)
-from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
-    _make_sector_label_resolver as _pm_sector_label_resolver,
-)
-from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
-    _render_position_proximity_block as _pm_position_proximity_block,
-)
-from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
-    _render_sector_breakdown_block as _pm_sector_breakdown_block,
-)
-from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
-    _resolve_sector_entries as _pm_resolve_sector_entries,
-)
-from alphamind.risk_guardrails.state_delivery.portfolio_manager import (
-    _validate_feature_flag_closure as _pm_validate_feature_flag_closure,
 )
 from alphamind.risk_guardrails.state_delivery.primitives import (
+    GROSS_RULE_ID,
+    NET_LONG_RULE_ID,
+    NET_SHORT_RULE_ID,
+    OPTIONS_DELTA_RULE_ID,
+    OPTIONS_THETA_RULE_ID,
+    OPTIONS_VEGA_RULE_ID,
+    POSITION_MAX_SIZE_RULE_ID,
     format_pct,
+    make_sector_label_resolver,
+    regime_label_display,
     render_capital_block,
     render_directional_headroom_block,
     render_envelope_close,
     render_envelope_open,
     render_hard_blocks_block,
     render_options_headroom_block,
+    render_position_proximity_block,
     render_regime_line,
+    render_regime_transition_breaches_block,
+    render_sector_breakdown_block,
     render_sector_headroom_block,
+    require_budget_entry,
+    require_param_entry,
+    resolve_sector_entries,
+    validate_feature_flag_closure,
 )
 from alphamind.risk_guardrails.state_delivery.strategist import (
-    _render_regime_transition_breaches_block,
     render_strategist_header,
 )
 
@@ -96,7 +81,6 @@ _ANALYST_MODE_LINE = "Mode: WATCHLIST ONLY — do not generate trade proposals"
 _STRATEGIST_MODE_LINE = "Mode: DEFENSIVE POSTURE — focus on risk reduction for existing positions"
 _PM_AVAILABLE_ACTIONS_LINE = "Available actions: CLOSE, ADJUST, CANCEL only"
 _PM_BLOCKED_ACTIONS_LINE = "Blocked actions: OPEN, ADD"
-_PER_POSITION_MAX_RULE_ID = "position_max_size_pct"
 
 _PENDING_ORDERS_REVIEW_HEADER = "Pending orders review:"
 _PENDING_ORDERS_NONE_LINE = "  None"
@@ -115,20 +99,6 @@ _HALT_MODE_CAPITAL_BLOCK = (
     "  New positions: BLOCKED (halt active)\n"
     "  Per-position max size: not applicable (halt mode)"
 )
-
-_REGIME_LABEL_DISPLAY: dict[RegimeLabel, str] = {
-    RegimeLabel.LOW_VOL: "low-vol compression",
-    RegimeLabel.NORMAL: "normal",
-    RegimeLabel.ELEVATED: "elevated",
-    RegimeLabel.CRISIS: "crisis",
-}
-
-_NET_LONG_RULE_ID = "net_long_pct"
-_NET_SHORT_RULE_ID = "net_short_pct"
-_GROSS_RULE_ID = "gross_exposure_pct"
-_OPTIONS_DELTA_RULE_ID = "options_delta_pct"
-_OPTIONS_THETA_RULE_ID = "portfolio_theta_pct_per_day"
-_OPTIONS_VEGA_RULE_ID = "portfolio_vega_pct_per_iv_point"
 
 
 # ---------------------------------------------------------------------------
@@ -172,13 +142,13 @@ def render_analyst_header_halt_mode(  # noqa: PLR0913 — mirrors render_analyst
     verbatim from the same primitives the normal renderer uses.
     """
     del config
-    _analyst_validate_feature_flag_closure(
+    validate_feature_flag_closure(
         risk_budget=risk_budget,
         options_enabled=options_enabled,
         short_selling_enabled=short_selling_enabled,
     )
-    sector_entries = _analyst_resolve_sector_entries(risk_budget, active_sectors)
-    sector_label_resolver = _analyst_sector_label_resolver(sector_label_display)
+    sector_entries = resolve_sector_entries(risk_budget, active_sectors)
+    sector_label_resolver = make_sector_label_resolver(sector_label_display)
 
     blocks: list[str] = [
         "\n".join(
@@ -192,17 +162,17 @@ def render_analyst_header_halt_mode(  # noqa: PLR0913 — mirrors render_analyst
         _HALT_MODE_CAPITAL_BLOCK,
         render_sector_headroom_block(sector_entries, sector_label_resolver=sector_label_resolver),
         render_directional_headroom_block(
-            net_long=_analyst_require_entry(risk_budget, _NET_LONG_RULE_ID),
+            net_long=require_budget_entry(risk_budget, NET_LONG_RULE_ID),
             net_short=(
-                risk_budget.entry_by_rule_id(_NET_SHORT_RULE_ID) if short_selling_enabled else None
+                risk_budget.entry_by_rule_id(NET_SHORT_RULE_ID) if short_selling_enabled else None
             ),
-            gross=_analyst_require_entry(risk_budget, _GROSS_RULE_ID),
+            gross=require_budget_entry(risk_budget, GROSS_RULE_ID),
         ),
     ]
     options_block = render_options_headroom_block(
-        delta=risk_budget.entry_by_rule_id(_OPTIONS_DELTA_RULE_ID),
-        theta=risk_budget.entry_by_rule_id(_OPTIONS_THETA_RULE_ID),
-        vega=risk_budget.entry_by_rule_id(_OPTIONS_VEGA_RULE_ID),
+        delta=risk_budget.entry_by_rule_id(OPTIONS_DELTA_RULE_ID),
+        theta=risk_budget.entry_by_rule_id(OPTIONS_THETA_RULE_ID),
+        vega=risk_budget.entry_by_rule_id(OPTIONS_VEGA_RULE_ID),
     )
     if options_block is not None:
         blocks.append(options_block)
@@ -414,13 +384,13 @@ def render_pm_header_halt_mode(  # noqa: PLR0913 — mirrors render_pm_header
     ``OPEN: BLOCKED (halt mode)`` and ``ADD: BLOCKED (halt mode)`` lines
     (synthesized from scratch when the primitive returns ``None``).
     """
-    _pm_validate_feature_flag_closure(
+    validate_feature_flag_closure(
         risk_budget=pm_view.risk_budget,
         options_enabled=options_enabled,
         short_selling_enabled=short_selling_enabled,
     )
-    per_position_max_pct = _require_param_entry(
-        pm_view.active_risk_parameters, _PER_POSITION_MAX_RULE_ID
+    per_position_max_pct = require_param_entry(
+        pm_view.active_risk_parameters, POSITION_MAX_SIZE_RULE_ID
     ).value
     available_pct = (
         (available_for_new_positions_usd / total_portfolio_value_usd) * 100.0
@@ -428,9 +398,9 @@ def render_pm_header_halt_mode(  # noqa: PLR0913 — mirrors render_pm_header
         else 0.0
     )
     per_position_max_usd = total_portfolio_value_usd * per_position_max_pct / 100.0
-    regime_display = _REGIME_LABEL_DISPLAY[pm_view.active_risk_parameters.regime_label]
-    sector_entries = _pm_resolve_sector_entries(pm_view.risk_budget, active_sectors)
-    sector_label_resolver = _pm_sector_label_resolver(sector_label_display)
+    regime_display = regime_label_display(pm_view.active_risk_parameters.regime_label)
+    sector_entries = resolve_sector_entries(pm_view.risk_budget, active_sectors)
+    sector_label_resolver = make_sector_label_resolver(sector_label_display)
 
     blocks: list[str] = [
         "\n".join(
@@ -452,29 +422,35 @@ def render_pm_header_halt_mode(  # noqa: PLR0913 — mirrors render_pm_header
         ),
         render_sector_headroom_block(sector_entries, sector_label_resolver=sector_label_resolver),
         render_directional_headroom_block(
-            net_long=_require_budget_entry(pm_view.risk_budget, _NET_LONG_RULE_ID),
+            net_long=require_budget_entry(pm_view.risk_budget, NET_LONG_RULE_ID),
             net_short=(
-                pm_view.risk_budget.entry_by_rule_id(_NET_SHORT_RULE_ID)
+                pm_view.risk_budget.entry_by_rule_id(NET_SHORT_RULE_ID)
                 if short_selling_enabled
                 else None
             ),
-            gross=_require_budget_entry(pm_view.risk_budget, _GROSS_RULE_ID),
+            gross=require_budget_entry(pm_view.risk_budget, GROSS_RULE_ID),
         ),
     ]
     options_block = render_options_headroom_block(
-        delta=pm_view.risk_budget.entry_by_rule_id(_OPTIONS_DELTA_RULE_ID),
-        theta=pm_view.risk_budget.entry_by_rule_id(_OPTIONS_THETA_RULE_ID),
-        vega=pm_view.risk_budget.entry_by_rule_id(_OPTIONS_VEGA_RULE_ID),
+        delta=pm_view.risk_budget.entry_by_rule_id(OPTIONS_DELTA_RULE_ID),
+        theta=pm_view.risk_budget.entry_by_rule_id(OPTIONS_THETA_RULE_ID),
+        vega=pm_view.risk_budget.entry_by_rule_id(OPTIONS_VEGA_RULE_ID),
     )
     if options_block is not None:
         blocks.append(options_block)
-    blocks.append(_pm_position_proximity_block(pm_view.positions, per_position_max_pct))
     blocks.append(
-        _pm_sector_breakdown_block(
+        render_position_proximity_block(
             positions=pm_view.positions,
-            sector_entries=sector_entries,
+            active_risk_parameters=pm_view.active_risk_parameters,
+        )
+    )
+    blocks.append(
+        render_sector_breakdown_block(
+            positions=pm_view.positions,
+            active_sectors=active_sectors,
             sector_label_resolver=sector_label_resolver,
             sector_resolver=sector_resolver,
+            risk_budget=pm_view.risk_budget,
         )
     )
     blocks.append(_render_halt_mode_cross_constraint_block(cross_constraint_impact))
@@ -485,7 +461,7 @@ def render_pm_header_halt_mode(  # noqa: PLR0913 — mirrors render_pm_header
             total_portfolio_value_usd=total_portfolio_value_usd,
         )
     )
-    breaches_block = _render_regime_transition_breaches_block(
+    breaches_block = render_regime_transition_breaches_block(
         breaches=regime_transition_breaches,
         regime_label_display=regime_display,
     )

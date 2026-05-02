@@ -40,6 +40,7 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import (
     ValidationResult,
     ValidationSize,
     ValidationStrategyLeg,
+    ValidationToolError,
     ValidationToolState,
     validate_guardrail,
 )
@@ -195,6 +196,7 @@ def _state(
     invocation_id: str = "INV-001",
     sector_resolver: Callable[[str], str] | None = None,
     feature_flags: FeatureFlagsView | None = None,
+    borrow_cost_resolver: Callable[[str], float] | None = None,
 ) -> ValidationToolState:
     library_config = config or _config()
     return ValidationToolState(
@@ -203,9 +205,10 @@ def _state(
         starting_risk_budget=_risk_budget(),
         starting_active_risk_parameters=_active_risk_parameters(),
         profile_feature_flags=feature_flags or library_config.feature_flags,
-        starting_config=library_config,
-        starting_market=market or _market(),
+        library_config=library_config,
+        library_market=market or _market(),
         sector_resolver=sector_resolver or _sector_resolver,
+        borrow_cost_resolver=borrow_cost_resolver,
         accumulated_deltas=accumulated_deltas,
     )
 
@@ -635,7 +638,13 @@ def test_library_not_called_on_options_disabled_early_exit(
 
 
 def _fail_proj(
-    *, rule: str, current: float, limit: float, projected_after: float, unit: str
+    *,
+    rule: str,
+    current: float,
+    limit: float,
+    projected_after: float,
+    unit: str,
+    inverse: bool = False,
 ) -> RuleProjection:
     return RuleProjection(
         rule=rule,
@@ -645,6 +654,7 @@ def _fail_proj(
         projected_after=projected_after,
         headroom_remaining=limit - projected_after,
         unit=unit,
+        inverse=inverse,
     )
 
 
@@ -735,6 +745,7 @@ def test_failure_guidance_capital_includes_dollar_amounts(
         limit=10.0,
         projected_after=8.0,
         unit="% of portfolio",
+        inverse=True,
     )
     _patch_library(monkeypatch, (proj,), signed_notional_usd=5_000.0)
     result = validate_guardrail(request=_equity_request(), state=_state())
@@ -790,6 +801,7 @@ def test_failure_guidance_multi_rule_inverse_primary(
         limit=10.0,
         projected_after=7.0,  # under by 3 (largest by magnitude)
         unit="% of portfolio",
+        inverse=True,
     )
     _patch_library(monkeypatch, (sector, cash), signed_notional_usd=5_000.0)
     result = validate_guardrail(request=_equity_request(), state=_state())
@@ -991,6 +1003,231 @@ def test_repeated_calls_produce_identical_results() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_option_open_premium_at_risk_routed_as_library_notional() -> None:
+    """When ``premium_at_risk_usd != dollar_value``, the library sees the
+    premium as ``notional_usd`` for option proposals (the library's capital
+    rules treat options ``notional_usd`` as the premium-at-risk for cash
+    accounting per ``rules/capital.py``)."""
+    state = _state()
+    # Cash starts at 70K (70% of 100K portfolio); min-cash floor is 10%.
+    # Premium-at-risk 6_000 → cash drops to 64K (64%); dollar_value 12_000
+    # would drop cash to 58K (58%). With premium routed: pending_order
+    # contribution 0 (options reserve nothing), cash impact 6K.
+    request = _option_request(
+        ticker="AAPL",
+        dollar_value=12_000.0,
+        premium_at_risk_usd=6_000.0,
+    )
+    result = validate_guardrail(request=request, state=state)
+    by_rule = {p.rule: p for p in result.per_rule}
+    cash_rule = by_rule["min_cash_reserve_pct"]
+    # Cash drops from 70% to 64% (premium 6K used, not dollar_value 12K).
+    # Pre-fix: would be 58% (12K used).
+    assert cash_rule.projected_after == pytest.approx(64.0)
+
+
+def test_option_open_without_premium_falls_back_to_dollar_value() -> None:
+    """When ``premium_at_risk_usd`` is None, dollar_value plays the
+    premium-at-risk role for cash accounting (back-compat fallback)."""
+    state = _state()
+    # Build an option request where premium_at_risk_usd is unset
+    request = ValidationRequest(
+        instrument=ValidationInstrument(
+            ticker="AAPL",
+            asset_type=InstrumentType.OPTIONS,
+            direction=Direction.LONG,
+            strike=100.0,
+            expiration=_EXPIRATION_DT,
+            contract_type="call",
+        ),
+        size=ValidationSize(quantity=5, dollar_value=8_000.0),  # no premium_at_risk_usd
+        action=ValidationAction.OPEN,
+    )
+    result = validate_guardrail(request=request, state=state)
+    by_rule = {p.rule: p for p in result.per_rule}
+    cash_rule = by_rule["min_cash_reserve_pct"]
+    # Cash drops from 70% to 62% (dollar_value 8K).
+    assert cash_rule.projected_after == pytest.approx(62.0)
+
+
+def test_short_equity_open_uses_borrow_cost_resolver() -> None:
+    """Short equity OPEN derives ``daily_borrow_cost_usd`` via the state's
+    ``borrow_cost_resolver``; the request shape carries no borrow-cost field."""
+    state = _state(borrow_cost_resolver=lambda ticker: 0.50)
+    request = _equity_request(direction=Direction.SHORT, dollar_value=4_000.0)
+    # The library would raise on missing borrow-cost; PASS or FAIL depends on
+    # rule outcomes, but the call must succeed (no LibraryInputError).
+    result = validate_guardrail(request=request, state=state)
+    assert result.overall in {"PASS", "FAIL"}
+
+
+def test_short_equity_open_without_resolver_raises_validation_error() -> None:
+    """Short equity OPEN with ``borrow_cost_resolver=None`` raises
+    ``ValidationToolError`` with a clear message."""
+    state = _state()  # default fixture: resolver=None
+    request = _equity_request(direction=Direction.SHORT)
+    with pytest.raises(ValidationToolError, match="borrow_cost_resolver"):
+        validate_guardrail(request=request, state=state)
+
+
+def test_long_equity_open_does_not_call_borrow_cost_resolver() -> None:
+    """The resolver is only invoked for short equity OPEN/ADD; other actions
+    must succeed even with ``borrow_cost_resolver=None``."""
+    state = _state()  # default fixture: resolver=None
+    request = _equity_request(direction=Direction.LONG)
+    result = validate_guardrail(request=request, state=state)
+    assert result.overall in {"PASS", "FAIL"}
+
+
+def test_borrow_cost_resolver_purity_replay_determinism() -> None:
+    """``borrow_cost_resolver`` purity contract: equal ticker inputs must
+    produce equal float outputs across all calls within a chain.
+
+    Replays of the same proposal sequence against fresh ``ValidationToolState``
+    instances must yield byte-identical ``ValidationResult`` outputs. The
+    resolver is invoked once per short equity OPEN/ADD per call (the current
+    proposal plus each replayed prior delta in the chain).
+    """
+    calls: list[str] = []
+
+    def tracking_resolver(ticker: str) -> float:
+        calls.append(ticker)
+        return {"AAPL": 0.40, "NVDA": 0.55}[ticker]
+
+    def fresh_state() -> ValidationToolState:
+        # Snapshot/config sized so the short-only chain stays well inside limits.
+        snapshot = _snapshot(net_long_pct=0.0, net_short_pct=0.0, gross_pct=0.0)
+        return _state(snapshot=snapshot, borrow_cost_resolver=tracking_resolver)
+
+    state = fresh_state()
+    request_a = _equity_request(ticker="AAPL", direction=Direction.SHORT, dollar_value=2_000.0)
+    request_b = _equity_request(ticker="NVDA", direction=Direction.SHORT, dollar_value=2_000.0)
+
+    # Call 1: validates request_a → resolver called once for AAPL.
+    result_a = validate_guardrail(request=request_a, state=state)
+    state = state.with_accepted_proposal(
+        ProjectedDelta(
+            instrument=request_a.instrument,
+            size=request_a.size,
+            action=ValidationAction.OPEN,
+            sector="tech",
+            delta_adjusted_exposure=result_a.delta_adjusted_exposure,
+            greeks=result_a.greeks,
+            proposal_index=1,
+        )
+    )
+    # Call 2: replays request_a (resolver call) + validates request_b.
+    result_b = validate_guardrail(request=request_b, state=state)
+    expected_calls = ["AAPL", "AAPL", "NVDA"]
+    assert calls == expected_calls
+
+    # Replay the same sequence against a fresh state with a fresh tracking list;
+    # the resolver must still be pure (same ticker → same float), so the
+    # ValidationResult outputs must be byte-identical to the first run.
+    calls.clear()
+    state2 = fresh_state()
+    replay_a = validate_guardrail(request=request_a, state=state2)
+    state2 = state2.with_accepted_proposal(
+        ProjectedDelta(
+            instrument=request_a.instrument,
+            size=request_a.size,
+            action=ValidationAction.OPEN,
+            sector="tech",
+            delta_adjusted_exposure=replay_a.delta_adjusted_exposure,
+            greeks=replay_a.greeks,
+            proposal_index=1,
+        )
+    )
+    replay_b = validate_guardrail(request=request_b, state=state2)
+    assert calls == expected_calls
+    assert replay_a == result_a
+    assert replay_b == result_b
+
+
+def test_borrow_cost_resolver_mutating_violates_replay_determinism() -> None:
+    """A mutating resolver (closure over a mutable counter) violates the
+    purity contract and produces visibly different ``ValidationResult`` outputs
+    across replays — making the contract violation tangible.
+    """
+    counter = {"n": 0}
+
+    def mutating_resolver(_ticker: str) -> float:
+        counter["n"] += 1
+        # Each call returns a different cost — clearly impure.
+        return 0.10 + 0.05 * counter["n"]
+
+    def fresh_state() -> ValidationToolState:
+        snapshot = _snapshot(net_long_pct=0.0, net_short_pct=0.0, gross_pct=0.0)
+        return _state(snapshot=snapshot, borrow_cost_resolver=mutating_resolver)
+
+    request = _equity_request(ticker="AAPL", direction=Direction.SHORT, dollar_value=2_000.0)
+
+    first = validate_guardrail(request=request, state=fresh_state())
+    second = validate_guardrail(request=request, state=fresh_state())
+    # Per-rule projections may differ via the borrow-cost rule; the divergence
+    # is the visible symptom of the contract violation.
+    assert first.per_rule != second.per_rule
+
+
+def test_validation_tool_state_uses_library_prefixed_field_names() -> None:
+    """Library plumbing fields are prefixed ``library_*`` to distinguish them
+    from the spec's renderer-shared starting_* fields."""
+    state = _state()
+    assert isinstance(state.library_config, LibraryConfig)
+    assert isinstance(state.library_market, MarketInputs)
+    # Spec-shaped renderer-shared inputs remain available as starting_* names
+    assert state.starting_snapshot is not None
+    assert state.starting_risk_budget is not None
+    assert state.starting_active_risk_parameters is not None
+    assert state.profile_feature_flags is not None
+
+
+def test_validation_tool_state_rejects_mismatched_feature_flags() -> None:
+    """``profile_feature_flags`` and ``library_config.feature_flags`` must agree
+    at construction time. The tool composes the library against the latter and
+    returns disabled-feature guidance against the former; silent divergence
+    yields a class of bugs where the guidance and the actual gate disagree."""
+    library_config = _config(options_enabled=True, short_selling_enabled=True)
+    mismatched_flags = FeatureFlagsView(options_enabled=False, short_selling_enabled=True)
+    with pytest.raises(ValueError, match="profile_feature_flags must equal"):
+        ValidationToolState(
+            invocation_id="INV-001",
+            starting_snapshot=_snapshot(),
+            starting_risk_budget=_risk_budget(),
+            starting_active_risk_parameters=_active_risk_parameters(),
+            profile_feature_flags=mismatched_flags,
+            library_config=library_config,
+            library_market=_market(),
+            sector_resolver=_sector_resolver,
+        )
+
+
+def test_validation_tool_state_with_accepted_proposal_preserves_all_fields() -> None:
+    """``with_accepted_proposal`` returns a new state preserving every other
+    field — invocation_id, snapshot, risk budget, active risk params, feature
+    flags, library config, library market, sector resolver."""
+    state = _state()
+    delta = ProjectedDelta(
+        instrument=_equity_request().instrument,
+        size=_equity_request().size,
+        action=ValidationAction.OPEN,
+        sector="tech",
+        delta_adjusted_exposure=5_000.0,
+        greeks=None,
+        proposal_index=1,
+    )
+    state2 = state.with_accepted_proposal(delta)
+    assert state2.invocation_id == state.invocation_id
+    assert state2.starting_snapshot is state.starting_snapshot
+    assert state2.starting_risk_budget is state.starting_risk_budget
+    assert state2.starting_active_risk_parameters is state.starting_active_risk_parameters
+    assert state2.profile_feature_flags == state.profile_feature_flags
+    assert state2.library_config is state.library_config
+    assert state2.library_market is state.library_market
+    assert state2.sector_resolver is state.sector_resolver
+    assert state2.accumulated_deltas == (delta,)
+
+
 def test_state_delivery_reexports_validation_tool_symbols() -> None:
     from alphamind.risk_guardrails.state_delivery import (
         ProjectedDelta as RexProjectedDelta,
@@ -1014,6 +1251,9 @@ def test_state_delivery_reexports_validation_tool_symbols() -> None:
         ValidationStrategyLeg as RexValidationStrategyLeg,
     )
     from alphamind.risk_guardrails.state_delivery import (
+        ValidationToolError as RexValidationToolError,
+    )
+    from alphamind.risk_guardrails.state_delivery import (
         ValidationToolState as RexValidationToolState,
     )
     from alphamind.risk_guardrails.state_delivery import (
@@ -1027,6 +1267,7 @@ def test_state_delivery_reexports_validation_tool_symbols() -> None:
     assert RexValidationResult is ValidationResult
     assert RexValidationSize is ValidationSize
     assert RexValidationStrategyLeg is ValidationStrategyLeg
+    assert RexValidationToolError is ValidationToolError
     assert RexValidationToolState is ValidationToolState
     assert rex_validate_guardrail is validate_guardrail
 

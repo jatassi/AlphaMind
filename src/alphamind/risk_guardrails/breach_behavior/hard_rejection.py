@@ -31,9 +31,11 @@ class RuleProjectionProtocol(Protocol):
     ``status`` is documented as the string label (``"PASS"`` / ``"WARNING"`` /
     ``"FAIL"``); production callers whose projection carries a ``Status`` enum
     pass ``rule_projection.status.value`` (or an equivalent adapter) at the
-    call site. Attributes are declared as read-only ``@property`` so frozen
-    dataclasses (the production ``RuleProjection`` and any test stubs) satisfy
-    the structural contract.
+    call site. ``inverse`` is the canonical floor-vs-cap flag: ``True`` when
+    ``limit`` is a floor (e.g., ``min_cash_reserve_pct``) and ``False`` when
+    ``limit`` is a cap. Attributes are declared as read-only ``@property`` so
+    frozen dataclasses (the production ``RuleProjection`` and any test stubs)
+    satisfy the structural contract.
     """
 
     @property
@@ -50,6 +52,8 @@ class RuleProjectionProtocol(Protocol):
     def headroom_remaining(self) -> float: ...
     @property
     def unit(self) -> str: ...
+    @property
+    def inverse(self) -> bool: ...
 
 
 class LibraryOutputProtocol(Protocol):

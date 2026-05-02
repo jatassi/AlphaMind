@@ -493,8 +493,11 @@ def test_render_pm_header_renders_position_level_constraint_proximity_block() ->
         cross_constraint_impact=impact,
     )
     assert "Position-level constraint proximity:" in rendered
-    assert "  POS-NVDA-001: 4.2% of portfolio (max 5.0%) — P/L: -18.0% of cost" in rendered
-    assert "  POS-AMD-002:  2.1% of portfolio (max 5.0%) — P/L: +5.0% of cost" in rendered
+    assert (
+        "  POS-NVDA-001:  4.2% of portfolio (max 5.0%) — P/L: -18.0% of cost [⚠ WARNING]"
+        in rendered
+    )
+    assert "  POS-AMD-002:   2.1% of portfolio (max 5.0%) — P/L: +5.0% of cost" in rendered
 
 
 def test_render_pm_header_renders_sector_exposure_breakdown_per_position() -> None:
@@ -1647,9 +1650,9 @@ def test_render_pm_header_micro_fixture_full_render() -> None:
             "  Gross:     78.0% / 120.0% — room: 42.0%",
             "",
             "Position-level constraint proximity:",
-            "  POS-NVDA-001: 4.2% of portfolio (max 5.0%) — P/L: +5.0% of cost",
-            "  POS-AAPL-002: 3.1% of portfolio (max 5.0%) — P/L: +5.0% of cost",
-            "  POS-MU-003:   2.5% of portfolio (max 5.0%) — P/L: +5.0% of cost",
+            "  POS-NVDA-001:  4.2% of portfolio (max 5.0%) — P/L: +5.0% of cost [⚠ WARNING]",
+            "  POS-AAPL-002:  3.1% of portfolio (max 5.0%) — P/L: +5.0% of cost",
+            "  POS-MU-003:    2.5% of portfolio (max 5.0%) — P/L: +5.0% of cost",
             "",
             "Sector exposure breakdown (per position):",
             "  Tech (18.3% / 25.0%):",
@@ -1822,11 +1825,11 @@ def test_render_pm_header_full_system_fixture_full_render() -> None:
             "  Gross:     78.0% / 120.0% — room: 42.0%",
             "",
             "Position-level constraint proximity:",
-            "  POS-NVDA-001: 4.2% of portfolio (max 5.0%) — P/L: +5.0% of cost",
-            "  POS-AAPL-002: 3.5% of portfolio (max 5.0%) — P/L: +5.0% of cost",
-            "  POS-AMD-003:  2.1% of portfolio (max 5.0%) — P/L: +5.0% of cost",
-            "  POS-AVGO-004: 3.0% of portfolio (max 5.0%) — P/L: +5.0% of cost",
-            "  POS-MU-005:   2.5% of portfolio (max 5.0%) — P/L: +5.0% of cost",
+            "  POS-NVDA-001:  4.2% of portfolio (max 5.0%) — P/L: +5.0% of cost [⚠ WARNING]",
+            "  POS-AAPL-002:  3.5% of portfolio (max 5.0%) — P/L: +5.0% of cost [⚠ WARNING]",
+            "  POS-AMD-003:   2.1% of portfolio (max 5.0%) — P/L: +5.0% of cost",
+            "  POS-AVGO-004:  3.0% of portfolio (max 5.0%) — P/L: +5.0% of cost",
+            "  POS-MU-005:    2.5% of portfolio (max 5.0%) — P/L: +5.0% of cost",
             "",
             "Sector exposure breakdown (per position):",
             "  Tech (18.3% / 25.0%):",

@@ -59,6 +59,7 @@ class _StubRuleProjection:
     projected_after: float
     headroom_remaining: float
     unit: str
+    inverse: bool = False
 
 
 @dataclass(frozen=True)

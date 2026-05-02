@@ -75,4 +75,13 @@ Recent engine-originated actions (since last invocation):
 
 Active regime overrides:
   None
+
+Correlation state:
+  Portfolio weighted avg correlation: 0.45 / 0.60 [NORMAL]
+  Highest pairwise: POS-NVDA-001 ↔ POS-AAPL-002 = 0.78
+
+Dependency risk flag:
+  Max catalyst-failure exposure: 12.0% / 20.0% [NORMAL]
+  Effective independent thesis count: 8
+  Worst shared catalyst: "Q2 earnings" — positions: {POS-NVDA-001, POS-AAPL-002}
 ===

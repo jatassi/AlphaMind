@@ -114,6 +114,7 @@ def project_rule(
         projected_after=projected_after,
         headroom_remaining=headroom_remaining,
         unit=unit,
+        inverse=inverse,
     )
 
 

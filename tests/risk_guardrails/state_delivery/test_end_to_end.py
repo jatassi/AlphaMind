@@ -856,8 +856,8 @@ def _build_cross_constraint_impact() -> CrossConstraintImpact:
             CrossConstraintImpactPerRule(
                 rule_id="gross_exposure_pct",
                 rule_label="Gross",
-                current=105.0,
-                projected_after=108.0,
+                current=78.0,
+                projected_after=81.0,
                 limit=120.0,
                 unit="% of portfolio",
             ),
@@ -1152,8 +1152,8 @@ def _build_validation_tool_state(
         starting_risk_budget=_make_full_risk_budget(),
         starting_active_risk_parameters=_make_active_risk_parameters(),
         profile_feature_flags=config.feature_flags,
-        starting_config=config,
-        starting_market=_build_market(),
+        library_config=config,
+        library_market=_build_market(),
         sector_resolver=_sector_for_ticker,
         accumulated_deltas=accumulated_deltas,
     )
@@ -1214,6 +1214,20 @@ class TestNormalHeaderRendering:
     def test_pm_header_full_system(self) -> None:
         rendered = _render_normal_pm_header()
         expected = _read_fixture("pm_normal.txt")
+        _assert_lines_equal(rendered, expected)
+
+    def test_pm_header_full_system_with_correlation_and_dependency(self) -> None:
+        """Exercise the PM header with both correlation_state and dependency_risk_flag populated.
+
+        The non-populated path is covered by ``test_pm_header_full_system``; this
+        case anchors the byte-format of the threshold-gated correlation and
+        dependency-risk blocks against a committed fixture.
+        """
+        rendered = _render_normal_pm_header(
+            correlation_state=_build_correlation_state(),
+            dependency_risk_flag=_build_dependency_risk_flag(),
+        )
+        expected = _read_fixture("pm_normal_with_correlation.txt")
         _assert_lines_equal(rendered, expected)
 
     def test_analyst_header_block_inventory(self) -> None:
@@ -1281,10 +1295,9 @@ class TestNormalHeaderRendering:
     def test_three_renderers_share_per_position_proximity_block(self) -> None:
         strategist = _render_normal_strategist_header()
         pm = _render_normal_pm_header()
-        # Per-position proximity is a shared block produced by both renderers.
-        # Strategist's variant carries the "(max loss: ...)" annotation; PM's
-        # variant does not. Confirm both surface the same per-position rows by
-        # comparing the position_id ordering.
+        # Per-position proximity is a shared block produced by both renderers
+        # via render_position_proximity_block. Confirm both surface the same
+        # per-position rows by comparing the position_id ordering.
         strategist_proximity = _extract_block(strategist, "Position-level constraint proximity:")
         pm_proximity = _extract_block(pm, "Position-level constraint proximity:")
         strategist_ids = [
@@ -1304,7 +1317,7 @@ class TestNormalHeaderRendering:
         # Both surface a sector breakdown block listing positions per sector.
         strategist_block = _extract_block(strategist, "Sector exposure breakdown (per position):")
         pm_block = _extract_block(pm, "Sector exposure breakdown (per position):")
-        # Both expose the same 4 sector groups (PM's variant skips unclassified)
+        # Both expose the same 4 sector groups via render_sector_breakdown_block.
         for label in ("  Tech (", "  Semis (", "  Financials (", "  Energy ("):
             assert any(row.startswith(label) for row in strategist_block)
             assert any(row.startswith(label) for row in pm_block)
@@ -1676,7 +1689,7 @@ class TestValidationTool:
             active_profile=config.active_profile,
             conservative_buffer_pct=config.conservative_buffer_pct,
         )
-        state = state.model_copy(update={"starting_snapshot": snapshot, "starting_config": relaxed})
+        state = state.model_copy(update={"starting_snapshot": snapshot, "library_config": relaxed})
         # Propose a 5K tech equity (10% of portfolio) — pushes tech 22% → 32%.
         request = _equity_request(ticker="AAPL", dollar_value=5_000.0)
         result = validate_guardrail(request=request, state=state)
@@ -1732,8 +1745,8 @@ class TestValidationTool:
             starting_risk_budget=_make_full_risk_budget(),
             starting_active_risk_parameters=_make_active_risk_parameters(),
             profile_feature_flags=config.feature_flags,
-            starting_config=config,
-            starting_market=_build_market(),
+            library_config=config,
+            library_market=_build_market(),
             sector_resolver=_sector_for_ticker,
         )
         # Each 1K request is 2% of the 50K portfolio.
@@ -1926,8 +1939,8 @@ class TestComposition:
             starting_risk_budget=_make_full_risk_budget(),
             starting_active_risk_parameters=_make_active_risk_parameters(),
             profile_feature_flags=config.feature_flags,
-            starting_config=config,
-            starting_market=_build_market(),
+            library_config=config,
+            library_market=_build_market(),
             sector_resolver=_sector_for_ticker,
         )
 
