@@ -12,14 +12,21 @@ from alphamind.portfolio_state.consumers.analyst import (
 )
 from alphamind.portfolio_state.records.capital import (
     ActiveRiskParameterSet,
-    RegimeLabel,
     RiskBudgetConsumption,
-    RiskBudgetEntry,
 )
 from alphamind.portfolio_state.records.positions import Direction, InstrumentType
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 from alphamind.risk_guardrails.state_delivery.primitives import (
+    GROSS_RULE_ID,
+    NET_LONG_RULE_ID,
+    NET_SHORT_RULE_ID,
+    OPTIONS_DELTA_RULE_ID,
+    OPTIONS_THETA_RULE_ID,
+    OPTIONS_VEGA_RULE_ID,
+    SECTOR_RULE_PREFIX,
     format_pct,
+    make_sector_label_resolver,
+    regime_label_display,
     render_capital_block,
     render_directional_headroom_block,
     render_envelope_close,
@@ -28,23 +35,10 @@ from alphamind.risk_guardrails.state_delivery.primitives import (
     render_options_headroom_block,
     render_regime_line,
     render_sector_headroom_block,
+    require_budget_entry,
+    resolve_sector_entries,
+    validate_feature_flag_closure,
 )
-
-_SECTOR_RULE_PREFIX = "sector_concentration_"
-_NET_LONG_RULE_ID = "net_long_pct"
-_NET_SHORT_RULE_ID = "net_short_pct"
-_GROSS_RULE_ID = "gross_exposure_pct"
-_OPTIONS_DELTA_RULE_ID = "options_delta_pct"
-_OPTIONS_THETA_RULE_ID = "portfolio_theta_pct_per_day"
-_OPTIONS_VEGA_RULE_ID = "portfolio_vega_pct_per_iv_point"
-_OPTIONS_RULE_IDS = (_OPTIONS_DELTA_RULE_ID, _OPTIONS_THETA_RULE_ID, _OPTIONS_VEGA_RULE_ID)
-
-_REGIME_LABEL_DISPLAY: dict[RegimeLabel, str] = {
-    RegimeLabel.LOW_VOL: "low-vol compression",
-    RegimeLabel.NORMAL: "normal",
-    RegimeLabel.ELEVATED: "elevated",
-    RegimeLabel.CRISIS: "crisis",
-}
 
 _DIRECTION_DISPLAY: dict[Direction, str] = {
     Direction.LONG: "long",
@@ -87,15 +81,15 @@ def render_analyst_header(  # noqa: PLR0913 — signature dictated by story 04a 
     ``analyst_view.abandoned_openings`` before reaching this renderer).
     """
     del config
-    _validate_feature_flag_closure(
+    validate_feature_flag_closure(
         risk_budget=risk_budget,
         options_enabled=options_enabled,
         short_selling_enabled=short_selling_enabled,
     )
-    sector_entries = _resolve_sector_entries(risk_budget, active_sectors)
-    sector_label_resolver = _make_sector_label_resolver(sector_label_display)
+    sector_entries = resolve_sector_entries(risk_budget, active_sectors)
+    sector_label_resolver = make_sector_label_resolver(sector_label_display)
     capital = analyst_view.available_capital
-    regime_display = _REGIME_LABEL_DISPLAY[active_risk_parameters.regime_label]
+    regime_display = regime_label_display(active_risk_parameters.regime_label)
 
     blocks: list[str] = [
         "\n".join(
@@ -113,17 +107,17 @@ def render_analyst_header(  # noqa: PLR0913 — signature dictated by story 04a 
         ),
         render_sector_headroom_block(sector_entries, sector_label_resolver=sector_label_resolver),
         render_directional_headroom_block(
-            net_long=_require_entry(risk_budget, _NET_LONG_RULE_ID),
+            net_long=require_budget_entry(risk_budget, NET_LONG_RULE_ID),
             net_short=(
-                risk_budget.entry_by_rule_id(_NET_SHORT_RULE_ID) if short_selling_enabled else None
+                risk_budget.entry_by_rule_id(NET_SHORT_RULE_ID) if short_selling_enabled else None
             ),
-            gross=_require_entry(risk_budget, _GROSS_RULE_ID),
+            gross=require_budget_entry(risk_budget, GROSS_RULE_ID),
         ),
     ]
     options_block = render_options_headroom_block(
-        delta=risk_budget.entry_by_rule_id(_OPTIONS_DELTA_RULE_ID),
-        theta=risk_budget.entry_by_rule_id(_OPTIONS_THETA_RULE_ID),
-        vega=risk_budget.entry_by_rule_id(_OPTIONS_VEGA_RULE_ID),
+        delta=risk_budget.entry_by_rule_id(OPTIONS_DELTA_RULE_ID),
+        theta=risk_budget.entry_by_rule_id(OPTIONS_THETA_RULE_ID),
+        vega=risk_budget.entry_by_rule_id(OPTIONS_VEGA_RULE_ID),
     )
     if options_block is not None:
         blocks.append(options_block)
@@ -137,66 +131,6 @@ def render_analyst_header(  # noqa: PLR0913 — signature dictated by story 04a 
     if hard_blocks is not None:
         blocks.append(hard_blocks)
     return "\n\n".join(blocks) + "\n" + render_envelope_close()
-
-
-# ---------------------------------------------------------------------------
-# Validation helpers
-# ---------------------------------------------------------------------------
-
-
-def _validate_feature_flag_closure(
-    *,
-    risk_budget: RiskBudgetConsumption,
-    options_enabled: bool,
-    short_selling_enabled: bool,
-) -> None:
-    if not options_enabled:
-        for rule_id in _OPTIONS_RULE_IDS:
-            if risk_budget.entry_by_rule_id(rule_id) is not None:
-                msg = f"options_enabled is False but risk_budget contains options rule {rule_id!r}"
-                raise ValueError(msg)
-    if not short_selling_enabled and risk_budget.entry_by_rule_id(_NET_SHORT_RULE_ID) is not None:
-        msg = (
-            f"short_selling_enabled is False but risk_budget contains {_NET_SHORT_RULE_ID!r} entry"
-        )
-        raise ValueError(msg)
-
-
-def _require_entry(risk_budget: RiskBudgetConsumption, rule_id: str) -> RiskBudgetEntry:
-    entry = risk_budget.entry_by_rule_id(rule_id)
-    if entry is None:
-        msg = f"risk_budget missing required entry for rule_id {rule_id!r}"
-        raise ValueError(msg)
-    return entry
-
-
-def _resolve_sector_entries(
-    risk_budget: RiskBudgetConsumption,
-    active_sectors: tuple[str, ...],
-) -> tuple[RiskBudgetEntry, ...]:
-    entries: list[RiskBudgetEntry] = []
-    for sector_key in active_sectors:
-        rule_id = f"{_SECTOR_RULE_PREFIX}{sector_key}"
-        entry = risk_budget.entry_by_rule_id(rule_id)
-        if entry is None:
-            msg = f"risk_budget missing required entry for rule_id {rule_id!r}"
-            raise ValueError(msg)
-        entries.append(entry)
-    return tuple(entries)
-
-
-def _make_sector_label_resolver(
-    sector_label_display: dict[str, str] | None,
-) -> Callable[[str], str]:
-    """Return a resolver mapping ``sector_concentration_<key>`` rule_ids to display labels."""
-
-    def _resolver(rule_id: str) -> str:
-        sector_key = rule_id.removeprefix(_SECTOR_RULE_PREFIX)
-        if sector_label_display is not None and sector_key in sector_label_display:
-            return sector_label_display[sector_key]
-        return sector_key.capitalize()
-
-    return _resolver
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +151,7 @@ def _render_held_positions_block(
         ticker = position.ticker.ljust(ticker_width)
         direction = _DIRECTION_DISPLAY[position.direction].ljust(_DIRECTION_COLUMN_WIDTH)
         size = f"{format_pct(position.size_pct)}%".rjust(5)
-        sector_label = sector_label_resolver(f"{_SECTOR_RULE_PREFIX}{position.sector}")
+        sector_label = sector_label_resolver(f"{SECTOR_RULE_PREFIX}{position.sector}")
         rows.append(f"  {ticker}  {direction}  {size}  {sector_label}")
     return "\n".join(rows)
 

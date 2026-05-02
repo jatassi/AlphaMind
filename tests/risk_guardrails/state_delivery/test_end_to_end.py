@@ -856,8 +856,8 @@ def _build_cross_constraint_impact() -> CrossConstraintImpact:
             CrossConstraintImpactPerRule(
                 rule_id="gross_exposure_pct",
                 rule_label="Gross",
-                current=105.0,
-                projected_after=108.0,
+                current=78.0,
+                projected_after=81.0,
                 limit=120.0,
                 unit="% of portfolio",
             ),
@@ -1214,6 +1214,20 @@ class TestNormalHeaderRendering:
     def test_pm_header_full_system(self) -> None:
         rendered = _render_normal_pm_header()
         expected = _read_fixture("pm_normal.txt")
+        _assert_lines_equal(rendered, expected)
+
+    def test_pm_header_full_system_with_correlation_and_dependency(self) -> None:
+        """Exercise the PM header with both correlation_state and dependency_risk_flag populated.
+
+        The non-populated path is covered by ``test_pm_header_full_system``; this
+        case anchors the byte-format of the threshold-gated correlation and
+        dependency-risk blocks against a committed fixture.
+        """
+        rendered = _render_normal_pm_header(
+            correlation_state=_build_correlation_state(),
+            dependency_risk_flag=_build_dependency_risk_flag(),
+        )
+        expected = _read_fixture("pm_normal_with_correlation.txt")
         _assert_lines_equal(rendered, expected)
 
     def test_analyst_header_block_inventory(self) -> None:
