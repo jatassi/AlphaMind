@@ -113,4 +113,8 @@ agents:
     latency_budget_seconds: 180
     context_token_budget: 12000
     output_token_budget: 2000
+    # tools intentionally empty: synthesizer's portfolio-state and retrieve_brief
+    # tools are wired at the harness level via per-invocation closures over the
+    # per-call RetrievalStore + SynthesizerPortfolioStateReader. See ALP-114
+    # § Notes for the orchestrator — per-invocation MCP wiring.
     tools: []
