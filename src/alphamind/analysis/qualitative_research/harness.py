@@ -38,7 +38,7 @@ from alphamind.analysis.qualitative_research.validation import (
     validate_qualitative_brief,
 )
 from alphamind.analysis.tools import TOOLS
-from alphamind.analysis.tools._sdk_adapter import build_qualitative_mcp_server
+from alphamind.analysis.tools._sdk_adapter import build_analysis_mcp_server
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
 
 __all__ = [
@@ -457,8 +457,12 @@ def _resolve_tools(
         )
     if not agent_config.tools:
         return [], {}
-    server, allowed = build_qualitative_mcp_server(agent_config.tools, session)
-    return allowed, {"alphamind_qualitative": server}
+    mcp_servers, allowed = build_analysis_mcp_server(
+        server_name="alphamind_qualitative",
+        tool_names=agent_config.tools,
+        session=session,
+    )
+    return allowed, mcp_servers
 
 
 def _build_sdk_options(
