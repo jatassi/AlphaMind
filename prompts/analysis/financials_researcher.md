@@ -157,6 +157,25 @@ Signal quality: HIGH
 </example>
 </example_output>
 
+<format_discipline>
+Two fields the parser is strict on shape; default to the canonical templates.
+
+**Conviction sketch.** The bare conviction word — `low`, `moderate`, or `high` — is the first token, followed by a separator and the justification. The parser accepts `with`, em/en-dash, hyphen, colon, comma, or whitespace as the separator.
+
+  RIGHT: `moderate with single-source rumor and one corroborating signal; resolves binary on confirmation`
+  RIGHT: `moderate — single-source rumor with one corroborating signal; resolves binary on confirmation`
+  RIGHT: `high: yield-curve flattening corroborated across rate, flow, and qualitative slices`
+  WRONG: `moderately confident given the rumor and corroborating flow` (lead with the bare conviction word, not a derived adjective)
+  WRONG: `Setup is moderate; rumor with one corroborating signal` (the conviction word is the first token, not embedded in prose)
+
+**DEGRADED reason.** Required when (and only when) `Signal quality:` is `DEGRADED`.
+
+  RIGHT: `[If DEGRADED: reason — rate-environment qualitative slice missing for the past two invocations]`
+  RIGHT: `Reason: rate-environment qualitative slice missing for the past two invocations`
+  WRONG: A reason line when signal quality is HIGH, MODERATE, or LOW
+  WRONG: Omitting the reason when signal quality is DEGRADED
+</format_discipline>
+
 <constraints>
 - Do not invent tickers. Every ticker mentioned must be a financials name (banks, investment banks, payments, fintech) from `asset-universe.md`. NVDA or XOM in a financials brief is structural malformation.
 - Do not propose trades. Thesis candidates are sketches; sizing, entry orders, brackets, and guardrail validation are the analyst's job downstream.

@@ -154,6 +154,25 @@ Signal quality: HIGH
 </example>
 </example_output>
 
+<format_discipline>
+Two fields the parser is strict on shape; default to the canonical templates.
+
+**Conviction sketch.** The bare conviction word — `low`, `moderate`, or `high` — is the first token, followed by a separator and the justification. The parser accepts `with`, em/en-dash, hyphen, colon, comma, or whitespace as the separator.
+
+  RIGHT: `moderate with multi-source convergence on the demand read; implied move in line with history`
+  RIGHT: `moderate — multi-source convergence on the demand read; implied move in line with history`
+  RIGHT: `high: pre-earnings flow shape and corroborating capex signal align`
+  WRONG: `moderately confident given multi-source convergence` (lead with the bare conviction word, not a derived adjective)
+  WRONG: `Setup is moderate; demand read is corroborated` (the conviction word is the first token, not embedded in prose)
+
+**DEGRADED reason.** Required when (and only when) `Signal quality:` is `DEGRADED`.
+
+  RIGHT: `[If DEGRADED: reason — missing options flow data due to API failure]`
+  RIGHT: `Reason: missing options flow data due to API failure`
+  WRONG: A reason line when signal quality is HIGH, MODERATE, or LOW
+  WRONG: Omitting the reason when signal quality is DEGRADED
+</format_discipline>
+
 <constraints>
 - Do not invent tickers. Every ticker mentioned must be a tech or semis name from `asset-universe.md`. JPM, XOM, and other cross-sector tickers in a tech-semis brief are structural malformation; the synthesizer rejects them.
 - Do not propose trades. Thesis candidates are sketches; sizing, entry orders, brackets, and guardrail validation are the analyst's job downstream. Recording an entry price or stop level in a thesis candidate is reaching past your mandate.

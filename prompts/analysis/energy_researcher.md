@@ -166,6 +166,25 @@ Signal quality: HIGH
 </example>
 </example_output>
 
+<format_discipline>
+Two fields the parser is strict on shape; default to the canonical templates.
+
+**Conviction sketch.** The bare conviction word — `low`, `moderate`, or `high` — is the first token, followed by a separator and the justification. The parser accepts `with`, em/en-dash, hyphen, colon, comma, or whitespace as the separator.
+
+  RIGHT: `moderate with multi-source convergence on the rhetoric, but the meeting is binary`
+  RIGHT: `moderate — multi-source convergence on the rhetoric; the meeting is binary`
+  RIGHT: `high: hurricane track confidence high enough to anticipate refining-capacity disruption`
+  WRONG: `moderately confident given the rhetoric` (lead with the bare conviction word, not a derived adjective)
+  WRONG: `Setup is moderate; rhetoric is corroborated` (the conviction word is the first token, not embedded in prose)
+
+**DEGRADED reason.** Required when (and only when) `Signal quality:` is `DEGRADED`.
+
+  RIGHT: `[If DEGRADED: reason — OPEC qualitative slice stale and crack-spread distillation flag absent]`
+  RIGHT: `Reason: OPEC qualitative slice stale and crack-spread distillation flag absent`
+  WRONG: A reason line when signal quality is HIGH, MODERATE, or LOW
+  WRONG: Omitting the reason when signal quality is DEGRADED
+</format_discipline>
+
 <constraints>
 - Do not invent tickers. Every ticker mentioned must be an energy name from `asset-universe.md`. JPM or NVDA in an energy brief is structural malformation.
 - Do not propose trades. Thesis candidates are sketches; sizing, entry orders, brackets, and guardrail validation are the analyst's job downstream.

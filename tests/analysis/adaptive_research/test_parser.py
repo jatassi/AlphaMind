@@ -340,16 +340,19 @@ def test_invalid_assessment_value_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AC-10: invocation_id mismatch raises ParseError on header.invocation_id
+# AC-10: invocation_id drift is tolerated; caller-supplied id wins
 # ---------------------------------------------------------------------------
 
 
-def test_invocation_id_mismatch_raises() -> None:
-    """Caller invocation_id different from `Invocation:` line raises ParseError."""
+def test_invocation_id_mismatch_is_tolerated() -> None:
+    """Model drift on the `Invocation:` line is tolerated — the caller-supplied
+    id is canonical and is set on the returned brief. Mirrors the qualitative
+    parser's discard-and-overwrite behavior; loosened in ALP-271 because Sonnet
+    occasionally invents its own id under load and the strict check rejected
+    otherwise-valid briefs."""
     text = _empty_brief(invocation_id="inv-actual")
-    with pytest.raises(ParseError) as exc_info:
-        parse_adaptive_brief(text, invocation_id="inv-different")
-    assert exc_info.value.field_path == "header.invocation_id"
+    brief = parse_adaptive_brief(text, invocation_id="inv-different")
+    assert brief.invocation_id == "inv-different"
 
 
 # ---------------------------------------------------------------------------

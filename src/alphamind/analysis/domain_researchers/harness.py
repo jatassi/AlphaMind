@@ -323,8 +323,10 @@ async def _collect_response(
 # ---------------------------------------------------------------------------
 
 _SECTION_DIRECTIVE = (
-    "Emit a single corrected sector brief. "
-    "No prose preceding or following the structured content. "
+    "Output the corrected sector brief and nothing else. "
+    "No preamble, no acknowledgment, no apology, no closing prose. "
+    "The first non-blank line of your response must begin with "
+    "the envelope marker `SECTOR BRIEF:`. "
     "Use exactly the section headers "
     "=== KEY FINDINGS ===, === FLAGGED ANOMALIES ===, === THESIS CANDIDATES ==="
 )

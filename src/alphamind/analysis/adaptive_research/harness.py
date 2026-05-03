@@ -312,8 +312,9 @@ async def _collect_response(
 # ---------------------------------------------------------------------------
 
 _SECTION_DIRECTIVE = (
-    "Emit a single corrected adaptive research findings brief. "
-    "No prose preceding or following the structured content. "
+    "Output the corrected adaptive research findings brief and nothing else. "
+    "No preamble, no acknowledgment, no apology, no closing prose. "
+    "The first non-blank line of your response must be exactly `ADAPTIVE RESEARCH FINDINGS`. "
     "Use exactly the section header === INVESTIGATION THREADS ==="
 )
 

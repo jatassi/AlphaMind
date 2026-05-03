@@ -168,6 +168,17 @@ Regime: Sentiment broadly constructive with a tilt toward soft-landing themes; t
 </example>
 </example_output>
 
+<format_discipline>
+One field the parser is strict on shape; default to the canonical template.
+
+**DEGRADED reason.** Required when (and only when) `Signal quality:` is `DEGRADED`.
+
+  RIGHT: `[If DEGRADED: reason — news API partial; sentiment data stale]`
+  RIGHT: `Reason: news API partial; sentiment data stale`
+  WRONG: A reason line when signal quality is HIGH, MODERATE, or LOW
+  WRONG: Omitting the reason when signal quality is DEGRADED
+</format_discipline>
+
 <constraints>
 - Do not generate trade ideas. Narrative threads observe the world; thesis candidates and trade construction are downstream.
 - Do not assess thesis health. Catalyst watch surfaces approaching events; the strategist owns whether a held thesis is on-track or at-risk.
