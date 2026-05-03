@@ -16,9 +16,9 @@ Coverage map per ALP-211 § Tests:
 - ``test_verdict_warn_when_invented_present_but_response_nonempty`` —
   non-empty response, ≥1 invented, end_turn → WARN.
 - ``test_verdict_fail_when_harness_failure`` — any HarnessFailure → FAIL.
-- ``test_missing_auth_raises_sdk_failure`` — CLI entry surfaces a
-  missing CLAUDE_CODE_OAUTH_TOKEN as a clean SDKFailure rather than a
-  stack trace.
+- ``test_missing_auth_renders_failure_report`` — CLI entry surfaces a
+  missing CLAUDE_CODE_OAUTH_TOKEN as a clean failure-report block on
+  stdout with exit code 1, rather than a stack trace.
 """
 
 from __future__ import annotations
@@ -205,17 +205,25 @@ def test_verdict_fail_when_harness_failure(failure: HarnessFailure) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_missing_auth_raises_sdk_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Missing CLAUDE_CODE_OAUTH_TOKEN surfaces as a clean SDKFailure.
+def test_missing_auth_renders_failure_report(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Missing CLAUDE_CODE_OAUTH_TOKEN renders a clean failure-report block.
 
-    The script must fail fast with the documented exception type rather
-    than crashing inside the SDK or surfacing a stack trace from the
-    harness's CLI-connection error path.
+    The script must fail fast and route the missing-token case through
+    the same ``_render_failure_report`` path as a runtime harness
+    failure: a clean operator-facing report on stdout and exit code 1,
+    never a stack trace from inside the SDK or harness CLI bridge.
     """
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
 
-    with pytest.raises(SDKFailure) as exc_info:
-        main(argv=[])
+    exit_code = main(argv=[])
 
-    assert exc_info.value.agent_name == _AGENT_NAME
-    assert "CLAUDE_CODE_OAUTH_TOKEN" in str(exc_info.value)
+    assert exit_code == 1
+    captured = capsys.readouterr().out
+    assert "Synthesizer live-SDK verification" in captured
+    assert "Harness failure" in captured
+    assert "type: SDKFailure" in captured
+    assert f"agent_name: {_AGENT_NAME}" in captured
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in captured
+    assert "Verdict: FAIL" in captured

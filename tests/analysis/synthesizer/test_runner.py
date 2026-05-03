@@ -55,8 +55,8 @@ from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.runner import (
     SynthesizerResult,
     _Deps,
-    _load_synthesizer_agent_config,
     _run_synthesizer,
+    load_synthesizer_agent_config,
 )
 from alphamind.config.models.agents import (
     AgentName,
@@ -434,11 +434,11 @@ def test_runner_propagates_harness_failures(failure: HarnessFailure) -> None:
 def test_runner_resolves_agent_config_from_agents_yaml() -> None:
     """The runner reads the synthesizer entry from ``config/agents.yaml``.
 
-    Calling :func:`_load_synthesizer_agent_config` exercises the existing
+    Calling :func:`load_synthesizer_agent_config` exercises the existing
     :class:`AgentsConfig` validator (no parallel YAML parsing) and
     surfaces the synthesizer slot's :class:`BaseAgentConfig`.
     """
-    agent_config = _load_synthesizer_agent_config()
+    agent_config = load_synthesizer_agent_config()
 
     assert isinstance(agent_config, BaseAgentConfig)
     assert agent_config.model == AllowedModel.sonnet_4_6

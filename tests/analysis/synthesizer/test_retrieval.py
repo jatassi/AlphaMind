@@ -73,6 +73,23 @@ def test_assemble_collision_raises() -> None:
     assert err.second_bundle is tech_b
 
 
+def test_assemble_rejects_bundle_with_undeclared_prefix() -> None:
+    """A bundle whose text emits a prefix outside ``bundle.prefixes`` raises.
+
+    Catches an upstream-adapter mis-declaration: the bundle declares
+    ``BriefSource.AR`` (so its declared prefix set is ``{AR}``) but its
+    body emits a ``[SA-TECH-1]`` reference. The retrieval-store assembler
+    must surface this as :class:`RetrievalAssemblyError` rather than
+    silently indexing the off-source ref.
+    """
+    bundle = _bundle(BriefSource.AR, "[SA-TECH-1] off-source ref.\n")
+    with pytest.raises(RetrievalAssemblyError) as excinfo:
+        assemble_retrieval_store([bundle])
+    message = str(excinfo.value)
+    assert "SA-TECH" in message
+    assert BriefSource.AR.value in message
+
+
 def test_lookup_returns_none_on_unknown() -> None:
     """A ref ID absent from entries returns None, not raises."""
     store = assemble_retrieval_store(

@@ -39,8 +39,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import yaml
-
 from alphamind.analysis._shared import Sector, SignalQuality
 from alphamind.analysis.adaptive_research.models import (
     AdaptiveBrief,
@@ -72,10 +70,13 @@ from alphamind.analysis.qualitative_research.models import (
 from alphamind.analysis.synthesizer.harness import HarnessFailure, SDKFailure
 from alphamind.analysis.synthesizer.models import parse_reference_id
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
-from alphamind.analysis.synthesizer.runner import SynthesizerResult, run_synthesizer
+from alphamind.analysis.synthesizer.runner import (
+    SynthesizerResult,
+    load_synthesizer_agent_config,
+    run_synthesizer,
+)
 from alphamind.config.models.agents import (
     AgentName,
-    AgentsConfig,
     BaseAgentConfig,
 )
 from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
@@ -96,15 +97,12 @@ __all__ = [
     "build_fixture_qualitative_brief",
     "build_fixture_sector_briefs",
     "classify_reference_coverage",
-    "load_synthesizer_agent_config",
     "main",
     "verdict_for_failure",
     "verdict_for_success",
 ]
 
 
-_REPO_ROOT = Path(__file__).parents[3]
-_DEFAULT_AGENTS_YAML = _REPO_ROOT / "config" / "agents.yaml"
 _AGENT_NAME = AgentName.synthesizer.value
 
 
@@ -196,22 +194,6 @@ def verdict_for_failure(failure: HarnessFailure) -> Verdict:
     """Apply the failure-path rubric: any HarnessFailure → FAIL."""
     del failure
     return Verdict.FAIL
-
-
-# ---------------------------------------------------------------------------
-# Agent-config loader
-# ---------------------------------------------------------------------------
-
-
-def load_synthesizer_agent_config(
-    agents_yaml_path: Path | None = None,
-) -> BaseAgentConfig:
-    """Read ``config/agents.yaml`` and return the synthesizer entry."""
-    path = agents_yaml_path or _DEFAULT_AGENTS_YAML
-    with path.open() as fh:
-        data = yaml.safe_load(fh)
-    cfg = AgentsConfig.model_validate(data)
-    return cfg.agents[AgentName.synthesizer]
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +321,11 @@ def build_fixture_qualitative_brief(invocation_id: str) -> QualitativeBrief:
                         source_type="news_digest",
                         observation="OPEC+ extended production cuts.",
                         citation="ND-E1",
+                    ),
+                    EvidenceLine(
+                        source_type="prediction_market",
+                        observation="Brent prediction-market odds tightened.",
+                        citation="kalshi:brent-q3",
                     ),
                 ),
                 implication="Supportive for XOM-like cash-flow names.",
@@ -570,9 +557,12 @@ def _parse_iso8601(value: str) -> datetime:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """CLI entry point. Returns the exit code; raises SDKFailure on missing auth.
+    """CLI entry point. Returns the exit code (0 on PASS/WARN, 1 on FAIL).
 
-    Success paths (PASS / WARN) return 0; failure path (FAIL) returns 1.
+    A missing ``CLAUDE_CODE_OAUTH_TOKEN`` is reported via the same
+    failure-report rendering path as a runtime :class:`HarnessFailure` —
+    the operator sees a clean failure block and exit code 1, never a
+    bare stack trace.
     """
     parser = argparse.ArgumentParser(
         description=(
@@ -612,16 +602,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     as_of = _parse_iso8601(args.as_of) if args.as_of else now
     invocation_id = args.invocation_id or _format_invocation_id(now)
 
-    _check_oauth_token_set(invocation_id)
-
+    # Load the agent config first so the pre-flight failure path has the same
+    # `agent_config` shape available for `_render_failure_report` as the
+    # harness-failure path does.
     agent_config = load_synthesizer_agent_config()
-    sector_briefs = build_fixture_sector_briefs(invocation_id)
-    correlation_regime_brief = build_fixture_correlation_regime_brief(as_of)
-    qualitative_brief = build_fixture_qualitative_brief(invocation_id)
-    adaptive_brief = build_fixture_adaptive_brief(invocation_id)
-    portfolio_reader = build_fixture_portfolio_reader()
 
     try:
+        _check_oauth_token_set(invocation_id)
+        sector_briefs = build_fixture_sector_briefs(invocation_id)
+        correlation_regime_brief = build_fixture_correlation_regime_brief(as_of)
+        qualitative_brief = build_fixture_qualitative_brief(invocation_id)
+        adaptive_brief = build_fixture_adaptive_brief(invocation_id)
+        portfolio_reader = build_fixture_portfolio_reader()
+        # Announce SDK invocation up front so the operator sees activity rather
+        # than 10-30s of silence between script start and the SDK return.
+        print(
+            f"=== Synthesizer live-SDK verification: "
+            f"invocation_id={invocation_id}, model={agent_config.model.value} ===\n"
+            "Invoking SDK...",
+            flush=True,
+        )
         result = asyncio.run(
             run_synthesizer(
                 regime_label="vol_expansion",

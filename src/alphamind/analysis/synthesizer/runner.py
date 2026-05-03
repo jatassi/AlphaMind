@@ -54,6 +54,7 @@ from alphamind.portfolio_state.consumers.synthesizer import SynthesizerPortfolio
 
 __all__ = [
     "SynthesizerResult",
+    "load_synthesizer_agent_config",
     "run_synthesizer",
 ]
 
@@ -140,15 +141,23 @@ async def _run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 s
         bundles.append(adaptive_brief_to_bundle(adaptive_brief, now_utc))
 
     retrieval_store = assemble_retrieval_store(bundles)
+    logger.info(
+        "retrieval store assembled (entries=%d, sources=%d)",
+        len(retrieval_store.entries),
+        len(retrieval_store.freshness_by_source),
+    )
+
     user_message = assemble_input_bundle(
         regime_label=regime_label,
         brief_bundles=tuple(bundles),
         portfolio_tool_names=PORTFOLIO_TOOL_NAMES,
         now_utc=now_utc,
     )
+    logger.info("synthesizer input bundle assembled (chars=%d)", len(user_message))
 
     # HarnessFailure propagates up unchanged — the runner does NOT catch and
     # degrade. The pipeline-level orchestrator handles fail-closed semantics.
+    logger.info("invoking synthesizer harness (invocation_id=%s)", invocation_id)
     harness_result: HarnessSuccess = await deps.harness_fn(
         agent_config=agent_config,
         user_message=user_message,
@@ -178,14 +187,20 @@ async def _run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 s
 # ---------------------------------------------------------------------------
 
 
-def _load_synthesizer_agent_config() -> BaseAgentConfig:
+def load_synthesizer_agent_config(
+    agents_yaml_path: Path | None = None,
+) -> BaseAgentConfig:
     """Read ``config/agents.yaml`` and return the synthesizer entry.
 
-    Uses the existing ``AgentsConfig`` validator (no parallel YAML
+    Uses the existing :class:`AgentsConfig` validator (no parallel YAML
     parsing). The synthesizer slot is non-tool-loop, so the loaded entry
-    is a plain ``BaseAgentConfig`` rather than ``AdaptiveAgentConfig``.
+    is a plain :class:`BaseAgentConfig` rather than ``AdaptiveAgentConfig``.
+
+    Defaults to the in-tree ``config/agents.yaml``; tests and the
+    verification script can override via ``agents_yaml_path``.
     """
-    with _AGENTS_YAML.open() as fh:
+    path = agents_yaml_path or _AGENTS_YAML
+    with path.open() as fh:
         data = yaml.safe_load(fh)
     cfg = AgentsConfig.model_validate(data)
     return cfg.agents[AgentName.synthesizer]
@@ -234,7 +249,7 @@ async def run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 sp
         )
 
     return await _run_synthesizer(
-        agent_config=_load_synthesizer_agent_config(),
+        agent_config=load_synthesizer_agent_config(),
         regime_label=regime_label,
         sector_briefs=sector_briefs,
         correlation_regime_brief=correlation_regime_brief,
