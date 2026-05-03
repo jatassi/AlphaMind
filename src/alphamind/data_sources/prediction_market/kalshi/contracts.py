@@ -9,8 +9,7 @@ UPSERTs into ``prediction_market_contracts``; writes
 
 ``liquidity_usd`` is approximated as ``volume x last_price / 100`` (cents →
 dollars), since Kalshi does not expose open-interest directly in the markets
-endpoint.  This is noted in the module docstring so callers understand the
-proxy.
+endpoint.
 
 ``contract_id`` is Kalshi's ``market_ticker`` — the unique identifier for a
 single binary market.
@@ -25,47 +24,11 @@ from typing import Any
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from alphamind.data_sources._common import default_session_factory, track_run
-from alphamind.data_sources.kalshi.client import KalshiClient
+from alphamind.data_sources.prediction_market.categories import derive_canonical_category
+from alphamind.data_sources.prediction_market.kalshi.client import KalshiClient
 from alphamind.persistence.models import PredictionMarketContracts, PredictionMarketSnapshots
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Series ticker → storage category mapping
-# ---------------------------------------------------------------------------
-
-#: Maps Kalshi ``series_ticker`` prefixes to ``prediction_market_contracts.category``.
-SERIES_CATEGORY_MAP: dict[str, str] = {
-    "FED": "monetary_policy",
-    "FOMC": "monetary_policy",
-    "CPI": "inflation",
-    "PCE": "inflation",
-    "OPEC": "geopolitical",
-    "OIL": "geopolitical",
-    "ELECTION": "political",
-    "PRES": "political",
-    "SENATE": "political",
-    "HOUSE": "political",
-    "ANTITRUST": "regulatory",
-    "SEC": "regulatory",
-    "TRADE": "regulatory",
-    "TARIFF": "regulatory",
-    "GDP": "macro",
-    "JOBS": "macro",
-    "UNEMPLOYMENT": "macro",
-}
-
-
-def _derive_category(series_ticker: str) -> str:
-    """Map a Kalshi series_ticker prefix to a storage category."""
-    category = SERIES_CATEGORY_MAP.get(series_ticker)
-    if category is None:
-        logger.warning(
-            "Unknown Kalshi series_ticker %r — defaulting category to 'other'.",
-            series_ticker,
-        )
-        return "other"
-    return category
 
 
 def _map_result(result: str | None) -> str | None:
@@ -100,7 +63,7 @@ def collect_snapshots(
         Accepted for runner-contract compatibility; Kalshi snapshots always
         reflect current state so its value does not affect collection.
     client:
-        :class:`~alphamind.data_sources.kalshi.client.KalshiClient`.
+        :class:`~alphamind.data_sources.prediction_market.kalshi.client.KalshiClient`.
         Defaults to ``KalshiClient()`` which reads ``KALSHI_EMAIL`` and
         ``KALSHI_PASSWORD`` from the environment.
     session_factory:
@@ -132,7 +95,8 @@ def collect_snapshots(
         # other vendor collectors firing concurrently exhausted busy_timeout.
         for event in events:
             series_ticker: str = event.get("series_ticker", "")
-            category = _derive_category(series_ticker)
+            event_category: str = event.get("category", "") or ""
+            vendor_labels: tuple[str, ...] = (event_category,) if event_category else ()
 
             markets_payload = client.get("/markets", series_ticker=series_ticker)
             markets: list[dict[str, Any]] = markets_payload.get("markets", [])
@@ -145,6 +109,10 @@ def collect_snapshots(
                     open_time: str | None = market.get("open_time", ingested_at)
                     market_status: str = market.get("status", "active")
                     result: str | None = market.get("result")
+
+                    category = derive_canonical_category(
+                        description=description, vendor_labels=vendor_labels
+                    )
 
                     resolution_outcome = (
                         _map_result(result) if market_status in ("closed", "finalized") else None
