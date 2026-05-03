@@ -1,0 +1,15 @@
+{
+  "regime": "vol_expansion",
+  "transition_flag": "early-weak",
+  "confidence": 0.62,
+  "freshness_ts": "2026-05-02T14:30:00+00:00",
+  "regime_label": "vol_expansion",
+  "transition_state": "early-weak",
+  "prior_label": "low_vol_compression",
+  "invocations_held": 2,
+  "indicator_agreement_count": 3,
+  "vix_level": 22.0,
+  "term_structure_basis": 1.5,
+  "vvix_percentile": 0.7,
+  "realized_vol_5d": 0.15
+}

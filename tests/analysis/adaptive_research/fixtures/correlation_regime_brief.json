@@ -1,0 +1,11 @@
+{
+  "text": "CORRELATION & REGIME BRIEF\nInvocation: 20260502T143000Z-e2e-adaptive-fixture\nEffective freshness: 2026-05-02T14:00:00+00:00\n\n=== REGIME ===\n[CR-1] Volatility regime: vol_expansion (early-weak transition from low_vol_compression)\n  VIX 22.0; term-structure basis 1.5; VVIX 70th pctile; realized vol (5d) 15.0%.\n\n=== INTRA-SECTOR CORRELATION ===\n[CR-2] Tech-semis intra-correlation declining: NVDA-AVGO 30d rolling rho fell from 0.71 to 0.42.\n  Suggests dispersion regime within the cluster; idiosyncratic drivers regaining weight.\n\n=== CROSS-SECTOR ROTATION ===\n[CR-3] Energy outperforming Tech on 5d basis: XLE +3.2% vs XLK -1.1%.\n  Rotation magnitude in 90th percentile of 1-year distribution.\n\n=== INTERMARKET REGIME SIGNALS ===\n[CR-4] Dollar-index breakout vs 10-year yield decoupling: DXY +1.8% with TNX flat.\n  Atypical co-movement; usually carries information about reserve-asset flows.\n\n=== CORRELATION REGIME CHANGE ===\n[CR-5] Equity-bond correlation flipped sign: 30d rolling SPX-TLT moved from -0.42 to +0.18.\n  Implies stagflation-leaning macro pricing or momentum-overlay forced unwind.\n",
+  "reference_index": {
+    "CR-1": "qual.regime.universal",
+    "CR-2": "q7.intra_sector_correlation.tech",
+    "CR-3": "q7.cross_sector_rotation",
+    "CR-4": "q7.intermarket_regime.dxy_yield",
+    "CR-5": "q7.correlation_breakdown.equity_bond"
+  },
+  "freshness_min": "2026-05-02T14:00:00+00:00"
+}

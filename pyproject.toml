@@ -157,3 +157,6 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--strict-markers --strict-config"
 xfail_strict = true
+markers = [
+    "e2e: live SDK + database integration tests; gated on RUN_LIVE_LLM_TESTS=1.",
+]
