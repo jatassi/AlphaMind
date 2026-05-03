@@ -427,11 +427,15 @@ def cluster_events(
             themes=ctx.themes[article.article_id],
         )
         # Advance ``start_idx`` past clusters whose ``first_seen_at`` precedes
-        # the candidate by more than Stage 2's comparison window — per the
-        # design spec a new member must fall within ``STAGE_2_TIME_WINDOW_HOURS``
-        # of the cluster's ``first_seen_at``, so older clusters cannot match.
-        # The ``CLUSTER_SEAL_HOURS`` horizon is strictly looser than the
-        # Stage-2 window, so this advance also enforces the seal.
+        # the candidate by more than Stage 2's comparison window. This is a
+        # correctness invariant, not just a perf bound: per § Headline
+        # clustering criterion 3, both members must fall within
+        # ``STAGE_2_TIME_WINDOW_HOURS`` of the cluster's ``first_seen_at``, so
+        # without this advance a candidate could join an older cluster via
+        # single-link agglomeration through a recent member while violating
+        # the first-seen window. Advancing past the 6h boundary subsumes the
+        # 24h seal enforcement (both bound the same cluster-from-candidate
+        # timestamp delta).
         while start_idx < len(cluster_order) and (
             candidate.timestamp - cluster_first_seen[cluster_order[start_idx]] > ctx.article_window
         ):

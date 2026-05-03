@@ -256,7 +256,10 @@ def _spy_news_articles_scan_sizes(engine: Engine, scan_sizes: list[int]) -> Call
             return
         cur = conn.connection.cursor()
         try:
-            cur.execute(statement, parameters or ())
+            if isinstance(parameters, dict):
+                cur.execute(statement, parameters)
+            else:
+                cur.execute(statement, parameters or ())
             scan_sizes.append(len(cur.fetchall()))
         finally:
             cur.close()
@@ -358,3 +361,70 @@ def test_news_search_query_filter_pushed_down_to_sql(engine: Engine, session: Se
         f"news_articles query returned {max(scan_sizes)} rows; "
         f"query filter was not pushed down to SQL (expected ≤ {fomc_count})"
     )
+
+
+# ---------------------------------------------------------------------------
+# Tests: LIKE wildcard escaping (PR #12 /review item A)
+# ---------------------------------------------------------------------------
+
+
+def test_news_search_query_escapes_like_wildcards(session: Session) -> None:
+    """``%`` and ``_`` in ``query`` must match literal characters, not SQL wildcards.
+
+    Regression guard against SQL-LIKE wildcard injection: an LLM-supplied
+    ``query`` containing ``%`` (any-string) or ``_`` (any-character) would
+    otherwise broaden the match. The pre-PR-#12 Python ``in`` check treated
+    these characters literally; the SQL-pushdown rewrite must do the same.
+    """
+    _add_ticker(session, "AAPL")
+    session.flush()
+    _add_article(
+        session,
+        article_id="art-50pct",
+        headline="Stocks gain 50% in record rally",
+        published_at=_RECENT,
+        tickers=("AAPL",),
+    )
+    _add_article(
+        session,
+        article_id="art-1500",
+        headline="Tech firm cuts 1500 jobs in restructuring",
+        published_at=_RECENT,
+        tickers=("AAPL",),
+    )
+    session.commit()
+
+    fn = TOOLS["news_search"].callable_factory(session)
+    result: NewsSearchOutput = fn(NewsSearchInput(query="50%"))
+
+    headlines = {a.headline for a in result.articles}
+    assert "Stocks gain 50% in record rally" in headlines
+    assert "Tech firm cuts 1500 jobs in restructuring" not in headlines
+
+
+def test_news_search_query_escapes_underscore_wildcard(session: Session) -> None:
+    """``_`` in ``query`` must match a literal underscore, not any single char."""
+    _add_ticker(session, "AAPL")
+    session.flush()
+    _add_article(
+        session,
+        article_id="art-underscore",
+        headline="Code_review tool launches",
+        published_at=_RECENT,
+        tickers=("AAPL",),
+    )
+    _add_article(
+        session,
+        article_id="art-no-underscore",
+        headline="CodeXreview tool launches",
+        published_at=_RECENT,
+        tickers=("AAPL",),
+    )
+    session.commit()
+
+    fn = TOOLS["news_search"].callable_factory(session)
+    result: NewsSearchOutput = fn(NewsSearchInput(query="code_review"))
+
+    headlines = {a.headline for a in result.articles}
+    assert "Code_review tool launches" in headlines
+    assert "CodeXreview tool launches" not in headlines
