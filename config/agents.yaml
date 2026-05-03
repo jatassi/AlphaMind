@@ -87,12 +87,11 @@ agents:
     latency_budget_seconds: 300
     context_token_budget: 4000
     output_token_budget: 1500
+    # social_sentiment + options_flow deferred — Qual2 + Q2 storage not yet provisioned.
     tools:
       - news_search
       - ticker_deep_pull
-      - social_sentiment
       - prediction_markets
-      - options_flow
       - sec_lending
       - short_interest
       - earnings_calendar
@@ -102,9 +101,7 @@ agents:
     tool_caps:
       news_search: 10
       ticker_deep_pull: 5
-      social_sentiment: 5
       prediction_markets: 5
-      options_flow: 5
       sec_lending: 3
       short_interest: 3
       earnings_calendar: 5
