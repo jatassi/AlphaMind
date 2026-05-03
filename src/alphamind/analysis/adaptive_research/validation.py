@@ -168,6 +168,9 @@ def _check_thread_id_prefix(brief: AdaptiveBrief) -> Iterable[ValidationError]:
             )
 
 
+# The next two checks duplicate `AdaptiveBrief._brief_invariants` (model-level).
+# Kept here for parser-bypass paths (programmatic AdaptiveBrief construction or
+# direct mutation) that skip the model validator.
 def _check_threads_count_matches_header(brief: AdaptiveBrief) -> Iterable[ValidationError]:
     if brief.threads_investigated_count != len(brief.threads):
         yield ValidationError(
@@ -299,6 +302,9 @@ def _check_strengthens_weakens_resolve(
 # Public entry point
 # ---------------------------------------------------------------------------
 
+# `anomalies_deferred` carries free-text descriptions of triage skips per the
+# adaptive-research output contract (e.g. "Distillation: gold-yield correlation
+# flip"); no Layer-3 referential check applies — they are not citations.
 _LAYER_2_CHECKS: list[Callable[[AdaptiveBrief], Iterable[ValidationError]]] = [
     _check_invocation_id_not_empty,
     _check_threads_sequential_indexing,

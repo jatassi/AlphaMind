@@ -88,9 +88,9 @@ async def _load_prompt(prompt_path: str) -> str:
 # Multi-turn budget
 # ---------------------------------------------------------------------------
 
-# Per the adaptive-research design doc: cumulative_tool_call_limit=20
-# soft, with headroom for the agent's reasoning turns.  ``max_turns`` bounds
-# the SDK loop covering tool calls + final text generation.
+# Per the adaptive-research design doc: cumulative_tool_call_limit=25
+# soft (set in agents.yaml), with headroom for the agent's reasoning turns.
+# ``max_turns`` bounds the SDK loop covering tool calls + final text generation.
 _MAX_TURNS = 30
 
 
