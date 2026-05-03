@@ -17,12 +17,15 @@ Pragmas applied on every new connection (from data-and-state.md):
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Engine, event
 from sqlalchemy import create_engine as _sa_create_engine
 from sqlalchemy.orm import Session, sessionmaker
+
+_PERCENT_VAR_PATTERN = re.compile(r"%([A-Za-z_][A-Za-z0-9_]*)%")
 
 
 def _default_db_path() -> str:
@@ -47,9 +50,12 @@ def _resolve_path(path: str | None) -> str:
                 cfg: dict[str, Any] = yaml.safe_load(fh) or {}
             db_path: str | None = cfg.get("paths", {}).get("database")
             if db_path:
-                # main.yaml stores Windows ``%USERPROFILE%`` literally so the
-                # value is portable across machines; expand at the OS boundary.
-                return os.path.expandvars(db_path)
+                # ``os.path.expandvars`` only honors ``%VAR%`` on Windows; we
+                # substitute manually so a YAML value like ``%USERPROFILE%/...``
+                # expands identically on POSIX (test parity, replay harness).
+                return _PERCENT_VAR_PATTERN.sub(
+                    lambda m: os.environ.get(m.group(1), m.group(0)), db_path
+                )
     except Exception:
         pass
     return _default_db_path()

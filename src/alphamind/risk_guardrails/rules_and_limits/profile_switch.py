@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import io
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -140,8 +141,12 @@ def _rewrite_active_profile(main_yaml_path: Path, new_profile: Profile) -> None:
 
     tmp_path.replace(main_yaml_path)
 
-    parent_fd = os.open(main_yaml_path.parent, os.O_RDONLY)
-    try:
-        os.fsync(parent_fd)
-    finally:
-        os.close(parent_fd)
+    # Parent-directory fsync is a Linux-only durability primitive; Windows'
+    # POSIX shim rejects ``os.open`` against directory paths with EACCES, and
+    # ``os.replace`` already provides the in-tree atomicity Windows can offer.
+    if sys.platform != "win32":
+        parent_fd = os.open(main_yaml_path.parent, os.O_RDONLY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
