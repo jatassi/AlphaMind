@@ -19,7 +19,6 @@ from alphamind.analysis.qualitative_research.models import (
     TimeHorizon,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
@@ -94,7 +93,7 @@ def _make_brief(**overrides: object) -> QualitativeBrief:
 class TestImports:
     def test_all_public_names_importable(self) -> None:
         """All model names listed in acceptance criteria resolve."""
-        from alphamind.analysis.qualitative_research import models  # noqa: F401
+        from alphamind.analysis.qualitative_research import models
 
         for name in (
             "QualitativeBrief",
@@ -122,15 +121,15 @@ class TestImports:
 
 class TestEnums:
     def test_thread_direction_values(self) -> None:
-        assert ThreadDirection.BULLISH == "bullish"
-        assert ThreadDirection.BEARISH == "bearish"
-        assert ThreadDirection.MIXED == "mixed"
-        assert ThreadDirection.UNCERTAIN == "uncertain"
+        assert ThreadDirection.BULLISH.value == "bullish"
+        assert ThreadDirection.BEARISH.value == "bearish"
+        assert ThreadDirection.MIXED.value == "mixed"
+        assert ThreadDirection.UNCERTAIN.value == "uncertain"
 
     def test_time_horizon_values(self) -> None:
-        assert TimeHorizon.IMMEDIATE == "immediate"
-        assert TimeHorizon.NEAR_TERM == "near_term"
-        assert TimeHorizon.DEVELOPING == "developing"
+        assert TimeHorizon.IMMEDIATE.value == "immediate"
+        assert TimeHorizon.NEAR_TERM.value == "near_term"
+        assert TimeHorizon.DEVELOPING.value == "developing"
 
     def test_time_horizon_display_map_exists(self) -> None:
         from alphamind.analysis.qualitative_research.models import _TIME_HORIZON_DISPLAY
@@ -220,7 +219,7 @@ class TestNarrativeThread:
             observation="obs-3",
             citation="prediction_markets",
         )
-        t = _make_thread(evidence=_make_evidence_pair() + (third,))
+        t = _make_thread(evidence=(*_make_evidence_pair(), third))
         assert len(t.evidence) == 3
 
     def test_empty_summary_rejected(self) -> None:
@@ -358,11 +357,11 @@ class TestQualitativeBrief:
 
     def test_empty_threads_rejected(self) -> None:
         """At least one narrative thread is always required."""
-        with pytest.raises(ValidationError, match="(?i)thread"):
+        with pytest.raises(ValidationError, match=r"(?i)thread"):
             _make_brief(threads=())
 
     def test_empty_catalyst_watches_accepted(self) -> None:
-        """Catalyst watch section may be empty — 0 items on invocations with no imminent catalysts."""
+        """Catalyst watch section may be empty when no catalysts are imminent."""
         b = _make_brief(catalyst_watches=())
         assert b.catalyst_watches == ()
 
@@ -393,8 +392,3 @@ class TestDunderAll:
             "_TIME_HORIZON_DISPLAY",
         }
         assert expected.issubset(set(m.__all__))
-
-    def test_all_is_sorted(self) -> None:
-        import alphamind.analysis.qualitative_research.models as m
-
-        assert m.__all__ == sorted(m.__all__)

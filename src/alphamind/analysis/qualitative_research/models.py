@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, model_validator
 from alphamind.analysis._shared import SignalQuality
 
 __all__ = [
+    "_TIME_HORIZON_DISPLAY",
     "CatalystWatch",
     "EvidenceLine",
     "NarrativeThread",
@@ -33,7 +34,6 @@ __all__ = [
     "SignalQuality",
     "ThreadDirection",
     "TimeHorizon",
-    "_TIME_HORIZON_DISPLAY",
 ]
 
 
