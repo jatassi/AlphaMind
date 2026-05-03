@@ -1,0 +1,131 @@
+"""Portfolio-state MCP tools for the synthesizer agent — story 06b (ALP-206).
+
+Wraps the three :class:`SynthesizerPortfolioStateReader` methods as Claude
+Agent SDK MCP tools. Each tool renders the typed value object into compact
+LLM-readable text the synthesizer's prompt consumes as a tool return.
+
+The factory is per-invocation: the harness (story 08) constructs a reader
+bound to the current portfolio snapshot, calls
+:func:`build_portfolio_state_mcp_server`, and assigns the returned
+``(mcp_servers, allowed_tools)`` tuple onto its
+:class:`ClaudeAgentOptions`.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
+
+from alphamind.portfolio_state.consumers.synthesizer import (
+    SynthesizerExposureSnapshot,
+    SynthesizerPortfolioStateReader,
+    SynthesizerPositionSummary,
+    SynthesizerThesisSummary,
+)
+
+__all__ = ["build_portfolio_state_mcp_server"]
+
+
+_EMPTY_INPUT_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}}
+
+
+# ---------------------------------------------------------------------------
+# Renderer helpers
+# ---------------------------------------------------------------------------
+
+
+def _render_positions(positions: tuple[SynthesizerPositionSummary, ...]) -> str:
+    """Render position summaries as one line per position."""
+    if not positions:
+        return "No open positions."
+    return "\n".join(
+        f"{p.ticker} | {p.direction.value} | sector={p.sector} | "
+        f"size={p.size_pct:.2f}% | age={p.position_age_hours:.1f}h"
+        for p in positions
+    )
+
+
+def _render_theses(theses: tuple[SynthesizerThesisSummary, ...]) -> str:
+    """Render thesis summaries as one line per thesis."""
+    if not theses:
+        return "No active theses."
+    return "\n".join(
+        f"{t.ticker} | {t.summary} | catalyst: {t.key_catalyst} | time: {t.time_expectation_hours}"
+        for t in theses
+    )
+
+
+def _render_exposure(snapshot: SynthesizerExposureSnapshot) -> str:
+    """Render exposure snapshot as sector breakdown plus net + gross lines."""
+    if (
+        not snapshot.sector_exposure_pct
+        and snapshot.net_directional_pct == 0.0
+        and snapshot.gross_exposure_pct == 0.0
+    ):
+        return "No exposure (all positions flat or empty book)."
+    sector_lines = "\n".join(
+        f"  {sector}: {pct:.2f}%" for sector, pct in snapshot.sector_exposure_pct.items()
+    )
+    return (
+        f"Sector exposure:\n{sector_lines}\n"
+        f"Net directional: {snapshot.net_directional_pct:.2f}%\n"
+        f"Gross exposure: {snapshot.gross_exposure_pct:.2f}%"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Factory
+# ---------------------------------------------------------------------------
+
+
+def build_portfolio_state_mcp_server(
+    reader: SynthesizerPortfolioStateReader,
+    *,
+    server_name: str = "alphamind_synthesizer_portfolio",
+) -> tuple[dict[str, McpSdkServerConfig], list[str]]:
+    """Build a per-invocation SDK MCP server bound to *reader*.
+
+    Returns ``(mcp_servers_dict, allowed_tool_names)`` ready for direct
+    assignment to ``ClaudeAgentOptions.mcp_servers`` and
+    ``ClaudeAgentOptions.allowed_tools``. The allowed-tools list contains
+    three names of the form ``mcp__<server_name>__<tool>``.
+    """
+
+    @tool(
+        "get_positions_summary",
+        "Return current open and pending positions as one line per position.",
+        _EMPTY_INPUT_SCHEMA,
+    )
+    async def _get_positions_summary(_args: dict[str, Any]) -> dict[str, Any]:
+        positions = await reader.get_positions_summary()
+        return {"content": [{"type": "text", "text": _render_positions(positions)}]}
+
+    @tool(
+        "get_active_theses_summary",
+        "Return active theses as one line per thesis.",
+        _EMPTY_INPUT_SCHEMA,
+    )
+    async def _get_active_theses_summary(_args: dict[str, Any]) -> dict[str, Any]:
+        theses = await reader.get_active_theses_summary()
+        return {"content": [{"type": "text", "text": _render_theses(theses)}]}
+
+    @tool(
+        "get_exposure_snapshot",
+        "Return portfolio exposure: sector breakdown plus net directional and gross exposure.",
+        _EMPTY_INPUT_SCHEMA,
+    )
+    async def _get_exposure_snapshot(_args: dict[str, Any]) -> dict[str, Any]:
+        snapshot = await reader.get_exposure_snapshot()
+        return {"content": [{"type": "text", "text": _render_exposure(snapshot)}]}
+
+    server = create_sdk_mcp_server(
+        name=server_name,
+        tools=[_get_positions_summary, _get_active_theses_summary, _get_exposure_snapshot],
+    )
+    allowed = [
+        f"mcp__{server_name}__get_positions_summary",
+        f"mcp__{server_name}__get_active_theses_summary",
+        f"mcp__{server_name}__get_exposure_snapshot",
+    ]
+    return {server_name: server}, allowed
