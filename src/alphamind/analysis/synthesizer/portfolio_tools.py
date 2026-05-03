@@ -24,7 +24,17 @@ from alphamind.portfolio_state.consumers.synthesizer import (
     SynthesizerThesisSummary,
 )
 
-__all__ = ["build_portfolio_state_mcp_server"]
+__all__ = ["PORTFOLIO_TOOL_NAMES", "build_portfolio_state_mcp_server"]
+
+
+# Canonical ordering of the three portfolio-state tools the synthesizer can
+# call. Surfaced as a public constant so the runner's input-bundle text and
+# the harness's `allowed_tools` list both reference the same source.
+PORTFOLIO_TOOL_NAMES: tuple[str, ...] = (
+    "get_positions_summary",
+    "get_active_theses_summary",
+    "get_exposure_snapshot",
+)
 
 
 _EMPTY_INPUT_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}}
@@ -123,9 +133,5 @@ def build_portfolio_state_mcp_server(
         name=server_name,
         tools=[_get_positions_summary, _get_active_theses_summary, _get_exposure_snapshot],
     )
-    allowed = [
-        f"mcp__{server_name}__get_positions_summary",
-        f"mcp__{server_name}__get_active_theses_summary",
-        f"mcp__{server_name}__get_exposure_snapshot",
-    ]
+    allowed = [f"mcp__{server_name}__{name}" for name in PORTFOLIO_TOOL_NAMES]
     return {server_name: server}, allowed
