@@ -185,11 +185,41 @@ class PersistenceWindows(BaseModel):
         return self
 
 
+class TrackedCategoryOverride(BaseModel):
+    """Optional per-category overrides for ``tracked_categories``.
+
+    ``min_volume_24h_usd`` overrides
+    :attr:`PredictionMarket.tracked_default_min_volume_24h_usd` when set.
+    Empty dict ``{}`` accepts the default floor.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    min_volume_24h_usd: int | None = Field(default=None, ge=0)
+
+
 class PredictionMarket(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     prediction_market_delta_pp_threshold: float = Field(gt=0, le=100)
     prediction_market_low_liquidity_volume_min_usd: int = Field(ge=1)
+    tracked_default_min_volume_24h_usd: int = Field(ge=0)
+    tracked_categories: dict[str, TrackedCategoryOverride]
+
+    @field_validator("tracked_categories")
+    @classmethod
+    def categories_in_canonical_taxonomy(
+        cls, v: dict[str, TrackedCategoryOverride]
+    ) -> dict[str, TrackedCategoryOverride]:
+        from alphamind.data_sources.prediction_market.categories import CANONICAL_CATEGORIES
+
+        invalid = sorted(name for name in v if name not in CANONICAL_CATEGORIES)
+        if invalid:
+            raise ValueError(
+                "tracked_categories keys not in canonical taxonomy: "
+                f"{invalid}; valid keys are {list(CANONICAL_CATEGORIES)}"
+            )
+        return v
 
 
 class DistillationConfig(BaseModel):

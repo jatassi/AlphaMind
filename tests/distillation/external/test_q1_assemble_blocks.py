@@ -165,6 +165,8 @@ def _build_distillation_config(
         prediction_market=PredictionMarket(
             prediction_market_delta_pp_threshold=10.0,
             prediction_market_low_liquidity_volume_min_usd=10_000,
+            tracked_default_min_volume_24h_usd=5_000,
+            tracked_categories={},
         ),
     )
 

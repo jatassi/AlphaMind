@@ -863,6 +863,8 @@ def _build_distillation_config(**overrides: object) -> DistillationConfig:
         prediction_market=PredictionMarket(
             prediction_market_delta_pp_threshold=10.0,
             prediction_market_low_liquidity_volume_min_usd=10_000,
+            tracked_default_min_volume_24h_usd=5_000,
+            tracked_categories={},
         ),
     )
     return config.model_copy(update=overrides) if overrides else config

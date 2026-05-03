@@ -64,6 +64,7 @@ from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.calibration_snapshot import (
     write_calibration_state_snapshot,
 )
+from alphamind.distillation.contract_scope import resolve_prediction_market_scope
 from alphamind.distillation.correlation_brief import (
     CorrelationRegimeBrief,
     assemble_correlation_brief,
@@ -201,6 +202,7 @@ def _refresh_class_b_state(
     *,
     config: DistillationConfig,
     ticker_scope: Sequence[str],
+    contract_scope: Sequence[str],
     as_of: datetime,
 ) -> int:
     """Run the five Class B refresh primitives in sequence.
@@ -242,12 +244,13 @@ def _refresh_class_b_state(
         )
     )
 
-    # Prediction-market contract history is empty when no contracts are
-    # tracked in the fixture; refresh accepts an empty scope and is a no-op.
+    # Prediction-market contract history runs over the orchestrator-resolved
+    # scope; an empty scope is a no-op (e.g. when ``tracked_categories`` is
+    # empty in config).
     rows += len(
         refresh_contract_history(
             session,
-            contract_scope=(),
+            contract_scope=contract_scope,
             as_of=as_of_iso,
             min_observations=pw.sentiment_min_observations,
         )
@@ -402,6 +405,7 @@ def _compute_qualitative_blocks(
     *,
     config: DistillationConfig,
     ticker_scope: Sequence[str],
+    contract_scope: Sequence[str],
     as_of: datetime,
 ) -> list[OutputBlock]:
     """Qualitative-derived blocks.
@@ -434,7 +438,7 @@ def _compute_qualitative_blocks(
     blocks.extend(
         compute_prediction_market_deltas(
             session,
-            contract_scope=(),
+            contract_scope=contract_scope,
             as_of=as_of_iso,
             delta_pp_threshold=config.prediction_market.prediction_market_delta_pp_threshold,
             low_liquidity_volume_min_usd=(
@@ -671,6 +675,18 @@ async def run_external_distillation(
 
     overall_start = time.monotonic()
 
+    # Resolve prediction-market contract scope ONCE so every consumer
+    # (Phase 1's refresh_contract_history and Phase 2's
+    # compute_prediction_market_deltas) sees the identical tuple. Splitting
+    # would let the writer ingest one set while the reader reports on
+    # another.
+    contract_scope: tuple[str, ...] = await asyncio.to_thread(
+        resolve_prediction_market_scope,
+        session,
+        config=config,
+        as_of=as_of,
+    )
+
     # Phase 1 — Class B refresh.
     phase_start = time.monotonic()
     baseline_rows = await asyncio.to_thread(
@@ -678,6 +694,7 @@ async def run_external_distillation(
         session,
         config=config,
         ticker_scope=ticker_scope,
+        contract_scope=contract_scope,
         as_of=as_of,
     )
     logger.info(
@@ -746,6 +763,7 @@ async def run_external_distillation(
             session,
             config=config,
             ticker_scope=ticker_scope,
+            contract_scope=contract_scope,
             as_of=as_of,
         ),
     )

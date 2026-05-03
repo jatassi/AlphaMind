@@ -771,6 +771,8 @@ class TestPredictionMarketDeltaDefault:
         prediction_market_config = PredictionMarket(
             prediction_market_delta_pp_threshold=5.0,
             prediction_market_low_liquidity_volume_min_usd=10_000,
+            tracked_default_min_volume_24h_usd=5_000,
+            tracked_categories={},
         )
         prior = prediction_market_delta_default(
             prediction_market_config=prediction_market_config,
@@ -782,6 +784,8 @@ class TestPredictionMarketDeltaDefault:
         prediction_market_config = PredictionMarket(
             prediction_market_delta_pp_threshold=7.5,
             prediction_market_low_liquidity_volume_min_usd=20_000,
+            tracked_default_min_volume_24h_usd=5_000,
+            tracked_categories={},
         )
         prior = prediction_market_delta_default(
             prediction_market_config=prediction_market_config,
