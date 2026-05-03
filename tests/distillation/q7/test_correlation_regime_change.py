@@ -8,6 +8,7 @@ fires when a correlation breakdown coincides with media silence.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
@@ -332,14 +333,15 @@ class TestNarrativeLagFlag:
         _seed_path(session, ticker="B", closes=b_closes, start_day=start_day)
         # Qualifying article — topic_tags includes a regime-relevant tag,
         # ticker A is in universe, published within the silence window.
-        # Use a topic from the regime-relevant set.
+        # Use a topic from the regime-relevant set, JSON-encoded as the
+        # production storage shape (canonical HeadlineType.value list).
         regime_tag = next(iter(NARRATIVE_LAG_REGIME_TAGS))
         _add_article(
             session,
             article_id="art-1",
             published_at=as_of - timedelta(hours=1),
             ticker="A",
-            topic_tags=regime_tag,
+            topic_tags=json.dumps([regime_tag.value]),
         )
         session.commit()
 
@@ -364,3 +366,56 @@ class TestNarrativeLagFlag:
             assert not any("narrative_lag_flag" in name for name in names), (
                 f"unexpected narrative_lag_flag despite qualifying news: {names}"
             )
+
+    def test_malformed_topic_tags_json_does_not_crash(self, session: Session) -> None:
+        """Historical rows may carry vendor-raw text (not valid JSON) — must not crash."""
+        as_of = datetime(2026, 4, 30, tzinfo=UTC)
+        start_day = as_of - timedelta(days=60)
+        long_returns_a = [0.01, -0.005, 0.008, -0.012, 0.006] * 8
+        long_returns_b = [
+            r + (0.00005 if i % 5 else -0.00005) for i, r in enumerate(long_returns_a)
+        ]
+        short_a = [0.01, -0.02, 0.015, 0.005, -0.01,
+                   0.012, -0.018, 0.02, -0.005, 0.008,
+                   -0.015, 0.01, -0.005, 0.012, -0.008,
+                   0.005, -0.012, 0.018, -0.01, 0.005]  # fmt: skip
+        short_b_inverted = [-r for r in short_a]
+        a_returns = long_returns_a + short_a
+        b_returns = long_returns_b + short_b_inverted
+        a_closes = [100.0]
+        b_closes = [100.0]
+        for r in a_returns:
+            a_closes.append(a_closes[-1] * (1.0 + r))
+        for r in b_returns:
+            b_closes.append(b_closes[-1] * (1.0 + r))
+        _seed_path(session, ticker="A", closes=a_closes, start_day=start_day)
+        _seed_path(session, ticker="B", closes=b_closes, start_day=start_day)
+        # Vendor-raw historical row: comma-separated free-form, not valid JSON.
+        _add_article(
+            session,
+            article_id="art-malformed",
+            published_at=as_of - timedelta(hours=1),
+            ticker="A",
+            topic_tags="macro_data,regulatory",
+        )
+        session.commit()
+
+        # Must not raise — the malformed row contributes no qualifying tags
+        # so narrative_lag_flag fires (no qualifying news).
+        blocks = compute_correlation_regime_change(
+            session,
+            universe_tickers=("A", "B"),
+            as_of=as_of,
+            config=CorrelationRegimeChangeConfig(
+                short_window_days=20,
+                long_window_days=60,
+                correlation_shift_sigma=1.5,
+                dispersion_window_days=20,
+                dispersion_sigma=1.5,
+                media_silence_hours=12,
+            ),
+        )
+        narrative_blocks = [b for b in blocks if b.block_id == "q7.narrative_lag"]
+        assert narrative_blocks
+        names = [flag.name for flag in narrative_blocks[0].anomaly_flags]
+        assert any("narrative_lag_flag" in name for name in names), names

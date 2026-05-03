@@ -71,7 +71,7 @@ You do not predict prices, propose trades, or assess portfolio fit. Pattern reco
 Emit the brief as plain text with no surrounding prose, no markdown code fences, no preface. Section markers are literal; preserve them exactly.
 
 ```
-SECTOR BRIEF: financials
+SECTOR BRIEF: Financials
 Invocation: {invocation_id}
 Signal quality: {HIGH | MODERATE | LOW | DEGRADED}
   [If DEGRADED: reason]
@@ -114,7 +114,7 @@ Stop after the last section's last entry.
 <example>
   <context>Vol-normalization regime, stable transition state. Yield-curve flattening over the last week, JPM ahead of bank earnings season, M&A rumor on a payments name, COIN with a crypto-narrative tape.</context>
   <output>
-SECTOR BRIEF: financials
+SECTOR BRIEF: Financials
 Invocation: inv-2026-04-23T14-30Z
 Signal quality: HIGH
 
@@ -151,7 +151,7 @@ Signal quality: HIGH
   Setup type: catalyst
   Catalyst/driver: M&A rumor in SA-FIN-2 with corroborating call-volume flow; payments-network deal speculation tends to resolve quickly when sourced from tier-1 outlets.
   Time horizon: 24–72h
-  Conviction sketch: moderate — single-source rumor with one corroborating signal; resolves binary on confirmation or denial.
+  Conviction sketch: moderate with single-source rumor and one corroborating signal; resolves binary on confirmation or denial.
   Key risk: A formal denial from V or the named target would unwind the rumor leg cleanly; flow positioning offers no protection if the rumor is false.
   </output>
 </example>

@@ -80,7 +80,7 @@ You do not predict prices, propose trades, or assess portfolio fit. Pattern reco
 Emit the brief as plain text with no surrounding prose, no markdown code fences, no preface. Section markers are literal; preserve them exactly.
 
 ```
-SECTOR BRIEF: energy
+SECTOR BRIEF: Energy
 Invocation: {invocation_id}
 Signal quality: {HIGH | MODERATE | LOW | DEGRADED}
   [If DEGRADED: reason]
@@ -123,7 +123,7 @@ Stop after the last section's last entry.
 <example>
   <context>Vol-expansion regime, stable transition state. Unexpected EIA crude draw two days ago, OPEC pre-meeting rhetoric, hurricane track update for Gulf Coast, refiners showing cracks-favorable but stocks lagging.</context>
   <output>
-SECTOR BRIEF: energy
+SECTOR BRIEF: Energy
 Invocation: inv-2026-04-23T14-30Z
 Signal quality: HIGH
 
@@ -136,7 +136,7 @@ Signal quality: HIGH
 
 [SA-ENERGY-2] Refining group lagging despite favorable crack-spread signal in distillation §8; crack spreads widened ~$2 last week but refiner equities have not repriced.
   Tickers: VLO, MPC, PSX
-  Signal type: price_flow_divergence
+  Signal type: price_action
   Strength: moderate
   Detail: Distillation flags the crack spread vs. energy-stock divergence explicitly. Volume on the refiner names is below average. Either the crack-spread move is being read as transient (driven by a single refinery outage) or the equities are repricing-lagging — the distinction matters for the time horizon.
 
@@ -160,7 +160,7 @@ Signal quality: HIGH
   Setup type: catalyst
   Catalyst/driver: OPEC meeting in SA-ENERGY-1 with E&P-heavy business mix offering disproportionate upside on a confirmed cut; pre-positioning evident in the rally differential.
   Time horizon: 24–48h
-  Conviction sketch: moderate — multi-source convergence on the rhetoric, but the meeting is binary and a no-cut outcome would unwind the rally cleanly.
+  Conviction sketch: moderate with multi-source convergence on the rhetoric, but the meeting is binary and a no-cut outcome would unwind the rally cleanly.
   Key risk: A formal OPEC decision short of a cut would invalidate the catalyst leg; the position would face mean-reversion pressure into the next session.
   </output>
 </example>

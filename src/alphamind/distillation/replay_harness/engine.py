@@ -202,10 +202,17 @@ def _copy_raw_input_tables(target_db: Path, source_db: Path) -> None:
 def _copy_one_table(
     source_conn: sqlite3.Connection, target_conn: sqlite3.Connection, table: str
 ) -> None:
-    """Copy every row from ``source.table`` into ``target.table`` in batches."""
+    """Copy every row from ``source.table`` into ``target.table`` in batches.
+
+    Insert by explicit column name list so a target schema that's been
+    extended via Alembic since the fixture was captured (e.g. a new
+    nullable column) absorbs the older fixture without errors.
+    """
     cursor = source_conn.execute(f"SELECT * FROM {table}")
-    placeholders = ", ".join("?" * len(cursor.description))
-    insert_sql = f"INSERT INTO {table} VALUES ({placeholders})"
+    column_names = [c[0] for c in cursor.description]
+    columns_sql = ", ".join(column_names)
+    placeholders = ", ".join("?" * len(column_names))
+    insert_sql = f"INSERT INTO {table} ({columns_sql}) VALUES ({placeholders})"
     while True:
         batch = cursor.fetchmany(_COPY_BATCH_SIZE)
         if not batch:

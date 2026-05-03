@@ -432,8 +432,10 @@ class TestAlembicMigration:
         db_path = tmp_path / "alembic.db"
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, "head")
-        # Downgrade exactly one step (this story's revision).
-        command.downgrade(cfg, "-1")
+        # Downgrade to the parent of this story's revision so the regime
+        # adaptation table is dropped regardless of how many later
+        # migrations have stacked on top.
+        command.downgrade(cfg, "8a8d4e44b305")
 
         eng = make_engine(str(db_path))
         try:
