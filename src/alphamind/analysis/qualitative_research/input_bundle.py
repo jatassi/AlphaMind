@@ -177,9 +177,7 @@ def _render_calendar(inputs: QualitativeInputs) -> str:
     return "\n".join(lines)
 
 
-_THESES_STUB = (
-    "(no active theses — execution-layer thesis model pending per ALP-111)."
-)
+_THESES_STUB = "(no active theses — execution-layer thesis model pending per ALP-111)."
 
 
 def _render_theses(inputs: QualitativeInputs) -> str:

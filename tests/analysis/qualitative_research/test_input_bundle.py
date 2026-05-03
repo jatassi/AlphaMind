@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind.analysis._shared import Sector
 from alphamind.analysis.qualitative_research.loaders import (
     ActiveThesis,
     CalendarEvent,
@@ -22,7 +23,7 @@ from alphamind.analysis.qualitative_research.news_digest import NewsDigest
 _AS_OF = datetime(2024, 3, 15, 14, 30, 0, tzinfo=UTC)
 _INVOCATION_ID = "inv-qr-001"
 
-_REGIME_LABEL: dict = {
+_REGIME_LABEL: dict[str, object] = {
     "regime_label": "vol_expansion",
     "transition_state": "early-weak",
     "prior_label": "low_vol_compression",
@@ -95,7 +96,7 @@ def _make_calendar_event(
     event_time: datetime | None = None,
     event_type: str = "macro",
     tickers: tuple[str, ...] = (),
-    sectors: frozenset | None = None,
+    sectors: frozenset[Sector] | None = None,
     consensus: str | None = None,
 ) -> CalendarEvent:
     return CalendarEvent(
@@ -147,7 +148,7 @@ def _make_inputs(
 
 def test_import_resolves() -> None:
     """assemble_input_bundle and InputBundle are importable from the module."""
-    from alphamind.analysis.qualitative_research.input_bundle import (  # noqa: PLC0415
+    from alphamind.analysis.qualitative_research.input_bundle import (
         InputBundle,
         assemble_input_bundle,
     )
@@ -165,7 +166,7 @@ def test_import_resolves() -> None:
 
 def test_bundle_text_contains_all_section_headers() -> None:
     """bundle_text contains every required section header."""
-    from alphamind.analysis.qualitative_research.input_bundle import (  # noqa: PLC0415
+    from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
     )
 
@@ -195,7 +196,7 @@ def test_bundle_text_contains_all_section_headers() -> None:
 
 def test_empty_theses_placeholder() -> None:
     """Empty theses tuple produces the named placeholder line."""
-    from alphamind.analysis.qualitative_research.input_bundle import (  # noqa: PLC0415
+    from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
     )
 
@@ -206,12 +207,13 @@ def test_empty_theses_placeholder() -> None:
         digest=_DIGEST,
         inputs=_make_inputs(theses=()),
     )
-    assert "(no active theses — execution-layer thesis model pending per ALP-111)." in bundle.bundle_text
+    placeholder = "(no active theses — execution-layer thesis model pending per ALP-111)."
+    assert placeholder in bundle.bundle_text
 
 
 def test_non_empty_theses_formatted_rows() -> None:
     """Non-empty theses produce formatted rows (no placeholder)."""
-    from alphamind.analysis.qualitative_research.input_bundle import (  # noqa: PLC0415
+    from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
     )
 
@@ -234,7 +236,7 @@ def test_non_empty_theses_formatted_rows() -> None:
 
 def test_sentiment_sorted_alphabetically() -> None:
     """Sentiment rows appear in alphabetical ticker order."""
-    from alphamind.analysis.qualitative_research.input_bundle import (  # noqa: PLC0415
+    from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
     )
 
@@ -256,7 +258,7 @@ def test_sentiment_sorted_alphabetically() -> None:
 
 def test_calendar_events_sorted_by_event_time() -> None:
     """Calendar event rows appear sorted by event_time ascending."""
-    from alphamind.analysis.qualitative_research.input_bundle import (  # noqa: PLC0415
+    from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
     )
 
@@ -290,7 +292,7 @@ def test_calendar_events_sorted_by_event_time() -> None:
 
 def test_prediction_markets_sorted_by_contract_id() -> None:
     """Prediction market rows appear sorted by contract_id."""
-    from alphamind.analysis.qualitative_research.input_bundle import (  # noqa: PLC0415
+    from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
     )
 
@@ -317,7 +319,7 @@ def test_prediction_markets_sorted_by_contract_id() -> None:
 
 def test_determinism_identical_inputs() -> None:
     """Calling assemble_input_bundle twice with identical inputs → byte-identical bundle_text."""
-    from alphamind.analysis.qualitative_research.input_bundle import (  # noqa: PLC0415
+    from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
     )
 
@@ -355,7 +357,7 @@ def test_determinism_identical_inputs() -> None:
 
 def test_digest_text_embedded_verbatim() -> None:
     """digest.digest_text appears verbatim in bundle_text — not re-decorated."""
-    from alphamind.analysis.qualitative_research.input_bundle import (  # noqa: PLC0415
+    from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
     )
 
@@ -386,7 +388,7 @@ def test_digest_text_embedded_verbatim() -> None:
 
 def test_regime_fields_in_regime_text() -> None:
     """All four regime fields appear in InputBundle.regime_text."""
-    from alphamind.analysis.qualitative_research.input_bundle import (  # noqa: PLC0415
+    from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
     )
 
@@ -405,7 +407,7 @@ def test_regime_fields_in_regime_text() -> None:
 
 def test_regime_text_in_bundle_text() -> None:
     """The regime block appears under ## VOLATILITY REGIME in bundle_text."""
-    from alphamind.analysis.qualitative_research.input_bundle import (  # noqa: PLC0415
+    from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
     )
 
@@ -433,7 +435,7 @@ def test_regime_text_in_bundle_text() -> None:
 
 def test_prediction_market_flagged_appended() -> None:
     """[FLAGGED] is appended when meets_threshold_flag=True."""
-    from alphamind.analysis.qualitative_research.input_bundle import (  # noqa: PLC0415
+    from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
     )
 
@@ -450,7 +452,7 @@ def test_prediction_market_flagged_appended() -> None:
 
 def test_prediction_market_low_liquidity_appended() -> None:
     """[LOW LIQUIDITY] is appended when is_low_liquidity=True."""
-    from alphamind.analysis.qualitative_research.input_bundle import (  # noqa: PLC0415
+    from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
     )
 
@@ -469,7 +471,7 @@ def test_input_bundle_is_frozen() -> None:
     """InputBundle is a frozen Pydantic model."""
     from pydantic import BaseModel, ValidationError
 
-    from alphamind.analysis.qualitative_research.input_bundle import (  # noqa: PLC0415
+    from alphamind.analysis.qualitative_research.input_bundle import (
         InputBundle,
         assemble_input_bundle,
     )
@@ -490,7 +492,7 @@ def test_input_bundle_is_frozen() -> None:
 
 def test_bundle_header_and_invocation_line() -> None:
     """bundle_text starts with the H1 header and contains the invocation line."""
-    from alphamind.analysis.qualitative_research.input_bundle import (  # noqa: PLC0415
+    from alphamind.analysis.qualitative_research.input_bundle import (
         assemble_input_bundle,
     )
 
