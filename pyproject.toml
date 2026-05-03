@@ -112,6 +112,10 @@ max-statements = 50
     "ARG",     # fixtures often appear unused at signature
     "PLR0913", # test builders that mirror vendor API field structure exceed 8 args
 ]
+"tests/analysis/qualitative_research/test_parser.py" = [
+    "E501",   # verbatim fixture strings from the prompt spec cannot be wrapped
+    "RUF001", # verbatim fixture strings may contain Unicode dashes from the spec
+]
 "src/alphamind/risk_guardrails/guardrail_evaluation/rules/*.py" = [
     "ARG001",  # rule callbacks conform to a uniform RuleSpec interface; some rules
                # don't use every parameter (e.g., config is unused by most contribute
