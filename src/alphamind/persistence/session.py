@@ -5,7 +5,10 @@ Database path resolution order:
   1. Explicit ``path`` argument passed to :func:`make_engine`
   2. ``DATABASE_PATH`` environment variable
   3. ``main.yaml`` ``paths.database`` key
-  4. Platform default: ``%USERPROFILE%\\AlphaMind\\data\\alphamind.db``
+
+Raises :class:`RuntimeError` when none of the above resolves a path; a silent
+default would let SQLAlchemy create an empty SQLite file and downstream
+verifiers would mis-report "tables MISSING" instead of "no DB configured".
 
 Pragmas applied on every new connection (from data-and-state.md):
   - ``journal_mode = WAL``
@@ -26,12 +29,6 @@ from sqlalchemy import create_engine as _sa_create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 _PERCENT_VAR_PATTERN = re.compile(r"%([A-Za-z_][A-Za-z0-9_]*)%")
-
-
-def _default_db_path() -> str:
-    """Return the platform-default database path."""
-    userprofile = os.environ.get("USERPROFILE") or str(Path.home())
-    return str(Path(userprofile) / "AlphaMind" / "data" / "alphamind.db")
 
 
 def _resolve_path(path: str | None) -> str:
@@ -58,7 +55,11 @@ def _resolve_path(path: str | None) -> str:
                 )
     except Exception:
         pass
-    return _default_db_path()
+    raise RuntimeError(
+        "AlphaMind database path is not configured. "
+        "Pass an explicit path, set the DATABASE_PATH environment variable, "
+        "or populate paths.database in config/main.yaml."
+    )
 
 
 def _apply_pragmas(dbapi_connection: Any, _connection_record: Any) -> None:

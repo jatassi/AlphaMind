@@ -121,6 +121,26 @@ class TestResolvePath:
         assert resolved.endswith(("data/alphamind.db", r"data\alphamind.db"))
         assert str(tmp_path) in resolved
 
+    def test_raises_when_chain_falls_through(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """No explicit path, no env var, and no main.yaml ⇒ loud failure."""
+        monkeypatch.delenv("DATABASE_PATH", raising=False)
+
+        import alphamind.persistence.session as session_mod
+
+        # Point __file__ at a tmp dir with no config/main.yaml so YAML lookup misses.
+        monkeypatch.setattr(
+            session_mod,
+            "__file__",
+            str(tmp_path / "src" / "alphamind" / "persistence" / "session.py"),
+        )
+
+        with pytest.raises(RuntimeError, match="not configured"):
+            _resolve_path(None)
+
 
 class TestPragmas:
     def test_journal_mode_is_wal(self, file_engine: Engine) -> None:
