@@ -480,26 +480,6 @@ def _ticker_sector(session: Session, ticker: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Dispatch table — maps category value → loader function
-# ---------------------------------------------------------------------------
-
-type _CategoryLoader = Callable[
-    [Session, str],
-    tuple[
-        PriceVolumePayload | ShortDataPayload | EarningsPayload | MacroContextPayload | None,
-        datetime | None,
-        ToolQuality,
-    ],
-]
-
-_CATEGORY_LOADERS: dict[str, _CategoryLoader] = {
-    TickerDeepPullCategory.PRICE_VOLUME: _load_price_volume,
-    TickerDeepPullCategory.SHORT_DATA: _load_short_data,
-    TickerDeepPullCategory.EARNINGS: _load_earnings,
-    TickerDeepPullCategory.MACRO_CONTEXT: _load_macro_context,
-}
-
-# ---------------------------------------------------------------------------
 # Quality aggregation helper
 # ---------------------------------------------------------------------------
 
@@ -561,34 +541,34 @@ def _dispatch_categories(
     now: datetime,
 ) -> TickerDeepPullOutput:
     """Fan out to per-category loaders and aggregate results."""
-    payloads: dict[str, object] = {
-        "price_volume": None,
-        "short_data": None,
-        "earnings": None,
-        "macro_context": None,
-    }
+    price_volume: PriceVolumePayload | None = None
+    short_data: ShortDataPayload | None = None
+    earnings: EarningsPayload | None = None
+    macro_context: MacroContextPayload | None = None
     qualities: list[ToolQuality] = []
     freshnesses: list[datetime] = []
 
     for category in categories:
-        loader = _CATEGORY_LOADERS.get(category)
-        if loader is None:
+        if category == TickerDeepPullCategory.PRICE_VOLUME:
+            price_volume, freshness, quality = _load_price_volume(session, ticker)
+        elif category == TickerDeepPullCategory.SHORT_DATA:
+            short_data, freshness, quality = _load_short_data(session, ticker)
+        elif category == TickerDeepPullCategory.EARNINGS:
+            earnings, freshness, quality = _load_earnings(session, ticker)
+        elif category == TickerDeepPullCategory.MACRO_CONTEXT:
+            macro_context, freshness, quality = _load_macro_context(session, ticker)
+        else:
             continue
-        payload, freshness, quality = loader(session, ticker)
-        payloads[category] = payload
         qualities.append(quality)
         if freshness is not None:
             freshnesses.append(freshness)
 
-    aggregate_quality = _aggregate_quality(qualities)
-    aggregate_freshness = min(freshnesses) if freshnesses else now
-
     return TickerDeepPullOutput(
         ticker=ticker,
-        data_freshness=aggregate_freshness,
-        quality=aggregate_quality,
-        price_volume=payloads["price_volume"],  # type: ignore[arg-type]
-        short_data=payloads["short_data"],  # type: ignore[arg-type]
-        earnings=payloads["earnings"],  # type: ignore[arg-type]
-        macro_context=payloads["macro_context"],  # type: ignore[arg-type]
+        data_freshness=min(freshnesses) if freshnesses else now,
+        quality=_aggregate_quality(qualities),
+        price_volume=price_volume,
+        short_data=short_data,
+        earnings=earnings,
+        macro_context=macro_context,
     )
