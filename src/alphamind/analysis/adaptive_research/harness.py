@@ -375,6 +375,7 @@ def _parse_and_validate(
     sector_briefs: tuple[SectorBrief, ...],
     qualitative_brief: QualitativeBrief,
     correlation_regime_brief: CorrelationRegimeBrief,
+    allowed_tools: frozenset[str],
     stop_reason: str | None,
     attempt: int,
     diag: _DiagState,
@@ -412,6 +413,7 @@ def _parse_and_validate(
         qualitative_brief=qualitative_brief,
         correlation_regime_brief=correlation_regime_brief,
         universe=universe,
+        allowed_tools=allowed_tools,
     )
     if not validation.is_valid:
         for ve in validation.errors:
@@ -447,21 +449,24 @@ def _resolve_tools(
     *,
     agent_name: str,
     invocation_id: str,
-) -> tuple[list[str], dict[str, Any]]:
+) -> tuple[list[str], dict[str, Any], frozenset[str]]:
     """Resolve agent_config.tools against the registry and build the SDK MCP server.
 
-    Returns ``(allowed_tools, mcp_servers)`` ready for
-    :class:`ClaudeAgentOptions`.  ``allowed_tools`` carries the bundled
-    CLI's ``mcp__<server>__<tool>`` wire form so the permission filter
-    matches what the model emits.  ``mcp_servers`` is keyed by the
-    adaptive-research server name and registers each tool's handler
+    Returns ``(allowed_tools, mcp_servers, validator_tool_allowlist)`` ready
+    for :class:`ClaudeAgentOptions` and the validator. ``allowed_tools``
+    carries the bundled CLI's ``mcp__<server>__<tool>`` wire form so the
+    permission filter matches what the model emits. ``mcp_servers`` is keyed
+    by the adaptive-research server name and registers each tool's handler
     via the :mod:`alphamind.analysis.tools._sdk_adapter` decorator wrap.
+    ``validator_tool_allowlist`` is the registry-name form (e.g.
+    ``"news_search"``) the validator uses to check ``thread.tools_used`` —
+    the model's free-text recap, not an MCP wire ID.
 
     Raises :class:`SDKFailure` immediately if any name in
     ``agent_config.tools`` is not registered in
     :data:`alphamind.analysis.tools.TOOLS` — fail loudly rather than
-    silently dropping tool privileges.  An empty ``agent_config.tools``
-    yields ``([], {})``: no MCP server is registered.
+    silently dropping tool privileges. An empty ``agent_config.tools``
+    yields ``([], {}, frozenset())``: no MCP server is registered.
     """
     missing = [name for name in agent_config.tools if name not in TOOLS]
     if missing:
@@ -471,14 +476,15 @@ def _resolve_tools(
             agent_name=agent_name,
             invocation_id=invocation_id,
         )
+    validator_tool_allowlist = frozenset(agent_config.tools)
     if not agent_config.tools:
-        return [], {}
+        return [], {}, validator_tool_allowlist
     mcp_servers, allowed = build_analysis_mcp_server(
         server_name="alphamind_adaptive",
         tool_names=agent_config.tools,
         session=session,
     )
-    return allowed, mcp_servers
+    return allowed, mcp_servers, validator_tool_allowlist
 
 
 def _build_sdk_options(
@@ -586,7 +592,7 @@ async def invoke_adaptive_researcher(
 
     agent_name = AgentName.adaptive_researcher.value
 
-    allowed_tools, mcp_servers = _resolve_tools(
+    allowed_tools, mcp_servers, validator_tool_allowlist = _resolve_tools(
         agent_config, session, agent_name=agent_name, invocation_id=invocation_id
     )
     prompt_text = await _load_prompt(agent_config.prompt)
@@ -662,6 +668,7 @@ async def invoke_adaptive_researcher(
             sector_briefs,
             qualitative_brief,
             correlation_regime_brief,
+            validator_tool_allowlist,
             stop_reason1,
             attempt=1,
             diag=diag,
@@ -704,6 +711,7 @@ async def invoke_adaptive_researcher(
         sector_briefs,
         qualitative_brief,
         correlation_regime_brief,
+        validator_tool_allowlist,
         stop_reason2,
         attempt=2,
         diag=diag,

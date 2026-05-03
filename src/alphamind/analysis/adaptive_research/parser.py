@@ -66,6 +66,27 @@ _HEADER_COUNTS_RE = re.compile(
 )
 _INVESTIGATION_THREADS_MARKER = "=== INVESTIGATION THREADS ==="
 
+# Conditional-field allowlists keyed off Assessment, in wire-key form (lower-
+# cased Field: line label — note the space in "dismissal reason"). Field paths
+# use the underscored slug. Mirrors the model-level :data:`_REQUIRED_BY_ASSESSMENT`
+# — kept here so the parser can fail-fast with a clear per-field message rather
+# than re-wrap pydantic's _assessment_invariant ValueError.
+_ALLOWED_CONDITIONAL_KEYS_BY_ASSESSMENT: dict[Assessment, frozenset[str]] = {
+    Assessment.SIGNAL: frozenset({"implication", "strengthens", "weakens"}),
+    Assessment.NOISE: frozenset({"dismissal reason"}),
+    Assessment.INCONCLUSIVE: frozenset({"missing"}),
+}
+
+_CONDITIONAL_KEYS: frozenset[str] = frozenset().union(
+    *_ALLOWED_CONDITIONAL_KEYS_BY_ASSESSMENT.values()
+)
+
+_CONDITIONAL_KEY_OWNER: dict[str, Assessment] = {
+    key: assessment
+    for assessment, keys in _ALLOWED_CONDITIONAL_KEYS_BY_ASSESSMENT.items()
+    for key in keys
+}
+
 
 # ---------------------------------------------------------------------------
 # ParseError
@@ -336,14 +357,16 @@ def _parse_single_thread(index: int, thread_id: str, body_lines: list[str]) -> I
     The five conditional fields are populated branchwise on ``Assessment``:
 
     * required-by-assessment fields raise :class:`ParseError` if missing;
-    * forbidden-by-assessment fields, if present in the wire input, are
-      passed through unchanged so the model's ``_assessment_invariant``
-      rejects them — ParseError surfaces from the ValidationError handler.
+    * forbidden-by-assessment fields, if present in the wire input, raise
+      :class:`ParseError` with a clear per-field message — the early check
+      bypasses the pydantic ``_assessment_invariant`` rewrap path that would
+      otherwise produce a noisy diagnostic.
     """
     field_prefix = f"threads[{index}]"
     fields, findings = _parse_thread_body(body_lines)
 
     assessment = _parse_assessment(_require(fields, "assessment", field_prefix), field_prefix)
+    _check_forbidden_conditional_fields(fields, assessment, field_prefix)
 
     implication: str | None
     strengthens: tuple[str, ...] | None
@@ -355,20 +378,20 @@ def _parse_single_thread(index: int, thread_id: str, body_lines: list[str]) -> I
         implication = _require(fields, "implication", field_prefix)
         strengthens = _parse_csv_or_none(_require(fields, "strengthens", field_prefix))
         weakens = _parse_csv_or_none(_require(fields, "weakens", field_prefix))
-        dismissal_reason = fields.get("dismissal reason")
-        missing = fields.get("missing")
-    else:
-        # noise / inconclusive: only one required field; signal-only fields
-        # passed through (if present) so the model invariant rejects.
-        implication = fields.get("implication")
-        strengthens = _parse_csv_or_none(fields["strengthens"]) if "strengthens" in fields else None
-        weakens = _parse_csv_or_none(fields["weakens"]) if "weakens" in fields else None
-        if assessment is Assessment.NOISE:
-            dismissal_reason = _require(fields, "dismissal reason", field_prefix)
-            missing = fields.get("missing")
-        else:  # INCONCLUSIVE
-            dismissal_reason = fields.get("dismissal reason")
-            missing = _require(fields, "missing", field_prefix)
+        dismissal_reason = None
+        missing = None
+    elif assessment is Assessment.NOISE:
+        implication = None
+        strengthens = None
+        weakens = None
+        dismissal_reason = _require(fields, "dismissal reason", field_prefix)
+        missing = None
+    else:  # INCONCLUSIVE
+        implication = None
+        strengthens = None
+        weakens = None
+        dismissal_reason = None
+        missing = _require(fields, "missing", field_prefix)
 
     try:
         return InvestigationThread(
@@ -430,6 +453,27 @@ def _parse_thread_body(body_lines: list[str]) -> tuple[dict[str, str], tuple[str
 # ---------------------------------------------------------------------------
 # Field-value helpers
 # ---------------------------------------------------------------------------
+
+
+def _check_forbidden_conditional_fields(
+    fields: dict[str, str], assessment: Assessment, context: str
+) -> None:
+    """Raise :class:`ParseError` for any conditional field forbidden by *assessment*.
+
+    Each of ``strengthens`` / ``weakens`` / ``implication`` is valid only on
+    SIGNAL threads; ``dismissal reason`` only on NOISE; ``missing`` only on
+    INCONCLUSIVE. Catches the failure with a clear, per-field message before
+    pydantic's ``_assessment_invariant`` would re-wrap a noisier diagnostic.
+    """
+    allowed = _ALLOWED_CONDITIONAL_KEYS_BY_ASSESSMENT[assessment]
+    for key in _CONDITIONAL_KEYS - allowed:
+        if key in fields:
+            owner = _CONDITIONAL_KEY_OWNER[key].value
+            slug = key.replace(" ", "_")
+            raise ParseError(
+                field_path=f"{context}.{slug}",
+                message=f"{slug} is only valid for {owner} threads",
+            )
 
 
 def _require(fields: dict[str, str], key: str, context: str) -> str:

@@ -239,6 +239,25 @@ def _check_tickers_in_universe(
                 )
 
 
+def _check_tools_used_in_allowlist(
+    brief: AdaptiveBrief, allowed: frozenset[str]
+) -> Iterable[ValidationError]:
+    """Each ``thread.tools_used`` entry must be a registered tool name.
+
+    Guards against LLM self-report drift — the SDK's permission filter rejects
+    real tool calls outside the allowlist, but ``tools_used`` is the model's
+    free-text recap and can hallucinate tool names that were never invoked.
+    """
+    for i, thread in enumerate(brief.threads):
+        for j, tool in enumerate(thread.tools_used):
+            if tool not in allowed:
+                yield ValidationError(
+                    field_path=f"threads[{i}].tools_used[{j}]",
+                    rule="tools_used_in_allowlist",
+                    message=f"tool {tool!r} is not in the agent's tool allowlist",
+                )
+
+
 # ---------------------------------------------------------------------------
 # Layer-3 reference resolution
 # ---------------------------------------------------------------------------
@@ -323,6 +342,7 @@ def validate_adaptive_brief(
     qualitative_brief: QualitativeBrief,
     correlation_regime_brief: CorrelationRegimeBrief,
     universe: frozenset[str] | None = None,
+    allowed_tools: frozenset[str] | None = None,
 ) -> ValidationResult:
     """Run Layer-2 + Layer-3 checks on *brief* and aggregate the error list.
 
@@ -347,6 +367,12 @@ def validate_adaptive_brief(
         Optional pre-loaded set of asset-universe tickers. When supplied, every
         ``thread.tickers`` member is verified to be in the universe. Pass
         ``None`` (the default) to skip the membership check.
+    allowed_tools:
+        Optional set of tool names registered for the agent (e.g.
+        ``frozenset(agent_config.tools)``). When supplied, every
+        ``thread.tools_used`` entry is verified to be in the allowlist —
+        catching LLM self-report drift where the model names a tool it
+        never actually invoked. Pass ``None`` (the default) to skip the check.
 
     Returns
     -------
@@ -359,6 +385,8 @@ def validate_adaptive_brief(
         errors.extend(check(brief))
     if universe is not None:
         errors.extend(_check_tickers_in_universe(brief, universe))
+    if allowed_tools is not None:
+        errors.extend(_check_tools_used_in_allowlist(brief, allowed_tools))
     valid_ids = _build_reference_universe(
         sector_briefs, qualitative_brief, correlation_regime_brief
     )

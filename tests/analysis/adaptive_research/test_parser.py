@@ -481,3 +481,165 @@ def test_round_trip_structural_equality() -> None:
     rendered = _render_brief(first)
     second = parse_adaptive_brief(rendered, invocation_id=EXAMPLE_INVOCATION_ID)
     assert first.model_dump() == second.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Forbidden-conditional-field parser checks — clearer ParseError than the
+# pydantic-validator-rewrap path. Each forbidden field gets its own branch.
+# ---------------------------------------------------------------------------
+
+
+_FORBIDDEN_MESSAGE = {
+    "strengthens": "strengthens is only valid for signal threads",
+    "weakens": "weakens is only valid for signal threads",
+    "implication": "implication is only valid for signal threads",
+    "dismissal_reason": "dismissal_reason is only valid for noise threads",
+    "missing": "missing is only valid for inconclusive threads",
+}
+
+
+def test_noise_thread_with_strengthens_raises_clear_parse_error() -> None:
+    """A NOISE thread carrying `Strengthens:` raises ParseError with a clear message."""
+    thread = (
+        "[AR-1]\n"
+        "  Trigger: Distillation: minor blip\n"
+        "  Question: Is this signal?\n"
+        "  Tickers: NVDA\n"
+        "  Sector: tech_semis\n"
+        "  Tools used: news_search\n"
+        "  Findings:\n"
+        "    - news_search returned routine commentary\n"
+        "  Assessment: noise\n"
+        "  Confidence: high\n"
+        "  Dismissal reason: Routine.\n"
+        "  Strengthens: none\n"
+    )
+    text = _brief_with(thread, triaged=1)
+    with pytest.raises(ParseError) as exc_info:
+        parse_adaptive_brief(text, invocation_id="inv-test")
+    assert exc_info.value.field_path == "threads[0].strengthens"
+    assert exc_info.value.message == _FORBIDDEN_MESSAGE["strengthens"]
+
+
+def test_noise_thread_with_weakens_raises_clear_parse_error() -> None:
+    """A NOISE thread carrying `Weakens:` raises ParseError naming threads[0].weakens."""
+    thread = (
+        "[AR-1]\n"
+        "  Trigger: Distillation: minor blip\n"
+        "  Question: Is this signal?\n"
+        "  Tickers: NVDA\n"
+        "  Sector: tech_semis\n"
+        "  Tools used: news_search\n"
+        "  Findings:\n"
+        "    - news_search returned routine commentary\n"
+        "  Assessment: noise\n"
+        "  Confidence: high\n"
+        "  Dismissal reason: Routine.\n"
+        "  Weakens: none\n"
+    )
+    text = _brief_with(thread, triaged=1)
+    with pytest.raises(ParseError) as exc_info:
+        parse_adaptive_brief(text, invocation_id="inv-test")
+    assert exc_info.value.field_path == "threads[0].weakens"
+    assert exc_info.value.message == _FORBIDDEN_MESSAGE["weakens"]
+
+
+def test_inconclusive_thread_with_implication_raises_clear_parse_error() -> None:
+    """An INCONCLUSIVE thread with `Implication:` raises ParseError naming threads[0].implication."""
+    thread = (
+        "[AR-1]\n"
+        "  Trigger: [SA-ENERGY-ANOM-1]\n"
+        "  Question: Is this a sector-wide shift?\n"
+        "  Tickers: VLO\n"
+        "  Sector: energy\n"
+        "  Tools used: macro_data\n"
+        "  Findings:\n"
+        "    - macro_data crack spread widened\n"
+        "  Assessment: inconclusive\n"
+        "  Confidence: low\n"
+        "  Missing: Per-name capacity-utilization data.\n"
+        "  Implication: This should not be here.\n"
+    )
+    text = _brief_with(thread, triaged=1)
+    with pytest.raises(ParseError) as exc_info:
+        parse_adaptive_brief(text, invocation_id="inv-test")
+    assert exc_info.value.field_path == "threads[0].implication"
+    assert exc_info.value.message == _FORBIDDEN_MESSAGE["implication"]
+
+
+def test_signal_thread_with_dismissal_reason_raises_clear_parse_error() -> None:
+    """A SIGNAL thread carrying `Dismissal reason:` raises ParseError naming threads[0]."""
+    thread = (
+        "[AR-1]\n"
+        "  Trigger: [SA-TECH-ANOM-1]\n"
+        "  Question: What drove it?\n"
+        "  Tickers: NVDA\n"
+        "  Sector: tech_semis\n"
+        "  Tools used: news_search\n"
+        "  Findings:\n"
+        "    - news_search returned notes\n"
+        "  Assessment: signal\n"
+        "  Confidence: moderate\n"
+        "  Implication: x.\n"
+        "  Strengthens: [SA-TECH-1]\n"
+        "  Weakens: none\n"
+        "  Dismissal reason: spurious.\n"
+    )
+    text = _brief_with(thread, triaged=1)
+    with pytest.raises(ParseError) as exc_info:
+        parse_adaptive_brief(text, invocation_id="inv-test")
+    assert exc_info.value.field_path == "threads[0].dismissal_reason"
+    assert exc_info.value.message == _FORBIDDEN_MESSAGE["dismissal_reason"]
+
+
+def test_signal_thread_with_missing_raises_clear_parse_error() -> None:
+    """A SIGNAL thread carrying `Missing:` raises ParseError naming threads[0].missing."""
+    thread = (
+        "[AR-1]\n"
+        "  Trigger: [SA-TECH-ANOM-1]\n"
+        "  Question: What drove it?\n"
+        "  Tickers: NVDA\n"
+        "  Sector: tech_semis\n"
+        "  Tools used: news_search\n"
+        "  Findings:\n"
+        "    - news_search returned notes\n"
+        "  Assessment: signal\n"
+        "  Confidence: moderate\n"
+        "  Implication: x.\n"
+        "  Strengthens: [SA-TECH-1]\n"
+        "  Weakens: none\n"
+        "  Missing: spurious.\n"
+    )
+    text = _brief_with(thread, triaged=1)
+    with pytest.raises(ParseError) as exc_info:
+        parse_adaptive_brief(text, invocation_id="inv-test")
+    assert exc_info.value.field_path == "threads[0].missing"
+    assert exc_info.value.message == _FORBIDDEN_MESSAGE["missing"]
+
+
+def test_inconclusive_thread_with_dismissal_reason_raises_clear_parse_error() -> None:
+    """An INCONCLUSIVE thread with `Dismissal reason:` raises a clear ParseError."""
+    thread = (
+        "[AR-1]\n"
+        "  Trigger: [SA-ENERGY-ANOM-1]\n"
+        "  Question: Is this a sector-wide shift?\n"
+        "  Tickers: VLO\n"
+        "  Sector: energy\n"
+        "  Tools used: macro_data\n"
+        "  Findings:\n"
+        "    - macro_data crack spread widened\n"
+        "  Assessment: inconclusive\n"
+        "  Confidence: low\n"
+        "  Missing: Per-name data.\n"
+        "  Dismissal reason: spurious.\n"
+    )
+    text = _brief_with(thread, triaged=1)
+    with pytest.raises(ParseError) as exc_info:
+        parse_adaptive_brief(text, invocation_id="inv-test")
+    assert exc_info.value.field_path == "threads[0].dismissal_reason"
+    assert exc_info.value.message == _FORBIDDEN_MESSAGE["dismissal_reason"]
+
+
+# Existing test_noise_thread_with_implication_raises continues to validate the
+# noise+implication combination — that test now exercises the same parser-level
+# branch as the new ones.

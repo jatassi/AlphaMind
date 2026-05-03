@@ -421,6 +421,70 @@ def test_ticker_universe_none_skips_check() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 6b. Layer-2 — tools_used_in_allowlist membership
+# ---------------------------------------------------------------------------
+
+
+_REGISTERED_TOOLS = frozenset(
+    {
+        "news_search",
+        "prediction_markets",
+        "earnings_commentary",
+        "sec_lending",
+        "short_interest",
+        "earnings_calendar",
+        "macro_data",
+        "ticker_deep_pull",
+    }
+)
+
+
+def test_tool_not_in_allowlist_fails() -> None:
+    """When `allowed_tools` is supplied and a thread cites a hallucinated tool, fails."""
+    bad = _signal_thread(tools_used=("social_sentiment",))
+    result = validate_adaptive_brief(
+        _make_brief(threads=(bad,)),
+        sector_briefs=_sector_briefs(),
+        qualitative_brief=_qualitative_brief(),
+        correlation_regime_brief=_correlation_brief(),
+        allowed_tools=_REGISTERED_TOOLS,
+    )
+    assert result.is_valid is False
+    [err] = [e for e in result.errors if e.rule == "tools_used_in_allowlist"]
+    assert err.field_path == "threads[0].tools_used[0]"
+    assert "social_sentiment" in err.message
+
+
+def test_tool_allowlist_none_skips_check() -> None:
+    """When `allowed_tools` is None, no membership check runs even on hallucinated tools."""
+    bad = _signal_thread(tools_used=("social_sentiment",))
+    result = validate_adaptive_brief(
+        _make_brief(threads=(bad,)),
+        sector_briefs=_sector_briefs(),
+        qualitative_brief=_qualitative_brief(),
+        correlation_regime_brief=_correlation_brief(),
+        allowed_tools=None,
+    )
+    rules = {e.rule for e in result.errors}
+    assert "tools_used_in_allowlist" not in rules
+
+
+def test_tools_in_allowlist_passes() -> None:
+    """A thread whose `tools_used` are all registered yields no allowlist errors."""
+    ok = _signal_thread(tools_used=("news_search", "ticker_deep_pull"))
+    result = validate_adaptive_brief(
+        _make_brief(threads=(ok,)),
+        sector_briefs=_sector_briefs(),
+        qualitative_brief=_qualitative_brief(),
+        correlation_regime_brief=_correlation_brief(),
+        allowed_tools=_REGISTERED_TOOLS,
+    )
+    rules = {e.rule for e in result.errors}
+    assert "tools_used_in_allowlist" not in rules
+    assert result.is_valid is True
+
+
+# ---------------------------------------------------------------------------
 # 7. _build_reference_universe — every six-family ID is included
 # ---------------------------------------------------------------------------
 

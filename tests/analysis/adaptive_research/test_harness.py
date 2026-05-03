@@ -1020,11 +1020,35 @@ async def test_mcp_servers_empty_when_no_tools_configured(
         cumulative_tool_token_budget=4_000,
         tool_caps={},
     )
+    # When the agent has no registered tools, the brief's tools_used must be
+    # empty too — the validator's tools_used_in_allowlist check rejects any
+    # tool name not in agent_config.tools.
+    no_tools_brief = """\
+ADAPTIVE RESEARCH FINDINGS
+Invocation: inv-no-tools
+Threads investigated: 1 of 1 anomalies triaged
+Anomalies deferred: none
+
+=== INVESTIGATION THREADS ===
+[AR-1]
+  Trigger: SA-TECH-ANOM-1
+  Question: What drove NVDA volume spike?
+  Tickers: NVDA
+  Sector: tech_semis
+  Tools used: none
+  Findings:
+    - reasoning-only conclusion based on upstream context
+  Assessment: signal
+  Confidence: moderate
+  Implication: Pre-earnings repositioning.
+  Strengthens: SA-TECH-1
+  Weakens: none
+"""
     captured_options: list[Any] = []
 
     async def _capturing_stub(**kwargs: Any) -> AsyncIterator[Any]:
         captured_options.append(kwargs.get("options"))
-        async for msg in _async_iter(_make_sdk_response(_minimal_brief_text("inv-no-tools"))):
+        async for msg in _async_iter(_make_sdk_response(no_tools_brief)):
             yield msg
 
     await invoke_adaptive_researcher(
