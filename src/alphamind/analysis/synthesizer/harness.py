@@ -163,6 +163,27 @@ class TimeoutFailure(HarnessFailure):
     """Invocation exceeded ``agent_config.latency_budget_seconds``."""
 
 
+class _CLIResultError(Exception):
+    """Internal signal: ResultMessage carried is_error=True.
+
+    Raised from inside ``_collect_response`` so the caller can convert into
+    the appropriate ``HarnessFailure`` subclass with full agent-name /
+    invocation-id context. Not part of the public API.
+    """
+
+    def __init__(
+        self,
+        *,
+        error_text: str,
+        partial_response: str,
+        stop_reason: str | None,
+    ) -> None:
+        super().__init__(error_text)
+        self.error_text = error_text
+        self.partial_response = partial_response
+        self.stop_reason = stop_reason
+
+
 # ---------------------------------------------------------------------------
 # HarnessSuccess
 # ---------------------------------------------------------------------------
@@ -193,6 +214,20 @@ def _tokens_from_usage(usage: dict[str, Any], previous: TokensUsed) -> TokensUse
     )
 
 
+def _absorb_metadata(
+    message: Any,
+    *,
+    stop_reason: str | None,
+    tokens: TokensUsed,
+) -> tuple[str | None, TokensUsed]:
+    """Update accumulator state from any message that carries metadata — pure transformation."""
+    if message.stop_reason:
+        stop_reason = message.stop_reason
+    if message.usage:
+        tokens = _tokens_from_usage(message.usage, tokens)
+    return stop_reason, tokens
+
+
 async def _collect_response(
     sdk_query_fn: Callable[..., AsyncIterator[Any]],
     *,
@@ -219,11 +254,16 @@ async def _collect_response(
                     text_parts.append(block.text)
                 elif isinstance(block, ToolUseBlock):
                     tool_calls += 1
-        if isinstance(message, AssistantMessage | ResultMessage):
-            if message.stop_reason:
-                stop_reason = message.stop_reason
-            if message.usage:
-                tokens = _tokens_from_usage(message.usage, tokens)
+            stop_reason, tokens = _absorb_metadata(message, stop_reason=stop_reason, tokens=tokens)
+        elif isinstance(message, ResultMessage):
+            stop_reason, tokens = _absorb_metadata(message, stop_reason=stop_reason, tokens=tokens)
+            if message.is_error:
+                raise _CLIResultError(
+                    error_text=message.result or "(no result text)",
+                    partial_response="".join(text_parts),
+                    stop_reason=stop_reason,
+                )
+            break
 
     return "".join(text_parts), stop_reason, tokens, tool_calls
 
@@ -409,6 +449,13 @@ async def invoke_synthesizer(
         _flush_failure(None)
         raise TimeoutFailure(
             f"Invocation exceeded latency budget of {agent_config.latency_budget_seconds}s",
+            agent_name=agent_name,
+            invocation_id=invocation_id,
+        ) from exc
+    except _CLIResultError as exc:
+        _flush_failure(exc.stop_reason)
+        raise SDKFailure(
+            f"CLI returned is_error=True: {exc.error_text}",
             agent_name=agent_name,
             invocation_id=invocation_id,
         ) from exc

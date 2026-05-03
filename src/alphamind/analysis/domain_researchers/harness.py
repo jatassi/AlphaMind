@@ -165,6 +165,27 @@ class TimeoutFailure(HarnessFailure):
     """Invocation exceeded the per-call timeout (agent_config.latency_budget_seconds)."""
 
 
+class _CLIResultError(Exception):
+    """Internal signal: ResultMessage carried is_error=True.
+
+    Raised from inside ``_collect_response`` so the caller (``_invoke``)
+    can convert into the appropriate ``HarnessFailure`` subclass with full
+    agent-name / invocation-id context. Not part of the public API.
+    """
+
+    def __init__(
+        self,
+        *,
+        error_text: str,
+        partial_response: str,
+        stop_reason: str | None,
+    ) -> None:
+        super().__init__(error_text)
+        self.error_text = error_text
+        self.partial_response = partial_response
+        self.stop_reason = stop_reason
+
+
 # ---------------------------------------------------------------------------
 # HarnessSuccess
 # ---------------------------------------------------------------------------
@@ -183,6 +204,41 @@ class HarnessSuccess(BaseModel, frozen=True):
 # ---------------------------------------------------------------------------
 # SDK response accumulation helpers
 # ---------------------------------------------------------------------------
+
+
+def _record_failure_diag(
+    diag: Any,
+    wall_start: float,
+    *,
+    stop_reason: str | None,
+) -> None:
+    """Write the on-disk diagnostic for a failed invocation."""
+    diag.write(
+        success=False,
+        wall_clock_seconds=time.monotonic() - wall_start,
+        stop_reason=stop_reason,
+    )
+
+
+def _absorb_result_metadata(
+    message: Any,
+    *,
+    stop_reason: str | None,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int,
+    cache_write_tokens: int,
+) -> tuple[str | None, int, int, int, int]:
+    """Update accumulator state from a ``ResultMessage`` — pure transformation."""
+    if message.stop_reason:
+        stop_reason = message.stop_reason
+    if message.usage:
+        usage = message.usage
+        input_tokens = usage.get("input_tokens", input_tokens)
+        output_tokens = usage.get("output_tokens", output_tokens)
+        cache_read_tokens = usage.get("cache_read_input_tokens", cache_read_tokens)
+        cache_write_tokens = usage.get("cache_creation_input_tokens", cache_write_tokens)
+    return stop_reason, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
 
 
 async def _collect_response(
@@ -224,14 +280,27 @@ async def _collect_response(
                 cache_read_tokens = usage.get("cache_read_input_tokens", 0)
                 cache_write_tokens = usage.get("cache_creation_input_tokens", 0)
         elif isinstance(message, ResultMessage):
-            if message.stop_reason:
-                stop_reason = message.stop_reason
-            if message.usage:
-                usage = message.usage
-                input_tokens = usage.get("input_tokens", input_tokens)
-                output_tokens = usage.get("output_tokens", output_tokens)
-                cache_read_tokens = usage.get("cache_read_input_tokens", cache_read_tokens)
-                cache_write_tokens = usage.get("cache_creation_input_tokens", cache_write_tokens)
+            (
+                stop_reason,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+            ) = _absorb_result_metadata(
+                message,
+                stop_reason=stop_reason,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
+            )
+            if message.is_error:
+                raise _CLIResultError(
+                    error_text=message.result or "(no result text)",
+                    partial_response="".join(text_parts),
+                    stop_reason=stop_reason,
+                )
+            break
 
     response_text = "".join(text_parts)
     tokens = TokensUsed(
@@ -501,16 +570,22 @@ async def invoke_domain_researcher(
                 timeout=float(agent_config.latency_budget_seconds),
             )
         except TimeoutError as exc:
-            wall_elapsed = time.monotonic() - wall_start
-            diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=None)
+            _record_failure_diag(diag, wall_start, stop_reason=None)
             raise TimeoutFailure(
                 f"Invocation exceeded latency budget of {agent_config.latency_budget_seconds}s",
                 agent_name=agent_name,
                 invocation_id=invocation_id,
             ) from exc
+        except _CLIResultError as exc:
+            _record_failure_diag(diag, wall_start, stop_reason=exc.stop_reason)
+            raise ContextOverflowFailure(
+                f"CLI returned is_error=True: {exc.error_text}",
+                agent_name=agent_name,
+                invocation_id=invocation_id,
+                raw_response=exc.partial_response,
+            ) from exc
         except CLIConnectionError as exc:
-            wall_elapsed = time.monotonic() - wall_start
-            diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=None)
+            _record_failure_diag(diag, wall_start, stop_reason=None)
             raise SDKFailure(
                 f"Authentication or connection failure — ensure CLAUDE_CODE_OAUTH_TOKEN "
                 f"is set and valid. Underlying error: {exc}",
@@ -519,8 +594,7 @@ async def invoke_domain_researcher(
                 cause=exc,
             ) from exc
         except ClaudeSDKError as exc:
-            wall_elapsed = time.monotonic() - wall_start
-            diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=None)
+            _record_failure_diag(diag, wall_start, stop_reason=None)
             raise SDKFailure(
                 f"Non-recoverable SDK error: {exc}",
                 agent_name=agent_name,

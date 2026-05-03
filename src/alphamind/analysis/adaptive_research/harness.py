@@ -179,6 +179,27 @@ class TimeoutFailure(HarnessFailure):
     """Invocation exceeded the per-call timeout (agent_config.latency_budget_seconds)."""
 
 
+class _CLIResultError(Exception):
+    """Internal signal: ResultMessage carried is_error=True.
+
+    Raised from inside ``_collect_response`` so the caller (``_invoke``)
+    can convert into the appropriate ``HarnessFailure`` subclass with full
+    agent-name / invocation-id context. Not part of the public API.
+    """
+
+    def __init__(
+        self,
+        *,
+        error_text: str,
+        partial_response: str,
+        stop_reason: str | None,
+    ) -> None:
+        super().__init__(error_text)
+        self.error_text = error_text
+        self.partial_response = partial_response
+        self.stop_reason = stop_reason
+
+
 # ---------------------------------------------------------------------------
 # HarnessSuccess
 # ---------------------------------------------------------------------------
@@ -220,6 +241,20 @@ def _add_tokens(a: TokensUsed, b: TokensUsed) -> TokensUsed:
     )
 
 
+def _absorb_metadata(
+    message: Any,
+    *,
+    stop_reason: str | None,
+    tokens: TokensUsed,
+) -> tuple[str | None, TokensUsed]:
+    """Update accumulator state from any message that carries metadata — pure transformation."""
+    if message.stop_reason:
+        stop_reason = message.stop_reason
+    if message.usage:
+        tokens = _tokens_from_usage(message.usage, tokens)
+    return stop_reason, tokens
+
+
 async def _collect_response(
     sdk_query_fn: Callable[..., AsyncIterator[Any]],
     *,
@@ -248,11 +283,16 @@ async def _collect_response(
                     text_parts.append(block.text)
                 elif isinstance(block, ToolUseBlock):
                     tool_calls += 1
-        if isinstance(message, AssistantMessage | ResultMessage):
-            if message.stop_reason:
-                stop_reason = message.stop_reason
-            if message.usage:
-                tokens = _tokens_from_usage(message.usage, tokens)
+            stop_reason, tokens = _absorb_metadata(message, stop_reason=stop_reason, tokens=tokens)
+        elif isinstance(message, ResultMessage):
+            stop_reason, tokens = _absorb_metadata(message, stop_reason=stop_reason, tokens=tokens)
+            if message.is_error:
+                raise _CLIResultError(
+                    error_text=message.result or "(no result text)",
+                    partial_response="".join(text_parts),
+                    stop_reason=stop_reason,
+                )
+            break
 
     return "".join(text_parts), stop_reason, tokens, tool_calls
 
@@ -518,6 +558,75 @@ def _build_sdk_options(
 
 
 # ---------------------------------------------------------------------------
+# Corrective-retry execution helper
+# ---------------------------------------------------------------------------
+
+
+async def _run_retry_attempt(
+    *,
+    retry_message: str,
+    response1: str,
+    tokens1: TokensUsed,
+    tool_calls1: int,
+    universe: frozenset[str],
+    sector_briefs: tuple[SectorBrief, ...],
+    qualitative_brief: QualitativeBrief,
+    correlation_regime_brief: CorrelationRegimeBrief,
+    validator_tool_allowlist: frozenset[str],
+    diag: _DiagState,
+    wall_start: float,
+    invoke: Any,
+) -> HarnessSuccess:
+    """Execute Attempt 2 and return :class:`HarnessSuccess` or raise.
+
+    Extracted to keep ``invoke_adaptive_researcher`` below the C901/PLR0915
+    thresholds.  All mutable state is passed explicitly.
+    """
+    diag.retry_count = 1
+
+    response2, stop_reason2, tokens2, tool_calls2 = await invoke(retry_message)
+    diag.response_retry = response2
+    diag.tokens_used = _add_tokens(tokens1, tokens2)
+    diag.tool_calls_used = tool_calls1 + tool_calls2
+
+    brief2, _ = _parse_and_validate(
+        response2,
+        diag.invocation_id,
+        universe,
+        sector_briefs,
+        qualitative_brief,
+        correlation_regime_brief,
+        validator_tool_allowlist,
+        stop_reason2,
+        attempt=2,
+        diag=diag,
+    )
+
+    wall_elapsed = time.monotonic() - wall_start
+
+    if brief2 is None:
+        diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
+        raise MalformedOutputFailure(
+            "Parse or validation failed on both initial and retry attempts. "
+            f"First retry error: {diag.errors[-1].get('message', '')}",
+            agent_name=diag.agent_name,
+            invocation_id=diag.invocation_id,
+            raw_response_initial=response1,
+            raw_response_retry=response2,
+        )
+
+    diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
+    return HarnessSuccess(
+        brief=brief2,
+        raw_response=response2,
+        retry_count=1,
+        tokens_used=diag.tokens_used,
+        tool_calls_used=diag.tool_calls_used,
+        wall_clock_seconds=wall_elapsed,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -613,11 +722,11 @@ async def invoke_adaptive_researcher(
     )
     wall_start = time.monotonic()
 
-    def _flush_failure() -> None:
+    def _flush_failure(stop_reason: str | None = None) -> None:
         diag.write(
             success=False,
             wall_clock_seconds=time.monotonic() - wall_start,
-            stop_reason=None,
+            stop_reason=stop_reason,
         )
 
     async def _invoke(prompt: str) -> tuple[str, str | None, TokensUsed, int]:
@@ -633,6 +742,14 @@ async def invoke_adaptive_researcher(
                 f"Invocation exceeded latency budget of {agent_config.latency_budget_seconds}s",
                 agent_name=agent_name,
                 invocation_id=invocation_id,
+            ) from exc
+        except _CLIResultError as exc:
+            _flush_failure(exc.stop_reason)
+            raise ContextOverflowFailure(
+                f"CLI returned is_error=True: {exc.error_text}",
+                agent_name=agent_name,
+                invocation_id=invocation_id,
+                raw_response=exc.partial_response,
             ) from exc
         except CLIConnectionError as exc:
             _flush_failure()
@@ -697,45 +814,17 @@ async def invoke_adaptive_researcher(
     # Attempt 2: corrective retry
     # ------------------------------------------------------------------
     assert retry_message is not None
-    diag.retry_count = 1
-
-    response2, stop_reason2, tokens2, tool_calls2 = await _invoke(retry_message)
-    diag.response_retry = response2
-    diag.tokens_used = _add_tokens(tokens1, tokens2)
-    diag.tool_calls_used = tool_calls1 + tool_calls2
-
-    brief2, _ = _parse_and_validate(
-        response2,
-        invocation_id,
-        universe,
-        sector_briefs,
-        qualitative_brief,
-        correlation_regime_brief,
-        validator_tool_allowlist,
-        stop_reason2,
-        attempt=2,
+    return await _run_retry_attempt(
+        retry_message=retry_message,
+        response1=response1,
+        tokens1=tokens1,
+        tool_calls1=tool_calls1,
+        universe=universe,
+        sector_briefs=sector_briefs,
+        qualitative_brief=qualitative_brief,
+        correlation_regime_brief=correlation_regime_brief,
+        validator_tool_allowlist=validator_tool_allowlist,
         diag=diag,
-    )
-
-    wall_elapsed = time.monotonic() - wall_start
-
-    if brief2 is None:
-        diag.write(success=False, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
-        raise MalformedOutputFailure(
-            "Parse or validation failed on both initial and retry attempts. "
-            f"First retry error: {diag.errors[-1].get('message', '')}",
-            agent_name=agent_name,
-            invocation_id=invocation_id,
-            raw_response_initial=response1,
-            raw_response_retry=response2,
-        )
-
-    diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
-    return HarnessSuccess(
-        brief=brief2,
-        raw_response=response2,
-        retry_count=1,
-        tokens_used=diag.tokens_used,
-        tool_calls_used=diag.tool_calls_used,
-        wall_clock_seconds=wall_elapsed,
+        wall_start=wall_start,
+        invoke=_invoke,
     )

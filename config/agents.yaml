@@ -43,35 +43,51 @@ agents:
   tech_semis_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/tech_semis_researcher.md
-    latency_budget_seconds: 120
-    context_token_budget: 8000
-    output_token_budget: 2000
+    # Cold-cache + extended thinking: an uncapped run took ~334s on the
+    # financials sector; budget includes headroom for that plus rate-limit
+    # backoff variance.
+    latency_budget_seconds: 480
+    context_token_budget: 16000
+    # Sonnet 4.6 emits ~4 thinking blocks (~4400 tokens) before the brief text;
+    # the budget must cover thinking + 2× the design-doc brief target.
+    output_token_budget: 8000
     tools: []
 
   financials_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/financials_researcher.md
-    latency_budget_seconds: 120
-    context_token_budget: 8000
-    output_token_budget: 2000
+    # Cold-cache + extended thinking: an uncapped run took ~334s on the
+    # financials sector; budget includes headroom for that plus rate-limit
+    # backoff variance.
+    latency_budget_seconds: 480
+    context_token_budget: 16000
+    # Sonnet 4.6 emits ~4 thinking blocks (~4400 tokens) before the brief text;
+    # the budget must cover thinking + 2× the design-doc brief target.
+    output_token_budget: 8000
     tools: []
 
   energy_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/energy_researcher.md
-    latency_budget_seconds: 120
-    context_token_budget: 8000
-    output_token_budget: 2000
+    # Cold-cache + extended thinking: an uncapped run took ~334s on the
+    # financials sector; budget includes headroom for that plus rate-limit
+    # backoff variance.
+    latency_budget_seconds: 480
+    context_token_budget: 16000
+    # Sonnet 4.6 emits ~4 thinking blocks (~4400 tokens) before the brief text;
+    # the budget must cover thinking + 2× the design-doc brief target.
+    output_token_budget: 8000
     tools: []
 
   qualitative_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/qualitative_researcher.md
-    latency_budget_seconds: 180
+    latency_budget_seconds: 360
     context_token_budget: 8000
-    # 2× the design-doc 300–600 brief target; SDK cap carries headroom because
-    # truncation at the cap fails parse/validation rather than producing a short brief.
-    output_token_budget: 1000
+    # Sonnet 4.6 emits ~4400 tokens of extended thinking before brief text;
+    # cap covers thinking + 2× the design-doc 300–600 brief target with
+    # headroom (tool result text doesn't count toward the cap).
+    output_token_budget: 6000
     # social_sentiment deferred per ALP-111 — Qual2 storage not yet provisioned.
     tools: [news_search, prediction_markets, earnings_commentary]
     cumulative_tool_call_limit: 15
@@ -84,9 +100,11 @@ agents:
   adaptive_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/adaptive_researcher.md
-    latency_budget_seconds: 300
+    latency_budget_seconds: 480
     context_token_budget: 4000
-    output_token_budget: 1500
+    # Same rationale as qualitative_researcher: extended thinking (~4400 tok)
+    # plus the brief itself, with headroom.
+    output_token_budget: 8000
     # social_sentiment + options_flow deferred — Qual2 + Q2 storage not yet provisioned.
     tools:
       - news_search
@@ -110,9 +128,10 @@ agents:
   synthesizer:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/synthesizer.md
-    latency_budget_seconds: 180
+    latency_budget_seconds: 360
     context_token_budget: 12000
-    output_token_budget: 2000
+    # Extended thinking (~4400 tok) plus the synthesizer's prose response.
+    output_token_budget: 8000
     # tools intentionally empty: synthesizer's portfolio-state and retrieve_brief
     # tools are wired at the harness level via per-invocation closures over the
     # per-call RetrievalStore + SynthesizerPortfolioStateReader. See ALP-114
