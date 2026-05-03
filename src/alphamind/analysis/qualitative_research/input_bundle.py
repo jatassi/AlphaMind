@@ -109,32 +109,39 @@ def _format_iso_utc(dt: datetime) -> str:
 
 
 def _render_regime(regime_label: dict[str, Any]) -> str:
-    """Render the VOLATILITY REGIME section body."""
-    label = regime_label.get("regime_label", "")
-    transition = regime_label.get("transition_state", "")
-    prior = regime_label.get("prior_label")
-    held = regime_label.get("invocations_held", 0)
-    prior_str = str(prior) if prior is not None else "(none)"
-    return (
-        f"regime_label: {label}\n"
-        f"transition_state: {transition}\n"
-        f"prior_label: {prior_str}\n"
-        f"invocations_held: {held}"
-    )
+    """Render the VOLATILITY REGIME section body.
+
+    Renders every key in ``regime_label`` as a ``key: value`` line in
+    deterministic alphabetical key order. The bundle is payload-agnostic:
+    additions to the regime payload (currently seven supporting indicators
+    on top of the four labels per :func:`alphamind.distillation.regime
+    .assemble_regime_block`) propagate to the LLM without renderer edits.
+    """
+    return "\n".join(f"{key}: {regime_label[key]}" for key in sorted(regime_label))
 
 
 def _render_sentiment(inputs: QualitativeInputs) -> str:
-    """Render per-ticker sentiment aggregates sorted alphabetically by ticker."""
+    """Render per-ticker sentiment aggregates sorted alphabetically by ticker.
+
+    ``rate_of_change``, ``volume``, and ``divergence_flag`` render as
+    ``pending`` when ``None`` so the LLM reads them as "data not available
+    yet" rather than as concrete null signals.
+    """
     rows = sorted(inputs.sentiment_aggregates, key=lambda s: s.ticker)
     return "\n".join(
         f"{s.ticker}: directional={s.directional_score},"
         f" magnitude={s.magnitude},"
-        f" change={s.rate_of_change},"
-        f" vol={s.volume},"
+        f" change={_render_optional(s.rate_of_change)},"
+        f" vol={_render_optional(s.volume)},"
         f" percentile={s.percentile_vs_self},"
-        f" divergence={s.divergence_flag}"
+        f" divergence={_render_optional(s.divergence_flag)}"
         for s in rows
     )
+
+
+def _render_optional(value: object) -> str:
+    """Render ``None`` as ``pending``; otherwise stringify the value."""
+    return "pending" if value is None else str(value)
 
 
 def _render_prediction_markets(inputs: QualitativeInputs) -> str:
@@ -147,7 +154,7 @@ def _render_prediction_markets(inputs: QualitativeInputs) -> str:
             f"[{p.contract_id}] {p.description} ({p.platform}/{p.category}):"
             f" prob={p.current_probability},"
             f" Δ_invocation={p.delta_since_last_invocation_pp}pp,"
-            f" Δ_24h={p.delta_24h_pp}pp,"
+            f" Δ_since_prior={p.delta_since_prior_pp}pp,"
             f" vol_24h={vol_str},"
             f" expires={p.expiration}"
         )

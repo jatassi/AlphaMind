@@ -84,14 +84,19 @@ class SentimentAggregate(BaseModel, frozen=True):
 
     ``percentile_vs_self`` is in ``[0.0, 1.0]`` (unit interval, not 0-100).
     ``data_freshness`` is the timestamp of the underlying baseline row.
+
+    ``rate_of_change``, ``volume``, and ``divergence_flag`` are ``None`` while
+    the v1 stub is in place — they will be populated when the rate-of-change
+    and news-price-divergence loaders land. The renderer surfaces ``None`` as
+    ``pending`` so the LLM reads "data not available yet", not "no signal".
     """
 
     ticker: str
     directional_score: float = Field(ge=-1.0, le=1.0)
     magnitude: float = Field(ge=0.0, le=1.0)
-    rate_of_change: float
-    volume: int = Field(ge=0)
-    divergence_flag: bool
+    rate_of_change: float | None
+    volume: int | None = Field(ge=0)
+    divergence_flag: bool | None
     percentile_vs_self: float = Field(ge=0.0, le=1.0)
     data_freshness: datetime
 
@@ -101,6 +106,11 @@ class PredictionMarketSnapshot(BaseModel, frozen=True):
 
     ``delta_since_last_invocation_pp`` is ``0.0`` when only one history row
     exists (no prior to compute against).
+
+    ``delta_since_prior_pp`` is the change versus the second-latest history
+    row at or before ``as_of``. The "since prior" naming is precise: the
+    underlying snapshot history is irregular, so the prior row could be any
+    timestamp ago.
     """
 
     contract_id: str
@@ -109,7 +119,7 @@ class PredictionMarketSnapshot(BaseModel, frozen=True):
     category: str
     current_probability: float
     delta_since_last_invocation_pp: float
-    delta_24h_pp: float
+    delta_since_prior_pp: float
     volume_24h_usd: float | None
     expiration: str | None
     is_low_liquidity: bool
@@ -337,9 +347,12 @@ def load_sentiment_aggregates(
                 ticker=row.ticker,
                 directional_score=directional_score,
                 magnitude=magnitude,
-                rate_of_change=0.0,  # Requires two baseline rows; v1 stub.
-                volume=0,  # Not stored in baseline; v1 stub.
-                divergence_flag=False,  # Populated by news-price divergence loader.
+                # v1 stub: these three fields require pipeline pieces that
+                # have not yet landed. None signals "data pending" to the LLM
+                # via the bundle renderer's `pending` placeholder.
+                rate_of_change=None,
+                volume=None,
+                divergence_flag=None,
                 percentile_vs_self=percentile,
                 data_freshness=_parse_iso_utc(row.as_of),
             )
@@ -368,8 +381,10 @@ def load_prediction_market_snapshot(
     * ``delta_since_last_invocation_pp`` comes from the latest history row's
       ``delta_pp_since_prior`` column (written by story 07's
       ``refresh_contract_history``).
-    * ``delta_24h_pp`` is computed from the two most-recent history rows; when
-      only one row exists it is ``0.0``.
+    * ``delta_since_prior_pp`` is the difference between the latest history
+      row's ``yes_probability`` and the second-latest row's; when only one
+      row exists it is ``0.0``. The two rows can be any timestamps apart —
+      snapshot history is irregular.
     * ``meets_threshold_flag`` is ``True`` when
       ``|delta_since_last_invocation_pp| >= delta_pp_threshold``.
     * ``is_low_liquidity`` is ``True`` when 24h volume ≤
@@ -460,7 +475,11 @@ def load_prediction_market_snapshot(
         yes_probability = float(latest[0])
         delta_since_last = float(latest[1])
         snapshot_ts_str = latest[2]
-        delta_24h = yes_probability - float(history_rows[1][0]) if len(history_rows) == 2 else 0.0
+        # Subtract the second-latest history row's yes_probability — the gap
+        # between the two rows is irregular (anywhere from minutes to days).
+        delta_since_prior = (
+            yes_probability - float(history_rows[1][0]) if len(history_rows) == 2 else 0.0
+        )
 
         platform, description, category, resolution_date = meta_by_id.get(
             contract_id, ("", "", "", None)
@@ -476,7 +495,7 @@ def load_prediction_market_snapshot(
                 category=category,
                 current_probability=yes_probability,
                 delta_since_last_invocation_pp=delta_since_last,
-                delta_24h_pp=delta_24h,
+                delta_since_prior_pp=delta_since_prior,
                 volume_24h_usd=volume_24h,
                 expiration=resolution_date,
                 is_low_liquidity=low_liquidity,

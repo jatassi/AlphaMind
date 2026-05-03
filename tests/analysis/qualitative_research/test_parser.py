@@ -425,3 +425,49 @@ def test_empty_threads_section_raises_parse_error() -> None:
     with pytest.raises(ParseError) as exc_info:
         parse_qualitative_brief(text, invocation_id="inv-test")
     assert "thread" in exc_info.value.field_path.lower()
+
+
+# ---------------------------------------------------------------------------
+# Evidence line missing ': ' separator raises ParseError (no silent fabrication)
+# ---------------------------------------------------------------------------
+
+
+def test_evidence_line_without_separator_raises_parse_error() -> None:
+    """An evidence line without the ``: `` separator raises ParseError.
+
+    Strict-parse design: do not silently fabricate fields by treating the
+    whole content as both ``source_type`` and ``observation``.
+    """
+    threads_body = (
+        "[QR-1] Thread with malformed evidence.\n"
+        "  Relevance: financials\n"
+        "  Direction: bullish for equities\n"
+        "  Time horizon: immediate (<24h)\n"
+        "  Evidence:\n"
+        "    - missing separator content one [from ND-M1]\n"
+        "    - news: properly-formed observation [from ND-M2]\n"
+        "  Implication: Should fail.\n"
+    )
+    with pytest.raises(ParseError) as exc_info:
+        parse_qualitative_brief(_brief_with_threads(threads_body), invocation_id="inv-test")
+    assert "evidence" in exc_info.value.field_path.lower()
+    assert "separator" in exc_info.value.message.lower()
+
+
+def test_evidence_line_with_separator_parses_successfully() -> None:
+    """Evidence line with proper ``source_type: observation`` separator parses cleanly."""
+    threads_body = (
+        "[QR-1] Thread with valid evidence.\n"
+        "  Relevance: financials\n"
+        "  Direction: bullish for equities\n"
+        "  Time horizon: immediate (<24h)\n"
+        "  Evidence:\n"
+        "    - news: first observation [from ND-M1]\n"
+        "    - news: second observation [from ND-M2]\n"
+        "  Implication: Should pass.\n"
+    )
+    brief = parse_qualitative_brief(_brief_with_threads(threads_body), invocation_id="inv-test")
+    assert len(brief.threads) == 1
+    evidence = brief.threads[0].evidence
+    assert evidence[0].source_type == "news"
+    assert evidence[0].observation == "first observation"

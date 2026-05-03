@@ -423,7 +423,7 @@ def _parse_single_thread(thread_id: str, summary: str, body_lines: list[str]) ->
             continue
 
         if in_evidence and stripped.startswith("-"):
-            ev = _parse_evidence_line(stripped)
+            ev = _parse_evidence_line(stripped, thread_id=thread_id)
             evidence_lines.append(ev)
             continue
 
@@ -496,8 +496,13 @@ def _parse_time_horizon_field(line: str, thread_id: str) -> TimeHorizon:
     return horizon
 
 
-def _parse_evidence_line(line: str) -> EvidenceLine:
-    """Parse a single evidence sub-line ``- {source_type}: {observation} [from {citation}]``."""
+def _parse_evidence_line(line: str, *, thread_id: str) -> EvidenceLine:
+    """Parse a single evidence sub-line ``- {source_type}: {observation} [from {citation}]``.
+
+    The ``: `` separator between source-type and observation is required.
+    A missing separator raises :class:`ParseError` rather than silently
+    fabricating both fields from the whole content.
+    """
     # Strip leading dash
     content = line.lstrip("-").strip()
 
@@ -510,13 +515,16 @@ def _parse_evidence_line(line: str) -> EvidenceLine:
 
     # Split on first ': ' for source_type
     colon_idx = content.find(": ")
-    if colon_idx >= 0:
-        source_type = content[:colon_idx].strip()
-        observation = content[colon_idx + 2 :].strip()
-    else:
-        # Fallback: entire content is source_type, empty observation
-        source_type = content.strip()
-        observation = content.strip()
+    if colon_idx < 0:
+        raise ParseError(
+            field_path=f"threads[{thread_id}].evidence",
+            message=(
+                f"evidence line missing ': ' separator between source_type and "
+                f"observation: {line.strip()!r}"
+            ),
+        )
+    source_type = content[:colon_idx].strip()
+    observation = content[colon_idx + 2 :].strip()
 
     return EvidenceLine(
         source_type=source_type,
