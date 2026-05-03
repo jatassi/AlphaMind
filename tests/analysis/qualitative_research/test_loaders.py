@@ -610,6 +610,65 @@ class TestLoadPredictionMarketSnapshot:
         # = 0.55 - 0.40 = 0.15 (delta is in probability units, not pp).
         assert snap.delta_since_prior_pp == pytest.approx(0.15)
 
+    def test_history_lookup_is_batched_not_n_plus_one(
+        self, engine: Engine, session: Session
+    ) -> None:
+        """Latest-two history rows are loaded in a single batched query, not per-contract.
+
+        Regression guard against the N+1 pattern: with 5 contracts at 3
+        history rows each, the loader should issue fewer than 5 history-table
+        queries total — empirically a single window-function query.
+        """
+        from sqlalchemy import event as sa_event
+
+        ts_old = (AS_OF - timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ts_mid = (AS_OF - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ts_new = (AS_OF - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for i in range(5):
+            cid = f"c-batch-{i}"
+            _add_contract(session, cid)
+            _add_snapshot(session, cid, ts_new, yes_probability=0.70)
+            _add_contract_history(
+                session, cid, ts_old, yes_probability=0.50, delta_pp_since_prior=0.0
+            )
+            _add_contract_history(
+                session, cid, ts_mid, yes_probability=0.60, delta_pp_since_prior=10.0
+            )
+            _add_contract_history(
+                session, cid, ts_new, yes_probability=0.70, delta_pp_since_prior=10.0
+            )
+        session.commit()
+
+        history_query_count = 0
+
+        @sa_event.listens_for(engine, "after_cursor_execute")
+        def _count_history_queries(
+            conn: object,
+            cursor: object,
+            statement: str,
+            parameters: object,
+            context: object,
+            executemany: bool,
+        ) -> None:
+            nonlocal history_query_count
+            if "distillation_contract_history" in statement.lower():
+                history_query_count += 1
+
+        try:
+            result = load_prediction_market_snapshot(session, as_of=AS_OF)
+        finally:
+            sa_event.remove(engine, "after_cursor_execute", _count_history_queries)
+
+        assert len(result) == 5
+        # Per-row deltas should match the seeded latest-vs-prior gap (0.70 - 0.60).
+        for snap in result:
+            assert snap.delta_since_prior_pp == pytest.approx(0.10)
+        # N+1 elimination: the documented design is a single window-function
+        # query batching the latest-two history rows for all contracts.
+        assert history_query_count <= 1, (
+            f"expected single batched history query, got {history_query_count}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # 6. load_qualitative_inputs — aggregator and freshness

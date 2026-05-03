@@ -67,7 +67,7 @@ Use `TaskCreate` once, up front, to register everything you must not drop. Two g
   5. `Land PR and clean local git state`
   6. `Send PushNotification summarizing completed work`
 
-### 5. Create the feature branch
+### 5. Create and push the feature branch
 
 From a clean `main` checkout:
 
@@ -75,7 +75,10 @@ From a clean `main` checkout:
 git checkout main
 git pull --ff-only
 git checkout -b <gitBranchName-from-parent-Issue>
+git push -u origin <gitBranchName-from-parent-Issue>
 ```
+
+**Push immediately on creation, before any subagent dispatches.** Wave-1 subagents run the rebase block in their dispatch prompt (`git fetch origin <feature-branch> ; git rebase origin/<feature-branch>`); if `origin/<feature-branch>` does not exist yet, the fetch fails silently and the subagent works off `origin/main` instead. On wave 1 the content is identical, so nothing breaks visibly — but it masks the broken fallback for later resumption or for waves where the same code path matters. Push as part of branch creation, not as part of the wave-end gate.
 
 If the branch already exists locally (resuming a prior run), check it out instead and surface its state.
 
@@ -122,7 +125,7 @@ After tests are green and before your final commit, invoke the `simplify` skill 
 When done:
 1. Run `uv run pytest -n auto` and confirm green.
 2. Stage all changes with `git add` and create the final commit. **REQUIRED — DO NOT SKIP.** After committing, run `git log --oneline <feature-branch>..HEAD` and confirm at least one of YOUR commits is listed. If `git status` shows untracked or modified files, you have NOT committed — `git add` and commit them.
-3. Report back with the commit SHA(s) from `git log --oneline -5` (most recent first) and a one-line attestation per acceptance criterion ("met by test X", "met by file Y exists", "met by manual inspection of Z").
+3. Report back with **the verbatim output of `git log --oneline <feature-branch>..HEAD`** (paste the exact lines from your terminal, not a paraphrase or summary), followed by a one-line attestation per acceptance criterion ("met by test X", "met by file Y exists", "met by manual inspection of Z"). A report without verbatim git-log output signals to the orchestrator that the commit step was skipped — the orchestrator will reject the report and re-dispatch.
 
 If you hit a blocker — schema gap, ambiguous spec, sibling-work-tree primitive missing or shaped differently than the story expected, test that won't pass without scope creep — stop and report. Do not improvise.
 
@@ -164,7 +167,8 @@ Each agent result includes the worktree path and branch name. Per result:
    - **Non-trivial unwarranted ones** — re-dispatch the story with explicit instruction to remove the suppression and address the underlying issue.
    - **Warranted ones** — note in your verification report and accept.
 4. **Spot-check non-test acceptance criteria.** For each criterion not verified by an automated test, confirm it manually (file exists at the expected path, schema validates against a sample, function signature matches the story's spec).
-5. **Decision:**
+5. **Architectural integration gaps invisible to stubs.** Stub-heavy unit tests can pass while the framework itself rejects the constructed options at runtime. When a story touches an external SDK or framework's option-shape construction (e.g., `ClaudeAgentOptions.mcp_servers`, `Alembic.Config`'s logger configuration, `pytest` plugins, `pydantic` discriminated unions), confirm at least one test exercises the constructed shape end-to-end — not just stubbing the framework's response. If every test stubs the SDK, the harness can build wrong-shaped options that silently degrade in production (e.g., tools registered with `allowed_tools` but no `mcp_servers` — the LLM emits `<tool_use>` and the SDK returns "tool not found", and the agent falls back to its non-tool path). Add such a test before merging or surface as a follow-on issue.
+6. **Decision:**
    - **Pass:** From the feature-branch checkout, `git merge --ff-only <branch>`. If FF fails (parallel branches diverged), `git merge --no-ff <branch>` and resolve conflicts (this is a "trivial conflict" you handle directly per CLAUDE.md "When you handle work directly"). Then update Linear: `save_issue(id=<sub-issue ID>, state="Done")`. Mark the corresponding TaskUpdate to `completed`. Clean up: `git worktree remove <path>` then `git branch -d <branch>`.
    - **Fail (test failure, lint failure, blocker reported, criterion miss):** Diagnose the gap. If the subagent reported a blocker that exists as another Linear issue, set `state="Blocked"` and add the `blockedBy` link. Otherwise re-dispatch with the specific gap noted in the prompt. Clean up the failed worktree first: `git worktree remove --force <path>` and `git branch -D <branch>`.
 
@@ -176,6 +180,7 @@ After all stories in a wave have been verified and merged (or blocked), and *bef
 - **Push the feature branch to `origin`** (`git push origin <feature-branch>`) so the next wave's worktrees can rebase onto its latest tip. Skipping this means wave-N+1 subagents will only see content reachable from `main`, missing every story merged in waves 1..N.
 - If clean, proceed to the next survey.
 - If the global run fails, the failure is in the integration boundary between this wave's stories. Diagnose; fix directly if trivial; re-dispatch the relevant story if not. Do not advance to the next wave until the global run is clean.
+- **If the global run flakes — passes some runs, fails others on the same code — do not defer it as a finding. Bisect.** The flake exists because some test in this wave (or in the work tree's accumulated additions to the suite) mutates global state that another test depends on; xdist surfaces it intermittently because workload distribution to workers shifts run-to-run. Procedure: confirm by running `for i in 1 2 3 4 5; do uv run pytest -n auto 2>&1 | tail -1; done`; if mixed pass/fail, narrow with `--ignore=<test-dir>` to drop test groups until the flake stops, then narrow within the offending dir to a single file; read the offending file for `sys.modules` mutation, `logging.config.fileConfig` calls (default `disable_existing_loggers=True` is a classic trap), `os.environ` writes, shared filesystem-state mutations, `caplog` interactions, or fixture-leak across tests. The fix usually lands in production code (e.g., pass `disable_existing_loggers=False` to the offending `fileConfig` call), not in the test that surfaces the flake. CLAUDE.md is strict that test-order dependence is a real bug; a flake from your work tree counts as a wave-gate failure even if a previous run passed.
 
 ## When you handle work directly
 

@@ -362,6 +362,165 @@ class TestStage2EventClustering:
         for cluster in clusters:
             assert cluster.headline_count == 1
 
+    def test_candidate_outside_first_seen_window_seeds_new_cluster(self) -> None:
+        """Candidates farther than ``STAGE_2_TIME_WINDOW_HOURS`` from a cluster's
+        ``first_seen_at`` must seed a fresh cluster, even when they match a
+        recent member's SimHash + ticker.
+
+        Per § Headline clustering Stage 2, criterion 3 requires "both members
+        fall within ``STAGE_2_TIME_WINDOW_HOURS`` of the cluster's
+        ``first_seen_at``" — not "within Stage-2 window of any member". A
+        cluster seeded at ``T-8h`` whose latest member is at ``T-3h`` cannot
+        absorb a candidate at ``T+0`` (8h from ``first_seen_at``), regardless
+        of how similar that candidate is to the recent member.
+        """
+        from alphamind.data_sources.news.clustering import cluster_events
+
+        articles = [
+            _article(
+                "seed-old",
+                "Nvidia reports record Q3 revenue beating analyst estimates",
+                "2026-05-01T04:00:00Z",  # T-8h relative to candidate
+                topic_tags="earnings_related",
+            ),
+            _article(
+                "seed-recent",
+                "Nvidia reports record Q3 revenue beating analyst estimates",
+                "2026-05-01T09:00:00Z",  # T-3h, within 6h of seed-old
+                topic_tags="earnings_related",
+            ),
+            _article(
+                "cand-now",
+                "Nvidia reports record Q3 revenue topping analyst estimates",
+                "2026-05-01T12:00:00Z",  # T+0; 3h from seed-recent, 8h from seed-old
+                topic_tags="earnings_related",
+            ),
+        ]
+        ticker_index: dict[str, frozenset[str]] = {
+            "seed-old": frozenset({"NVDA"}),
+            "seed-recent": frozenset({"NVDA"}),
+            "cand-now": frozenset({"NVDA"}),
+        }
+
+        clusters = cluster_events(articles, ticker_index)
+
+        # seed-old + seed-recent merge (3h apart). cand-now is 8h past
+        # seed-old's first_seen_at, so it must seed a NEW cluster rather than
+        # joining via the recent-member back-channel.
+        cluster_by_id = {c.cluster_id: c for c in clusters}
+        assert "seed-old" in cluster_by_id
+        assert "cand-now" in cluster_by_id
+        old_cluster = cluster_by_id["seed-old"]
+        new_cluster = cluster_by_id["cand-now"]
+        assert "cand-now" not in old_cluster.member_article_ids
+        assert new_cluster.member_article_ids == ("cand-now",)
+
+    def test_inner_loop_skips_clusters_outside_stage_2_window(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Stage 2 must not iterate clusters older than ``STAGE_2_TIME_WINDOW_HOURS``.
+
+        On a busy news day with hundreds of articles, naive O(n²) iteration of
+        every existing cluster's every member dominates the 30-minute refresh
+        cron. Per § Headline clustering, two members must fall within
+        ``STAGE_2_TIME_WINDOW_HOURS`` of the cluster's ``first_seen_at``, so
+        clusters whose ``first_seen_at`` is older than the candidate by more
+        than that window cannot match by definition — iterating them is
+        wasted work.
+
+        Counts ``_candidate_matches_member`` invocations directly (rather than
+        wrapping ``_find_joinable_cluster``) so the test stays stable against
+        signature refactors to the inner search. With N out-of-window cluster
+        anchors seeded before a candidate at hour 37.5 and one in-window
+        anchor at hour 36, the count of per-member checks attributable to the
+        candidate must be independent of N — only the in-window anchor's lone
+        member should be inspected.
+        """
+        from alphamind.data_sources.news import clustering
+
+        def _seeds(n_old: int) -> tuple[list[NewsArticles], dict[str, frozenset[str]]]:
+            # n_old anchors spaced 30 minutes apart starting 22h before the
+            # candidate. Each is > 6h before the candidate (outside the
+            # Stage-2 window) but < 24h before (inside the seal window) — so
+            # the OLD pre-perf-#6 code would walk every one's members for the
+            # candidate, while the new code skips them via the start_idx
+            # advance. The in-window anchor seed-36 is 1.5h before the
+            # candidate.
+            specs: list[tuple[str, str]] = []
+            for i in range(n_old):
+                # Hours 14..14 + n_old*0.5 on day 1, all > 6h before day 2 13:30.
+                hour = 14 + i // 2
+                minute = (i % 2) * 30
+                specs.append((f"seed-old-{i:02d}", f"2026-05-01T{hour:02d}:{minute:02d}:00Z"))
+            articles = [
+                _article(
+                    aid,
+                    f"Company unique-{aid} reports record Q3 revenue beating analyst",
+                    ts,
+                    topic_tags="earnings_related",
+                )
+                for aid, ts in specs
+            ]
+            articles.append(
+                _article(
+                    "seed-36",
+                    "Company NVDA reports record Q3 revenue beating analyst estimates",
+                    "2026-05-02T12:00:00Z",
+                    topic_tags="earnings_related",
+                )
+            )
+            articles.append(
+                _article(
+                    "cand-36",
+                    "Company NVDA reports record Q3 revenue topping analyst estimates",
+                    "2026-05-02T13:30:00Z",  # 1.5h after seed-36, > 6h but < 24h after seed-old-*
+                    topic_tags="earnings_related",
+                )
+            )
+            ticker_index: dict[str, frozenset[str]] = {
+                aid: frozenset({f"TIC{i:02d}"}) for i, (aid, _) in enumerate(specs)
+            }
+            ticker_index["seed-36"] = frozenset({"NVDA"})
+            ticker_index["cand-36"] = frozenset({"NVDA"})
+            return articles, ticker_index
+
+        def _count_matches_under_candidate(n_old: int) -> int:
+            articles, ticker_index = _seeds(n_old)
+            original = clustering._candidate_matches_member
+            counts_by_candidate: dict[str, int] = {}
+
+            def counter(
+                candidate: clustering._CandidateProfile,
+                member_id: str,
+                ctx: clustering._ClusteringContext,
+            ) -> bool:
+                counts_by_candidate[candidate.article_id] = (
+                    counts_by_candidate.get(candidate.article_id, 0) + 1
+                )
+                return original(candidate, member_id, ctx)
+
+            monkeypatch.setattr(clustering, "_candidate_matches_member", counter)
+            try:
+                clusters = clustering.cluster_events(articles, ticker_index)
+            finally:
+                monkeypatch.setattr(clustering, "_candidate_matches_member", original)
+
+            joined = next(c for c in clusters if c.cluster_id == "seed-36")
+            assert "cand-36" in joined.member_article_ids
+            return counts_by_candidate.get("cand-36", 0)
+
+        # Count of per-member checks for the candidate must be independent of
+        # how many out-of-window cluster anchors precede it: only the lone
+        # in-window anchor is eligible, so each invocation should observe a
+        # single per-member check.
+        small = _count_matches_under_candidate(n_old=1)
+        large = _count_matches_under_candidate(n_old=8)
+        assert small == large == 1, (
+            f"_candidate_matches_member invoked {small} times with 1 old cluster "
+            f"and {large} times with 8 — expected 1 in both, since only the "
+            "in-window anchor falls within STAGE_2_TIME_WINDOW_HOURS."
+        )
+
 
 class TestRefreshNewsClusters:
     """``refresh_news_clusters`` is the persistence-layer top-level callable."""
