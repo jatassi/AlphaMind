@@ -47,7 +47,9 @@ def _resolve_path(path: str | None) -> str:
                 cfg: dict[str, Any] = yaml.safe_load(fh) or {}
             db_path: str | None = cfg.get("paths", {}).get("database")
             if db_path:
-                return db_path
+                # main.yaml stores Windows ``%USERPROFILE%`` literally so the
+                # value is portable across machines; expand at the OS boundary.
+                return os.path.expandvars(db_path)
     except Exception:
         pass
     return _default_db_path()

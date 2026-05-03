@@ -37,7 +37,7 @@ from alphamind.persistence.models import (
     TickerChangeHistory,
     TreasuryAuctions,
 )
-from alphamind.persistence.session import make_engine, make_session_factory
+from alphamind.persistence.session import _resolve_path, make_engine, make_session_factory
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -93,6 +93,33 @@ def seeded_universe(session: Session) -> AssetUniverse:
 # ---------------------------------------------------------------------------
 # AC: PRAGMA settings
 # ---------------------------------------------------------------------------
+
+
+class TestResolvePath:
+    def test_yaml_path_expands_environment_variables(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``main.yaml`` stores paths with literal ``%VAR%`` for portability."""
+        monkeypatch.delenv("DATABASE_PATH", raising=False)
+        monkeypatch.setenv("ALPHAMIND_TEST_ROOT", str(tmp_path))
+        fake_yaml = tmp_path / "config" / "main.yaml"
+        fake_yaml.parent.mkdir()
+        fake_yaml.write_text("paths:\n  database: '%ALPHAMIND_TEST_ROOT%/data/alphamind.db'\n")
+
+        import alphamind.persistence.session as session_mod
+
+        monkeypatch.setattr(
+            session_mod,
+            "__file__",
+            str(tmp_path / "src" / "alphamind" / "persistence" / "session.py"),
+        )
+
+        resolved = _resolve_path(None)
+        assert "%ALPHAMIND_TEST_ROOT%" not in resolved
+        assert resolved.endswith(("data/alphamind.db", r"data\alphamind.db"))
+        assert str(tmp_path) in resolved
 
 
 class TestPragmas:
