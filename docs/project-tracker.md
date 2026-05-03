@@ -43,7 +43,7 @@ Cross-cutting policies and reference specs that constrain implementation but are
 - [x] **Domain researchers** ([ALP-113](https://linear.app/alphamind-jatassi/issue/ALP-113)) — _done_ — [tech-semis](design/03-analysis-layer/domain-researchers/tech-semis.md), [financials](design/03-analysis-layer/domain-researchers/financials.md), [energy](design/03-analysis-layer/domain-researchers/energy.md)
 - [x] **Qualitative research** ([ALP-111](https://linear.app/alphamind-jatassi/issue/ALP-111)) — _done_ — [design](design/03-analysis-layer/qualitative-research.md)
 - [x] **Adaptive research** ([ALP-112](https://linear.app/alphamind-jatassi/issue/ALP-112)) — _done_ — [design](design/03-analysis-layer/adaptive-research.md)
-- [ ] **Synthesizer** ([ALP-114](https://linear.app/alphamind-jatassi/issue/ALP-114)) — _stories drafted_ — [design](design/03-analysis-layer/synthesizer.md)
+- [x] **Synthesizer** ([ALP-114](https://linear.app/alphamind-jatassi/issue/ALP-114)) — _done_ — [design](design/03-analysis-layer/synthesizer.md)
 
 ### Decision layer
 
