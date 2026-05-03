@@ -5,8 +5,8 @@ Authoritative specs this prompt implements:
 - docs/design/03-analysis-layer/synthesizer.md                          (purpose, inputs, source-reference mechanism, contradiction handling, output, retrieval-store side-effect, portfolio-state tools)
 - docs/design/03-analysis-layer/README.md                               (sequencing — synthesizer runs last, downstream of all upstream briefs)
 - docs/design/testing/llm-output-validation.md                          (reference-ID taxonomy — the prefixes the synthesizer cites)
-- docs/implementation/03-analysis-layer/synthesizer/07-input-bundle-assembler.md (the user-message format)
-- docs/implementation/03-analysis-layer/synthesizer/06b-portfolio-state-mcp-tools.md (tool names and shapes)
+- ALP-207 https://linear.app/alphamind-jatassi/issue/ALP-207             (input-bundle assembler — the user-message format)
+- ALP-206 https://linear.app/alphamind-jatassi/issue/ALP-206             (portfolio-state MCP tools — tool names and shapes)
 
 This prompt produces prose, not JSON. No schema, no first-token prefill.
 -->
