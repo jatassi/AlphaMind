@@ -155,7 +155,9 @@ def _check_reference_prefix_consistency(brief: QualitativeBrief) -> Iterable[Val
             yield ValidationError(
                 field_path=f"catalyst_watches[{i}].catalyst_id",
                 rule="reference_prefix_consistency",
-                message=f"catalyst_id {cw.catalyst_id!r} does not have the required 'QR-CW-' prefix",
+                message=(
+                    f"catalyst_id {cw.catalyst_id!r} does not have the required 'QR-CW-' prefix"
+                ),
             )
 
 

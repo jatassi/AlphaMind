@@ -39,7 +39,9 @@ def _make_evidence_pair() -> tuple[EvidenceLine, EvidenceLine]:
     )
 
 
-def _make_thread(thread_id: str = "QR-1", evidence: tuple[EvidenceLine, ...] | None = None) -> NarrativeThread:
+def _make_thread(
+    thread_id: str = "QR-1", evidence: tuple[EvidenceLine, ...] | None = None
+) -> NarrativeThread:
     return NarrativeThread(
         thread_id=thread_id,
         summary="Rate expectations shifted hawkish overnight",
