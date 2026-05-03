@@ -21,10 +21,10 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel
 
@@ -266,41 +266,47 @@ async def _collect_response(
     # ``max_turns=1`` (set on options) is load-bearing for this loop:
     # we overwrite per-message usage rather than summing across turns,
     # which is correct only when there's exactly one assistant turn.
-    async for message in sdk_query_fn(prompt=prompt, options=options):
-        if isinstance(message, AssistantMessage):
-            for block in message.content:
-                if isinstance(block, TextBlock):
-                    text_parts.append(block.text)
-            if message.stop_reason:
-                stop_reason = message.stop_reason
-            if message.usage:
-                usage = message.usage
-                input_tokens = usage.get("input_tokens", 0)
-                output_tokens = usage.get("output_tokens", 0)
-                cache_read_tokens = usage.get("cache_read_input_tokens", 0)
-                cache_write_tokens = usage.get("cache_creation_input_tokens", 0)
-        elif isinstance(message, ResultMessage):
-            (
-                stop_reason,
-                input_tokens,
-                output_tokens,
-                cache_read_tokens,
-                cache_write_tokens,
-            ) = _absorb_result_metadata(
-                message,
-                stop_reason=stop_reason,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cache_read_tokens=cache_read_tokens,
-                cache_write_tokens=cache_write_tokens,
-            )
-            if message.is_error:
-                raise _CLIResultError(
-                    error_text=message.result or "(no result text)",
-                    partial_response="".join(text_parts),
+    query_iter = sdk_query_fn(prompt=prompt, options=options)
+    try:
+        async for message in query_iter:
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        text_parts.append(block.text)
+                if message.stop_reason:
+                    stop_reason = message.stop_reason
+                if message.usage:
+                    usage = message.usage
+                    input_tokens = usage.get("input_tokens", 0)
+                    output_tokens = usage.get("output_tokens", 0)
+                    cache_read_tokens = usage.get("cache_read_input_tokens", 0)
+                    cache_write_tokens = usage.get("cache_creation_input_tokens", 0)
+            elif isinstance(message, ResultMessage):
+                (
+                    stop_reason,
+                    input_tokens,
+                    output_tokens,
+                    cache_read_tokens,
+                    cache_write_tokens,
+                ) = _absorb_result_metadata(
+                    message,
                     stop_reason=stop_reason,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cache_read_tokens=cache_read_tokens,
+                    cache_write_tokens=cache_write_tokens,
                 )
-            break
+                if message.is_error:
+                    raise _CLIResultError(
+                        error_text=message.result or "(no result text)",
+                        partial_response="".join(text_parts),
+                        stop_reason=stop_reason,
+                    )
+                break
+    finally:
+        # Close from this task; GC-time aclose() races the SDK reader
+        # and prints "asynchronous generator is already running" to stderr.
+        await cast(AsyncGenerator[Any], query_iter).aclose()
 
     response_text = "".join(text_parts)
     tokens = TokensUsed(
