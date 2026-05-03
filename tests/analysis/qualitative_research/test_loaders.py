@@ -663,9 +663,10 @@ class TestLoadPredictionMarketSnapshot:
         # Per-row deltas should match the seeded latest-vs-prior gap (0.70 - 0.60).
         for snap in result:
             assert snap.delta_since_prior_pp == pytest.approx(0.10)
-        # N+1 elimination: should be far fewer than 5 history queries — ideally 1.
-        assert history_query_count < 5, (
-            f"expected batched history lookup, got {history_query_count} queries"
+        # N+1 elimination: the documented design is a single window-function
+        # query batching the latest-two history rows for all contracts.
+        assert history_query_count <= 1, (
+            f"expected single batched history query, got {history_query_count}"
         )
 
 
