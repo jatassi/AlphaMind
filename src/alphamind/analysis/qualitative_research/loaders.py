@@ -392,21 +392,49 @@ def load_prediction_market_snapshot(
     """
     as_of_str = _format_iso_utc(as_of)
 
-    # All distinct contract IDs that have history rows.
-    contract_ids_row = (
-        session.execute(
-            select(DistillationContractHistory.contract_id)
-            .where(DistillationContractHistory.snapshot_ts <= as_of_str)
-            .distinct()
+    # Batch-load the latest two history rows per contract in one query
+    # via ROW_NUMBER() — avoids the N+1 of running one limit-2 query per
+    # tracked contract.
+    rn = (
+        func.row_number()
+        .over(
+            partition_by=DistillationContractHistory.contract_id,
+            order_by=DistillationContractHistory.snapshot_ts.desc(),
         )
-        .scalars()
-        .all()
+        .label("rn")
     )
+    ranked_subq = (
+        select(
+            DistillationContractHistory.contract_id,
+            DistillationContractHistory.yes_probability,
+            DistillationContractHistory.delta_pp_since_prior,
+            DistillationContractHistory.snapshot_ts,
+            rn,
+        )
+        .where(DistillationContractHistory.snapshot_ts <= as_of_str)
+        .subquery()
+    )
+    ranked_rows = session.execute(
+        select(
+            ranked_subq.c.contract_id,
+            ranked_subq.c.yes_probability,
+            ranked_subq.c.delta_pp_since_prior,
+            ranked_subq.c.snapshot_ts,
+        )
+        .where(ranked_subq.c.rn <= 2)
+        .order_by(ranked_subq.c.contract_id, ranked_subq.c.snapshot_ts.desc())
+    ).all()
 
-    if not contract_ids_row:
+    if not ranked_rows:
         return ()
 
-    contract_ids = list(contract_ids_row)
+    # Each value is up to 2 rows ordered latest-first:
+    # (yes_probability, delta_pp_since_prior, snapshot_ts).
+    history_by_id: dict[str, list[tuple[float, float, str]]] = {}
+    for row in ranked_rows:
+        history_by_id.setdefault(row[0], []).append((float(row[1]), float(row[2]), row[3]))
+
+    contract_ids = list(history_by_id)
 
     # Batch-load contract metadata in one query.
     meta_rows = session.execute(
@@ -453,33 +481,11 @@ def load_prediction_market_snapshot(
     results: list[PredictionMarketSnapshot] = []
 
     for contract_id in contract_ids:
-        # Latest two history rows for delta fields.
-        history_rows = session.execute(
-            select(
-                DistillationContractHistory.yes_probability,
-                DistillationContractHistory.delta_pp_since_prior,
-                DistillationContractHistory.snapshot_ts,
-            )
-            .where(
-                DistillationContractHistory.contract_id == contract_id,
-                DistillationContractHistory.snapshot_ts <= as_of_str,
-            )
-            .order_by(DistillationContractHistory.snapshot_ts.desc())
-            .limit(2)
-        ).all()
-
-        if not history_rows:
-            continue
-
-        latest = history_rows[0]
-        yes_probability = float(latest[0])
-        delta_since_last = float(latest[1])
-        snapshot_ts_str = latest[2]
+        history_rows = history_by_id[contract_id]
+        latest_yes, delta_since_last, snapshot_ts_str = history_rows[0]
         # Subtract the second-latest history row's yes_probability — the gap
         # between the two rows is irregular (anywhere from minutes to days).
-        delta_since_prior = (
-            yes_probability - float(history_rows[1][0]) if len(history_rows) == 2 else 0.0
-        )
+        delta_since_prior = latest_yes - history_rows[1][0] if len(history_rows) == 2 else 0.0
 
         platform, description, category, resolution_date = meta_by_id.get(
             contract_id, ("", "", "", None)
@@ -493,7 +499,7 @@ def load_prediction_market_snapshot(
                 description=description,
                 platform=platform,
                 category=category,
-                current_probability=yes_probability,
+                current_probability=latest_yes,
                 delta_since_last_invocation_pp=delta_since_last,
                 delta_since_prior_pp=delta_since_prior,
                 volume_24h_usd=volume_24h,
