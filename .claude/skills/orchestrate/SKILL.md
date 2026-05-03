@@ -87,7 +87,9 @@ If the branch already exists locally (resuming a prior run), check it out instea
 
 **Run independent stories in parallel.** The dependency graph is in the parent Issue's description; the per-sub-issue `blockedBy` relations are the source of truth. A story is dispatch-eligible when: its status is `Todo` AND every story it `blockedBy` has status `Done`. Stories at the same dependency rank dispatch together in one wave (one `Agent` call per story, all in the same message), capped at 6 concurrent.
 
-**Each story runs in its own worktree.** `isolation: "worktree"` makes the harness create a fresh branch + checkout from your *feature branch* (not `main`), runs the subagent there, and reports the branch name and worktree path on completion. Subagents commit on that branch; you merge into the feature branch after verification. Never run subagents on the feature branch checkout itself — parallel stories would collide.
+**Each story runs in its own worktree.** `isolation: "worktree"` makes the harness create a fresh branch + checkout **from `main`** (not the feature branch), runs the subagent there, and reports the branch name and worktree path on completion. Subagents must rebase onto `origin/<feature-branch>` before starting work — otherwise they won't see prior waves' commits. The dispatch prompt below includes the rebase block; honor it verbatim. Subagents commit on the worktree branch; you cherry-pick or merge onto the feature branch after verification. Never run subagents on the feature branch checkout itself — parallel stories would collide.
+
+**Push the feature branch to `origin` after each wave's wave-end gate passes**, so the next wave's worktrees can rebase onto its latest tip. Without this, wave-2+ subagents only see content from `main`, missing all prior waves' commits.
 
 **Verify before marking done.** A story is `Done` when every acceptance-criteria checkbox passes a verification step *you can describe* — typically `uv run pytest -n auto` plus a spot-check of each non-test criterion (file exists, schema validates, function exhibits the documented behavior). Do not trust the subagent's self-report alone (`feedback_subagent_must_commit`).
 
@@ -98,7 +100,16 @@ Each implementation subagent receives a prompt of this exact shape (replace `<Li
 ```
 Implement story <Linear ID>.
 
-You are running in an isolated git worktree on a fresh branch. IT IS CRITICAL that you only make changes and commits inside the worktree. ALWAYS use relative paths (e.g. `docs/project-tracker.md`), NEVER use fully-qualified paths (e.g. `/Users/jatassi/Git/AlphaMind/docs/project-tracker.md`). Do not push, switch branches, or merge. Before starting any work, ensure that the base commit of your worktree is the latest from the branch.
+You are running in an isolated git worktree on a fresh branch. IT IS CRITICAL that you only make changes and commits inside the worktree. ALWAYS use relative paths (e.g. `docs/project-tracker.md`), NEVER use fully-qualified paths (e.g. `/Users/jatassi/Git/AlphaMind/docs/project-tracker.md`). Do not push, switch branches, or merge.
+
+**Verify your base before starting work.** The harness creates worktree branches off `main`. The integration branch for this work tree is `<feature-branch>` (it carries all prior waves' commits). Fetching is allowed; pushing is not. Run:
+
+    git fetch origin <feature-branch>
+    if ! git merge-base --is-ancestor origin/<feature-branch> HEAD; then
+      git rebase origin/<feature-branch>
+    fi
+
+Confirm with `git log --oneline -10` that prior waves' commits are reachable from HEAD before proceeding.
 
 Fetch the user story from Linear and read it first. It names the design docs to read, the scope, and the acceptance criteria. Treat the acceptance criteria as your test list.
 
@@ -110,8 +121,8 @@ After tests are green and before your final commit, invoke the `simplify` skill 
 
 When done:
 1. Run `uv run pytest -n auto` and confirm green.
-2. Make the final commit including all changes.
-3. Report back: the list of commit SHAs you made (most recent last) and a one-line attestation per acceptance criterion ("met by test X", "met by file Y exists", "met by manual inspection of Z").
+2. Stage all changes with `git add` and create the final commit. **REQUIRED — DO NOT SKIP.** After committing, run `git log --oneline <feature-branch>..HEAD` and confirm at least one of YOUR commits is listed. If `git status` shows untracked or modified files, you have NOT committed — `git add` and commit them.
+3. Report back with the commit SHA(s) from `git log --oneline -5` (most recent first) and a one-line attestation per acceptance criterion ("met by test X", "met by file Y exists", "met by manual inspection of Z").
 
 If you hit a blocker — schema gap, ambiguous spec, sibling-work-tree primitive missing or shaped differently than the story expected, test that won't pass without scope creep — stop and report. Do not improvise.
 
@@ -162,6 +173,7 @@ Each agent result includes the worktree path and branch name. Per result:
 After all stories in a wave have been verified and merged (or blocked), and *before* dispatching the next wave:
 
 - Run the full chain on the feature branch: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest -n auto`. Catches integration issues that pass per-story but fail combined.
+- **Push the feature branch to `origin`** (`git push origin <feature-branch>`) so the next wave's worktrees can rebase onto its latest tip. Skipping this means wave-N+1 subagents will only see content reachable from `main`, missing every story merged in waves 1..N.
 - If clean, proceed to the next survey.
 - If the global run fails, the failure is in the integration boundary between this wave's stories. Diagnose; fix directly if trivial; re-dispatch the relevant story if not. Do not advance to the next wave until the global run is clean.
 
@@ -291,7 +303,7 @@ Surface blockers immediately, do not work around them:
 
 ## Boundaries
 
-- **Do not push to remote** until the post-completion sequence — the operator owns intermediate push timing.
+- **Do not push to remote branches other than the feature branch** until the post-completion sequence. Pushing the feature branch to `origin/<feature-branch>` after each wave is REQUIRED for worktree rebasing (the wave-end gate covers this).
 - **Do not amend commits** — create new commits instead. If a hook fails, the commit didn't happen, and `--amend` would corrupt the previous commit.
 - **Do not skip hooks** (`--no-verify`, `--no-gpg-sign`). If a hook fails, fix the underlying issue.
 - **Do not dispatch a subagent without `isolation: "worktree"`** — parallel work on the feature branch checkout corrupts state.
@@ -306,6 +318,7 @@ Surface blockers immediately, do not work around them:
 ## Anti-patterns
 
 - **Dispatching all stories at once "to save time".** Wave structure exists because dependencies are real. Out-of-order dispatch produces stories that depend on absent code and waste subagent cycles.
+- **Dispatching multiple stories that share a target file in the same wave.** When two or more stories all create or edit the same file (e.g., three sub-stories each adding a test case to one shared file), parallel worktrees produce independent versions of the file and the cherry-picks conflict at integration time. Either sequence them across waves, merge them into one story, or — if the parent Issue's notes say "story A creates the file; siblings ADD to it" — dispatch story A first, wait for merge + push, then dispatch the siblings.
 - **Running `pytest` without `-n auto`** anywhere — your verification, the subagent's verification, the wave gate. CLAUDE.md is strict; serial pytest runs hide xdist-only failures.
 - **Trusting subagent self-reports.** They sometimes report "done" with uncommitted changes (`feedback_subagent_must_commit`). Always verify with `git log <feature-branch>..<subagent-branch>` and `git status` in the worktree.
 - **Skipping the wave-end global lint+test gate.** Per-story verification doesn't catch integration issues. The global gate is cheap; skipping it costs more later.
