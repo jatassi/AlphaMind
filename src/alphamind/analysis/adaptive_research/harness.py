@@ -1,16 +1,17 @@
-"""LLM invocation harness for qualitative-researcher agent — story 04b (ALP-249).
+"""LLM invocation harness for adaptive-researcher agent — story 05 (ALP-263).
 
 Wraps the Claude Agent SDK call with the agent's tool allowlist registered,
-runs the parser (story 03a) and validator (story 03b) on the response,
+runs the parser (story 03b) and validator (story 03c) on the response,
 executes a single corrective retry on parse-or-validation failure, and
 re-classifies failures paired with ``stop_reason: max_tokens`` as
 :class:`ContextOverflowFailure`.
 
-Structurally mirrors :mod:`alphamind.analysis.domain_researchers.harness`;
+Structurally mirrors :mod:`alphamind.analysis.qualitative_research.harness`;
 the differences are confined to: parser/validator imports, retry-message
-text, the tools-allowlist plumbing, and ``tool_calls_used`` accounting.
+text, the validator's three additional upstream-brief arguments, the MCP
+server name (``alphamind_adaptive``), and the agent identifier.
 
-Architecture note: ``invoke_qualitative_researcher`` accepts ``sdk_query_fn``
+Architecture note: ``invoke_adaptive_researcher`` accepts ``sdk_query_fn``
 for dependency injection.  In production the default (the real
 ``claude_agent_sdk.query``) is used.  Tests pass a stub so no test touches
 the Anthropic API.
@@ -18,7 +19,13 @@ the Anthropic API.
 
 from __future__ import annotations
 
-# ruff: noqa: N818  # Exception class names are spec-mandated (ALP-249 story scope)
+# ruff: noqa: N818, PLR0913
+# N818: Exception class names are spec-mandated (ALP-263 story scope) — they
+#       mirror the qualitative-research harness names exactly.
+# PLR0913: ``invoke_adaptive_researcher`` has the spec-mandated public signature
+#          (eight named-only args + two optional); ``_parse_and_validate``
+#          threads the validator's three additional upstream-brief arguments
+#          through to the validator. Both are intentional per the story.
 import asyncio
 import json
 import time
@@ -31,15 +38,18 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from alphamind.analysis._shared import TokensUsed
-from alphamind.analysis.qualitative_research.models import QualitativeBrief
-from alphamind.analysis.qualitative_research.parser import ParseError, parse_qualitative_brief
-from alphamind.analysis.qualitative_research.validation import (
+from alphamind.analysis.adaptive_research.models import AdaptiveBrief
+from alphamind.analysis.adaptive_research.parser import ParseError, parse_adaptive_brief
+from alphamind.analysis.adaptive_research.validation import (
     ValidationResult,
-    validate_qualitative_brief,
+    validate_adaptive_brief,
 )
+from alphamind.analysis.domain_researchers.models import SectorBrief
+from alphamind.analysis.qualitative_research.models import QualitativeBrief
 from alphamind.analysis.tools import TOOLS
 from alphamind.analysis.tools._sdk_adapter import build_analysis_mcp_server
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
+from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
 
 __all__ = [
     "ContextOverflowFailure",
@@ -48,7 +58,7 @@ __all__ = [
     "MalformedOutputFailure",
     "SDKFailure",
     "TimeoutFailure",
-    "invoke_qualitative_researcher",
+    "invoke_adaptive_researcher",
 ]
 
 # ---------------------------------------------------------------------------
@@ -78,10 +88,10 @@ async def _load_prompt(prompt_path: str) -> str:
 # Multi-turn budget
 # ---------------------------------------------------------------------------
 
-# Per the qualitative-research design doc: cumulative_tool_call_limit=15
-# soft, with headroom for the agent's reasoning turns.  ``max_turns`` bounds
-# the SDK loop covering tool calls + final text generation.
-_MAX_TURNS = 25
+# Per the adaptive-research design doc: cumulative_tool_call_limit=25
+# soft (set in agents.yaml), with headroom for the agent's reasoning turns.
+# ``max_turns`` bounds the SDK loop covering tool calls + final text generation.
+_MAX_TURNS = 30
 
 
 # ---------------------------------------------------------------------------
@@ -175,9 +185,9 @@ class TimeoutFailure(HarnessFailure):
 
 
 class HarnessSuccess(BaseModel, frozen=True):
-    """Successful invocation result returned to the qualitative-researcher runner."""
+    """Successful invocation result returned to the adaptive-researcher runner."""
 
-    brief: QualitativeBrief
+    brief: AdaptiveBrief
     raw_response: str
     retry_count: int  # 0 or 1
     tokens_used: TokensUsed  # imported from _shared, NOT redefined here
@@ -222,7 +232,7 @@ async def _collect_response(
     ``stop_reason`` is ``None`` when the SDK did not surface it (treated as
     ``end_turn`` by the harness per the spec: "missing metadata → malformed_output,
     not context_overflow"). ``tool_calls`` counts ``ToolUseBlock`` instances in
-    assistant messages — this is the qualitative-researcher's tool-budget metric.
+    assistant messages — this is the adaptive-researcher's tool-budget metric.
     """
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
@@ -252,15 +262,12 @@ async def _collect_response(
 # ---------------------------------------------------------------------------
 
 _SECTION_DIRECTIVE = (
-    "Emit a single corrected qualitative brief. "
+    "Emit a single corrected adaptive research findings brief. "
     "No prose preceding or following the structured content. "
-    "Use exactly the section headers "
-    "=== NARRATIVE THREADS ===, === CATALYST WATCH ===, === SENTIMENT SNAPSHOT ==="
+    "Use exactly the section header === INVESTIGATION THREADS ==="
 )
 
-_CONTRACT_REF = (
-    "See docs/design/03-analysis-layer/qualitative-research.md § Output § Output schema."
-)
+_CONTRACT_REF = "See docs/design/03-analysis-layer/adaptive-research.md § Output § Output schema."
 
 
 def _build_retry_message(framing: str, error_detail: str) -> str:
@@ -270,7 +277,7 @@ def _build_retry_message(framing: str, error_detail: str) -> str:
     - Explicit framing line naming which contract failed
     - First error only (caller extracts it)
     - Contract reference
-    - Directive with exact section headers
+    - Directive with exact section header
     - Does NOT contain: full error list, analytical guidance, raw input data
     """
     return "\n\n".join([framing, error_detail, _CONTRACT_REF, _SECTION_DIRECTIVE])
@@ -278,7 +285,7 @@ def _build_retry_message(framing: str, error_detail: str) -> str:
 
 def _build_retry_message_for_parse_error(error: ParseError) -> str:
     framing = (
-        "The prior response did not meet the parse contract for the qualitative researcher output."
+        "The prior response did not meet the parse contract for the adaptive researcher output."
     )
     error_detail = f"Field: {error.field_path}\nError: {error.message}"
     return _build_retry_message(framing, error_detail)
@@ -287,7 +294,7 @@ def _build_retry_message_for_parse_error(error: ParseError) -> str:
 def _build_retry_message_for_validation_failure(result: ValidationResult) -> str:
     framing = (
         "The prior response did not meet the structural contract for "
-        "the qualitative researcher output."
+        "the adaptive researcher output."
     )
     first_error = result.errors[0]
     error_detail = (
@@ -365,10 +372,14 @@ def _parse_and_validate(
     response: str,
     invocation_id: str,
     universe: frozenset[str],
+    sector_briefs: tuple[SectorBrief, ...],
+    qualitative_brief: QualitativeBrief,
+    correlation_regime_brief: CorrelationRegimeBrief,
+    allowed_tools: frozenset[str],
     stop_reason: str | None,
     attempt: int,
     diag: _DiagState,
-) -> tuple[QualitativeBrief | None, str | None]:
+) -> tuple[AdaptiveBrief | None, str | None]:
     """Parse *response* and validate the result.
 
     Returns ``(brief, retry_message)``.  When the brief is ``None``, a
@@ -377,7 +388,7 @@ def _parse_and_validate(
     with ``stop_reason == 'max_tokens'``.
     """
     try:
-        brief = parse_qualitative_brief(response, invocation_id=invocation_id)
+        brief = parse_adaptive_brief(response, invocation_id=invocation_id)
     except ParseError as exc:
         diag.errors.append(
             {
@@ -396,7 +407,14 @@ def _parse_and_validate(
             ) from exc
         return None, _build_retry_message_for_parse_error(exc)
 
-    validation = validate_qualitative_brief(brief, universe=universe)
+    validation = validate_adaptive_brief(
+        brief,
+        sector_briefs=sector_briefs,
+        qualitative_brief=qualitative_brief,
+        correlation_regime_brief=correlation_regime_brief,
+        universe=universe,
+        allowed_tools=allowed_tools,
+    )
     if not validation.is_valid:
         for ve in validation.errors:
             diag.errors.append(
@@ -431,21 +449,24 @@ def _resolve_tools(
     *,
     agent_name: str,
     invocation_id: str,
-) -> tuple[list[str], dict[str, Any]]:
+) -> tuple[list[str], dict[str, Any], frozenset[str]]:
     """Resolve agent_config.tools against the registry and build the SDK MCP server.
 
-    Returns ``(allowed_tools, mcp_servers)`` ready for
-    :class:`ClaudeAgentOptions`.  ``allowed_tools`` carries the bundled
-    CLI's ``mcp__<server>__<tool>`` wire form so the permission filter
-    matches what the model emits.  ``mcp_servers`` is keyed by the
-    qualitative-research server name and registers each tool's handler
+    Returns ``(allowed_tools, mcp_servers, validator_tool_allowlist)`` ready
+    for :class:`ClaudeAgentOptions` and the validator. ``allowed_tools``
+    carries the bundled CLI's ``mcp__<server>__<tool>`` wire form so the
+    permission filter matches what the model emits. ``mcp_servers`` is keyed
+    by the adaptive-research server name and registers each tool's handler
     via the :mod:`alphamind.analysis.tools._sdk_adapter` decorator wrap.
+    ``validator_tool_allowlist`` is the registry-name form (e.g.
+    ``"news_search"``) the validator uses to check ``thread.tools_used`` —
+    the model's free-text recap, not an MCP wire ID.
 
     Raises :class:`SDKFailure` immediately if any name in
     ``agent_config.tools`` is not registered in
     :data:`alphamind.analysis.tools.TOOLS` — fail loudly rather than
-    silently dropping tool privileges.  An empty ``agent_config.tools``
-    yields ``([], {})``: no MCP server is registered.
+    silently dropping tool privileges. An empty ``agent_config.tools``
+    yields ``([], {}, frozenset())``: no MCP server is registered.
     """
     missing = [name for name in agent_config.tools if name not in TOOLS]
     if missing:
@@ -455,14 +476,15 @@ def _resolve_tools(
             agent_name=agent_name,
             invocation_id=invocation_id,
         )
+    validator_tool_allowlist = frozenset(agent_config.tools)
     if not agent_config.tools:
-        return [], {}
+        return [], {}, validator_tool_allowlist
     mcp_servers, allowed = build_analysis_mcp_server(
-        server_name="alphamind_qualitative",
+        server_name="alphamind_adaptive",
         tool_names=agent_config.tools,
         session=session,
     )
-    return allowed, mcp_servers
+    return allowed, mcp_servers, validator_tool_allowlist
 
 
 def _build_sdk_options(
@@ -472,7 +494,7 @@ def _build_sdk_options(
     allowed_tools: list[str],
     mcp_servers: dict[str, Any],
 ) -> Any:
-    """Build :class:`ClaudeAgentOptions` for the qualitative-researcher invocation.
+    """Build :class:`ClaudeAgentOptions` for the adaptive-researcher invocation.
 
     ``setting_sources=[]`` keeps the SDK from loading developer
     ``.claude/settings.json`` (hooks/permissions) — this agent must run
@@ -500,17 +522,20 @@ def _build_sdk_options(
 # ---------------------------------------------------------------------------
 
 
-async def invoke_qualitative_researcher(
+async def invoke_adaptive_researcher(
     *,
     agent_config: BaseAgentConfig,
     user_message: str,
     invocation_id: str,
     session: Session,
     universe: frozenset[str],
+    sector_briefs: tuple[SectorBrief, ...],
+    qualitative_brief: QualitativeBrief,
+    correlation_regime_brief: CorrelationRegimeBrief,
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
 ) -> HarnessSuccess:
-    """Invoke the qualitative-researcher agent and return a validated :class:`HarnessSuccess`.
+    """Invoke the adaptive-researcher agent and return a validated :class:`HarnessSuccess`.
 
     Parameters
     ----------
@@ -525,8 +550,21 @@ async def invoke_qualitative_researcher(
     session:
         SQLAlchemy session passed to each tool's ``callable_factory``.
     universe:
-        Asset-universe ticker set used by the validator's catalyst-watch
-        ticker check.
+        Asset-universe ticker set used by the validator's ticker-membership
+        check on each thread's ``tickers`` field.
+    sector_briefs:
+        Three :class:`SectorBrief` instances from the same invocation,
+        passed through to the validator for Layer-3 referential resolution
+        of ``SA-{SECTOR}-N`` / ``SA-{SECTOR}-ANOM-N`` / ``SA-{SECTOR}-TC-N``
+        references.
+    qualitative_brief:
+        The baseline :class:`QualitativeBrief` from the same invocation,
+        passed through to the validator for Layer-3 referential resolution
+        of ``QR-N`` / ``QR-CW-N`` references.
+    correlation_regime_brief:
+        The :class:`CorrelationRegimeBrief` from the same invocation,
+        passed through to the validator for Layer-3 referential resolution
+        of ``CR-N`` references.
     archive_root:
         Root path for the invocation archive.  Pass ``None`` to skip
         diagnostic writes (e.g. in testing contexts that don't need them).
@@ -552,9 +590,9 @@ async def invoke_qualitative_researcher(
 
         sdk_query_fn = _real_query
 
-    agent_name = AgentName.qualitative_researcher.value
+    agent_name = AgentName.adaptive_researcher.value
 
-    allowed_tools, mcp_servers = _resolve_tools(
+    allowed_tools, mcp_servers, validator_tool_allowlist = _resolve_tools(
         agent_config, session, agent_name=agent_name, invocation_id=invocation_id
     )
     prompt_text = await _load_prompt(agent_config.prompt)
@@ -624,7 +662,16 @@ async def invoke_qualitative_researcher(
 
     try:
         brief, retry_message = _parse_and_validate(
-            response1, invocation_id, universe, stop_reason1, attempt=1, diag=diag
+            response1,
+            invocation_id,
+            universe,
+            sector_briefs,
+            qualitative_brief,
+            correlation_regime_brief,
+            validator_tool_allowlist,
+            stop_reason1,
+            attempt=1,
+            diag=diag,
         )
     except ContextOverflowFailure:
         diag.write(
@@ -658,7 +705,16 @@ async def invoke_qualitative_researcher(
     diag.tool_calls_used = tool_calls1 + tool_calls2
 
     brief2, _ = _parse_and_validate(
-        response2, invocation_id, universe, stop_reason2, attempt=2, diag=diag
+        response2,
+        invocation_id,
+        universe,
+        sector_briefs,
+        qualitative_brief,
+        correlation_regime_brief,
+        validator_tool_allowlist,
+        stop_reason2,
+        attempt=2,
+        diag=diag,
     )
 
     wall_elapsed = time.monotonic() - wall_start

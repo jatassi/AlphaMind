@@ -1,0 +1,70 @@
+{
+  "invocation_id": "20260502T143000Z-e2e-adaptive-fixture",
+  "signal_quality": "high",
+  "signal_quality_reason": null,
+  "threads": [
+    {
+      "thread_id": "QR-1",
+      "summary": "Semis cluster narrative pivot: AI capex deceleration concerns colliding with data-center buildout commitments.",
+      "relevance": "Directly affects NVDA, AVGO, AMD positioning; informs sector_tech_semis bias.",
+      "direction": "mixed",
+      "subject": "AI capex narrative",
+      "time_horizon": "near_term",
+      "evidence": [
+        {
+          "source_type": "news_digest",
+          "observation": "Hyperscaler capex guidance for FY surprised to upside, but cadence shifted later in year.",
+          "citation": "ND-T1"
+        },
+        {
+          "source_type": "prediction_market",
+          "observation": "Polymarket NVDA Q1 beat odds rose to 0.62 from 0.54 over 24h.",
+          "citation": "PM-001"
+        }
+      ],
+      "implication": "Buy-the-dip thesis on NVDA selloffs remains intact; treat near-term volatility as transient."
+    },
+    {
+      "thread_id": "QR-2",
+      "summary": "Regional bank stress signals re-emerging in funding markets despite headline calm.",
+      "relevance": "KRE constituents (regional banks); XLF complements; risk-off rotation candidate.",
+      "direction": "bearish",
+      "subject": "Regional bank funding stress",
+      "time_horizon": "developing",
+      "evidence": [
+        {
+          "source_type": "news_digest",
+          "observation": "Two regional banks announced deposit-rate hikes outside the Fed corridor.",
+          "citation": "ND-T2"
+        },
+        {
+          "source_type": "earnings_commentary",
+          "observation": "CFO commentary on cycle banks flagged elevated funding costs as multi-quarter headwind.",
+          "citation": "EC-T1"
+        }
+      ],
+      "implication": "Position regional bank shorts modestly; avoid concentrated bets ahead of Fed decision."
+    }
+  ],
+  "catalyst_watches": [
+    {
+      "catalyst_id": "QR-CW-1",
+      "ticker": "NVDA",
+      "catalyst_name": "Q1 earnings",
+      "hours_to_event": 36,
+      "thesis_impact": "Confirms or invalidates the AI capex narrative; high-conviction binary."
+    },
+    {
+      "catalyst_id": "QR-CW-2",
+      "ticker": "JPM",
+      "catalyst_name": "FOMC + dot-plot",
+      "hours_to_event": 18,
+      "thesis_impact": "Re-prices bank NIMs; magnitude depends on dot-plot delta from prior."
+    }
+  ],
+  "sentiment_snapshot": {
+    "extremes": "VIX call skew at 95th percentile; NVDA 30-day IV at 88th percentile.",
+    "divergences": "AAII bullish vs Investors Intelligence diverging by 18pp — retail-vs-newsletter spread elevated.",
+    "regime": "risk-on with rising vol-of-vol — typical late-cycle sentiment regime."
+  }
+}

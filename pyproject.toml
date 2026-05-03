@@ -116,6 +116,10 @@ max-statements = 50
     "E501",   # verbatim fixture strings from the prompt spec cannot be wrapped
     "RUF001", # verbatim fixture strings may contain Unicode dashes from the spec
 ]
+"tests/analysis/adaptive_research/test_parser.py" = [
+    "E501",   # verbatim fixture strings from the prompt spec cannot be wrapped
+    "RUF001", # verbatim fixture strings contain Unicode chars (σ, ×, em-dash) from the spec
+]
 "src/alphamind/risk_guardrails/guardrail_evaluation/rules/*.py" = [
     "ARG001",  # rule callbacks conform to a uniform RuleSpec interface; some rules
                # don't use every parameter (e.g., config is unused by most contribute
@@ -153,3 +157,6 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--strict-markers --strict-config"
 xfail_strict = true
+markers = [
+    "e2e: live SDK + database integration tests; gated on RUN_LIVE_LLM_TESTS=1.",
+]

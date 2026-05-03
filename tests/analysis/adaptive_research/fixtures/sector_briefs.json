@@ -1,0 +1,127 @@
+[
+  {
+    "invocation_id": "20260502T143000Z-e2e-adaptive-fixture",
+    "sector": "tech_semis",
+    "signal_quality": "high",
+    "signal_quality_reason": null,
+    "findings": [
+      {
+        "finding_id": "SA-TECH-1",
+        "headline": "NVDA put/call skew at 6-month extreme",
+        "tickers": ["NVDA"],
+        "signal_type": "options",
+        "strength": "strong",
+        "detail": "30d put/call ratio 1.42 vs 0.95 6-month median; concentrated in 30-45 DTE."
+      },
+      {
+        "finding_id": "SA-TECH-2",
+        "headline": "AVGO institutional accumulation",
+        "tickers": ["AVGO"],
+        "signal_type": "flow",
+        "strength": "moderate",
+        "detail": "13F large-cap aggregator share rose 80bps QoQ on AVGO; net-buy regime persists."
+      }
+    ],
+    "anomalies": [
+      {
+        "anomaly_id": "SA-TECH-ANOM-1",
+        "description": "NVDA volume 2.4x 20d ADV with no price drift",
+        "anomaly_type": "volume",
+        "tickers": ["NVDA"],
+        "severity": "investigate_now",
+        "suggested_question": "What is the institutional positioning behind NVDA's stealth accumulation?"
+      }
+    ],
+    "thesis_candidates": [
+      {
+        "thesis_candidate_id": "SA-TECH-TC-1",
+        "ticker": "NVDA",
+        "direction": "long",
+        "setup_type": "catalyst",
+        "catalyst": "Q1 earnings + GTC keynote",
+        "time_horizon_hours": "48-72h",
+        "conviction_sketch": "moderate",
+        "conviction_justification": "Skew + flow agree; macro regime supportive.",
+        "key_risk": "Earnings disappointment on data center growth deceleration."
+      }
+    ]
+  },
+  {
+    "invocation_id": "20260502T143000Z-e2e-adaptive-fixture",
+    "sector": "financials",
+    "signal_quality": "moderate",
+    "signal_quality_reason": null,
+    "findings": [
+      {
+        "finding_id": "SA-FIN-1",
+        "headline": "JPM call skew compressing into Fed",
+        "tickers": ["JPM"],
+        "signal_type": "options",
+        "strength": "moderate",
+        "detail": "OTM call IV minus OTM put IV at -2.1pp, 1-year low; pre-FOMC."
+      }
+    ],
+    "anomalies": [
+      {
+        "anomaly_id": "SA-FIN-ANOM-1",
+        "description": "Regional bank ETF KRE divergence vs XLF",
+        "anomaly_type": "correlation_break",
+        "tickers": ["KRE", "XLF"],
+        "severity": "investigate_if_persists",
+        "suggested_question": "Is regional credit stress decoupling from large-cap money-center banks?"
+      }
+    ],
+    "thesis_candidates": [
+      {
+        "thesis_candidate_id": "SA-FIN-TC-1",
+        "ticker": "JPM",
+        "direction": "short",
+        "setup_type": "event",
+        "catalyst": "FOMC + dot-plot release",
+        "time_horizon_hours": "24-48h",
+        "conviction_sketch": "low",
+        "conviction_justification": "Skew compression suggests positioning fatigue.",
+        "key_risk": "Hawkish surprise drives bank-NIM repricing higher, not lower."
+      }
+    ]
+  },
+  {
+    "invocation_id": "20260502T143000Z-e2e-adaptive-fixture",
+    "sector": "energy",
+    "signal_quality": "high",
+    "signal_quality_reason": null,
+    "findings": [
+      {
+        "finding_id": "SA-ENERGY-1",
+        "headline": "XOM upside breadth at 12-month high",
+        "tickers": ["XOM"],
+        "signal_type": "technical",
+        "strength": "strong",
+        "detail": "5d up-volume share 0.71; trend-acceleration signal active for 6 sessions."
+      }
+    ],
+    "anomalies": [
+      {
+        "anomaly_id": "SA-ENERGY-ANOM-1",
+        "description": "WTI front-month/back-month spread inverting",
+        "anomaly_type": "other",
+        "tickers": ["XOM", "CVX"],
+        "severity": "investigate_now",
+        "suggested_question": "Are E&P majors pricing in a near-term supply shock the curve isn't yet?"
+      }
+    ],
+    "thesis_candidates": [
+      {
+        "thesis_candidate_id": "SA-ENERGY-TC-1",
+        "ticker": "XOM",
+        "direction": "long",
+        "setup_type": "momentum",
+        "catalyst": "OPEC+ meeting + EIA inventories",
+        "time_horizon_hours": "72-120h",
+        "conviction_sketch": "high",
+        "conviction_justification": "Breadth + curve agree; macro tailwind from rising backwardation.",
+        "key_risk": "Demand destruction print invalidates the supply-shock narrative."
+      }
+    ]
+  }
+]

@@ -1,0 +1,111 @@
+{
+  "invocation_id": "20260502T143000Z-e2e-adaptive-fixture",
+  "as_of": "2026-05-02T14:30:00+00:00",
+  "total_blocks": 4,
+  "total_anomalies": 3,
+  "bootstrap_block_count": 0,
+  "all_blocks": [
+    {
+      "block_id": "q1.volume_spike.nvda",
+      "audience": ["sector_tech_semis", "universal_broadcast"],
+      "freshness_ts": "2026-05-02T14:25:00+00:00",
+      "calibration_state": "calibrated",
+      "bootstrap_reason": null,
+      "regime_context": "vol_expansion regime amplifies volume-spike interpretation",
+      "payload": {
+        "ticker": "NVDA",
+        "current_volume_z": 2.4,
+        "20d_avg_volume_m": 245.6
+      },
+      "anomaly_flags": [
+        {
+          "name": "volume_spike",
+          "magnitude": 2.4,
+          "severity": "investigate_now"
+        }
+      ]
+    },
+    {
+      "block_id": "q7.correlation_breakdown.equity_bond",
+      "audience": ["correlation_regime_brief"],
+      "freshness_ts": "2026-05-02T14:00:00+00:00",
+      "calibration_state": "calibrated",
+      "bootstrap_reason": null,
+      "regime_context": null,
+      "payload": {
+        "pair": "SPX_TLT",
+        "rolling_30d_rho": 0.18,
+        "prior_30d_rho": -0.42
+      },
+      "anomaly_flags": [
+        {
+          "name": "correlation_breakdown",
+          "magnitude": 0.6,
+          "severity": "investigate_now"
+        }
+      ]
+    },
+    {
+      "block_id": "q3.macro_surprise.cpi",
+      "audience": ["universal_broadcast"],
+      "freshness_ts": "2026-05-02T13:30:00+00:00",
+      "calibration_state": "calibrated",
+      "bootstrap_reason": null,
+      "regime_context": "Persistent core inflation supports vol_expansion regime persistence",
+      "payload": {
+        "indicator": "CPI_yoy",
+        "actual_pct": 3.2,
+        "consensus_pct": 2.9,
+        "surprise_z": 1.8
+      },
+      "anomaly_flags": [
+        {
+          "name": "macro_surprise",
+          "magnitude": 1.8,
+          "severity": "investigate_if_persists"
+        }
+      ]
+    },
+    {
+      "block_id": "qual.regime.universal",
+      "audience": ["universal_broadcast", "correlation_regime_brief"],
+      "freshness_ts": "2026-05-02T14:30:00+00:00",
+      "calibration_state": "calibrated",
+      "bootstrap_reason": null,
+      "regime_context": null,
+      "payload": {
+        "regime_label": "vol_expansion",
+        "transition_state": "early-weak"
+      },
+      "anomaly_flags": []
+    }
+  ],
+  "sector_outputs": [
+    {
+      "audience": "sector_tech_semis",
+      "sector_label": "Tech / Semiconductors",
+      "text": "TECH-SEMIS DISTILLATION\nInvocation: 20260502T143000Z-e2e-adaptive-fixture\n\n[NVDA] volume_spike z=2.4 (investigate_now)\n",
+      "tickers": ["NVDA", "AVGO", "AMD"],
+      "block_ids": ["q1.volume_spike.nvda"],
+      "freshness_min": "2026-05-02T14:25:00+00:00"
+    },
+    {
+      "audience": "sector_financials",
+      "sector_label": "Financials",
+      "text": "FINANCIALS DISTILLATION\nInvocation: 20260502T143000Z-e2e-adaptive-fixture\n(no current-cycle indicator anomalies)\n",
+      "tickers": ["JPM", "KRE", "XLF"],
+      "block_ids": [],
+      "freshness_min": "2026-05-02T14:30:00+00:00"
+    },
+    {
+      "audience": "sector_energy",
+      "sector_label": "Energy",
+      "text": "ENERGY DISTILLATION\nInvocation: 20260502T143000Z-e2e-adaptive-fixture\n(no current-cycle indicator anomalies)\n",
+      "tickers": ["XOM", "CVX"],
+      "block_ids": [],
+      "freshness_min": "2026-05-02T14:30:00+00:00"
+    }
+  ],
+  "correlation_regime_brief_ref": "correlation_regime_brief.json",
+  "universal_regime_label_ref": "universal_regime_label.json"
+}
