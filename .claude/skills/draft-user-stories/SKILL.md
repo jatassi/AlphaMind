@@ -43,8 +43,6 @@ list_issues(team="AlphaMind", project="<Section name>", query="<Feature name>")
 
 If a parent Issue already exists with a matching title, you'll **update** it in Phase 7 rather than create. If multiple match, surface them and ask. If none match, you'll create one in Phase 7.
 
-Finally, check whether `docs/implementation/` exists in this repo. The project-tracker prose links to per-feature directories like `docs/implementation/<section>/<feature>/`, but on some branches that directory tree does not exist (story bodies live only in Linear). Run a single `ls docs/implementation/` to confirm. If the directory is absent, do NOT reference any path under it in the User Story template's Reading list or the parent Issue's "Stories directory" bullet — use Linear sub-issue identifiers (`ALP-XXX`) for sibling-story references instead. Note this finding once at the start of Phase 7 so you don't drift back into the path-based form mid-drafting.
-
 ### Phase 2 — Gather context
 
 Read the feature's design docs end-to-end. Then walk the up/downstream graph:
@@ -168,7 +166,6 @@ Parent Issue description template (Markdown — fill the bracketed sections; rem
 * [Design doc 1](docs/design/<path>.md)
 * [Design doc 2](docs/design/<path>.md) — [if multiple]
 * [Architecture cross-ref](docs/architecture/<path>.md) — [if applicable]
-* [Stories directory](docs/implementation/<path>/) — [the directory the orchestrator's status loop greps; OMIT this bullet when `docs/implementation/` does not exist on this branch — sub-issues are tracked solely in Linear in that case]
 
 ## Cross-feature dependencies
 
@@ -220,7 +217,7 @@ The following choices were settled at drafting time and baked into the relevant 
 
 [Feature-specific guidance for the agent that picks this up via `/orchestrate`. DO NOT restate `/orchestrate`'s built-in behavior — only what's specific to this feature. Examples:]
 
-* **Sibling work-tree gates:** before dispatching story <NN>, verify <sibling-feature>'s stories <NN> and <NN> are `done` via `rg "^status:" docs/implementation/<sibling-path>/[0-9]*.md`.
+* **Sibling work-tree gates:** before dispatching story <NN>, verify <sibling-feature>'s stories <NN> and <NN> are `Done` via `mcp__linear-server__list_issues(parentId="<sibling parent ID>", state="Done")` and confirm the expected sub-issue identifiers appear.
 * **Model selection nuances:** [if this feature has stories where the default Sonnet/Opus split needs adjustment — e.g., "story 02's YAML loader shape wants judgment; default to Opus despite mechanical surface".]
 * **Architectural invariants the orchestrator must enforce:** [purity rules, no-I/O constraints, no-magic-numbers constraints, types-must-not-duplicate-upstream constraints — anything that a subagent might violate that the orchestrator should catch on verification.]
 * **Cumulative-state primitives:** [if any stories produce state that other stories consume in non-obvious ways.]
@@ -264,7 +261,7 @@ The description body — Markdown, no frontmatter (status tracking lives in the 
 
 * `docs/design/<feature>.md` § <Section> — <what to look for>
 * `src/alphamind/<package>/<module>.py` — <what's already there>
-* `docs/implementation/<sibling>/<NN-name>.md` — <which interface this story aligns with> — OR cite the sibling sub-issue's Linear identifier (`ALP-XXX — <sibling story title>`) when `docs/implementation/` does not exist on this branch
+* `ALP-XXX` (<sibling story title>) — <which interface this story aligns with>
 * [...]
 
 ## Depends on

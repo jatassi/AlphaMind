@@ -4,7 +4,7 @@
 
 ## Ready for implementation
 
-Each entry is a feature ready to have its implementation requirements defined as user stories under `docs/implementation/`. Items are listed in rough dependency order — earlier items unblock later ones.
+Each entry is a feature ready to have its implementation requirements defined as user stories tracked in Linear. Items are listed in rough dependency order — earlier items unblock later ones.
 
 Status:
 
@@ -17,33 +17,33 @@ Cross-cutting policies and reference specs that constrain implementation but are
 
 ### Foundation
 
-- [x] **Configuration management** — _done_ — [design](design/configuration-management.md), [stories](implementation/foundation/configuration/)
+- [x] **Configuration management** — _done_ — [design](design/configuration-management.md)
 
 ### Data layer
 
-- [x] **Collector** — _done_ — [design](design/01-data-layer/collector/), [stories](implementation/01-data-layer/collector/)
-- [x] **Portfolio state** — _done_ — [design](design/01-data-layer/internal/portfolio-state.md), [stories](implementation/01-data-layer/portfolio-state/)
+- [x] **Collector** — _done_ — [design](design/01-data-layer/collector/)
+- [x] **Portfolio state** — _done_ — [design](design/01-data-layer/internal/portfolio-state.md)
 
 ### Distillation layer
 
-- [*] **Distillation** — _Partially done_ — [external](design/02-distillation-layer/external.md), [internal](design/02-distillation-layer/internal.md), [stories](implementation/02-distillation-layer/)
-- [*] **Threshold calibration framework** — _Partially done_ — [design](design/02-distillation-layer/threshold-calibration.md), stories 02 (config schema), 03 (state schema), 04 (bootstrap framework), 07 (Class B refresh), 09 (regime classification), 13 (verification incl. `verify_regime_transition.py`), 14a (audit trail + calibration log convention), 14b (no-magic-numbers audit), 15 (emergency-invocation review), 16 (flag-rate reporter), 17 (calibration-state snapshot + dashboard panel) under [implementation/02-distillation-layer/](implementation/02-distillation-layer/)
-- [x] **Replay harness** — _done_ — [design](design/02-distillation-layer/replay-harness.md), [stories](implementation/02-distillation-layer/replay-harness/)
+- [*] **Distillation** — _Partially done_ — [external](design/02-distillation-layer/external.md), [internal](design/02-distillation-layer/internal.md)
+- [*] **Threshold calibration framework** — _Partially done_ — [design](design/02-distillation-layer/threshold-calibration.md). Stories 02 (config schema), 03 (state schema), 04 (bootstrap framework), 07 (Class B refresh), 09 (regime classification), 13 (verification incl. `verify_regime_transition.py`), 14a (audit trail + calibration log convention), 14b (no-magic-numbers audit), 15 (emergency-invocation review), 16 (flag-rate reporter), 17 (calibration-state snapshot + dashboard panel) tracked in Linear.
+- [x] **Replay harness** — _done_ — [design](design/02-distillation-layer/replay-harness.md)
 
 ### Risk guardrails
 
-- [x] **Rules & limits** — _done_ — [design](design/06-risk-guardrails/rules-and-limits.md), [stories](implementation/06-risk-guardrails/rules-and-limits/)
-- [x] **Guardrail evaluation primitives** — _done_ — [design](design/06-risk-guardrails/guardrail-evaluation.md), [stories](implementation/06-risk-guardrails/guardrail-evaluation/)
-- [x] **State delivery** — _done_ — [design](design/06-risk-guardrails/state-delivery.md), [stories](implementation/06-risk-guardrails/state-delivery/)
-- [x] **Regime adaptation** — _done_ — [design](design/06-risk-guardrails/regime-adaptation.md), [stories](implementation/06-risk-guardrails/regime-adaptation/)
-- [x] **Breach behavior** — _done_ — [design](design/06-risk-guardrails/breach-behavior.md), [stories](implementation/06-risk-guardrails/breach-behavior/)
+- [x] **Rules & limits** — _done_ — [design](design/06-risk-guardrails/rules-and-limits.md)
+- [x] **Guardrail evaluation primitives** — _done_ — [design](design/06-risk-guardrails/guardrail-evaluation.md)
+- [x] **State delivery** — _done_ — [design](design/06-risk-guardrails/state-delivery.md)
+- [x] **Regime adaptation** — _done_ — [design](design/06-risk-guardrails/regime-adaptation.md)
+- [x] **Breach behavior** — _done_ — [design](design/06-risk-guardrails/breach-behavior.md)
 
 ### Analysis layer
 
 - [x] **Domain researchers** — _done_ — [tech-semis](design/03-analysis-layer/domain-researchers/tech-semis.md), [financials](design/03-analysis-layer/domain-researchers/financials.md), [energy](design/03-analysis-layer/domain-researchers/energy.md)
 - [x] **Qualitative research** — _done_ — [design](design/03-analysis-layer/qualitative-research.md)
 - [ ] **Adaptive research** — _stories drafted_ — [design](design/03-analysis-layer/adaptive-research.md)
-- [ ] **Synthesizer** — _stories drafted_ — [design](design/03-analysis-layer/synthesizer.md), [stories](implementation/03-analysis-layer/synthesizer/)
+- [ ] **Synthesizer** — _stories drafted_ — [design](design/03-analysis-layer/synthesizer.md)
 
 ### Decision layer
 
@@ -55,7 +55,7 @@ Cross-cutting policies and reference specs that constrain implementation but are
 ### Execution layer
 
 - [ ] **Position & thesis model** — _requirements pending_ — [position model](design/05-execution-layer/position-model.md), [thesis model](design/05-execution-layer/thesis-model.md), [orders & brackets](design/05-execution-layer/orders-and-brackets.md)
-- [ ] **State persistence** — _requirements pending_ — [design](design/05-execution-layer/state-persistence.md). _Distillation-track stories blocked on this substrate (the SQL `invocations` and `activity_log` tables and a transactional invocation context):_ [`14a-config-change-emission`](implementation/02-distillation-layer/14a-config-change-emission.md), [`15-emergency-invocation-review-report`](implementation/02-distillation-layer/15-emergency-invocation-review-report.md), [`16-flag-rate-empirical-reporter`](implementation/02-distillation-layer/16-flag-rate-empirical-reporter.md). When the substrate ships, set the three stories to `not_started` and dispatch.
+- [ ] **State persistence** — _requirements pending_ — [design](design/05-execution-layer/state-persistence.md). _Distillation-track stories blocked on this substrate (the SQL `invocations` and `activity_log` tables and a transactional invocation context):_ `14a-config-change-emission`, `15-emergency-invocation-review-report`, `16-flag-rate-empirical-reporter`. When the substrate ships, set the three stories to `not_started` and dispatch.
 - [ ] **OMS commands** — _requirements pending_ — [design](design/05-execution-layer/oms-commands.md), [command schema](design/05-execution-layer/oms-command-schema.md), [engine envelope schema](design/05-execution-layer/engine-envelope-schema.md), [command IDs](design/oms-command-ids.md)
 - [ ] **Broker adapter** — _requirements pending_ — [design](design/05-execution-layer/broker-adapter.md), [venue configuration](design/05-execution-layer/venue-configuration.md)
 - [ ] **Guardrail enforcement layer** — _requirements pending_ — [design](design/05-execution-layer/architecture.md)
@@ -82,7 +82,7 @@ _Single-line spec edits, config additions, doc cross-references, or deferrals._
 
 #### Land analysis-layer prompts _(Configuration management)_
 
-- [x] Land production-quality prompts at `prompts/analysis/{tech_semis_researcher,financials_researcher,energy_researcher,qualitative_researcher,adaptive_researcher,synthesizer}.md` so the path-existence validator in story 03i (`docs/implementation/foundation/configuration/03i-agents-yaml-md`) can pass. Each prompt implements the design-doc contract for its agent — role, operating context, inputs, task, method, tool policy (where applicable), output contract, worked example, anti-pattern constraints — at the same readiness as the existing `prompts/decision/{analyst,strategist,pm}.md`. Side-effect cleanup: `portfolio_analyst` was identified as a hallucinated agent (no design doc; references traced to the initial commit only) and struck from `architecture/llm-integration.md`, `architecture/system-characterization.md`, `design/configuration-management.md`, `design/cost-and-rate-limit-modeling.md`, `design/feedback-loop.md`, `design/05-execution-layer/state-persistence.md`, and the `03i` / `04e` configuration stories. The strategist subsumes the role the phantom would have played. _Source: discovered while orchestrating the configuration-management implementation work tree on 2026-04-27; resolved 2026-04-27._
+- [x] Land production-quality prompts at `prompts/analysis/{tech_semis_researcher,financials_researcher,energy_researcher,qualitative_researcher,adaptive_researcher,synthesizer}.md` so the path-existence validator in story 03i (configuration management) can pass. Each prompt implements the design-doc contract for its agent — role, operating context, inputs, task, method, tool policy (where applicable), output contract, worked example, anti-pattern constraints — at the same readiness as the existing `prompts/decision/{analyst,strategist,pm}.md`. Side-effect cleanup: `portfolio_analyst` was identified as a hallucinated agent (no design doc; references traced to the initial commit only) and struck from `architecture/llm-integration.md`, `architecture/system-characterization.md`, `design/configuration-management.md`, `design/cost-and-rate-limit-modeling.md`, `design/feedback-loop.md`, `design/05-execution-layer/state-persistence.md`, and the `03i` / `04e` configuration stories. The strategist subsumes the role the phantom would have played. _Source: discovered while orchestrating the configuration-management implementation work tree on 2026-04-27; resolved 2026-04-27._
 
 ### Moderate
 
@@ -106,7 +106,7 @@ _Items whose work is gated on an external trigger (vendor activation, downstream
 
 #### Mapping coverage — deferred per-category schemas _(Data layer)_
 
-- [x] Q4 short selling and Q5 partial (earnings-estimate revisions) landed under the two-tier approach. Sources confirmed via POC: FINRA CDN (daily Reg SHO short volume, bi-weekly short interest) and iBorrowDesk's undocumented JSON endpoint (`/api/ticker/{TICKER}` — daily collector + on-demand single-ticker refresh, paced ≥5s to avoid the observed HTTP 444 rate-limit block). Storage tables `short_interest_snapshots`, `short_volume_daily`, `borrow_cost_daily`, `borrow_cost_intraday`, and `earnings_estimate_revisions` documented in [storage.md](design/01-data-layer/collector/storage.md); providers `finra` and `iborrowdesk` registered in [`data_sources.yaml`](../config/data_sources.yaml) (corrects the prior `q4_short_selling.primary: sec_edgar` misconfiguration); collector cron entries added to [`collector_schedule.yaml`](../config/collector_schedule.yaml); module skeletons listed in [data-sources.md § Module layout](design/01-data-layer/collector/data-sources.md). Implementation work split into user stories `05k-finra-vendor-adapter`, `05l-iborrowdesk-vendor-adapter`, `05m-finnhub-estimate-revisions` under [`docs/implementation/01-data-layer/collector/`](implementation/01-data-layer/collector/). The remaining five deferred categories convert to forward-trigger entries below; each lands when its consumer materializes per the storage doc's deferral reasons.
+- [x] Q4 short selling and Q5 partial (earnings-estimate revisions) landed under the two-tier approach. Sources confirmed via POC: FINRA CDN (daily Reg SHO short volume, bi-weekly short interest) and iBorrowDesk's undocumented JSON endpoint (`/api/ticker/{TICKER}` — daily collector + on-demand single-ticker refresh, paced ≥5s to avoid the observed HTTP 444 rate-limit block). Storage tables `short_interest_snapshots`, `short_volume_daily`, `borrow_cost_daily`, `borrow_cost_intraday`, and `earnings_estimate_revisions` documented in [storage.md](design/01-data-layer/collector/storage.md); providers `finra` and `iborrowdesk` registered in [`data_sources.yaml`](../config/data_sources.yaml) (corrects the prior `q4_short_selling.primary: sec_edgar` misconfiguration); collector cron entries added to [`collector_schedule.yaml`](../config/collector_schedule.yaml); module skeletons listed in [data-sources.md § Module layout](design/01-data-layer/collector/data-sources.md). Implementation work split into user stories `05k-finra-vendor-adapter`, `05l-iborrowdesk-vendor-adapter`, `05m-finnhub-estimate-revisions` tracked in Linear. The remaining five deferred categories convert to forward-trigger entries below; each lands when its consumer materializes per the storage doc's deferral reasons.
 
 **Forward-trigger entries** _(promote when the trigger fires)_:
 
