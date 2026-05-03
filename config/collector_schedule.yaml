@@ -24,3 +24,5 @@ collectors:
   finra.short_volume:        { cron: "0 19 * * mon-fri" }   # after FINRA's 6pm ET publication
   finra.short_interest:      { cron: "0 10 * * tue" }       # weekly poll for new bi-weekly file (FINRA publishes Tuesdays)
   iborrowdesk.borrow_cost:   { cron: "0 6 * * mon-fri" }    # pre-market — captures yesterday's full intraday + EOD
+  news.clustering:           { cron: "0,30 9-16 * * mon-fri" }     # market hours — every 30 min so the digest sees fresh clusters
+  news.clustering_premarket: { cron: "0 4-8 * * mon-fri" }          # pre-market — hourly catch-up on overnight news
