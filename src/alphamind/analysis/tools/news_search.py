@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import cast
 
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from alphamind.analysis.tools._envelope import ToolEnvelope, ToolQuality, format_iso, parse_iso
@@ -139,7 +139,10 @@ def _search_news(session: Session, inp: NewsSearchInput) -> NewsSearchOutput:
     window_start_iso = format_iso(as_of - timedelta(hours=inp.lookback_hours))
     as_of_iso = format_iso(as_of)
 
-    article_rows = session.execute(
+    # Push both filters into SQL: a JOIN/IN against ``news_article_tickers``
+    # constrains by ticker, and a ``LIKE`` on ``lower(headline_text)``
+    # constrains by query. ``DISTINCT`` deduplicates the ticker join.
+    article_stmt = (
         select(
             NewsArticles.article_id,
             NewsArticles.headline_text,
@@ -150,11 +153,25 @@ def _search_news(session: Session, inp: NewsSearchInput) -> NewsSearchOutput:
             NewsArticles.url,
             NewsArticles.topic_tags,
             NewsArticles.body_path,
-        ).where(
+        )
+        .where(
             NewsArticles.published_at >= window_start_iso,
             NewsArticles.published_at <= as_of_iso,
         )
-    ).all()
+        .distinct()
+    )
+    if inp.query:
+        article_stmt = article_stmt.where(
+            func.lower(NewsArticles.headline_text).like(f"%{inp.query.lower()}%")
+        )
+    if inp.tickers:
+        ticker_uppers = tuple(t.upper() for t in inp.tickers)
+        article_stmt = article_stmt.join(
+            NewsArticleTickers,
+            NewsArticleTickers.article_id == NewsArticles.article_id,
+        ).where(NewsArticleTickers.ticker.in_(ticker_uppers))
+
+    article_rows = session.execute(article_stmt).all()
 
     if not article_rows:
         return NewsSearchOutput(articles=(), data_freshness=as_of, quality=ToolQuality.UNAVAILABLE)
@@ -170,17 +187,10 @@ def _search_news(session: Session, inp: NewsSearchInput) -> NewsSearchOutput:
         tickers_by_article.setdefault(art_id, []).append(ticker)
 
     ticker_set = frozenset(t.upper() for t in inp.tickers)
-    query_lower = inp.query.lower()
 
     scored: list[tuple[float, datetime, NewsSearchArticle]] = []
     for row in article_rows:
         article_tickers = tuple(tickers_by_article.get(row.article_id, ()))
-
-        if ticker_set and not any(t.upper() in ticker_set for t in article_tickers):
-            continue
-        if query_lower and query_lower not in (row.headline_text or "").lower():
-            continue
-
         published_at = parse_iso(row.published_at)
         raw_tier = row.source_credibility_tier
         tier = raw_tier if raw_tier in _TIER_VALUES else _TIER_DEFAULT
