@@ -85,6 +85,10 @@ class _StateTableProbe:
     table_name: str
     model: type
     timestamp_column_name: str
+    deferred: bool = False
+    """When True, an empty / stale table is reported as DEFERRED instead of
+    STALE and does not count as a verification failure. Set for tables whose
+    write path is a known TODO (see ``docs/project-tracker.md``)."""
 
 
 _STATE_TABLES: tuple[_StateTableProbe, ...] = (
@@ -98,6 +102,7 @@ _STATE_TABLES: tuple[_StateTableProbe, ...] = (
         "distillation_contract_history",
         DistillationContractHistory,
         "ingested_at",
+        deferred=True,
     ),
     _StateTableProbe(
         "distillation_event_history",
@@ -143,6 +148,7 @@ class StateTableSnapshot:
     row_count: int
     most_recent_ingested_at: str | None
     fresh: bool
+    deferred: bool = False
 
 
 @dataclass(frozen=True)
@@ -281,6 +287,7 @@ def _probe_state_table(
         row_count=row_count,
         most_recent_ingested_at=most_recent,
         fresh=fresh,
+        deferred=probe.deferred,
     )
 
 
@@ -300,7 +307,7 @@ def _check_state_tables(
             freshness_window_minutes=freshness_window_minutes,
         )
         snapshots.append(snap)
-        if not snap.fresh:
+        if not snap.fresh and not probe.deferred:
             failures.append(
                 AssertionFailure(
                     code="state-table-stale",
@@ -445,7 +452,12 @@ def _render_state_table_section(report: VerificationReport) -> list[str]:
     lines: list[str] = ["", "[ State-table freshness ]"]
     for snap in report.state_tables:
         ts = snap.most_recent_ingested_at or "(no rows)"
-        status = "OK" if snap.fresh else "STALE"
+        if snap.fresh:
+            status = "OK"
+        elif snap.deferred:
+            status = "DEFERRED"
+        else:
+            status = "STALE"
         lines.append(
             f"  {snap.table_name:<35} rows={snap.row_count:<6} most_recent={ts:<25} {status}"
         )

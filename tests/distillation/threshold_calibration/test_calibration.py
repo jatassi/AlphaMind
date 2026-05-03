@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from alphamind.config.models.distillation import LeadLag, PredictionMarket
+from alphamind.config.models.distillation import LeadLag, LeadLagPair, PredictionMarket
 from alphamind.distillation.calibration import (
     CALIBRATION_STATE_VALUES,
     EXTENDED_HOURS_BOOTSTRAP_RATE,
@@ -701,6 +701,12 @@ class TestUniversePooledExtendedHoursConfirmationRate:
 @pytest.fixture()
 def lead_lag_config() -> LeadLag:
     return LeadLag(
+        pairs=(
+            LeadLagPair(key="credit_to_equity", lead="HYG", lag="SPY"),
+            LeadLagPair(key="semis_to_tech", lead="SOXX", lag="QQQ"),
+            LeadLagPair(key="financials_to_market", lead="XLF", lag="SPY"),
+            LeadLagPair(key="commodity_to_energy_equity", lead="USO", lag="XLE"),
+        ),
         lead_lag_funding_to_credit_max_days=3,
         lead_lag_credit_to_equity_max_days=3,
         lead_lag_semis_to_tech_max_days=2,

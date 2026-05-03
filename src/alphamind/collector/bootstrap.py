@@ -119,6 +119,15 @@ def _seed_asset_universe() -> int:
             "financials": "XLF",
             "energy": "XLE",
         }
+        # Maps assets.yaml sector key → distillation/analysis-layer
+        # ``sector_classification.domain_researcher`` value. Tech and semis
+        # share one researcher per the analysis-layer design.
+        _domain_researcher_map = {
+            "tech": "tech_semis",
+            "semis": "tech_semis",
+            "financials": "financials",
+            "energy": "energy",
+        }
 
         for sector_name, tickers in sectors.items():
             for ticker in tickers:
@@ -143,13 +152,30 @@ def _seed_asset_universe() -> int:
                             ticker=ticker,
                             asset_id=asset_id,
                             alphamind_sector=sector_name,
-                            domain_researcher="",
+                            domain_researcher=_domain_researcher_map.get(sector_name, ""),
                             sector_etf=_sector_etf_map.get(sector_name, ""),
                             classification_source="assets.yaml",
                             last_updated=now,
                         )
                     )
                     rows_written += 1
+                else:
+                    # Idempotent backfill: earlier bootstraps wrote
+                    # ``domain_researcher=""`` (the column was added without
+                    # a populated value). Refresh it from the current map so
+                    # re-running bootstrap repairs the gap without manual
+                    # SQL.
+                    classification = (
+                        sess.query(SectorClassification).filter_by(ticker=ticker).first()
+                    )
+                    desired_researcher = _domain_researcher_map.get(sector_name, "")
+                    if (
+                        classification is not None
+                        and classification.domain_researcher != desired_researcher
+                    ):
+                        classification.domain_researcher = desired_researcher
+                        classification.last_updated = now
+                        rows_written += 1
 
         # Benchmark tickers from benchmarks block
         benchmarks: dict[str, dict[str, str]] = assets.get("benchmarks", {})

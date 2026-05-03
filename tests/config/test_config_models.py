@@ -1215,6 +1215,12 @@ def _valid_distillation_raw() -> dict[str, Any]:
             "regime_skip_emergency_trigger": True,
         },
         "lead_lag": {
+            "pairs": [
+                {"key": "credit_to_equity", "lead": "HYG", "lag": "SPY"},
+                {"key": "semis_to_tech", "lead": "SOXX", "lag": "QQQ"},
+                {"key": "financials_to_market", "lead": "XLF", "lag": "SPY"},
+                {"key": "commodity_to_energy_equity", "lead": "USO", "lag": "XLE"},
+            ],
             "lead_lag_funding_to_credit_max_days": 3,
             "lead_lag_credit_to_equity_max_days": 3,
             "lead_lag_semis_to_tech_max_days": 2,
@@ -1306,6 +1312,49 @@ def test_distillation_rejects_zero_hours_window() -> None:
     raw = _valid_distillation_raw()
     raw["anomaly_detection"]["news_price_divergence_window_hours"] = 0
     with pytest.raises(ValidationError, match="news_price_divergence_window_hours"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_empty_lead_lag_pairs() -> None:
+    """Invariant: `lead_lag.pairs` must be non-empty."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["lead_lag"]["pairs"] = []
+    with pytest.raises(ValidationError, match="pairs"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_malformed_lead_lag_pair_ticker() -> None:
+    """Invariant: each ticker in `lead_lag.pairs` matches the ticker regex."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["lead_lag"]["pairs"] = [{"key": "x", "lead": "hyg", "lag": "SPY"}]  # lowercase ticker
+    with pytest.raises(ValidationError, match="pair ticker"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_malformed_lead_lag_pair_key() -> None:
+    """Invariant: each pair key matches snake_case regex."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["lead_lag"]["pairs"] = [{"key": "BadKey", "lead": "HYG", "lag": "SPY"}]
+    with pytest.raises(ValidationError, match="pair key"):
+        DistillationConfig.model_validate(raw)
+
+
+def test_distillation_rejects_duplicate_lead_lag_pair_keys() -> None:
+    """Invariant: pair keys must be unique."""
+    from alphamind.config.models import DistillationConfig
+
+    raw = _valid_distillation_raw()
+    raw["lead_lag"]["pairs"] = [
+        {"key": "dup", "lead": "HYG", "lag": "SPY"},
+        {"key": "dup", "lead": "USO", "lag": "XLE"},
+    ]
+    with pytest.raises(ValidationError, match="pair keys must be unique"):
         DistillationConfig.model_validate(raw)
 
 

@@ -38,6 +38,16 @@ regime_transition:
   regime_skip_emergency_trigger:             true
 
 lead_lag:
+  # Lead-lag pairs per external.md § 7f. Each pair carries a key (used to
+  # look up its per-pair max-days bound, e.g. credit_to_equity ->
+  # lead_lag_credit_to_equity_max_days) plus lead and lag tickers. Both
+  # tickers must resolve in asset_universe (sectors or benchmarks block of
+  # assets.yaml).
+  pairs:
+    - { key: credit_to_equity,           lead: HYG,  lag: SPY }
+    - { key: semis_to_tech,              lead: SOXX, lag: QQQ }
+    - { key: financials_to_market,       lead: XLF,  lag: SPY }
+    - { key: commodity_to_energy_equity, lead: USO,  lag: XLE }
   lead_lag_funding_to_credit_max_days:          3
   lead_lag_credit_to_equity_max_days:           3
   lead_lag_semis_to_tech_max_days:              2

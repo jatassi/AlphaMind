@@ -9,7 +9,9 @@ is the load-time gate — failure aborts the invocation per
 ``configuration-management.md`` § Validation.
 """
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+import re
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class AnomalyDetection(BaseModel):
@@ -95,15 +97,50 @@ class RegimeTransition(BaseModel):
     regime_skip_emergency_trigger: bool
 
 
+_TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.]*$")
+_PAIR_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+class LeadLagPair(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    lead: str
+    lag: str
+
+    @field_validator("key")
+    @classmethod
+    def key_well_formed(cls, v: str) -> str:
+        if not _PAIR_KEY_RE.match(v):
+            raise ValueError(f"pair key {v!r} must match {_PAIR_KEY_RE.pattern}")
+        return v
+
+    @field_validator("lead", "lag")
+    @classmethod
+    def ticker_well_formed(cls, v: str) -> str:
+        if not _TICKER_RE.match(v):
+            raise ValueError(f"pair ticker {v!r} must match {_TICKER_RE.pattern}")
+        return v
+
+
 class LeadLag(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    pairs: tuple[LeadLagPair, ...] = Field(min_length=1)
     lead_lag_funding_to_credit_max_days: int = Field(ge=1)
     lead_lag_credit_to_equity_max_days: int = Field(ge=1)
     lead_lag_semis_to_tech_max_days: int = Field(ge=1)
     lead_lag_financials_to_market_max_days: int = Field(ge=1)
     lead_lag_commodity_to_energy_equity_max_days: int = Field(ge=1)
     lead_lag_overdue_lead_sigma: float = Field(ge=0)
+
+    @field_validator("pairs")
+    @classmethod
+    def pair_keys_unique(cls, v: tuple[LeadLagPair, ...]) -> tuple[LeadLagPair, ...]:
+        keys = [p.key for p in v]
+        if len(set(keys)) != len(keys):
+            raise ValueError(f"pair keys must be unique; got {keys}")
+        return v
 
 
 class NarrativeLag(BaseModel):

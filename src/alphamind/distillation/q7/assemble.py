@@ -40,18 +40,6 @@ _CROSS_SECTOR_ETFS: tuple[str, ...] = ("XLK", "SMH", "XLF", "XLE")
 _RISK_PROXY_ETFS: tuple[str, ...] = ("IWM", "SPY")
 """Risk-appetite proxies (small-cap vs. broad market)."""
 
-# Lead-lag pair scope per the orchestrator's ``_LEAD_LAG_PAIR_SCOPE``;
-# pinned here so the q7 entry point owns the (lead, lag) pair-key wiring
-# rather than relying on the orchestrator to thread it in. Each tuple is
-# ``(pair_key, lead_ticker, lag_ticker)``; the per-pair ``_max_days``
-# bound is read out of the loaded :class:`DistillationConfig`.
-_LEAD_LAG_PAIR_SCOPE: tuple[tuple[str, str, str], ...] = (
-    ("credit_to_equity", "HYG", "SPY"),
-    ("semis_to_tech", "SOXX", "QQQ"),
-    ("financials_to_market", "XLF", "SPY"),
-    ("commodity_to_energy_equity", "USO", "XLE"),
-)
-
 
 def _resolve_universe_tickers(session: Session) -> list[str]:
     """Return every ticker in ``asset_universe`` ascending.
@@ -221,12 +209,12 @@ def assemble_q7_blocks(
     }
     pairs = tuple(
         LeadLagPair(
-            pair_key=pair_key,
-            lead_ticker=lead,
-            lag_ticker=lag,
-            max_days=pair_max_days[pair_key],
+            pair_key=p.key,
+            lead_ticker=p.lead,
+            lag_ticker=p.lag,
+            max_days=pair_max_days[p.key],
         )
-        for pair_key, lead, lag in _LEAD_LAG_PAIR_SCOPE
+        for p in config.lead_lag.pairs
     )
     blocks.extend(
         compute_lead_lag(

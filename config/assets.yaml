@@ -99,3 +99,5 @@ benchmarks:
   TLT:  { role: intermarket,  description: "20+ Year Treasury Bond ETF" }
   IEF:  { role: intermarket,  description: "7-10 Year Treasury Bond ETF" }
   GLD:  { role: intermarket,  description: "SPDR Gold Shares" }
+  HYG:  { role: intermarket,  description: "iShares iBoxx High Yield Corporate Bond ETF" }
+  USO:  { role: intermarket,  description: "United States Oil Fund" }

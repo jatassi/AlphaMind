@@ -31,6 +31,7 @@ from alphamind.config.models.distillation import (
     AnomalyDetection,
     DistillationConfig,
     LeadLag,
+    LeadLagPair,
     NarrativeLag,
     PersistenceWindows,
     PredictionMarket,
@@ -114,6 +115,12 @@ def _build_distillation_config() -> DistillationConfig:
             regime_skip_emergency_trigger=True,
         ),
         lead_lag=LeadLag(
+            pairs=(
+                LeadLagPair(key="credit_to_equity", lead="HYG", lag="SPY"),
+                LeadLagPair(key="semis_to_tech", lead="SOXX", lag="QQQ"),
+                LeadLagPair(key="financials_to_market", lead="XLF", lag="SPY"),
+                LeadLagPair(key="commodity_to_energy_equity", lead="USO", lag="XLE"),
+            ),
             lead_lag_funding_to_credit_max_days=3,
             lead_lag_credit_to_equity_max_days=3,
             lead_lag_semis_to_tech_max_days=2,

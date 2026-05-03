@@ -19,3 +19,6 @@ docs/design/01-data-layer/api-keys.md
 data/
 logs/
 opencode.json
+
+# Verification-run diagnostic archives (LLM-call dumps, prompts, responses)
+.archive/

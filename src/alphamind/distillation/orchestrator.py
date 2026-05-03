@@ -187,22 +187,6 @@ def _invocation_archive_dir(*, archive_root: Path, as_of: datetime, invocation_i
 
 
 # ---------------------------------------------------------------------------
-# Lead-lag pair scope (Phase 1.2)
-# ---------------------------------------------------------------------------
-
-
-_LEAD_LAG_PAIR_SCOPE: tuple[tuple[str, str], ...] = (
-    # Lead-lag relationships per external.md § quant 7d. Keyed by
-    # the (lead_ticker, lag_ticker) tuple convention used by
-    # refresh_pair_lag and the persisted distillation_pair_lag rows.
-    ("HYG", "SPY"),  # credit -> equity
-    ("SOXX", "QQQ"),  # semis -> tech
-    ("XLF", "SPY"),  # financials -> market
-    ("USO", "XLE"),  # commodity -> energy equity
-)
-
-
-# ---------------------------------------------------------------------------
 # Phase 1 — Class B refresh
 # ---------------------------------------------------------------------------
 
@@ -250,7 +234,7 @@ def _refresh_class_b_state(
     rows += len(
         refresh_pair_lag(
             session,
-            pair_scope=_LEAD_LAG_PAIR_SCOPE,
+            pair_scope=tuple((p.lead, p.lag) for p in config.lead_lag.pairs),
             as_of=as_of_iso,
             window_days=pw.correlation_long_days,
             min_events=config.anomaly_detection.earnings_revision_cluster_count,
