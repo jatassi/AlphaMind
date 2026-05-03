@@ -43,6 +43,8 @@ list_issues(team="AlphaMind", project="<Section name>", query="<Feature name>")
 
 If a parent Issue already exists with a matching title, you'll **update** it in Phase 7 rather than create. If multiple match, surface them and ask. If none match, you'll create one in Phase 7.
 
+Finally, check whether `docs/implementation/` exists in this repo. The project-tracker prose links to per-feature directories like `docs/implementation/<section>/<feature>/`, but on some branches that directory tree does not exist (story bodies live only in Linear). Run a single `ls docs/implementation/` to confirm. If the directory is absent, do NOT reference any path under it in the User Story template's Reading list or the parent Issue's "Stories directory" bullet — use Linear sub-issue identifiers (`ALP-XXX`) for sibling-story references instead. Note this finding once at the start of Phase 7 so you don't drift back into the path-based form mid-drafting.
+
 ### Phase 2 — Gather context
 
 Read the feature's design docs end-to-end. Then walk the up/downstream graph:
@@ -166,7 +168,7 @@ Parent Issue description template (Markdown — fill the bracketed sections; rem
 * [Design doc 1](docs/design/<path>.md)
 * [Design doc 2](docs/design/<path>.md) — [if multiple]
 * [Architecture cross-ref](docs/architecture/<path>.md) — [if applicable]
-* [Stories directory](docs/implementation/<path>/) — [the directory the orchestrator's status loop greps]
+* [Stories directory](docs/implementation/<path>/) — [the directory the orchestrator's status loop greps; OMIT this bullet when `docs/implementation/` does not exist on this branch — sub-issues are tracked solely in Linear in that case]
 
 ## Cross-feature dependencies
 
@@ -206,6 +208,13 @@ The following choices were settled at drafting time and baked into the relevant 
 ```
 
 [ASCII graph showing the wave structure. Use the same conventions as the breach-behavior ORCHESTRATOR.md.]
+
+**ASCII-graph rendering constraints (Linear).** Linear renders ASCII graphs as plain code blocks, but the code-block container can wrap on narrower viewports. Keep the graph readable by:
+
+- Capping line width at ~60 characters before any trailing arrow / box-drawing character. Pad short lines with spaces so column-anchored arrows stay aligned.
+- Avoiding right-edge box-drawing characters (`│`, `┐`, `┘`) past column 60 — they wrap and the visual mapping breaks.
+- For wide work trees (5+ parallel stories at one position), prefer multi-line stanzas with `(parallel: ...)` annotations on a separate line below rather than a single very wide horizontal fan-out.
+- Re-fetch the parent Issue after saving and skim the rendered graph; if any line wrapped, narrow the graph and re-save.
 
 ## Notes for the orchestrator
 
@@ -255,7 +264,7 @@ The description body — Markdown, no frontmatter (status tracking lives in the 
 
 * `docs/design/<feature>.md` § <Section> — <what to look for>
 * `src/alphamind/<package>/<module>.py` — <what's already there>
-* `docs/implementation/<sibling>/<NN-name>.md` — <which interface this story aligns with>
+* `docs/implementation/<sibling>/<NN-name>.md` — <which interface this story aligns with> — OR cite the sibling sub-issue's Linear identifier (`ALP-XXX — <sibling story title>`) when `docs/implementation/` does not exist on this branch
 * [...]
 
 ## Depends on

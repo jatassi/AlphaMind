@@ -42,7 +42,7 @@ Cross-cutting policies and reference specs that constrain implementation but are
 
 - [x] **Domain researchers** — _done_ — [tech-semis](design/03-analysis-layer/domain-researchers/tech-semis.md), [financials](design/03-analysis-layer/domain-researchers/financials.md), [energy](design/03-analysis-layer/domain-researchers/energy.md)
 - [x] **Qualitative research** — _done_ — [design](design/03-analysis-layer/qualitative-research.md)
-- [ ] **Adaptive research** — _requirements pending_ — [design](design/03-analysis-layer/adaptive-research.md)
+- [ ] **Adaptive research** — _stories drafted_ — [design](design/03-analysis-layer/adaptive-research.md)
 - [ ] **Synthesizer** — _stories drafted_ — [design](design/03-analysis-layer/synthesizer.md), [stories](implementation/03-analysis-layer/synthesizer/)
 
 ### Decision layer
@@ -95,6 +95,10 @@ _Schema additions, well-scoped multi-file edits, or single-component contributio
 ### Substantial
 
 _New infrastructure, cross-cutting consolidations, or UI surfaces._
+
+#### Analysis-layer pipeline composition wiring _(Analysis layer)_
+
+- [ ] Compose the analysis-layer agents into a single per-invocation pipeline runner: `run_external_distillation` → three `run_<sector>_researcher` calls (parallel) + `run_qualitative_researcher` (parallel) → `run_adaptive_researcher` (consumes upstream typed briefs) → `run_synthesizer`. Each agent's runner returns a typed `*Result` value; the composition runner threads `DistillationOutputs`, `tuple[SectorBrief, ...]`, `QualitativeBrief`, `CorrelationRegimeBrief`, and `AdaptiveBrief` through to the synthesizer's input bundle and out to the decision-layer agents. Per-trigger budget overrides from `config/run_types/<trigger>.yaml` apply to every agent's `agent_config` lookup. The adaptive-researcher work tree (Adaptive research, _stories drafted_) and the synthesizer work tree (Synthesizer, _stories drafted_) each ship with fixture-based E2E verification but defer live composition to this story. _Source: surfaced by the adaptive-research drafting on 2026-05-02 (parent issue ALP-112 § Pre-resolved configuration decisions § H); the synthesizer work tree's own E2E expectations land at draft time of that work tree's stories._
 
 ### Deferred
 
