@@ -132,17 +132,17 @@ class TestEnums:
         assert TimeHorizon.DEVELOPING.value == "developing"
 
     def test_time_horizon_display_map_exists(self) -> None:
-        from alphamind.analysis.qualitative_research.models import _TIME_HORIZON_DISPLAY
+        from alphamind.analysis.qualitative_research.models import TIME_HORIZON_DISPLAY
 
-        assert isinstance(_TIME_HORIZON_DISPLAY, dict)
-        assert set(_TIME_HORIZON_DISPLAY.keys()) == set(TimeHorizon)
+        assert isinstance(TIME_HORIZON_DISPLAY, dict)
+        assert set(TIME_HORIZON_DISPLAY.keys()) == set(TimeHorizon)
 
     def test_time_horizon_display_contains_suffixes(self) -> None:
-        from alphamind.analysis.qualitative_research.models import _TIME_HORIZON_DISPLAY
+        from alphamind.analysis.qualitative_research.models import TIME_HORIZON_DISPLAY
 
-        assert "(<24h)" in _TIME_HORIZON_DISPLAY[TimeHorizon.IMMEDIATE]
-        assert "(24-72h)" in _TIME_HORIZON_DISPLAY[TimeHorizon.NEAR_TERM]
-        assert "(>72h)" in _TIME_HORIZON_DISPLAY[TimeHorizon.DEVELOPING]
+        assert "(<24h)" in TIME_HORIZON_DISPLAY[TimeHorizon.IMMEDIATE]
+        assert "(24-72h)" in TIME_HORIZON_DISPLAY[TimeHorizon.NEAR_TERM]
+        assert "(>72h)" in TIME_HORIZON_DISPLAY[TimeHorizon.DEVELOPING]
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +389,6 @@ class TestDunderAll:
             "SignalQuality",
             "ThreadDirection",
             "TimeHorizon",
-            "_TIME_HORIZON_DISPLAY",
+            "TIME_HORIZON_DISPLAY",
         }
         assert expected.issubset(set(m.__all__))

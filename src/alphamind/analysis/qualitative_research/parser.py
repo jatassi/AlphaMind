@@ -52,7 +52,7 @@ from __future__ import annotations
 import re
 
 from alphamind.analysis.qualitative_research.models import (
-    _TIME_HORIZON_DISPLAY,
+    TIME_HORIZON_DISPLAY,
     CatalystWatch,
     EvidenceLine,
     NarrativeThread,
@@ -69,17 +69,17 @@ __all__ = ["ParseError", "parse_qualitative_brief"]
 # Compiled patterns
 # ---------------------------------------------------------------------------
 
-_FENCE_OPEN_RE = re.compile(r"^```(?:json|text|markdown)?\s*$")
+_FENCE_OPEN_RE = re.compile(r"^```\w*\s*$")
 _FENCE_CLOSE_RE = re.compile(r"^```\s*$")
 _DEGRADED_REASON_RE = re.compile(r"^\s*\[If DEGRADED:\s*reason\s*[—\-]\s*(.+?)\]\s*$")
 _THREAD_HEADER_RE = re.compile(r"^\[QR-(\d+)\]\s+(.+)$")
 _CATALYST_HEADER_RE = re.compile(r"^\[QR-CW-(\d+)\]\s+(\S+?):\s+(.+?)\s+in\s+~?(\d+)h\s*$")
 
 # Reverse-lookup from display string to TimeHorizon.
-# Keys are the canonical display strings from _TIME_HORIZON_DISPLAY (hyphens only).
+# Keys are the canonical display strings from TIME_HORIZON_DISPLAY (hyphens only).
 # _parse_time_horizon_field normalises em-dashes to hyphens before lookup.
 _DISPLAY_TO_HORIZON: dict[str, TimeHorizon] = {
-    display: horizon for horizon, display in _TIME_HORIZON_DISPLAY.items()
+    display: horizon for horizon, display in TIME_HORIZON_DISPLAY.items()
 }
 
 _SECTION_MARKERS = [

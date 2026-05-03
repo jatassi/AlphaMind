@@ -7,7 +7,7 @@ Public names
 ------------
 - :class:`ThreadDirection` — bullish/bearish/mixed/uncertain
 - :class:`TimeHorizon` — immediate/near_term/developing
-- :data:`_TIME_HORIZON_DISPLAY` — parser-facing display string mapping
+- :data:`TIME_HORIZON_DISPLAY` — parser-facing display string mapping
 - :class:`EvidenceLine` — single evidence entry within a narrative thread
 - :class:`NarrativeThread` — coherent story drawing from multiple sources
 - :class:`CatalystWatch` — per-thesis upcoming catalyst entry
@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field, model_validator
 from alphamind.analysis._shared import SignalQuality
 
 __all__ = [
-    "_TIME_HORIZON_DISPLAY",
+    "TIME_HORIZON_DISPLAY",
     "CatalystWatch",
     "EvidenceLine",
     "NarrativeThread",
@@ -62,7 +62,7 @@ class TimeHorizon(enum.StrEnum):
 #: Display-string mapping for parser/validator use.
 #: Keys are :class:`TimeHorizon` members; values include the parenthetical
 #: suffix the parser recognises (``(<24h)``, ``(24-72h)``, ``(>72h)``).
-_TIME_HORIZON_DISPLAY: dict[TimeHorizon, str] = {
+TIME_HORIZON_DISPLAY: dict[TimeHorizon, str] = {
     TimeHorizon.IMMEDIATE: "immediate (<24h)",
     TimeHorizon.NEAR_TERM: "near-term (24-72h)",
     TimeHorizon.DEVELOPING: "developing (>72h)",
