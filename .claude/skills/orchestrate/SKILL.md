@@ -268,6 +268,36 @@ git branch -d <feature-branch>          # safe; the merge into main makes -d non
 git remote prune origin
 ```
 
+Then dispose of stale subagent worktrees the run accumulated. Worktrees under `.claude/worktrees/agent-*` are gitlinks (mode 160000) with their own working trees on disk. After the PR merges, three patterns of noise commonly remain inside them and surface as "modified content" in main's `git status`:
+
+* **Formatter churn.** Running `uv run ruff format .` from the main repo's CWD recurses into worktree subdirectories (they are physical Python-containing trees regardless of the gitlink), reformatting whichever copy of each file the worktree's branch HEAD held. Multiple worktrees often show the *same* small set of files modified with whitespace-only diffs (multi-line strings collapsed, signatures rewrapped). These are pure cosmetic noise.
+* **Stale post-merge state.** A worktree whose work already landed via this PR (or an earlier one) still carries the working-tree edits the subagent made, because the worktree's branch HEAD is older than main and the changes were merged into main rather than back into the worktree branch. The diff against the worktree's HEAD shows the now-landed edits as "uncommitted." Compare to main: if the file content is byte-identical, it's stale.
+* **Subagent-leak noise.** Per `feedback_worktree_leak_compensation`, subagents occasionally write to the wrong tree. If the dispatch prompts pinned operations to `$WORKTREE_ROOT` correctly, this should be rare, but worth scanning.
+
+Triage and clean:
+
+```bash
+# List worktrees with dirty content.
+git status --porcelain .claude/worktrees/ | grep -E '^.[Mm?]'
+```
+
+For each dirty worktree, inspect the diff once (`git -C .claude/worktrees/agent-XXX diff --stat HEAD` and `git -C .claude/worktrees/agent-XXX status --short`). Classify:
+
+* **Whitespace-only diffs** (confirmed via `git diff --shortstat` showing only insertion/deletion counts and no `(+)`/`(-)` net add when ignoring whitespace) — formatter churn. Discard.
+* **Diffs whose content is byte-identical to current `main`** (verify via `diff -u <main-path> <worktree-path>` returning empty) — stale post-merge state. Discard.
+* **Diffs that represent real divergence from `main`** — pause. The work belongs somewhere; surface to the operator and decide whether to cherry-pick onto a follow-up branch or discard. Do not auto-clean these.
+
+After triage, dispose of the noise-only worktrees:
+
+```bash
+for d in <list of confirmed-noise worktree paths>; do
+  git -C "$d" restore .
+  git -C "$d" clean -fd
+done
+```
+
+This discards uncommitted edits and untracked files inside the worktree without changing the recorded gitlink SHA in main's index — the worktree's identity is preserved; only the dirty inner state is removed.
+
 Verify clean state: `git status` shows nothing pending.
 
 ### 6. PushNotification
