@@ -21,8 +21,18 @@ a numeric SLA. ``≥ 80%`` calibrated for high-frequency baselines and
 "calibrated mostly works / event-driven is mostly bootstrapping"
 checks the spec asks for.
 
+Cold-start exemption: on a freshly-migrated DB the first orchestrator
+invocation tags every per-ticker baseline ``bootstrap`` (the rolling
+window has not filled yet), so the high-frequency lower bound trivially
+fails on day one. When every row carries the cold-start signature —
+all ``bootstrap``, every ``n_observations < window_days``, and the
+ticker count covers the configured universe — the verifier reports the
+band as ``DEFERRED`` instead of failing, mirroring the ``deferred=True``
+state-table pattern in ``verify_distillation``.
+
 Exit codes:
-- 0 — every kind's distribution is within its expected band
+- 0 — every kind's distribution is within its expected band, or any
+  out-of-band high-frequency band is in the cold-start state
 - 1 — at least one kind is out of band, or the table is empty
 """
 
@@ -36,12 +46,13 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from alphamind.distillation.calibration import CalibrationState
 from alphamind.persistence.models import (
     DistillationPairLag,
     DistillationTickerBaseline,
 )
 from alphamind.persistence.session import make_engine, make_session_factory
-from alphamind.scripts._common import AssertionFailure
+from alphamind.scripts._common import AssertionFailure, load_universe_scope
 
 # ---------------------------------------------------------------------------
 # Expected calibrated-share bands per kind
@@ -137,7 +148,12 @@ class KindDistribution:
     """Per-kind calibration distribution snapshot.
 
     ``calibrated_share`` is ``calibrated / total`` in [0, 1]. ``None``
-    when ``total == 0`` (empty table).
+    when ``total == 0`` (empty table). ``cold_start_deferred`` is True
+    when the band would otherwise have failed but every row carries the
+    fresh-DB cold-start signature (all bootstrap, all underaged, full
+    universe coverage); the failure is reported as DEFERRED instead, in
+    the same spirit as ``verify_distillation``'s ``deferred=True``
+    state-table probes.
     """
 
     kind: str
@@ -149,6 +165,7 @@ class KindDistribution:
     expected_calibrated_share_lower: float | None
     expected_calibrated_share_upper: float | None
     in_band: bool
+    cold_start_deferred: bool = False
 
     @property
     def calibrated_share(self) -> float:
@@ -223,7 +240,55 @@ def _band_holds(
     return not (below_lower or above_upper)
 
 
-def compute_calibration_mix_report(*, session: Session) -> CalibrationMixReport:
+def _cold_start_signature_holds(
+    session: Session,
+    *,
+    band: _KindBand,
+    ticker_universe_size: int | None,
+) -> bool:
+    """Return True when ``band``'s rows match the fresh-DB cold-start signature.
+
+    Three conditions, all required:
+
+    1. Every row's ``calibration_state`` is ``bootstrap``.
+    2. Every row's ``n_observations`` is strictly less than ``window_days``
+       (the rolling window has not yet filled).
+    3. When ``ticker_universe_size`` is known, the per-ticker row count
+       matches it — the orchestrator processed the full universe (otherwise
+       a stale partial state could be misread as cold-start).
+
+    Only meaningful for ticker-baseline kinds with a ``calibrated_share_lower``
+    band. ``sentiment`` and ``lead_lag`` only carry an upper bound, so a
+    100%-bootstrap distribution already passes their band; the deferred-on-
+    cold-start path doesn't apply and the function returns False early.
+    """
+    if band.table_name != "distillation_ticker_baseline" or band.calibrated_share_lower is None:
+        return False
+    rows = session.execute(
+        select(
+            DistillationTickerBaseline.ticker,
+            DistillationTickerBaseline.calibration_state,
+            DistillationTickerBaseline.n_observations,
+            DistillationTickerBaseline.window_days,
+        ).where(DistillationTickerBaseline.baseline_kind == band.kind)
+    ).all()
+    if not rows:
+        return False
+    bootstrap_value = CalibrationState.BOOTSTRAP.value
+    for _ticker, state, n_obs, win_days in rows:
+        if state != bootstrap_value or n_obs >= win_days:
+            return False
+    return (
+        ticker_universe_size is None
+        or len({ticker for ticker, _, _, _ in rows}) >= ticker_universe_size
+    )
+
+
+def compute_calibration_mix_report(
+    *,
+    session: Session,
+    ticker_universe_size: int | None = None,
+) -> CalibrationMixReport:
     """Build the per-kind distribution and the aggregate pass/fail report."""
     failures: list[AssertionFailure] = []
     distributions: list[KindDistribution] = []
@@ -237,6 +302,13 @@ def compute_calibration_mix_report(*, session: Session) -> CalibrationMixReport:
             lower=band.calibrated_share_lower,
             upper=band.calibrated_share_upper,
         )
+        cold_start_deferred = (
+            total > 0
+            and not in_band
+            and _cold_start_signature_holds(
+                session, band=band, ticker_universe_size=ticker_universe_size
+            )
+        )
         distributions.append(
             KindDistribution(
                 kind=band.kind,
@@ -248,9 +320,10 @@ def compute_calibration_mix_report(*, session: Session) -> CalibrationMixReport:
                 expected_calibrated_share_lower=band.calibrated_share_lower,
                 expected_calibrated_share_upper=band.calibrated_share_upper,
                 in_band=in_band,
+                cold_start_deferred=cold_start_deferred,
             )
         )
-        if total > 0 and not in_band:
+        if total > 0 and not in_band and not cold_start_deferred:
             failures.append(
                 AssertionFailure(
                     code="calibration-distribution-out-of-band",
@@ -303,7 +376,14 @@ def format_calibration_mix_report(report: CalibrationMixReport) -> str:
         upper = dist.expected_calibrated_share_upper
         band_lower = "_" if lower is None else f"{lower * 100:.0f}%"
         band_upper = "_" if upper is None else f"{upper * 100:.0f}%"
-        status = "OK" if dist.in_band else ("EMPTY" if dist.total == 0 else "OUT")
+        if dist.in_band:
+            status = "OK"
+        elif dist.total == 0:
+            status = "EMPTY"
+        elif dist.cold_start_deferred:
+            status = "DEFERRED"
+        else:
+            status = "OUT"
         lines.append(
             f"  {dist.kind:<12} {dist.total:>6} {dist.calibrated:>11} "
             f"{dist.bootstrap:>10} {dist.unavailable:>12} {share_str}  "
@@ -348,10 +428,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    universe = load_universe_scope()
+
     engine = make_engine(args.db_path)
     factory = make_session_factory(engine)
     with factory() as session:
-        report = compute_calibration_mix_report(session=session)
+        report = compute_calibration_mix_report(session=session, ticker_universe_size=len(universe))
     print(format_calibration_mix_report(report))
     return 0 if report.passed else 1
 
