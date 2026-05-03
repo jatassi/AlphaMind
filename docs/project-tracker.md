@@ -17,59 +17,59 @@ Cross-cutting policies and reference specs that constrain implementation but are
 
 ### Foundation
 
-- [x] **Configuration management** — _done_ — [design](design/configuration-management.md)
+- [x] **Configuration management** ([ALP-8](https://linear.app/alphamind-jatassi/issue/ALP-8)) — _done_ — [design](design/configuration-management.md)
 
 ### Data layer
 
-- [x] **Collector** — _done_ — [design](design/01-data-layer/collector/)
-- [x] **Portfolio state** — _done_ — [design](design/01-data-layer/internal/portfolio-state.md)
+- [x] **Collector** ([ALP-30](https://linear.app/alphamind-jatassi/issue/ALP-30)) — _done_ — [design](design/01-data-layer/collector/)
+- [x] **Portfolio state** ([ALP-53](https://linear.app/alphamind-jatassi/issue/ALP-53)) — _done_ — [design](design/01-data-layer/internal/portfolio-state.md)
 
 ### Distillation layer
 
-- [*] **Distillation** — _Partially done_ — [external](design/02-distillation-layer/external.md), [internal](design/02-distillation-layer/internal.md)
-- [*] **Threshold calibration framework** — _Partially done_ — [design](design/02-distillation-layer/threshold-calibration.md). Stories 02 (config schema), 03 (state schema), 04 (bootstrap framework), 07 (Class B refresh), 09 (regime classification), 13 (verification incl. `verify_regime_transition.py`), 14a (audit trail + calibration log convention), 14b (no-magic-numbers audit), 15 (emergency-invocation review), 16 (flag-rate reporter), 17 (calibration-state snapshot + dashboard panel) tracked in Linear.
-- [x] **Replay harness** — _done_ — [design](design/02-distillation-layer/replay-harness.md)
+- [*] **Distillation** ([ALP-74](https://linear.app/alphamind-jatassi/issue/ALP-74)) — _Partially done_ — [external](design/02-distillation-layer/external.md), [internal](design/02-distillation-layer/internal.md)
+- [*] **Threshold calibration framework** ([ALP-76](https://linear.app/alphamind-jatassi/issue/ALP-76)) — _Partially done_ — [design](design/02-distillation-layer/threshold-calibration.md). Stories 02 (config schema), 03 (state schema), 04 (bootstrap framework), 07 (Class B refresh), 09 (regime classification), 13 (verification incl. `verify_regime_transition.py`), 14a (audit trail + calibration log convention), 14b (no-magic-numbers audit), 15 (emergency-invocation review), 16 (flag-rate reporter), 17 (calibration-state snapshot + dashboard panel) tracked in Linear.
+- [x] **Replay harness** ([ALP-75](https://linear.app/alphamind-jatassi/issue/ALP-75)) — _done_ — [design](design/02-distillation-layer/replay-harness.md)
 
 ### Risk guardrails
 
-- [x] **Rules & limits** — _done_ — [design](design/06-risk-guardrails/rules-and-limits.md)
-- [x] **Guardrail evaluation primitives** — _done_ — [design](design/06-risk-guardrails/guardrail-evaluation.md)
-- [x] **State delivery** — _done_ — [design](design/06-risk-guardrails/state-delivery.md)
-- [x] **Regime adaptation** — _done_ — [design](design/06-risk-guardrails/regime-adaptation.md)
-- [x] **Breach behavior** — _done_ — [design](design/06-risk-guardrails/breach-behavior.md)
+- [x] **Rules & limits** ([ALP-6](https://linear.app/alphamind-jatassi/issue/ALP-6)) — _done_ — [design](design/06-risk-guardrails/rules-and-limits.md)
+- [x] **Guardrail evaluation primitives** ([ALP-134](https://linear.app/alphamind-jatassi/issue/ALP-134)) — _done_ — [design](design/06-risk-guardrails/guardrail-evaluation.md)
+- [x] **State delivery** ([ALP-143](https://linear.app/alphamind-jatassi/issue/ALP-143)) — _done_ — [design](design/06-risk-guardrails/state-delivery.md)
+- [x] **Regime adaptation** ([ALP-213](https://linear.app/alphamind-jatassi/issue/ALP-213)) — _done_ — [design](design/06-risk-guardrails/regime-adaptation.md)
+- [x] **Breach behavior** ([ALP-212](https://linear.app/alphamind-jatassi/issue/ALP-212)) — _done_ — [design](design/06-risk-guardrails/breach-behavior.md)
 
 ### Analysis layer
 
-- [x] **Domain researchers** — _done_ — [tech-semis](design/03-analysis-layer/domain-researchers/tech-semis.md), [financials](design/03-analysis-layer/domain-researchers/financials.md), [energy](design/03-analysis-layer/domain-researchers/energy.md)
-- [x] **Qualitative research** — _done_ — [design](design/03-analysis-layer/qualitative-research.md)
-- [ ] **Adaptive research** — _stories drafted_ — [design](design/03-analysis-layer/adaptive-research.md)
-- [ ] **Synthesizer** — _stories drafted_ — [design](design/03-analysis-layer/synthesizer.md)
+- [x] **Domain researchers** ([ALP-113](https://linear.app/alphamind-jatassi/issue/ALP-113)) — _done_ — [tech-semis](design/03-analysis-layer/domain-researchers/tech-semis.md), [financials](design/03-analysis-layer/domain-researchers/financials.md), [energy](design/03-analysis-layer/domain-researchers/energy.md)
+- [x] **Qualitative research** ([ALP-111](https://linear.app/alphamind-jatassi/issue/ALP-111)) — _done_ — [design](design/03-analysis-layer/qualitative-research.md)
+- [ ] **Adaptive research** ([ALP-112](https://linear.app/alphamind-jatassi/issue/ALP-112)) — _stories drafted_ — [design](design/03-analysis-layer/adaptive-research.md)
+- [ ] **Synthesizer** ([ALP-114](https://linear.app/alphamind-jatassi/issue/ALP-114)) — _stories drafted_ — [design](design/03-analysis-layer/synthesizer.md)
 
 ### Decision layer
 
-- [ ] **Analyst** — _requirements pending_ — [design](design/04-decision-layer/analyst.md), [output schema](design/04-decision-layer/analyst-output-schema.md)
-- [ ] **Strategist** — _requirements pending_ — [design](design/04-decision-layer/strategist.md), [output schema](design/04-decision-layer/strategist-output-schema.md)
-- [ ] **Proposal pre-processor** — _requirements pending_ — [design](design/04-decision-layer/proposal-pre-processor.md), [bundle schema](design/04-decision-layer/proposal-pre-processor-bundle-schema.md)
-- [ ] **Portfolio manager** — _requirements pending_ — [design](design/04-decision-layer/portfolio-manager.md), [envelope schema](design/04-decision-layer/pm-envelope-schema.md), [submit_envelope tool schema](design/04-decision-layer/submit-envelope-tool-schema.md)
+- [ ] **Analyst** ([ALP-115](https://linear.app/alphamind-jatassi/issue/ALP-115)) — _requirements pending_ — [design](design/04-decision-layer/analyst.md), [output schema](design/04-decision-layer/analyst-output-schema.md)
+- [ ] **Strategist** ([ALP-116](https://linear.app/alphamind-jatassi/issue/ALP-116)) — _requirements pending_ — [design](design/04-decision-layer/strategist.md), [output schema](design/04-decision-layer/strategist-output-schema.md)
+- [ ] **Proposal pre-processor** ([ALP-118](https://linear.app/alphamind-jatassi/issue/ALP-118)) — _requirements pending_ — [design](design/04-decision-layer/proposal-pre-processor.md), [bundle schema](design/04-decision-layer/proposal-pre-processor-bundle-schema.md)
+- [ ] **Portfolio manager** ([ALP-117](https://linear.app/alphamind-jatassi/issue/ALP-117)) — _requirements pending_ — [design](design/04-decision-layer/portfolio-manager.md), [envelope schema](design/04-decision-layer/pm-envelope-schema.md), [submit_envelope tool schema](design/04-decision-layer/submit-envelope-tool-schema.md)
 
 ### Execution layer
 
-- [ ] **Position & thesis model** — _requirements pending_ — [position model](design/05-execution-layer/position-model.md), [thesis model](design/05-execution-layer/thesis-model.md), [orders & brackets](design/05-execution-layer/orders-and-brackets.md)
-- [ ] **State persistence** — _requirements pending_ — [design](design/05-execution-layer/state-persistence.md). _Distillation-track stories blocked on this substrate (the SQL `invocations` and `activity_log` tables and a transactional invocation context):_ `14a-config-change-emission`, `15-emergency-invocation-review-report`, `16-flag-rate-empirical-reporter`. When the substrate ships, set the three stories to `not_started` and dispatch.
-- [ ] **OMS commands** — _requirements pending_ — [design](design/05-execution-layer/oms-commands.md), [command schema](design/05-execution-layer/oms-command-schema.md), [engine envelope schema](design/05-execution-layer/engine-envelope-schema.md), [command IDs](design/oms-command-ids.md)
-- [ ] **Broker adapter** — _requirements pending_ — [design](design/05-execution-layer/broker-adapter.md), [venue configuration](design/05-execution-layer/venue-configuration.md)
-- [ ] **Guardrail enforcement layer** — _requirements pending_ — [design](design/05-execution-layer/architecture.md)
-- [ ] **Corporate actions** — _requirements pending_ — [design](design/05-execution-layer/corporate-actions.md)
-- [ ] **Reg T margin attribution** — _requirements pending_ — [design](design/05-execution-layer/regt-margin-attribution.md)
-- [ ] **Continuous monitor** — _requirements pending_ — [design](design/05-execution-layer/architecture.md)
+- [ ] **Position & thesis model** ([ALP-122](https://linear.app/alphamind-jatassi/issue/ALP-122)) — _requirements pending_ — [position model](design/05-execution-layer/position-model.md), [thesis model](design/05-execution-layer/thesis-model.md), [orders & brackets](design/05-execution-layer/orders-and-brackets.md)
+- [ ] **State persistence** ([ALP-119](https://linear.app/alphamind-jatassi/issue/ALP-119)) — _requirements pending_ — [design](design/05-execution-layer/state-persistence.md). _Distillation-track stories blocked on this substrate (the SQL `invocations` and `activity_log` tables and a transactional invocation context):_ `14a-config-change-emission`, `15-emergency-invocation-review-report`, `16-flag-rate-empirical-reporter`. When the substrate ships, set the three stories to `not_started` and dispatch.
+- [ ] **OMS commands** ([ALP-120](https://linear.app/alphamind-jatassi/issue/ALP-120)) — _requirements pending_ — [design](design/05-execution-layer/oms-commands.md), [command schema](design/05-execution-layer/oms-command-schema.md), [engine envelope schema](design/05-execution-layer/engine-envelope-schema.md), [command IDs](design/oms-command-ids.md)
+- [ ] **Broker adapter** ([ALP-121](https://linear.app/alphamind-jatassi/issue/ALP-121)) — _requirements pending_ — [design](design/05-execution-layer/broker-adapter.md), [venue configuration](design/05-execution-layer/venue-configuration.md)
+- [ ] **Guardrail enforcement layer** ([ALP-125](https://linear.app/alphamind-jatassi/issue/ALP-125)) — _requirements pending_ — [design](design/05-execution-layer/architecture.md)
+- [ ] **Corporate actions** ([ALP-124](https://linear.app/alphamind-jatassi/issue/ALP-124)) — _requirements pending_ — [design](design/05-execution-layer/corporate-actions.md)
+- [ ] **Reg T margin attribution** ([ALP-126](https://linear.app/alphamind-jatassi/issue/ALP-126)) — _requirements pending_ — [design](design/05-execution-layer/regt-margin-attribution.md)
+- [ ] **Continuous monitor** ([ALP-123](https://linear.app/alphamind-jatassi/issue/ALP-123)) — _requirements pending_ — [design](design/05-execution-layer/architecture.md)
 
 ### Operational tooling
 
-- [ ] **LLM output validation** — _requirements pending_ — [design](design/testing/llm-output-validation.md)
-- [ ] **Paper-evaluation harness** — _requirements pending_ — [design](design/05-execution-layer/paper-evaluation-harness.md)
-- [ ] **Counterfactual replay engine** — _requirements pending_ — [design](design/05-execution-layer/counterfactual-replay-engine.md)
-- [ ] **Command center** — _requirements pending_ — [design](design/command-center.md), [pipeline schema](design/pipeline-control-and-events-schema.md), [monitor schema](design/monitor-control-and-events-schema.md)
-- [ ] **Feedback loop** — _requirements pending_ — [design](design/feedback-loop.md)
+- [ ] **LLM output validation** ([ALP-127](https://linear.app/alphamind-jatassi/issue/ALP-127)) — _requirements pending_ — [design](design/testing/llm-output-validation.md)
+- [ ] **Paper-evaluation harness** ([ALP-130](https://linear.app/alphamind-jatassi/issue/ALP-130)) — _requirements pending_ — [design](design/05-execution-layer/paper-evaluation-harness.md)
+- [ ] **Counterfactual replay engine** ([ALP-129](https://linear.app/alphamind-jatassi/issue/ALP-129)) — _requirements pending_ — [design](design/05-execution-layer/counterfactual-replay-engine.md)
+- [ ] **Command center** ([ALP-128](https://linear.app/alphamind-jatassi/issue/ALP-128)) — _requirements pending_ — [design](design/command-center.md), [pipeline schema](design/pipeline-control-and-events-schema.md), [monitor schema](design/monitor-control-and-events-schema.md)
+- [ ] **Feedback loop** ([ALP-131](https://linear.app/alphamind-jatassi/issue/ALP-131)) — _requirements pending_ — [design](design/feedback-loop.md)
 
 ---
 
