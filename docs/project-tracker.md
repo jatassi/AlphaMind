@@ -41,7 +41,7 @@ Cross-cutting policies and reference specs that constrain implementation but are
 ### Analysis layer
 
 - [x] **Domain researchers** — _done_ — [tech-semis](design/03-analysis-layer/domain-researchers/tech-semis.md), [financials](design/03-analysis-layer/domain-researchers/financials.md), [energy](design/03-analysis-layer/domain-researchers/energy.md)
-- [ ] **Qualitative research** — _requirements pending_ — [design](design/03-analysis-layer/qualitative-research.md)
+- [ ] **Qualitative research** — _stories drafted_ — [design](design/03-analysis-layer/qualitative-research.md)
 - [ ] **Adaptive research** — _requirements pending_ — [design](design/03-analysis-layer/adaptive-research.md)
 - [ ] **Synthesizer** — _stories drafted_ — [design](design/03-analysis-layer/synthesizer.md), [stories](implementation/03-analysis-layer/synthesizer/)
 
