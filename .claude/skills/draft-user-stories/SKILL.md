@@ -25,7 +25,7 @@ One argument: the exact feature name as written in `docs/project-tracker.md` (e.
 
 ## Procedure
 
-Six phases. Work through them in order. After each phase, briefly tell the operator what you found / chose so they can redirect early if you're off track.
+Seven phases. Work through them in order. After each phase, briefly tell the operator what you found / chose so they can redirect early if you're off track.
 
 ### Phase 1 — Resolve the feature
 
@@ -41,7 +41,7 @@ Then check Linear for an existing parent Issue:
 list_issues(team="AlphaMind", project="<Section name>", query="<Feature name>")
 ```
 
-If a parent Issue already exists with a matching title, you'll **update** it in Phase 5 rather than create. If multiple match, surface them and ask. If none match, you'll create one in Phase 5.
+If a parent Issue already exists with a matching title, you'll **update** it in Phase 7 rather than create. If multiple match, surface them and ask. If none match, you'll create one in Phase 7.
 
 ### Phase 2 — Gather context
 
@@ -59,6 +59,7 @@ While gathering, jot down (in your working memory, not as files):
 - Typed value objects this feature owns vs. imports from upstream.
 - Configuration knobs sourced from `config/*.yaml`.
 - Any cross-feature dependencies that are hard gates (sibling story must land before this feature can dispatch a particular story) versus coordination notes (one-way dependencies that don't block dispatch).
+- **Open decisions** you'll need the operator to resolve in Phase 6 — places where the design doc presents options without picking one, where the as-built code diverges from the design (yaml entries, schema columns, prompt content), where a numeric threshold is named without explicit go/no-go on encoding (named constant vs. yaml-loaded), or where pipeline cadence is implied but not named. Capture each as one terse note: what's open, what the candidate options are, what your recommended default would be. These are the input to Phase 6.
 
 ### Phase 3 — Decompose into epics (mental scaffolding only)
 
@@ -112,11 +113,38 @@ A canonical example to mirror is the breach-behavior work tree (parent issue ALP
 
 If your graph has the wrong shape (too sequential, or stories falsely marked parallel that actually share a file), revise Phase 4 — it's cheap; ordering errors compound downstream.
 
-### Phase 6 — Create the parent Issue and draft sub-issues
+### Phase 6 — Resolve open decisions interactively
+
+Before writing anything into Linear, surface the open decisions from your Phase 2 notes and resolve them with the operator in one batched exchange. Drafting-time decisions belong in drafting, not in story bodies as "Surface to operator before X" gates that bottleneck dispatch.
+
+**The test for drafting-time vs. dispatch-time:**
+
+A question is **drafting-time** if it can be answered without running code — config values, encoding choices (named constant vs. yaml-loaded), pipeline cadence, naming conventions, scope-boundary calls, scheduling shape, default behaviors, stub strategies for missing upstream features. Settle these now.
+
+A question is **dispatch-time** if it requires actual implementation discovery — schema drift between an upstream's expected and produced shape, a third-party API behavior the docs don't pin down, an algorithm that turns out to need an additional case the design didn't name. Leave these as Surfacing conditions in the parent issue and trust the orchestrator to escalate when they hit.
+
+**Procedure:**
+
+1. Compile every open decision from your Phase 2 notes into a single batched message to the operator. Don't pepper them one question at a time — the cognitive cost of context-switching across decisions exceeds the cost of reviewing them in one pass.
+2. For each decision, give: a one-line summary of what's open, a two-or-three-line option list, and a recommended default with a one-sentence rationale. The recommendation matters — operators have limited bandwidth and most decisions have a clear "right under current constraints" answer.
+3. Wait for the operator's resolutions. Apply each — usually a one-line annotation in your working notes — before moving to Phase 7.
+4. Bake every resolved decision into either (a) the relevant story's body as a positive specification (what the story will do), or (b) a "Pre-resolved configuration decisions" section in the parent Issue body (see the template in Phase 7a). Do not write "Surface to operator" guidance for resolved decisions.
+
+**Common decision categories that surface here:**
+
+- **As-built / design divergences.** The yaml or schema differs from what the design doc names. Recommend keeping or changing; don't punt.
+- **Threshold encoding.** Definitional cutoff (named constant) vs. Class A tunable (yaml-loaded). Default to definitional unless the design doc explicitly names a calibration cadence.
+- **Pipeline cadence.** Per-invocation render vs. cron-scheduled producer + on-demand consumer. Default to producer-cadence-named-by-design-doc.
+- **Tool / contract scope.** Ship N tools or N+1; defer one for downstream-data-readiness reasons.
+- **Stub strategy for missing upstream.** Empty-tuple loader vs. fake-record loader vs. block-the-story. Default to empty-tuple when the consumer prompt handles the empty case gracefully.
+
+If you discover a new decision *during* Phase 7 drafting (you didn't catch it in Phase 2), pause, batch any other late-discovered ones with it, and surface — don't write it into the story body as deferred. The point of Phase 6 is to keep dispatch unblocked, and that contract holds even when a question surfaces late.
+
+### Phase 7 — Create the parent Issue and draft sub-issues
 
 This is the actual Linear work. Two stages.
 
-#### 6a. Parent Issue
+#### 7a. Parent Issue
 
 Use `save_issue` to create or update the parent Issue. Required fields:
 
@@ -142,7 +170,7 @@ Parent Issue description template (Markdown — fill the bracketed sections; rem
 
 ## Cross-feature dependencies
 
-[Hard gates first. For each: which sub-issue here is gated by which upstream story, and what shape the upstream contract takes. Use Linear `blockedBy` links between sub-issues for hard gates — those are wired in Phase 6b.]
+[Hard gates first. For each: which sub-issue here is gated by which upstream story, and what shape the upstream contract takes. Use Linear `blockedBy` links between sub-issues for hard gates — those are wired in Phase 7b.]
 
 * **Story <NN> (this work tree)** depends on **<sibling-feature> story <NN> (ALP-XXX)** for [contract description]. Until that lands, [stub strategy or "block dispatch"].
 * [Repeat for each hard gate.]
@@ -150,6 +178,18 @@ Parent Issue description template (Markdown — fill the bracketed sections; rem
 [Then coordination notes — one-way dependencies that don't block dispatch but require coordinated edits when both work trees converge.]
 
 * **Coordination:** [downstream feature] currently inlines [type/contract] this feature owns. After story <NN> here lands, those inline declarations should become imports in a coordinated edit when [downstream feature] dispatches.
+
+## Pre-resolved configuration decisions
+
+[Include this section iff Phase 6 produced resolved decisions. Omit entirely otherwise. Use bold-text paragraphs, NOT bullets — the Linear renderer drops bullet lists that follow a colon-ending paragraph or a heading-then-prose stanza, but bold-text paragraphs survive.]
+
+The following choices were settled at drafting time and baked into the relevant stories. The orchestrator does not need to surface them at dispatch.
+
+**(A) <Decision name>.** <Decision in one sentence>. <One-or-two-sentence rationale>. <Story number that applies it>.
+
+**(B) <Decision name>.** <Decision in one sentence>. <One-or-two-sentence rationale>. <Story number that applies it>.
+
+[etc.]
 
 ## Dependency graph
 
@@ -180,7 +220,7 @@ Parent Issue description template (Markdown — fill the bracketed sections; rem
 
 After saving the parent Issue, capture its identifier (e.g., `ALP-212`) — you'll use it as `parentId` for every sub-issue.
 
-#### 6b. Sub-issues, one at a time
+#### 7b. Sub-issues, one at a time
 
 For each user story in dependency order:
 
@@ -190,6 +230,8 @@ For each user story in dependency order:
 4. **Capture the returned identifier** so subsequent stories that depend on this one can reference it.
 
 Work methodically — one story per `save_issue` call, verifying each lands before drafting the next. Do not batch.
+
+When you re-fetch a description you just wrote, the Linear renderer will have auto-converted naked issue references like `ALP-XXX` into `<issue id="...">ALP-XXX</issue>` tags. This is cosmetic and harmless — the rendered display is unchanged — but it means the round-tripped body is not byte-identical to what you sent. Don't chase the diff.
 
 After all sub-issues are created, do a final pass:
 
@@ -300,6 +342,7 @@ If a `blockedBy` link fails (e.g., the upstream issue doesn't exist), surface th
 - **Stories that bundle "and" of two algorithmic concerns.** Re-split. The dependency graph is cheaper to maintain than ambiguous scope.
 - **Acceptance criteria that test "the system works".** Replace with criteria that test *observable behaviors* of *named functions* with *named inputs*.
 - **Skipping the operator-confirmation step in Phase 1** when the feature's status isn't `_requirements pending_`. Drafting stories on top of an in-progress work tree without confirming intent corrupts that tree.
+- **"Surface to operator" gates for drafting-time decisions.** Per Phase 6: if a decision can be made without running code (yaml value, encoding choice, pipeline cadence, scope boundary, stub strategy), settle it during drafting. Writing "the orchestrator should surface this before dispatch" turns the operator's review into N small interruptions during dispatch instead of one batched session before drafting — and the orchestrator typically lacks the context the drafter had to recommend a default.
 
 ## When you're done
 
