@@ -481,11 +481,30 @@ class TestLoadSentimentAggregates:
         assert agg.ticker == "JPM"
         assert isinstance(agg.directional_score, float)
         assert isinstance(agg.magnitude, float)
-        assert isinstance(agg.rate_of_change, float)
-        assert isinstance(agg.volume, int)
-        assert isinstance(agg.divergence_flag, bool)
+        assert agg.rate_of_change is None or isinstance(agg.rate_of_change, float)
+        assert agg.volume is None or isinstance(agg.volume, int)
+        assert agg.divergence_flag is None or isinstance(agg.divergence_flag, bool)
         assert 0.0 <= agg.percentile_vs_self <= 1.0
         assert isinstance(agg.data_freshness, datetime)
+
+    def test_v1_stub_fields_are_none(self, session: Session) -> None:
+        """V1 stub fields (rate_of_change, volume, divergence_flag) emit None.
+
+        These are not yet computed — the LLM should read them as "data pending"
+        rather than the misleading "value is zero / no signal".
+        """
+        _add_ticker(session, "NVDA")
+        _add_sentiment_baseline(
+            session, "NVDA", mean=0.1, stdev=0.3, n_observations=100, as_of_str=_ISO
+        )
+        session.commit()
+
+        result = load_sentiment_aggregates(session, as_of=AS_OF)
+        assert len(result) == 1
+        agg = result[0]
+        assert agg.rate_of_change is None
+        assert agg.volume is None
+        assert agg.divergence_flag is None
 
 
 # ---------------------------------------------------------------------------
@@ -543,7 +562,7 @@ class TestLoadPredictionMarketSnapshot:
         assert snap.platform == "Kalshi"
         assert snap.category == "macro"
         assert snap.current_probability == pytest.approx(0.72)
-        assert isinstance(snap.delta_24h_pp, float)
+        assert isinstance(snap.delta_since_prior_pp, float)
         assert isinstance(snap.volume_24h_usd, (float, type(None)))
         assert isinstance(snap.is_low_liquidity, bool)
         assert isinstance(snap.meets_threshold_flag, bool)
@@ -561,6 +580,35 @@ class TestLoadPredictionMarketSnapshot:
         assert len(result) == 1
         # A 25pp delta should be above any sane threshold.
         assert result[0].meets_threshold_flag is True
+
+    def test_delta_since_prior_pp_uses_second_latest_history_row(self, session: Session) -> None:
+        """delta_since_prior_pp = current_probability - probability of the second-latest
+        history row at or before as_of, regardless of the gap between rows.
+
+        The "since prior" naming reflects the irregular spacing of the underlying
+        snapshot history — the second-latest row could be hours, days, or longer
+        in the past.
+        """
+        _add_contract(session, "c-prior")
+        # Three rows spaced irregularly: 5 days ago, 1 hour ago, and AS_OF.
+        ts1 = (AS_OF - timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ts2 = (AS_OF - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _add_snapshot(session, "c-prior", ts1, yes_probability=0.40)
+        _add_snapshot(session, "c-prior", ts2, yes_probability=0.55)
+        _add_contract_history(
+            session, "c-prior", ts1, yes_probability=0.40, delta_pp_since_prior=0.0
+        )
+        _add_contract_history(
+            session, "c-prior", ts2, yes_probability=0.55, delta_pp_since_prior=15.0
+        )
+        session.commit()
+
+        result = load_prediction_market_snapshot(session, as_of=AS_OF)
+        assert len(result) == 1
+        snap = result[0]
+        # current_probability - probability of second-latest history row (0.40)
+        # = 0.55 - 0.40 = 0.15 (delta is in probability units, not pp).
+        assert snap.delta_since_prior_pp == pytest.approx(0.15)
 
 
 # ---------------------------------------------------------------------------

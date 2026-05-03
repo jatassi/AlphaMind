@@ -33,7 +33,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from alphamind.data_sources._common import HeadlineType
+from alphamind.data_sources._common import HeadlineType, decode_topic_tags
 from alphamind.persistence.models import (
     NewsArticleClusters,
     NewsArticles,
@@ -300,36 +300,6 @@ class HeadlineCluster(BaseModel, frozen=True):
 # ---------------------------------------------------------------------------
 
 
-def _parse_topic_tags(article: NewsArticles) -> tuple[HeadlineType, ...]:
-    """Decode ``news_articles.topic_tags`` into typed :class:`HeadlineType` values.
-
-    ``topic_tags`` is stored as a JSON-serialized list per the storage spec,
-    but legacy rows may carry comma-separated values; both shapes decode
-    cleanly. Unknown values drop silently — the canonical taxonomy is the
-    single source of truth.
-    """
-    raw = article.topic_tags
-    if raw is None or not raw.strip():
-        return ()
-    candidates: list[str]
-    stripped = raw.strip()
-    if stripped.startswith("["):
-        try:
-            decoded = json.loads(stripped)
-        except json.JSONDecodeError:
-            return ()
-        candidates = [str(v) for v in decoded if isinstance(v, str)]
-    else:
-        candidates = [token.strip() for token in stripped.split(",") if token.strip()]
-    out: list[HeadlineType] = []
-    for tag in candidates:
-        try:
-            out.append(HeadlineType(tag))
-        except ValueError:
-            continue
-    return tuple(out)
-
-
 def _modal_theme(article_themes: Sequence[tuple[HeadlineType, ...]]) -> HeadlineType:
     """Return the modal :class:`HeadlineType` across the cluster's members.
 
@@ -430,7 +400,7 @@ def cluster_events(
         fingerprints={a.article_id: _simhash(a.headline_text) for a in sorted_articles},
         timestamps={a.article_id: _parse_iso_utc(a.published_at) for a in sorted_articles},
         ticker_index=ticker_index,
-        themes={a.article_id: _parse_topic_tags(a) for a in sorted_articles},
+        themes={a.article_id: decode_topic_tags(a.topic_tags) for a in sorted_articles},
         article_window=timedelta(hours=STAGE_2_TIME_WINDOW_HOURS),
     )
     seal_window = timedelta(hours=CLUSTER_SEAL_HOURS)

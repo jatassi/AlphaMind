@@ -75,3 +75,51 @@ class TestNormalizeVendorTags:
 
     def test_empty_input_returns_empty(self) -> None:
         assert normalize_vendor_tags("marketaux", []) == []
+
+
+class TestDecodeTopicTags:
+    """Shared decode helper consumed by news clustering and digest renderers.
+
+    Both call sites previously carried near-verbatim copies of this routine;
+    consolidating prevents the two from drifting apart.
+    """
+
+    def test_import_resolves(self) -> None:
+        from alphamind.data_sources._common import decode_topic_tags
+
+        assert callable(decode_topic_tags)
+
+    def test_none_returns_empty(self) -> None:
+        from alphamind.data_sources._common import decode_topic_tags
+
+        assert decode_topic_tags(None) == ()
+
+    def test_blank_returns_empty(self) -> None:
+        from alphamind.data_sources._common import decode_topic_tags
+
+        assert decode_topic_tags("   ") == ()
+
+    def test_json_list_decodes(self) -> None:
+        from alphamind.data_sources._common import decode_topic_tags
+
+        result = decode_topic_tags('["earnings_related", "guidance"]')
+        assert result == (HeadlineType.EARNINGS_RELATED, HeadlineType.GUIDANCE)
+
+    def test_legacy_comma_separated_decodes(self) -> None:
+        from alphamind.data_sources._common import decode_topic_tags
+
+        result = decode_topic_tags("earnings_related, guidance")
+        assert result == (HeadlineType.EARNINGS_RELATED, HeadlineType.GUIDANCE)
+
+    def test_unknown_tags_drop_silently(self) -> None:
+        from alphamind.data_sources._common import decode_topic_tags
+
+        result = decode_topic_tags('["earnings_related", "completely_unknown_tag"]')
+        assert result == (HeadlineType.EARNINGS_RELATED,)
+
+    def test_malformed_json_returns_empty(self) -> None:
+        from alphamind.data_sources._common import decode_topic_tags
+
+        # Malformed JSON inside a [-prefixed string returns empty rather than
+        # raising — historical rows may carry corrupt content.
+        assert decode_topic_tags("[not, valid, json") == ()

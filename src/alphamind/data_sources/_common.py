@@ -14,6 +14,7 @@ Exposes:
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 import urllib.error
@@ -209,6 +210,39 @@ def normalize_vendor_tags(vendor: str, raw_tags: Iterable[str]) -> list[Headline
     if table is None:
         return []
     return [table[t] for t in raw_tags if t in table]
+
+
+def decode_topic_tags(raw: str | None) -> tuple[HeadlineType, ...]:
+    """Decode a ``news_articles.topic_tags`` cell into typed ``HeadlineType`` values.
+
+    ``topic_tags`` is canonically a JSON-serialized list per the storage
+    spec; legacy rows may carry comma-separated values. Both shapes decode
+    cleanly. Malformed JSON inside a ``[``-prefixed string returns ``()``
+    rather than raising — historical rows can carry corrupt content.
+
+    Unknown values drop silently — the canonical taxonomy in
+    :class:`HeadlineType` is the single source of truth. Order is preserved.
+    """
+    if raw is None:
+        return ()
+    stripped = raw.strip()
+    if not stripped:
+        return ()
+    if stripped.startswith("["):
+        try:
+            decoded = json.loads(stripped)
+        except json.JSONDecodeError:
+            return ()
+        candidates = [str(v) for v in decoded if isinstance(v, str)]
+    else:
+        candidates = [token.strip() for token in stripped.split(",") if token.strip()]
+    out: list[HeadlineType] = []
+    for tag in candidates:
+        try:
+            out.append(HeadlineType(tag))
+        except ValueError:
+            continue
+    return tuple(out)
 
 
 # ---------------------------------------------------------------------------

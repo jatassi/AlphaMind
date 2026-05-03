@@ -18,7 +18,6 @@ Public names
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 from collections.abc import Mapping, Sequence
@@ -31,7 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from alphamind.analysis._shared import Sector
-from alphamind.data_sources._common import HeadlineType
+from alphamind.data_sources._common import HeadlineType, decode_topic_tags
 from alphamind.persistence.models import (
     EarningsEventDetails,
     EventCalendar,
@@ -184,34 +183,6 @@ def _format_iso_utc(dt: datetime) -> str:
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _decode_topic_tags(raw: str | None) -> tuple[HeadlineType, ...]:
-    """Decode ``news_articles.topic_tags`` into typed ``HeadlineType`` values.
-
-    Mirrors :func:`alphamind.data_sources.news.clustering._parse_topic_tags`
-    so the digest's ``tags`` field round-trips through the same canonical
-    taxonomy. JSON-list and comma-separated legacy shapes both decode.
-    """
-    if raw is None or not raw.strip():
-        return ()
-    stripped = raw.strip()
-    candidates: list[str]
-    if stripped.startswith("["):
-        try:
-            decoded = json.loads(stripped)
-        except json.JSONDecodeError:
-            return ()
-        candidates = [str(v) for v in decoded if isinstance(v, str)]
-    else:
-        candidates = [token.strip() for token in stripped.split(",") if token.strip()]
-    out: list[HeadlineType] = []
-    for tag in candidates:
-        try:
-            out.append(HeadlineType(tag))
-        except ValueError:
-            continue
-    return tuple(out)
-
-
 def _normalize_tier(raw: str | None) -> _TIER_LITERAL:
     """Map a raw tier string onto the canonical literal; fall back to tier_3."""
     if raw == "tier_1":
@@ -299,7 +270,7 @@ def _load_candidates(
                 headline=row.headline_text,
                 source_outlet=row.source_outlet or "",
                 tickers=tuple(tickers_by_article.get(row.article_id, [])),
-                tags=_decode_topic_tags(row.topic_tags),
+                tags=decode_topic_tags(row.topic_tags),
             )
         )
     return candidates

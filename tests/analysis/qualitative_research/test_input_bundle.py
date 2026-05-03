@@ -28,6 +28,13 @@ _REGIME_LABEL: dict[str, object] = {
     "transition_state": "early-weak",
     "prior_label": "low_vol_compression",
     "invocations_held": 3,
+    "indicator_agreement_count": 4,
+    "regime_skip_emergency": False,
+    "vix_level": 18.5,
+    "term_structure_basis": 1.2,
+    "vvix_percentile": 0.65,
+    "realized_vol_5d": 0.18,
+    "realized_vol_20d": 0.16,
 }
 
 _DIGEST = NewsDigest(
@@ -44,9 +51,9 @@ def _make_sentiment(
     ticker: str = "AAPL",
     directional_score: float = 0.5,
     magnitude: float = 0.6,
-    rate_of_change: float = 0.1,
-    volume: int = 100,
-    divergence_flag: bool = False,
+    rate_of_change: float | None = 0.1,
+    volume: int | None = 100,
+    divergence_flag: bool | None = False,
     percentile_vs_self: float = 0.75,
 ) -> SentimentAggregate:
     return SentimentAggregate(
@@ -68,7 +75,7 @@ def _make_prediction_market(
     category: str = "macro",
     current_probability: float = 0.72,
     delta_since_last_invocation_pp: float = 3.0,
-    delta_24h_pp: float = 1.5,
+    delta_since_prior_pp: float = 1.5,
     volume_24h_usd: float | None = 50_000.0,
     expiration: str | None = "2024-03-20",
     is_low_liquidity: bool = False,
@@ -81,7 +88,7 @@ def _make_prediction_market(
         category=category,
         current_probability=current_probability,
         delta_since_last_invocation_pp=delta_since_last_invocation_pp,
-        delta_24h_pp=delta_24h_pp,
+        delta_since_prior_pp=delta_since_prior_pp,
         volume_24h_usd=volume_24h_usd,
         expiration=expiration,
         is_low_liquidity=is_low_liquidity,
@@ -422,10 +429,82 @@ def test_regime_text_in_bundle_text() -> None:
     digest_pos = bundle.bundle_text.index("## NEWS DIGEST")
     # Regime block comes before NEWS DIGEST
     assert regime_pos < digest_pos
-    # All four fields are visible in bundle_text
+    # All four labels are visible in bundle_text
     assert "vol_expansion" in bundle.bundle_text
     assert "early-weak" in bundle.bundle_text
     assert "low_vol_compression" in bundle.bundle_text
+
+
+def test_regime_text_renders_every_key_alphabetically() -> None:
+    """Every key in regime_label is rendered, in deterministic alphabetical
+    order, as ``key: value`` lines.
+
+    The full payload from ``assemble_regime_block`` carries seven supporting
+    indicators in addition to the four labels — the LLM should see every key
+    so it can read the indicator snapshot.
+    """
+    from alphamind.analysis.qualitative_research.input_bundle import (
+        assemble_input_bundle,
+    )
+
+    bundle = assemble_input_bundle(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        regime_label=_REGIME_LABEL,
+        digest=_DIGEST,
+        inputs=_make_inputs(),
+    )
+    expected_keys = sorted(_REGIME_LABEL.keys())
+    expected_lines = [f"{k}: {_REGIME_LABEL[k]}" for k in expected_keys]
+    rendered = bundle.regime_text
+    # Each rendered line is a substring of regime_text.
+    for line in expected_lines:
+        assert line in rendered, f"missing rendered line: {line!r}"
+    # Lines appear in alphabetical key order.
+    positions = [rendered.index(line) for line in expected_lines]
+    assert positions == sorted(positions), "keys not in alphabetical order"
+
+
+def test_regime_text_handles_arbitrary_extra_keys() -> None:
+    """Renderer is payload-agnostic: any extra keys present render too.
+
+    This protects against the regime payload growing without the bundle
+    assembler noticing.
+    """
+    from alphamind.analysis.qualitative_research.input_bundle import (
+        assemble_input_bundle,
+    )
+
+    custom = dict(_REGIME_LABEL)
+    custom["new_indicator"] = 42
+    bundle = assemble_input_bundle(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        regime_label=custom,
+        digest=_DIGEST,
+        inputs=_make_inputs(),
+    )
+    assert "new_indicator: 42" in bundle.regime_text
+
+
+def test_regime_text_renders_none_prior_label_as_string() -> None:
+    """A None ``prior_label`` (bootstrap state) renders as the literal None
+    so the LLM sees the absence rather than a missing field.
+    """
+    from alphamind.analysis.qualitative_research.input_bundle import (
+        assemble_input_bundle,
+    )
+
+    custom = dict(_REGIME_LABEL)
+    custom["prior_label"] = None
+    bundle = assemble_input_bundle(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        regime_label=custom,
+        digest=_DIGEST,
+        inputs=_make_inputs(),
+    )
+    assert "prior_label: None" in bundle.regime_text
 
 
 # ---------------------------------------------------------------------------
@@ -465,6 +544,82 @@ def test_prediction_market_low_liquidity_appended() -> None:
         inputs=_make_inputs(prediction_markets=(pm,)),
     )
     assert "[LOW LIQUIDITY]" in bundle.bundle_text
+
+
+def test_sentiment_renders_pending_for_none_stub_fields() -> None:
+    """When the v1 stub fields are None, the renderer prints 'pending' so the
+    LLM reads them as 'data not available yet' rather than 'no signal'.
+    """
+    from alphamind.analysis.qualitative_research.input_bundle import (
+        assemble_input_bundle,
+    )
+
+    s = _make_sentiment(
+        ticker="NVDA",
+        rate_of_change=None,
+        volume=None,
+        divergence_flag=None,
+    )
+    bundle = assemble_input_bundle(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        regime_label=_REGIME_LABEL,
+        digest=_DIGEST,
+        inputs=_make_inputs(sentiment=(s,)),
+    )
+    assert "change=pending" in bundle.bundle_text
+    assert "vol=pending" in bundle.bundle_text
+    assert "divergence=pending" in bundle.bundle_text
+
+
+def test_sentiment_renders_concrete_values_when_present() -> None:
+    """When the v1 stub fields are populated (future), the renderer prints them."""
+    from alphamind.analysis.qualitative_research.input_bundle import (
+        assemble_input_bundle,
+    )
+
+    s = _make_sentiment(
+        ticker="NVDA",
+        rate_of_change=0.25,
+        volume=42,
+        divergence_flag=True,
+    )
+    bundle = assemble_input_bundle(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        regime_label=_REGIME_LABEL,
+        digest=_DIGEST,
+        inputs=_make_inputs(sentiment=(s,)),
+    )
+    assert "change=0.25" in bundle.bundle_text
+    assert "vol=42" in bundle.bundle_text
+    assert "divergence=True" in bundle.bundle_text
+
+
+def test_prediction_market_renders_delta_since_prior_label() -> None:
+    """Prediction-market row uses the accurate Δ_since_prior label, not the
+    misleading Δ_24h label.
+
+    The underlying field measures the change versus the second-latest history
+    row, which can be any timestamp ago — not necessarily 24h.
+    """
+    from alphamind.analysis.qualitative_research.input_bundle import (
+        assemble_input_bundle,
+    )
+
+    pm = _make_prediction_market(
+        contract_id="PM-D01",
+        delta_since_prior_pp=4.2,
+    )
+    bundle = assemble_input_bundle(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        regime_label=_REGIME_LABEL,
+        digest=_DIGEST,
+        inputs=_make_inputs(prediction_markets=(pm,)),
+    )
+    assert "Δ_since_prior=4.2pp" in bundle.bundle_text
+    assert "Δ_24h" not in bundle.bundle_text
 
 
 def test_input_bundle_is_frozen() -> None:
