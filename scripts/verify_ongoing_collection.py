@@ -13,12 +13,17 @@ Exit codes:
   1 — one or more collectors have stale data
 
 Usage:
-  DATABASE_PATH=/path/to/alphamind.db uv run python scripts/verify_ongoing_collection.py
+  uv run python scripts/verify_ongoing_collection.py [--db-path PATH]
+
+``--db-path`` (when supplied) takes precedence over the ``DATABASE_PATH`` env
+var and the ``session.py`` resolution chain.
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -141,9 +146,9 @@ def _latest_ingested(conn: Any, table: str, collector_id: str) -> datetime | Non
     return None
 
 
-def run_verification() -> bool:
+def run_verification(db_path: str | None = None) -> bool:
     """Connect, check freshness for each collector, print report, return pass/fail."""
-    engine = make_engine()
+    engine = make_engine(db_path)
     now_utc = datetime.now(tz=UTC)
     nyse_open = _nyse_is_open(now_utc)
     all_pass = True
@@ -201,8 +206,16 @@ def run_verification() -> bool:
     return all_pass
 
 
-def main() -> None:
-    passed = run_verification()
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
+    parser.add_argument(
+        "--db-path",
+        type=str,
+        default=None,
+        help="Path to the AlphaMind SQLite database (overrides DATABASE_PATH and main.yaml).",
+    )
+    args = parser.parse_args(argv)
+    passed = run_verification(args.db_path)
     sys.exit(0 if passed else 1)
 
 

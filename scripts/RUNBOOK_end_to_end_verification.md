@@ -43,18 +43,40 @@ You're going to run 9 verification scripts in 5 phases. Three rules:
 Before running anything, confirm:
 
 1. **Working directory** — the AlphaMind repo root.
-2. **Database accessible** — on macOS dev machine, the production DB
-   lives at `/Volumes/Users/jacks/AlphaMind/data/alphamind.db`. If
-   that mount is not present, ask the operator to mount it, or point
-   to a local replica via `--db-path`.
+2. **Local snapshot of the production DB** — on macOS, direct reads
+   against the SMB-mounted production DB fail with `sqlite3.Operational
+   Error: database is locked` while the production collector is
+   writing (SMB + WAL + remote-writer don't cooperate). Snapshot the
+   WAL trio locally before any phase:
+   ```bash
+   mkdir -p data
+   cp /Volumes/Users/jacks/AlphaMind/data/alphamind.db     data/alphamind-snapshot.db
+   cp /Volumes/Users/jacks/AlphaMind/data/alphamind.db-wal data/alphamind-snapshot.db-wal
+   cp /Volumes/Users/jacks/AlphaMind/data/alphamind.db-shm data/alphamind-snapshot.db-shm
+   ```
+   ~2.5 GB; takes ~45–60s over SMB. The snapshot is gitignored
+   (`data/` in `.gitignore`). Re-snapshot between phases only if you
+   need a fresher view of live state — the snapshot is otherwise good
+   for the whole run. On Windows production, point scripts at
+   `%USERPROFILE%\AlphaMind\data\alphamind.db` directly (no snapshot
+   needed — same machine as the writer).
 3. **`CLAUDE_CODE_OAUTH_TOKEN` exported** — required for phases 2, 3,
    4, 5 (any script that talks to the SDK). Generate with
-   `claude setup-token` if missing.
+   `claude setup-token` if missing. If your token lives in `.env`,
+   source it inline before each SDK-using phase:
+   `set -a && source .env && set +a && uv run python scripts/...`
 4. **`uv sync` completed** — `uv run` is the entry point for every
    script.
 5. **Archive root chosen** — pick a directory like
    `.archive/verify-pipeline-$(date +%Y%m%d)` for diagnostic outputs.
    Reuse the same root across phases so all archives land together.
+
+Pick a `DB_PATH` shell variable so the per-phase commands stay
+short:
+```bash
+DB_PATH="$(pwd)/data/alphamind-snapshot.db"  # macOS dev
+# DB_PATH="%USERPROFILE%\AlphaMind\data\alphamind.db"  # Windows prod
+```
 
 Pick an `--as-of` timestamp to use across phases for consistency. Use
 ISO-8601 UTC like `2026-05-03T14:30:00Z`. Defaulting to "now" is fine
@@ -79,7 +101,7 @@ the agent is pointed at is empty/wrong — stop and surface to operator.
 
 ```bash
 uv run python scripts/verify_bootstrap.py \
-    --db-path /Volumes/Users/jacks/AlphaMind/data/alphamind.db
+    --db-path "$DB_PATH"
 ```
 
 Verifies: 18 tables exist with row counts in tolerance (525K OHLCV,
@@ -88,7 +110,7 @@ prediction tables populated).
 
 ```bash
 uv run python scripts/verify_ongoing_collection.py \
-    --db-path /Volumes/Users/jacks/AlphaMind/data/alphamind.db
+    --db-path "$DB_PATH"
 ```
 
 Verifies: 14 active collectors have produced rows within 2x their
@@ -107,7 +129,7 @@ DB-only state-machine checks.
 
 ```bash
 uv run python scripts/verify_distillation.py \
-    --db-path /Volumes/Users/jacks/AlphaMind/data/alphamind.db \
+    --db-path "$DB_PATH" \
     --archive-root .archive/verify-pipeline-YYYYMMDD
 ```
 
@@ -120,7 +142,7 @@ invocation archive has 5 files (`prompt.md`, `user_message.md`,
 
 ```bash
 uv run python scripts/verify_regime_transition.py \
-    --db-path /Volumes/Users/jacks/AlphaMind/data/alphamind.db \
+    --db-path "$DB_PATH" \
     --lookback-days 7
 ```
 
@@ -130,7 +152,7 @@ threshold, early-strong/weak indicator counts correct.
 
 ```bash
 uv run python scripts/verify_bootstrap_calibration_mix.py \
-    --db-path /Volumes/Users/jacks/AlphaMind/data/alphamind.db
+    --db-path "$DB_PATH"
 ```
 
 Verifies the calibration state distribution in
@@ -151,7 +173,7 @@ Three sector researchers running in parallel against real Sonnet.
 
 ```bash
 uv run python scripts/verify_domain_researchers.py \
-    --db-path /Volumes/Users/jacks/AlphaMind/data/alphamind.db \
+    --db-path "$DB_PATH" \
     --archive-root .archive/verify-pipeline-YYYYMMDD
 ```
 
@@ -186,7 +208,7 @@ prerequisites (regime label, ticker pool).
 
 ```bash
 uv run python scripts/verify_qualitative_researcher.py \
-    --db-path /Volumes/Users/jacks/AlphaMind/data/alphamind.db \
+    --db-path "$DB_PATH" \
     --archive-root .archive/verify-pipeline-YYYYMMDD \
     --as-of 2026-05-03T14:30:00Z
 ```
@@ -200,7 +222,7 @@ Runbook: `scripts/RUNBOOK_qualitative_researcher.md`.
 
 ```bash
 uv run python scripts/verify_adaptive_researcher.py \
-    --db-path /Volumes/Users/jacks/AlphaMind/data/alphamind.db \
+    --db-path "$DB_PATH" \
     --archive-root .archive/verify-pipeline-YYYYMMDD \
     --as-of 2026-05-03T14:30:00Z
 ```

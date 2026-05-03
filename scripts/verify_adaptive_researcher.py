@@ -25,8 +25,17 @@ See ``scripts/RUNBOOK_adaptive_researcher.md`` for the operator runbook.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
-from alphamind.scripts.verify_adaptive_researcher import main
+# The src module's lazy fixture loader does ``from tests.analysis... import``;
+# ``tests/`` is not a regular package on ``sys.path`` under ``uv run python
+# scripts/...`` (only ``src/`` is). Insert the repo root so the lazy import
+# resolves without requiring the operator to ``export PYTHONPATH=.``.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from alphamind.scripts.verify_adaptive_researcher import main  # noqa: E402
 
 if __name__ == "__main__":
     sys.exit(main())
