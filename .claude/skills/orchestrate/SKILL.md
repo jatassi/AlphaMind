@@ -82,6 +82,13 @@ git push -u origin <gitBranchName-from-parent-Issue>
 
 If the branch already exists locally (resuming a prior run), check it out instead and surface its state.
 
+**Stale `index.lock` recovery.** If any of the above commands fail with `Unable to create '.../.git/index.lock': File exists`, this is almost always a stale orphan from a prior crashed git operation (typical: VS Code's git extension polling `git diff --numstat HEAD`, or your own earlier `git pull` that crashed). Diagnose:
+
+- `lsof <repo>/.git/index.lock` — if no process holds it, the lock is stale.
+- `stat -f "%Sm" <repo>/.git/index.lock` (macOS) shows the lock's mtime. Locks older than ~30 seconds with no holding process are stale.
+
+Recovery: `rm -f <repo>/.git/index.lock` and immediately re-run the chained git operation. The watcher polls fast enough that a re-acquired transient lock can re-appear within ~1 second; chain the `rm -f` and the git command on a single line so they execute back-to-back rather than running them as separate Bash calls. The same procedure applies to every git invocation in this skill — wave merges, pushes, worktree removals — not just branch creation. The fix is the same each time.
+
 ## Operating posture
 
 **Delegate by default.** You drive sequencing and status; subagents do the work. Use `Agent` (`subagent_type: general-purpose`, `isolation: "worktree"`, `run_in_background: true`) for every implementation story. Write code yourself only when the work is smaller than dispatch overhead — Linear status updates, frontmatter fixes, single-line README edits, file-existence checks while planning a wave.
@@ -146,6 +153,8 @@ list_issues(team="AlphaMind", parentId="<parent ID>", limit=50)
 
 Identify dispatch-eligible stories: status `Todo` AND every `blockedBy` story is `Done`. Stop iterating when no eligible stories remain — either you're finished, or the remaining stories are blocked (real blockers or stale-status drift).
 
+The parent issue's dependency-graph diagram is illustrative, not prescriptive. Do not fix the wave plan up front from the diagram — re-derive eligibility from the actual sub-issue `blockedBy` relations on every survey. Stories at different "depths" in the rendered diagram can land in the same wave whenever their real `blockedBy` lists are satisfied. For example, after the wave that landed three siblings completes, a deep-in-diagram story whose only blocker was one of those siblings becomes eligible alongside a shallow-in-diagram story whose blockers were satisfied earlier — dispatch them together rather than stretching the plan into an extra wave. Compressing the wave plan saves wall-clock time and one full subagent dispatch + verify cycle per compression.
+
 ### Dispatch
 
 Group eligible stories by parallelism rank (same rank = same wave). Cap each wave at 6 concurrent.
@@ -160,6 +169,10 @@ Send all calls in one message. Each runs in background; you'll receive a notific
 
 Each agent result includes the worktree path and branch name. Per result:
 
+0. **Verbatim-git-log gate.** Before any lint/test, scan the agent's report for the verbatim `git log --oneline <feature-branch>..HEAD` output the dispatch prompt mandates (one or more lines of the form `<short-sha> <commit-message>`). If the report ends with the `simplify` skill's findings, with prose like "All tests pass / I'm done", or with any final message that is NOT at least one such git-log line, the commit step was skipped. Verify directly: `git -C <worktree-path> log --oneline <feature-branch>..HEAD`. If zero commits are listed, the agent did not commit. Decide:
+   - **Re-dispatch** when the work has substantive issues (lint failures, missing AC, unwarranted suppressions) on top of the missed commit.
+   - **Commit-yourself** when the work is otherwise sound and only the commit step was skipped — assess the lint state with `uv run ruff check . && uv run mypy` against the worktree first, then `git add` + `git commit` with a descriptive message and proceed to step 1.
+   Do NOT proceed to step 1 (Tests) on uncommitted state — the agent's "tests pass" claim is unverifiable, and pytest will collect different files than what would land at merge time.
 1. **Tests.** `cd` into the worktree and run `uv run pytest -n auto`. First run pays a one-time `uv sync` cost for the fresh `.venv` — that's fine.
 2. **Lint.** `uv run ruff check .` and `uv run mypy` against the worktree. Clean for the changed files.
 3. **Linter suppressions.** Grep the diff for `# noqa`, `# type: ignore`, `per-file-ignores`, `ignore` keys in `pyproject.toml`. For each suppression, assess whether it was warranted (per `feedback_lint_suppression_triage`):
@@ -169,8 +182,8 @@ Each agent result includes the worktree path and branch name. Per result:
 4. **Spot-check non-test acceptance criteria.** For each criterion not verified by an automated test, confirm it manually (file exists at the expected path, schema validates against a sample, function signature matches the story's spec).
 5. **Architectural integration gaps invisible to stubs.** Stub-heavy unit tests can pass while the framework itself rejects the constructed options at runtime. When a story touches an external SDK or framework's option-shape construction (e.g., `ClaudeAgentOptions.mcp_servers`, `Alembic.Config`'s logger configuration, `pytest` plugins, `pydantic` discriminated unions), confirm at least one test exercises the constructed shape end-to-end — not just stubbing the framework's response. If every test stubs the SDK, the harness can build wrong-shaped options that silently degrade in production (e.g., tools registered with `allowed_tools` but no `mcp_servers` — the LLM emits `<tool_use>` and the SDK returns "tool not found", and the agent falls back to its non-tool path). Add such a test before merging or surface as a follow-on issue.
 6. **Decision:**
-   - **Pass:** From the feature-branch checkout, `git merge --ff-only <branch>`. If FF fails (parallel branches diverged), `git merge --no-ff <branch>` and resolve conflicts (this is a "trivial conflict" you handle directly per CLAUDE.md "When you handle work directly"). Then update Linear: `save_issue(id=<sub-issue ID>, state="Done")`. Mark the corresponding TaskUpdate to `completed`. Clean up: `git worktree remove <path>` then `git branch -d <branch>`.
-   - **Fail (test failure, lint failure, blocker reported, criterion miss):** Diagnose the gap. If the subagent reported a blocker that exists as another Linear issue, set `state="Blocked"` and add the `blockedBy` link. Otherwise re-dispatch with the specific gap noted in the prompt. Clean up the failed worktree first: `git worktree remove --force <path>` and `git branch -D <branch>`.
+   - **Pass:** From the feature-branch checkout, `git merge --ff-only <branch>`. If FF fails (parallel branches diverged), `git merge --no-ff <branch>` and resolve conflicts (this is a "trivial conflict" you handle directly per CLAUDE.md "When you handle work directly"). Then update Linear: `save_issue(id=<sub-issue ID>, state="Done")`. Mark the corresponding TaskUpdate to `completed`. Clean up: `git worktree remove -f -f <path>` then `git branch -d <branch>`. The double `-f` is required: the Claude agent harness places a `claude agent agent-...` lock on the worktree on completion, and single `-f` fails the unlock check. Double-force overrides; safe because the agent has already returned and you own the worktree's lifecycle.
+   - **Fail (test failure, lint failure, blocker reported, criterion miss):** Diagnose the gap. If the subagent reported a blocker that exists as another Linear issue, set `state="Blocked"` and add the `blockedBy` link. Otherwise re-dispatch with the specific gap noted in the prompt. Clean up the failed worktree first: `git worktree remove -f -f <path>` and `git branch -D <branch>`.
 
 ### Wave-end gate
 
@@ -202,7 +215,7 @@ When every sub-issue is `Done` (no blockers, no deferrals), execute the six comp
 
 ```bash
 git push -u origin <feature-branch>
-gh pr create --title "<feature-name>: implement work tree" --body "$(cat <<'EOF'
+gh pr create --head <feature-branch> --base main --title "<feature-name>: implement work tree" --body "$(cat <<'EOF'
 ## Summary
 <2–4 bullets covering what the work tree delivers — drawn from the parent Issue's description>
 
@@ -217,6 +230,8 @@ Closes <parent Linear issue URL>.
 EOF
 )"
 ```
+
+The explicit `--head <feature-branch> --base main` is required: without it, gh refuses to create the PR with a confusing `you must first push the current branch to a remote` error even when the branch IS pushed. The friction is caused by gh's local-state safety check tripping on the leftover `.claude/worktrees/agent-*` directories as untracked content. Explicit `--head`/`--base` bypass the check.
 
 Capture the PR URL.
 
