@@ -406,8 +406,17 @@ def cluster_events(
     seal_window = timedelta(hours=CLUSTER_SEAL_HOURS)
 
     # cluster_id (earliest member's article_id) → ordered list of member article_ids.
-    clusters: dict[str, list[str]] = {}
+    members_by_cluster: dict[str, list[str]] = {}
+    # ``cluster_order`` is naturally sorted by ``first_seen_at`` ASC: outer-loop
+    # candidates arrive in ``published_at`` ASC order, and a freshly-seeded
+    # cluster's ``first_seen_at`` is the candidate's own timestamp.
+    cluster_order: list[str] = []
     cluster_first_seen: dict[str, datetime] = {}
+    # Index of the leftmost cluster still potentially in the Stage-2 window.
+    # Monotonically non-decreasing across the outer loop because candidate
+    # timestamps are non-decreasing — once a cluster falls behind the window
+    # for one candidate, no later candidate can resurrect it.
+    start_idx = 0
 
     for article in sorted_articles:
         candidate = _CandidateProfile(
@@ -417,29 +426,44 @@ def cluster_events(
             tickers=ctx.ticker_index.get(article.article_id, frozenset()),
             themes=ctx.themes[article.article_id],
         )
-        joined = _find_joinable_cluster(candidate, clusters, cluster_first_seen, seal_window, ctx)
+        # Advance ``start_idx`` past clusters whose ``first_seen_at`` precedes
+        # the candidate by more than Stage 2's comparison window — per the
+        # design spec a new member must fall within ``STAGE_2_TIME_WINDOW_HOURS``
+        # of the cluster's ``first_seen_at``, so older clusters cannot match.
+        # The ``CLUSTER_SEAL_HOURS`` horizon is strictly looser than the
+        # Stage-2 window, so this advance also enforces the seal.
+        while start_idx < len(cluster_order) and (
+            candidate.timestamp - cluster_first_seen[cluster_order[start_idx]] > ctx.article_window
+        ):
+            start_idx += 1
+        candidate_cluster_ids = cluster_order[start_idx:]
+        joined = _find_joinable_cluster(candidate, candidate_cluster_ids, members_by_cluster, ctx)
         if joined is not None:
-            clusters[joined].append(candidate.article_id)
+            members_by_cluster[joined].append(candidate.article_id)
         else:
-            clusters[candidate.article_id] = [candidate.article_id]
+            members_by_cluster[candidate.article_id] = [candidate.article_id]
+            cluster_order.append(candidate.article_id)
             cluster_first_seen[candidate.article_id] = candidate.timestamp
 
-    return _build_cluster_records(clusters, ctx, seal_window)
+    return _build_cluster_records(members_by_cluster, ctx, seal_window)
 
 
 def _find_joinable_cluster(
     candidate: _CandidateProfile,
-    clusters: Mapping[str, Sequence[str]],
-    cluster_first_seen: Mapping[str, datetime],
-    seal_window: timedelta,
+    candidate_cluster_ids: Sequence[str],
+    members_by_cluster: Mapping[str, Sequence[str]],
     ctx: _ClusteringContext,
 ) -> str | None:
-    """Return the cluster id ``candidate`` joins via single-link agglomeration."""
-    for cluster_id, member_ids in clusters.items():
-        if candidate.timestamp - cluster_first_seen[cluster_id] > seal_window:
-            # Sealed — cannot accept new members regardless of similarity.
-            continue
-        for member_id in member_ids:
+    """Return the cluster id ``candidate`` joins via single-link agglomeration.
+
+    ``candidate_cluster_ids`` is the caller-bounded slice of clusters within
+    Stage-2's comparison window of ``candidate``; older clusters are skipped
+    by the caller so this function never sees them. Within the slice, returns
+    the first cluster (in ``first_seen_at`` ASC order) that has any member
+    matching ``candidate`` per :func:`_candidate_matches_member`.
+    """
+    for cluster_id in candidate_cluster_ids:
+        for member_id in members_by_cluster[cluster_id]:
             if _candidate_matches_member(candidate, member_id, ctx):
                 return cluster_id
     return None

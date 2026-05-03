@@ -362,6 +362,89 @@ class TestStage2EventClustering:
         for cluster in clusters:
             assert cluster.headline_count == 1
 
+    def test_inner_loop_skips_clusters_outside_stage_2_window(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Stage 2 must not iterate clusters older than ``STAGE_2_TIME_WINDOW_HOURS``.
+
+        On a busy news day with hundreds of articles, naive O(n²) iteration of
+        every existing cluster's every member dominates the 30-minute refresh
+        cron. Per § Headline clustering, two members must fall within
+        ``STAGE_2_TIME_WINDOW_HOURS`` of the cluster's ``first_seen_at``, so
+        clusters whose ``first_seen_at`` is older than the candidate by more
+        than that window cannot match by definition — iterating them is
+        wasted work.
+
+        Seeds four cluster anchors spaced 12h apart across a 48h window, then
+        feeds a candidate at hour 37.5. With ``STAGE_2_TIME_WINDOW_HOURS`` of
+        6h, only the cluster anchored at hour 36 falls in scope; the inner
+        search must inspect strictly fewer than the four existing clusters
+        before deciding.
+        """
+        from collections.abc import Mapping, Sequence
+
+        from alphamind.data_sources.news import clustering
+
+        seed_specs = [
+            ("seed-00", "2026-05-01T00:00:00Z", "AAPL"),
+            ("seed-12", "2026-05-01T12:00:00Z", "AMD"),
+            ("seed-24", "2026-05-02T00:00:00Z", "NVDA"),
+            ("seed-36", "2026-05-02T12:00:00Z", "NVDA"),
+        ]
+        articles = [
+            _article(
+                aid,
+                f"Company {ticker} reports record Q3 revenue beating analyst estimates",
+                ts,
+                topic_tags="earnings_related",
+            )
+            for aid, ts, ticker in seed_specs
+        ]
+        candidate = _article(
+            "cand-36",
+            "Company NVDA reports record Q3 revenue topping analyst estimates",
+            "2026-05-02T13:30:00Z",  # 1.5h after seed-36
+            topic_tags="earnings_related",
+        )
+        articles.append(candidate)
+        ticker_index: dict[str, frozenset[str]] = {
+            aid: frozenset({ticker}) for aid, _, ticker in seed_specs
+        }
+        ticker_index["cand-36"] = frozenset({"NVDA"})
+
+        original = clustering._find_joinable_cluster
+        observed_lengths: list[int] = []
+
+        def wrapper(
+            candidate_arg: clustering._CandidateProfile,
+            cluster_ids: Sequence[str],
+            members_by_cluster: Mapping[str, Sequence[str]],
+            ctx: clustering._ClusteringContext,
+        ) -> str | None:
+            # Approach A surfaces the bounded subset as the second positional
+            # argument. The test asserts the caller pre-filters to clusters
+            # within Stage-2 window before invoking the inner search.
+            materialized = list(cluster_ids)
+            observed_lengths.append(len(materialized))
+            return original(candidate_arg, materialized, members_by_cluster, ctx)
+
+        monkeypatch.setattr(clustering, "_find_joinable_cluster", wrapper)
+
+        clusters = clustering.cluster_events(articles, ticker_index)
+
+        joined = next(c for c in clusters if c.cluster_id == "seed-36")
+        assert joined.headline_count == 2
+        assert "cand-36" in joined.member_article_ids
+
+        cand_observation = observed_lengths[-1]
+        assert cand_observation < 4, (
+            f"_find_joinable_cluster inspected {cand_observation} clusters for "
+            "cand-36; expected fewer than 4 (only seed-36 falls within "
+            "STAGE_2_TIME_WINDOW_HOURS)."
+        )
+        # Tighter contract: only the in-window cluster (seed-36) is inspected.
+        assert cand_observation == 1
+
 
 class TestRefreshNewsClusters:
     """``refresh_news_clusters`` is the persistence-layer top-level callable."""
