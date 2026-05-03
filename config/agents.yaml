@@ -69,8 +69,17 @@ agents:
     prompt: prompts/analysis/qualitative_researcher.md
     latency_budget_seconds: 180
     context_token_budget: 8000
+    # 2× the design-doc 300–600 brief target; SDK cap carries headroom because
+    # truncation at the cap fails parse/validation rather than producing a short brief.
     output_token_budget: 1000
-    tools: []
+    # social_sentiment deferred per ALP-111 — Qual2 storage not yet provisioned.
+    tools: [news_search, prediction_markets, earnings_commentary]
+    cumulative_tool_call_limit: 15
+    cumulative_tool_token_budget: 4000
+    tool_caps:
+      news_search: 8         # primary investigative tool; highest cap
+      prediction_markets: 4  # follow-up on snapshot deltas
+      earnings_commentary: 4 # one per universe name reporting in-window
 
   adaptive_researcher:
     model: claude-sonnet-4-6

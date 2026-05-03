@@ -56,3 +56,21 @@ def test_sector_values_match_domain_researcher_by_audience_strings() -> None:
 
     resolved = {DOMAIN_RESEARCHER_BY_AUDIENCE[aud] for aud in _SECTOR_AUDIENCE_MAP.values()}
     assert resolved == {sector.value for sector in Sector}
+
+
+def test_signal_quality_is_importable_from_shared() -> None:
+    """SignalQuality is promoted to _shared so the qualitative brief reuses it."""
+    from alphamind.analysis._shared import SignalQuality
+
+    assert {member.value for member in SignalQuality} == {"high", "moderate", "low", "degraded"}
+
+
+def test_signal_quality_re_export_from_domain_researchers_models_is_same_object() -> None:
+    """domain_researchers.models.SignalQuality re-exports the _shared enum;
+    existing call sites keep working without redefinition."""
+    from alphamind.analysis._shared import SignalQuality as SharedSignalQuality
+    from alphamind.analysis.domain_researchers.models import (
+        SignalQuality as DomainSignalQuality,
+    )
+
+    assert SharedSignalQuality is DomainSignalQuality

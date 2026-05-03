@@ -14,10 +14,11 @@ Sources transcribed from the analysis-layer specs:
   ``news_search``, ``ticker_deep_pull``, ``social_sentiment``,
   ``prediction_markets``, ``options_flow``, ``sec_lending``, ``short_interest``,
   ``earnings_calendar``, ``macro_data``
+* ``docs/design/03-analysis-layer/qualitative-research.md § On-demand tools`` —
+  ``earnings_commentary`` (new, qualitative-researcher-only)
 
 The set is a module-level constant; runtime tool registration and dispatch live
-in the tool harness, not here. Future stories may extend the set; this story
-freezes the v1 inventory.
+in the tool harness, not here. Future stories may extend the set.
 """
 
 REGISTERED_TOOLS: frozenset[str] = frozenset(
@@ -38,5 +39,7 @@ REGISTERED_TOOLS: frozenset[str] = frozenset(
         "short_interest",
         "earnings_calendar",
         "macro_data",
+        # Qualitative researcher tools (shares three with adaptive; one new).
+        "earnings_commentary",
     }
 )

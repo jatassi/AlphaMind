@@ -22,7 +22,7 @@ import enum
 
 from pydantic import BaseModel, Field, model_validator
 
-from alphamind.analysis._shared import AnomalySeverity, Sector
+from alphamind.analysis._shared import AnomalySeverity, Sector, SignalQuality
 
 __all__ = [
     "SECTOR_PREFIX",
@@ -98,15 +98,6 @@ class ConvictionSketch(enum.StrEnum):
     LOW = "low"
     MODERATE = "moderate"
     HIGH = "high"
-
-
-class SignalQuality(enum.StrEnum):
-    """Overall signal quality for a sector brief."""
-
-    HIGH = "high"
-    MODERATE = "moderate"
-    LOW = "low"
-    DEGRADED = "degraded"
 
 
 # ---------------------------------------------------------------------------

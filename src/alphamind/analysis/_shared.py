@@ -17,6 +17,7 @@ __all__ = [
     "_SECTOR_AUDIENCE_MAP",
     "AnomalySeverity",
     "Sector",
+    "SignalQuality",
     "TokensUsed",
 ]
 
@@ -31,6 +32,20 @@ class Sector(StrEnum):
     TECH_SEMIS = "tech_semis"
     FINANCIALS = "financials"
     ENERGY = "energy"
+
+
+class SignalQuality(StrEnum):
+    """Overall signal quality for an analysis-layer brief.
+
+    Shared across the domain-researcher :class:`SectorBrief` and the
+    qualitative-research brief. ``DEGRADED`` carries an accompanying reason
+    string; the other levels do not.
+    """
+
+    HIGH = "high"
+    MODERATE = "moderate"
+    LOW = "low"
+    DEGRADED = "degraded"
 
 
 class TokensUsed(BaseModel, frozen=True):
