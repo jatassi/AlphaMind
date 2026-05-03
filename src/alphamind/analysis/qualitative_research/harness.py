@@ -38,6 +38,7 @@ from alphamind.analysis.qualitative_research.validation import (
     validate_qualitative_brief,
 )
 from alphamind.analysis.tools import TOOLS
+from alphamind.analysis.tools._sdk_adapter import build_qualitative_mcp_server
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
 
 __all__ = [
@@ -430,14 +431,21 @@ def _resolve_tools(
     *,
     agent_name: str,
     invocation_id: str,
-) -> tuple[list[str], dict[str, Callable[..., Any]]]:
-    """Resolve agent_config.tools against the registry.
+) -> tuple[list[str], dict[str, Any]]:
+    """Resolve agent_config.tools against the registry and build the SDK MCP server.
 
-    Returns the allowlist (the raw tool names) and a name → callable mapping
-    built via each tool's ``callable_factory(session)``.  Raises
-    :class:`SDKFailure` immediately if any name in ``agent_config.tools`` is
-    not registered in :data:`alphamind.analysis.tools.TOOLS` — fail loudly
-    rather than silently dropping tool privileges.
+    Returns ``(allowed_tools, mcp_servers)`` ready for
+    :class:`ClaudeAgentOptions`.  ``allowed_tools`` carries the bundled
+    CLI's ``mcp__<server>__<tool>`` wire form so the permission filter
+    matches what the model emits.  ``mcp_servers`` is keyed by the
+    qualitative-research server name and registers each tool's handler
+    via the :mod:`alphamind.analysis.tools._sdk_adapter` decorator wrap.
+
+    Raises :class:`SDKFailure` immediately if any name in
+    ``agent_config.tools`` is not registered in
+    :data:`alphamind.analysis.tools.TOOLS` — fail loudly rather than
+    silently dropping tool privileges.  An empty ``agent_config.tools``
+    yields ``([], {})``: no MCP server is registered.
     """
     missing = [name for name in agent_config.tools if name not in TOOLS]
     if missing:
@@ -447,14 +455,18 @@ def _resolve_tools(
             agent_name=agent_name,
             invocation_id=invocation_id,
         )
-    callables: dict[str, Callable[..., Any]] = {
-        name: TOOLS[name].callable_factory(session) for name in agent_config.tools
-    }
-    return list(agent_config.tools), callables
+    if not agent_config.tools:
+        return [], {}
+    server, allowed = build_qualitative_mcp_server(agent_config.tools, session)
+    return allowed, {"alphamind_qualitative": server}
 
 
 def _build_sdk_options(
-    agent_config: BaseAgentConfig, *, prompt_text: str, allowed_tools: list[str]
+    agent_config: BaseAgentConfig,
+    *,
+    prompt_text: str,
+    allowed_tools: list[str],
+    mcp_servers: dict[str, Any],
 ) -> Any:
     """Build :class:`ClaudeAgentOptions` for the qualitative-researcher invocation.
 
@@ -462,7 +474,9 @@ def _build_sdk_options(
     ``.claude/settings.json`` (hooks/permissions) — this agent must run
     system_prompt + user_message + the allowlisted tools only.
     ``CLAUDE_CODE_MAX_OUTPUT_TOKENS`` is the only path the CLI exposes for
-    an output-token cap.
+    an output-token cap.  ``mcp_servers`` registers the in-process SDK
+    MCP server that backs the tool callables; without it the SDK CLI
+    returns "tool not found" when the model emits a tool_use block.
     """
     from claude_agent_sdk import ClaudeAgentOptions
 
@@ -470,6 +484,7 @@ def _build_sdk_options(
         system_prompt=prompt_text,
         model=agent_config.model,
         allowed_tools=allowed_tools,
+        mcp_servers=mcp_servers,
         max_turns=_MAX_TURNS,
         setting_sources=[],
         env={"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(agent_config.output_token_budget)},
@@ -535,11 +550,16 @@ async def invoke_qualitative_researcher(
 
     agent_name = AgentName.qualitative_researcher.value
 
-    allowed_tools, _tool_callables = _resolve_tools(
+    allowed_tools, mcp_servers = _resolve_tools(
         agent_config, session, agent_name=agent_name, invocation_id=invocation_id
     )
     prompt_text = await _load_prompt(agent_config.prompt)
-    options = _build_sdk_options(agent_config, prompt_text=prompt_text, allowed_tools=allowed_tools)
+    options = _build_sdk_options(
+        agent_config,
+        prompt_text=prompt_text,
+        allowed_tools=allowed_tools,
+        mcp_servers=mcp_servers,
+    )
 
     diag = _DiagState(
         agent_name=agent_name,

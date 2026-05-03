@@ -691,13 +691,236 @@ async def test_claude_agent_options_structure(
     assert len(captured_options) == 1
     options = captured_options[0]
 
-    assert options.allowed_tools == list(agent_config.tools)
+    # allowed_tools uses the bundled CLI's MCP wire format —
+    # ``mcp__<server>__<tool>`` — so the permission filter matches the
+    # tool name the model emits when calling an SDK MCP-server tool.
+    expected_allowed = [f"mcp__alphamind_qualitative__{name}" for name in agent_config.tools]
+    assert options.allowed_tools == expected_allowed
     assert options.max_turns is not None
     assert options.max_turns >= agent_config.cumulative_tool_call_limit
     assert isinstance(options.system_prompt, str)
     assert options.system_prompt
     assert options.setting_sources == []
     assert options.env.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS") == str(agent_config.output_token_budget)
+
+
+# ---------------------------------------------------------------------------
+# 11b. mcp_servers registers the SDK MCP server with one tool per agent_config.tools
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mcp_servers_populated_when_tools_configured(
+    agent_config: AdaptiveAgentConfig,
+    archive_root: Path,
+    session: Session,
+    universe: frozenset[str],
+) -> None:
+    """A non-empty agent_config.tools causes mcp_servers to register an SDK server.
+
+    Without this registration the bundled SDK CLI returns "tool not found" when
+    the model emits ``<tool_use name="news_search">``, and the agent silently
+    falls back to its in-context bundle — defeating the qualitative-researcher's
+    on-demand tool design.
+    """
+    captured_options: list[Any] = []
+
+    async def _capturing_stub(**kwargs: Any) -> AsyncIterator[Any]:
+        captured_options.append(kwargs.get("options"))
+        async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_TEXT)):
+            yield msg
+
+    await invoke_qualitative_researcher(
+        agent_config=agent_config,
+        user_message="Produce a qualitative brief.",
+        invocation_id="inv-mcp-001",
+        session=session,
+        universe=universe,
+        archive_root=archive_root,
+        sdk_query_fn=_capturing_stub,
+    )
+
+    options = captured_options[0]
+    assert options.mcp_servers, "mcp_servers must be populated when tools are configured"
+    assert "alphamind_qualitative" in options.mcp_servers
+    server_config = options.mcp_servers["alphamind_qualitative"]
+    # McpSdkServerConfig is a TypedDict with type/name/instance keys.
+    assert server_config["type"] == "sdk"
+    assert server_config["name"] == "alphamind_qualitative"
+
+
+# ---------------------------------------------------------------------------
+# 11c. mcp_servers is empty when no tools are configured (no spurious server)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mcp_servers_empty_when_no_tools_configured(
+    archive_root: Path,
+    session: Session,
+    universe: frozenset[str],
+) -> None:
+    """A config with empty tools registers no MCP server — the agent runs tool-less."""
+    no_tools_config = AdaptiveAgentConfig(
+        model=AllowedModel.sonnet_4_6,
+        prompt="prompts/analysis/qualitative_researcher.md",
+        latency_budget_seconds=30,
+        context_token_budget=8_000,
+        output_token_budget=1_000,
+        tools=[],
+        cumulative_tool_call_limit=15,
+        cumulative_tool_token_budget=4_000,
+        tool_caps={},
+    )
+    captured_options: list[Any] = []
+
+    async def _capturing_stub(**kwargs: Any) -> AsyncIterator[Any]:
+        captured_options.append(kwargs.get("options"))
+        async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_TEXT)):
+            yield msg
+
+    await invoke_qualitative_researcher(
+        agent_config=no_tools_config,
+        user_message="Produce a qualitative brief.",
+        invocation_id="inv-no-tools",
+        session=session,
+        universe=universe,
+        archive_root=archive_root,
+        sdk_query_fn=_capturing_stub,
+    )
+
+    options = captured_options[0]
+    assert options.allowed_tools == []
+    assert options.mcp_servers == {}
+
+
+# ---------------------------------------------------------------------------
+# 11d. SDK MCP-server handlers preserve the ToolEnvelope (data_freshness, quality)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mcp_handlers_preserve_envelope_fields(
+    agent_config: AdaptiveAgentConfig,
+    archive_root: Path,
+    session: Session,
+    universe: frozenset[str],
+) -> None:
+    """The SDK MCP-server handler must surface ``data_freshness`` and ``quality``.
+
+    Per ALP-111: every tool return must carry the envelope.  The MCP wrapping
+    must not strip those fields — they must round-trip through the handler's
+    JSON-serialisation.
+    """
+    captured_options: list[Any] = []
+
+    async def _capturing_stub(**kwargs: Any) -> AsyncIterator[Any]:
+        captured_options.append(kwargs.get("options"))
+        async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_TEXT)):
+            yield msg
+
+    await invoke_qualitative_researcher(
+        agent_config=agent_config,
+        user_message="Produce a qualitative brief.",
+        invocation_id="inv-env-001",
+        session=session,
+        universe=universe,
+        archive_root=archive_root,
+        sdk_query_fn=_capturing_stub,
+    )
+
+    server_config = captured_options[0].mcp_servers["alphamind_qualitative"]
+    server = server_config["instance"]
+
+    # Drive the in-process MCP server's tools/list handler — registered tool
+    # names must mirror agent_config.tools.
+    from mcp.types import ListToolsRequest
+
+    list_handler = server.request_handlers[ListToolsRequest]
+    list_result = await list_handler(ListToolsRequest(method="tools/list"))
+    registered_names = {t.name for t in list_result.root.tools}
+    assert registered_names == set(agent_config.tools)
+
+    # Invoke news_search through the SDK handler with empty input —
+    # the tool returns UNAVAILABLE-with-envelope per its contract.
+    payload = await _invoke_mcp_tool(server, "news_search", {})
+    assert "data_freshness" in payload
+    assert "quality" in payload
+
+
+async def _invoke_mcp_tool(server: Any, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Drive the in-process MCP server's call_tool handler for *tool_name*.
+
+    Returns the JSON payload extracted from the handler's content blocks.
+    """
+    import json as _json
+
+    from mcp.types import CallToolRequest, CallToolRequestParams
+
+    request = CallToolRequest(
+        method="tools/call",
+        params=CallToolRequestParams(name=tool_name, arguments=args),
+    )
+    handler = server.request_handlers[CallToolRequest]
+    result = await handler(request)
+    content_blocks = result.root.content
+    assert content_blocks, "tool returned no content blocks"
+    block = content_blocks[0]
+    payload = _json.loads(block.text)
+    assert isinstance(payload, dict)
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# 11e. SDK MCP-server handlers fail closed on invalid input — Pydantic raises,
+#      and the SDK surfaces is_error=True (per ALP-111's fail-closed invariant).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_mcp_handler_fails_closed_on_invalid_input(
+    agent_config: AdaptiveAgentConfig,
+    archive_root: Path,
+    session: Session,
+    universe: frozenset[str],
+) -> None:
+    """An invalid argument shape causes the handler to raise — surfaced as is_error.
+
+    The handler must not silently coerce or swallow validation errors.  Per
+    ALP-111's fail-closed propagation invariant the failure rides through.
+    """
+    captured_options: list[Any] = []
+
+    async def _capturing_stub(**kwargs: Any) -> AsyncIterator[Any]:
+        captured_options.append(kwargs.get("options"))
+        async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_TEXT)):
+            yield msg
+
+    await invoke_qualitative_researcher(
+        agent_config=agent_config,
+        user_message="Produce a qualitative brief.",
+        invocation_id="inv-validate-001",
+        session=session,
+        universe=universe,
+        archive_root=archive_root,
+        sdk_query_fn=_capturing_stub,
+    )
+
+    server = captured_options[0].mcp_servers["alphamind_qualitative"]["instance"]
+
+    from mcp.types import CallToolRequest, CallToolRequestParams
+
+    # ``lookback_hours`` is typed ``int``; passing a non-numeric string fails
+    # Pydantic validation.
+    request = CallToolRequest(
+        method="tools/call",
+        params=CallToolRequestParams(
+            name="news_search", arguments={"lookback_hours": "not-a-number"}
+        ),
+    )
+    handler = server.request_handlers[CallToolRequest]
+    result = await handler(request)
+    assert result.root.isError, "validation failure must surface as is_error=True"
 
 
 # ---------------------------------------------------------------------------
