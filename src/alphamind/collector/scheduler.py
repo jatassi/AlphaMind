@@ -41,6 +41,7 @@ from alphamind.data_sources.iborrowdesk.borrow_cost import (
 )
 from alphamind.data_sources.kalshi.contracts import collect_snapshots as kalshi_collect_snapshots
 from alphamind.data_sources.marketaux.news import collect_news as marketaux_news_collect_news
+from alphamind.data_sources.news.clustering import refresh_news_clusters
 from alphamind.data_sources.polygon.corporate_actions import collect_corporate_actions
 from alphamind.data_sources.polygon.equity import collect_universe_bars
 from alphamind.data_sources.polygon.options import collect_options_chains
@@ -72,6 +73,26 @@ def _finnhub_calendar_fanout(since: object = None) -> None:
     collect_fda_calendar()
 
 
+def _news_clustering_refresh(since: object = None) -> None:
+    """Run the headline-clustering pipeline against the configured database.
+
+    Opens a session against the default database, calls
+    :func:`alphamind.data_sources.news.clustering.refresh_news_clusters`
+    with ``as_of`` pinned to the current UTC time, and closes the session.
+    The pre-market and market-hours cron entries both route to this single
+    callable — the cadence difference lives entirely in
+    ``config/collector_schedule.yaml``.
+    """
+    from datetime import UTC, datetime
+
+    from alphamind.data_sources._common import default_session_factory
+
+    del since  # accepted for runner-contract compatibility
+    factory = default_session_factory()
+    with factory() as sess:
+        refresh_news_clusters(sess, as_of=datetime.now(UTC))
+
+
 # ---------------------------------------------------------------------------
 # Collector registry — maps YAML collector ID → callable
 # ---------------------------------------------------------------------------
@@ -96,6 +117,8 @@ COLLECTORS: dict[str, Callable[..., object]] = {
     "finra.short_interest": finra_short_interest,
     "iborrowdesk.borrow_cost": iborrowdesk_collect_borrow_cost,
     "finnhub.estimate_revisions": finnhub_estimate_revisions,
+    "news.clustering": _news_clustering_refresh,
+    "news.clustering_premarket": _news_clustering_refresh,
 }
 
 # Per-vendor executor sizing. Default is 1 (serialise to respect rate limits).
@@ -116,6 +139,7 @@ _VENDOR_WORKERS: dict[str, int] = {
     "kalshi": 1,
     "finra": 1,
     "iborrowdesk": 1,
+    "news": 1,
 }
 
 _SCHEDULE_PATH = Path(__file__).parents[3] / "config" / "collector_schedule.yaml"

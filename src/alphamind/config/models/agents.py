@@ -3,10 +3,12 @@
 The closed `AgentName` enum keys `AgentsConfig.agents`, making the per-agent slot
 roster a contract. `BaseAgentConfig` carries the model identity, prompt path,
 budget knobs, and tool allowlist; `AdaptiveAgentConfig` extends it with the
-three structured tool-loop fields the adaptive researcher uses (per
-`docs/design/03-analysis-layer/adaptive-research.md`). The discriminator between
-the two is structural — the adaptive researcher carries the extra fields and no
-other agent does — enforced by a model validator on `AgentsConfig`.
+three structured tool-loop fields a tool-loop agent needs (per
+`docs/design/03-analysis-layer/adaptive-research.md` and
+`docs/design/03-analysis-layer/qualitative-research.md`). The discriminator
+between the two is structural — tool-loop agents carry the extra fields and no
+other agent does — enforced by a model validator on `AgentsConfig`. The set of
+tool-loop slots is `_TOOL_LOOP_AGENTS`.
 """
 
 import re
@@ -35,6 +37,13 @@ class AgentName(StrEnum):
     qualitative_researcher = "qualitative_researcher"
     adaptive_researcher = "adaptive_researcher"
     synthesizer = "synthesizer"
+
+
+# Slots whose entry must carry tool-loop fields (cumulative_tool_call_limit,
+# cumulative_tool_token_budget, tool_caps). Any other slot must omit them.
+_TOOL_LOOP_AGENTS: frozenset[AgentName] = frozenset(
+    {AgentName.adaptive_researcher, AgentName.qualitative_researcher}
+)
 
 
 class AllowedModel(StrEnum):
@@ -113,19 +122,19 @@ class AgentsConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def adaptive_only_fields_isolated_to_adaptive(self) -> "AgentsConfig":
+    def tool_loop_fields_isolated_to_tool_loop_agents(self) -> "AgentsConfig":
         for name, entry in self.agents.items():
-            is_adaptive_entry = isinstance(entry, AdaptiveAgentConfig)
-            is_adaptive_slot = name == AgentName.adaptive_researcher
-            if is_adaptive_slot and not is_adaptive_entry:
+            is_tool_loop_entry = isinstance(entry, AdaptiveAgentConfig)
+            is_tool_loop_slot = name in _TOOL_LOOP_AGENTS
+            if is_tool_loop_slot and not is_tool_loop_entry:
                 raise ValueError(
                     f"Agent {name.value!r} must declare cumulative_tool_call_limit, "
                     f"cumulative_tool_token_budget, and tool_caps"
                 )
-            if is_adaptive_entry and not is_adaptive_slot:
+            if is_tool_loop_entry and not is_tool_loop_slot:
                 raise ValueError(
                     f"Agent {name.value!r} must not declare cumulative_tool_call_limit, "
                     f"cumulative_tool_token_budget, or tool_caps; only "
-                    f"{AgentName.adaptive_researcher.value!r} carries those fields"
+                    f"{sorted(n.value for n in _TOOL_LOOP_AGENTS)} carry those fields"
                 )
         return self

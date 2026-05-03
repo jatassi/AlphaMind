@@ -35,10 +35,11 @@ class TestEventCalendarSectorsMigration:
         finally:
             eng.dispose()
 
-    def test_downgrade_one_drops_sectors_column(self, tmp_path: Path) -> None:
+    def test_downgrading_past_sectors_revision_drops_column(self, tmp_path: Path) -> None:
+        """Targets the sectors revision explicitly so future migrations don't shift the test."""
         db_path = tmp_path / "alembic.db"
         cfg = _alembic_config(db_path)
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "ed4b7069d668")
         command.downgrade(cfg, "-1")
 
         eng = make_engine(str(db_path))

@@ -472,11 +472,45 @@ class NewsArticles(Base):
     vendor_sentiment_score: Mapped[float | None] = mapped_column(Float)
     vendor_sentiment_label: Mapped[str | None] = mapped_column(Text)
     topic_tags: Mapped[str | None] = mapped_column(Text)
+    # Logical FK to ``news_article_clusters.cluster_id`` (set null on the
+    # cluster's deletion). Declared without a SQLAlchemy ``ForeignKey``
+    # because the relationship is circular at the data level — a cluster's
+    # ``cluster_id`` is the earliest member's ``article_id``, so the cluster
+    # row references back into ``news_articles``. SQLite would refuse the
+    # insert ordering ``article_tickers → news_articles → clusters → update
+    # cross_ticker_cluster_id``, and the renderer's join works against the
+    # named index regardless of FK enforcement.
+    cross_ticker_cluster_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index("ix_news_articles_published_at_desc", "published_at"),
         Index("ix_news_articles_source_published", "source", "published_at"),
+        Index("ix_news_articles_cross_ticker_cluster_id", "cross_ticker_cluster_id"),
     )
+
+
+class NewsArticleClusters(Base):
+    """Cluster records produced by the two-pass headline clustering pipeline.
+
+    Persists the in-memory ``HeadlineCluster`` shape from
+    :mod:`alphamind.data_sources.news.clustering`. See
+    ``docs/design/03-analysis-layer/qualitative-research.md`` § Headline
+    clustering for the algorithmic specification and
+    ``docs/design/01-data-layer/collector/storage.md`` § ``news_article_clusters``
+    for the per-column reference.
+    """
+
+    __tablename__ = "news_article_clusters"
+
+    cluster_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    primary_theme: Mapped[str] = mapped_column(Text)
+    headline_count: Mapped[int] = mapped_column(Integer)
+    first_seen_at: Mapped[str] = mapped_column(Text)
+    last_seen_at: Mapped[str] = mapped_column(Text)
+    tickers_involved: Mapped[str] = mapped_column(Text)
+    sealed_at: Mapped[str] = mapped_column(Text)
+
+    __table_args__ = (Index("ix_news_article_clusters_first_seen_at", "first_seen_at"),)
 
 
 class NewsArticleTickers(Base):

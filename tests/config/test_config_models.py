@@ -838,6 +838,42 @@ def test_agents_yaml_adaptive_researcher_carries_three_extra_fields() -> None:
     assert adaptive.tool_caps  # non-empty
 
 
+def test_agents_yaml_qualitative_researcher_carries_expected_tool_loop_shape() -> None:
+    """qualitative_researcher carries the design-doc-driven tool allowlist,
+    cumulative caps, and per-tool caps per ALP-241."""
+    from alphamind.config.models import AdaptiveAgentConfig, AgentName, AgentsConfig
+
+    data = load_yaml(CONFIG_DIR / "agents.yaml")
+    config = AgentsConfig.model_validate(data)
+    qualitative = config.agents[AgentName.qualitative_researcher]
+    assert isinstance(qualitative, AdaptiveAgentConfig)
+    assert qualitative.tools == ["news_search", "prediction_markets", "earnings_commentary"]
+    assert qualitative.cumulative_tool_call_limit == 15
+    assert qualitative.cumulative_tool_token_budget == 4000
+    assert qualitative.tool_caps == {
+        "news_search": 8,
+        "prediction_markets": 4,
+        "earnings_commentary": 4,
+    }
+    assert qualitative.output_token_budget == 1000
+
+
+def test_agents_accepts_qualitative_researcher_with_tool_loop_fields() -> None:
+    """qualitative_researcher is a tool-loop agent: cumulative_* and tool_caps
+    are valid fields on its entry (not adaptive_researcher-only)."""
+    from alphamind.config.models import AgentsConfig
+
+    raw = _valid_agents_raw()
+    agents_map = raw["agents"]
+    assert isinstance(agents_map, dict)
+    qualitative_entry = agents_map["qualitative_researcher"]
+    assert isinstance(qualitative_entry, dict)
+    qualitative_entry["cumulative_tool_call_limit"] = 15
+    qualitative_entry["cumulative_tool_token_budget"] = 4000
+    qualitative_entry["tool_caps"] = {"news_search": 8}
+    AgentsConfig.model_validate(raw)  # does not raise
+
+
 def test_agents_models_are_frozen() -> None:
     from alphamind.config.models import AgentName, AgentsConfig
 
