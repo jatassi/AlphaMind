@@ -95,12 +95,20 @@ def _fmt_utc(dt: datetime) -> str:
 
 
 def _render_headline(index: int, entry: HeadlineEntry) -> str:
-    """Render one headline entry as two lines."""
+    """Render one headline entry as a single compact line (ALP-272).
+
+    Format: ``[i] <iso> [<tier>] <outlet> | <tickers> | <tags> | <headline>``.
+    The headline trails because it carries variable-length prose; metadata
+    sits up front so a scanning consumer (or LLM) can reject the row before
+    reading the prose. ``(macro)`` / ``(none)`` placeholders preserve the
+    semantic distinction between "no tickers extracted" and "tag-only match".
+    """
     tickers_str = ", ".join(entry.tickers) if entry.tickers else "(macro)"
     tags_str = ", ".join(tag.value for tag in entry.tags) if entry.tags else "(none)"
-    line1 = f"[{index}] {_fmt_utc(entry.published_at)} [{entry.tier}] {entry.headline}"
-    line2 = f"      Outlet: {entry.source_outlet} | Tickers: {tickers_str} | Tags: {tags_str}"
-    return f"{line1}\n{line2}"
+    return (
+        f"[{index}] {_fmt_utc(entry.published_at)} [{entry.tier}]"
+        f" {entry.source_outlet} | {tickers_str} | {tags_str} | {entry.headline}"
+    )
 
 
 def _render_event(entry: EventEntry) -> str:

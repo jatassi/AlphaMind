@@ -92,51 +92,76 @@ def test_format_block_is_byte_identical_on_repeated_calls() -> None:
     rendered_first = format_block(block)
     rendered_second = format_block(block)
     assert rendered_first == rendered_second
-    # Sanity: heading is present and starts the output.
-    assert rendered_first.startswith("### q1.volume_anomaly\n")
+    # Sanity: compact single-line heading is present and starts the output.
+    assert rendered_first.startswith("### q1.volume_anomaly | ")
 
 
 def test_format_block_omits_bootstrap_reason_when_calibrated() -> None:
-    """No bootstrap_reason line when state is CALIBRATED."""
+    """No bootstrap_reason segment when state is CALIBRATED."""
     block = _make_block(calibration_state=CalibrationState.CALIBRATED)
     rendered = format_block(block)
     assert "bootstrap_reason" not in rendered
-    assert "Calibration: calibrated" in rendered
+    assert "| calibrated" in rendered
 
 
 def test_format_block_includes_bootstrap_reason_when_bootstrap() -> None:
-    """The bootstrap_reason line appears when state is BOOTSTRAP."""
+    """The bootstrap_reason segment appears when state is BOOTSTRAP."""
     block = _make_block(
         calibration_state=CalibrationState.BOOTSTRAP,
         bootstrap_reason="volume_baseline: 5 < 20",
     )
     rendered = format_block(block)
-    assert "Calibration: bootstrap — bootstrap_reason: volume_baseline: 5 < 20" in rendered
+    assert "| bootstrap — bootstrap_reason: volume_baseline: 5 < 20" in rendered
 
 
 def test_format_block_includes_bootstrap_reason_when_unavailable() -> None:
-    """The bootstrap_reason line appears when state is UNAVAILABLE."""
+    """The bootstrap_reason segment appears when state is UNAVAILABLE."""
     block = _make_block(
         calibration_state=CalibrationState.UNAVAILABLE,
         bootstrap_reason="volume_baseline: 0 < 20 (cross-sectional pool empty)",
     )
     rendered = format_block(block)
-    assert "Calibration: unavailable — bootstrap_reason:" in rendered
+    assert "| unavailable — bootstrap_reason:" in rendered
     assert "(cross-sectional pool empty)" in rendered
 
 
-def test_format_block_omits_regime_line_when_regime_context_is_none() -> None:
-    """The Regime line appears only on blocks where regime is load-bearing."""
+def test_format_block_omits_regime_segment_when_regime_context_is_none() -> None:
+    """The regime segment appears only on blocks where regime is load-bearing."""
     block = _make_block(regime_context=None)
     rendered = format_block(block)
-    assert "Regime:" not in rendered
+    assert "regime:" not in rendered
 
 
-def test_format_block_includes_regime_line_when_regime_context_is_set() -> None:
-    """When regime_context is supplied the Regime line is rendered."""
+def test_format_block_includes_regime_segment_when_regime_context_is_set() -> None:
+    """When regime_context is supplied the regime segment is rendered."""
     block = _make_block(regime_context="low_vol_compression (early-strong)")
     rendered = format_block(block)
-    assert "Regime: low_vol_compression (early-strong)" in rendered
+    assert "| regime: low_vol_compression (early-strong)" in rendered
+
+
+def test_format_block_omits_anomaly_trailer_when_no_flags() -> None:
+    """Empty per-block anomaly trailer is omitted; universal summary lists flags upstream."""
+    block = _make_block(anomaly_flags=())
+    rendered = format_block(block)
+    assert "Anomaly flags" not in rendered
+
+
+def test_format_per_ticker_renders_compact_one_line_per_ticker() -> None:
+    """The per_ticker key collapses to one row per ticker for ALP-272 compactness."""
+    block = _make_block(
+        payload={
+            "per_ticker": {
+                "NVDA": {"rsi": 60.0, "macd_state": "bullish"},
+                "AAPL": {"rsi": 55.0, "macd_state": "bearish"},
+            },
+        },
+    )
+    rendered = format_block(block)
+    assert "per_ticker:" in rendered
+    assert "AAPL macd_state=bearish rsi=55" in rendered
+    assert "NVDA macd_state=bullish rsi=60" in rendered
+    assert "  AAPL:" not in rendered
+    assert "  NVDA:" not in rendered
 
 
 def test_format_blocks_for_audience_filters_and_orders_by_block_id() -> None:
@@ -181,11 +206,11 @@ def test_format_blocks_for_audience_returns_empty_string_when_no_matches() -> No
 
 
 def test_format_block_full_shape_locks_envelope_layout() -> None:
-    """Lock the envelope layout: heading, freshness, calibration, regime, payload, flags.
+    """Lock the compact envelope layout (ALP-272): single-line header, dense payload.
 
     Verifying the exact byte-for-byte render gives a single readable
     expression of the entire envelope shape. The fixture uses bootstrap state
-    plus a regime context so every conditional line is exercised. Sorted-key
+    plus a regime context so every conditional segment is exercised. Sorted-key
     iteration is exercised via the mixed-order payload.
     """
     block = OutputBlock(
@@ -205,18 +230,41 @@ def test_format_block_full_shape_locks_envelope_layout() -> None:
         regime_context="low_vol_compression",
     )
     expected = (
-        "### q1.volume_anomaly\n"
-        "Freshness: 2026-04-27T14:30:00+00:00\n"
-        "Calibration: bootstrap — bootstrap_reason: volume_baseline: 5 < 20\n"
-        "Regime: low_vol_compression\n"
-        "\n"
+        "### q1.volume_anomaly | freshness 2026-04-27T14:30:00+00:00"
+        " | bootstrap — bootstrap_reason: volume_baseline: 5 < 20"
+        " | regime: low_vol_compression\n"
         "context:\n"
         "  atr: 4.875\n"
         "  sector: tech_semis\n"
         "ticker: NVDA\n"
         "z_score: 2.5\n"
-        "\n"
         "Anomaly flags (1):\n"
         "  - volume_spike | magnitude 2.50 | severity investigate_now\n"
+    )
+    assert format_block(block) == expected
+
+
+def test_format_block_per_ticker_full_shape() -> None:
+    """Lock the compact per_ticker layout: one row per ticker, sorted fields, no nesting."""
+    block = OutputBlock(
+        block_id="q1.divergence_flags",
+        audience=frozenset({OutputAudience.SECTOR_TECH_SEMIS}),
+        freshness_ts=datetime(2026, 4, 27, 14, 30, tzinfo=UTC),
+        calibration_state=CalibrationState.CALIBRATED,
+        bootstrap_reason=None,
+        payload={
+            "per_ticker": {
+                "NVDA": {"rsi_1d": 60.0, "divergence_pairs": []},
+                "AAPL": {"rsi_1d": 55.0, "divergence_pairs": []},
+            },
+        },
+        anomaly_flags=(),
+        regime_context=None,
+    )
+    expected = (
+        "### q1.divergence_flags | freshness 2026-04-27T14:30:00+00:00 | calibrated\n"
+        "per_ticker:\n"
+        "AAPL divergence_pairs=[] rsi_1d=55\n"
+        "NVDA divergence_pairs=[] rsi_1d=60\n"
     )
     assert format_block(block) == expected
