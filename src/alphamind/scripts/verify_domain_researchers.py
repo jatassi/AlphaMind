@@ -57,6 +57,11 @@ from alphamind.distillation.orchestrator import (
     run_external_distillation,
 )
 from alphamind.persistence.session import make_engine, make_session_factory
+from alphamind.scripts._artifact_io import (
+    dump_sector_briefs,
+    load_distillation_outputs,
+    stage_artifacts_dir,
+)
 from alphamind.scripts._common import (
     AssertionFailure,
     load_distillation_config,
@@ -503,6 +508,10 @@ def run_verification(
     :func:`run_domain_researchers` wrapped with bound config, or a stub
     in tests). The function does I/O (prints to stdout) but every
     dependency is injected.
+
+    On a passing run, the three sector briefs are dumped to the per-invocation
+    stage-artifacts directory so downstream verification scripts can consume
+    them via ``--upstream-from`` (ALP-287).
     """
     output = asyncio.run(researchers_fn(invocation_id=invocation_id, as_of=as_of))
     report = compute_report(
@@ -511,6 +520,15 @@ def run_verification(
         budgets=budgets,
     )
     print(format_report(report))
+    if report.passed:
+        stage_dir = stage_artifacts_dir(archive_root, invocation_id)
+        sector_briefs = (
+            output.tech_semis.brief,
+            output.financials.brief,
+            output.energy.brief,
+        )
+        dump_sector_briefs(sector_briefs, stage_dir)
+        print(f"[verify_domain_researchers] stage artifacts written to {stage_dir}")
     return 0 if report.passed else 1
 
 
@@ -583,6 +601,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             "%%USERPROFILE%%/AlphaMind/archive on Windows, ~/AlphaMind/archive elsewhere)."
         ),
     )
+    parser.add_argument(
+        "--invocation-id",
+        type=str,
+        default=None,
+        help=(
+            "Override the invocation_id used for the diagnostic-archive layout AND "
+            "the stage-artifacts directory shared with downstream verification "
+            "scripts. Defaults to YYYYMMDDTHHMMSSZ-verify-domain-researchers."
+        ),
+    )
+    parser.add_argument(
+        "--upstream-from",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a stage-artifacts directory produced by an earlier phase. "
+            "When supplied, distillation_outputs.json is loaded from this directory "
+            "instead of running the live distillation orchestrator (avoids "
+            "double-spending phase-2 SDK tokens during an end-to-end run)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     _check_oauth_token_set()
@@ -593,23 +632,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     archive_root = args.archive_root if args.archive_root is not None else _default_archive_root()
 
     now = datetime.now(tz=UTC)
-    invocation_id = _format_invocation_id(now)
-    ticker_scope = load_universe_scope()
-    distillation_config = load_distillation_config()
+    invocation_id = args.invocation_id or _format_invocation_id(now)
     sectors_config = load_sectors_config()
     budgets = load_budget_thresholds()
 
     with factory() as session:
-        distillation_outputs = asyncio.run(
-            run_external_distillation(
-                session=session,
-                config=distillation_config,
-                ticker_scope=ticker_scope,
-                as_of=now,
-                invocation_id=invocation_id,
-                archive_root=archive_root,
+        if args.upstream_from is not None:
+            distillation_outputs = load_distillation_outputs(args.upstream_from)
+            print(
+                f"[verify_domain_researchers] distillation_outputs loaded from "
+                f"{args.upstream_from} (invocation={distillation_outputs.invocation_id})"
             )
-        )
+        else:
+            ticker_scope = load_universe_scope()
+            distillation_config = load_distillation_config()
+            distillation_outputs = asyncio.run(
+                run_external_distillation(
+                    session=session,
+                    config=distillation_config,
+                    ticker_scope=ticker_scope,
+                    as_of=now,
+                    invocation_id=invocation_id,
+                    archive_root=archive_root,
+                )
+            )
         researchers_fn = _bind_production_researchers(
             session=session,
             distillation_outputs=distillation_outputs,

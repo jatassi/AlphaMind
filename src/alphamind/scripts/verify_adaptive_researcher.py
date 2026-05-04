@@ -69,6 +69,15 @@ from alphamind.config.models.agents import (
 from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
 from alphamind.distillation.orchestrator import DistillationOutputs, _default_archive_root
 from alphamind.persistence.session import make_engine, make_session_factory
+from alphamind.scripts._artifact_io import (
+    dump_adaptive_brief,
+    load_correlation_regime_brief,
+    load_distillation_outputs,
+    load_qualitative_brief,
+    load_sector_briefs,
+    load_universal_regime_label,
+    stage_artifacts_dir,
+)
 from alphamind.scripts._common import AssertionFailure, load_universe_scope
 
 # ---------------------------------------------------------------------------
@@ -580,7 +589,12 @@ def run_verification(
     runner_fn: RunnerCallable,
     upstream: UpstreamFixture,
 ) -> int:
-    """Run the adaptive researcher, build the report, print it, return exit code."""
+    """Run the adaptive researcher, build the report, print it, return exit code.
+
+    On a passing run, the adaptive brief is dumped to the per-invocation
+    stage-artifacts directory so the synthesizer verification script can
+    consume it via ``--upstream-from`` (ALP-287).
+    """
     result = asyncio.run(runner_fn(invocation_id=invocation_id, as_of=as_of))
     report = compute_report(
         result=result,
@@ -590,6 +604,10 @@ def run_verification(
         upstream=upstream,
     )
     print(format_report(report))
+    if report.passed:
+        stage_dir = stage_artifacts_dir(archive_root, invocation_id)
+        dump_adaptive_brief(result.brief, stage_dir)
+        print(f"[verify_adaptive_researcher] stage artifacts written to {stage_dir}")
     return 0 if report.passed else 1
 
 
@@ -736,6 +754,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             "%%USERPROFILE%%/AlphaMind/archive on Windows, ~/AlphaMind/archive elsewhere)."
         ),
     )
+    parser.add_argument(
+        "--upstream-from",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a stage-artifacts directory produced by earlier phases. "
+            "When supplied, the upstream-brief tuple (sector_briefs, "
+            "qualitative_brief, correlation_regime_brief, distillation_outputs, "
+            "universal_regime_label) is loaded from this directory instead of "
+            "the test-tree fixtures — proving today's actual upstream artifacts "
+            "flow through the adaptive researcher."
+        ),
+    )
     args = parser.parse_args(argv)
 
     _check_oauth_token_set()
@@ -753,9 +784,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         name.value: cfg for name, cfg in agents_yaml_data.agents.items()
     }
 
-    sector_briefs, qualitative_brief, correlation_regime_brief, distillation_outputs, regime = (
-        _load_e2e_fixtures_lazy()
-    )
+    if args.upstream_from is not None:
+        sector_briefs = load_sector_briefs(args.upstream_from)
+        qualitative_brief = load_qualitative_brief(args.upstream_from)
+        correlation_regime_brief = load_correlation_regime_brief(args.upstream_from)
+        distillation_outputs = load_distillation_outputs(args.upstream_from)
+        regime = load_universal_regime_label(args.upstream_from)
+        upstream_source = f"stage artifacts at {args.upstream_from}"
+    else:
+        sector_briefs, qualitative_brief, correlation_regime_brief, distillation_outputs, regime = (
+            _load_e2e_fixtures_lazy()
+        )
+        upstream_source = "test-tree fixtures"
     upstream = UpstreamFixture(
         sector_briefs=sector_briefs,
         qualitative_brief=qualitative_brief,
@@ -765,7 +805,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         universe=universe,
     )
     print(
-        f"[verify_adaptive_researcher] upstream-brief tuple loaded from fixtures "
+        f"[verify_adaptive_researcher] upstream-brief tuple loaded from {upstream_source} "
         f"(sector_briefs={len(sector_briefs)}, "
         f"qualitative_threads={len(qualitative_brief.threads)}, "
         f"cr_refs={len(correlation_regime_brief.reference_index)}, "

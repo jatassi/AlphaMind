@@ -498,3 +498,63 @@ def test_run_verification_returns_one_on_fail(
     captured = capsys.readouterr()
     assert exit_code == 1
     assert "RESULT: FAIL" in captured.out
+
+
+def test_run_verification_writes_qualitative_brief_on_pass(tmp_path: Path) -> None:
+    """A passing run dumps the qualitative brief to the stage-artifacts dir."""
+    from alphamind.scripts._artifact_io import (
+        QUALITATIVE_BRIEF_FILENAME,
+        load_qualitative_brief,
+        stage_artifacts_dir,
+    )
+
+    archive_root = tmp_path / "archive"
+    _seed_archive(archive_root, _INVOCATION_ID)
+
+    runner_result = _make_runner_result()
+
+    async def _stub_runner(**_kwargs: Any) -> QualitativeResearcherResult:
+        return runner_result
+
+    exit_code = run_verification(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        last_invocation_time=_LAST_INVOCATION_TIME,
+        archive_root=archive_root,
+        budgets=_budgets(),
+        runner_fn=_stub_runner,
+    )
+
+    assert exit_code == 0
+    stage_dir = stage_artifacts_dir(archive_root, _INVOCATION_ID)
+    assert (stage_dir / QUALITATIVE_BRIEF_FILENAME).exists()
+    assert load_qualitative_brief(stage_dir) == runner_result.brief
+
+
+def test_run_verification_skips_qualitative_brief_on_fail(tmp_path: Path) -> None:
+    """A failed run does not dump artifacts."""
+    from alphamind.scripts._artifact_io import (
+        QUALITATIVE_BRIEF_FILENAME,
+        stage_artifacts_dir,
+    )
+
+    archive_root = tmp_path / "archive"
+    _seed_archive(archive_root, _INVOCATION_ID, missing_files=("metadata.json",))
+
+    runner_result = _make_runner_result()
+
+    async def _stub_runner(**_kwargs: Any) -> QualitativeResearcherResult:
+        return runner_result
+
+    exit_code = run_verification(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        last_invocation_time=_LAST_INVOCATION_TIME,
+        archive_root=archive_root,
+        budgets=_budgets(),
+        runner_fn=_stub_runner,
+    )
+
+    assert exit_code == 1
+    stage_dir = stage_artifacts_dir(archive_root, _INVOCATION_ID)
+    assert not (stage_dir / QUALITATIVE_BRIEF_FILENAME).exists()
