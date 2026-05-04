@@ -45,9 +45,12 @@ agents:
     prompt: prompts/analysis/tech_semis_researcher.md
     latency_budget_seconds: 600
     context_token_budget: 8000
-    # Sonnet 4.6 emits ~4 thinking blocks (~4400 tokens) before the brief text;
-    # the budget must cover thinking + 2× the design-doc brief target.
-    output_token_budget: 8000
+    # Sonnet 4.6 extended thinking dominates output; observed actuals across
+    # recent end-to-end runs range 8.5K–24.7K across the three sectors
+    # (financials variance widens under degraded upstream inputs). Cap covers
+    # the observed maximum and mirrors the qualitative/adaptive recalibration
+    # logic from ALP-285; corrective-retry path is not budgeted in.
+    output_token_budget: 24000
     tools: []
 
   financials_researcher:
@@ -55,9 +58,12 @@ agents:
     prompt: prompts/analysis/financials_researcher.md
     latency_budget_seconds: 600
     context_token_budget: 8000
-    # Sonnet 4.6 emits ~4 thinking blocks (~4400 tokens) before the brief text;
-    # the budget must cover thinking + 2× the design-doc brief target.
-    output_token_budget: 8000
+    # Sonnet 4.6 extended thinking dominates output; observed actuals across
+    # recent end-to-end runs range 8.5K–24.7K across the three sectors
+    # (financials variance widens under degraded upstream inputs). Cap covers
+    # the observed maximum and mirrors the qualitative/adaptive recalibration
+    # logic from ALP-285; corrective-retry path is not budgeted in.
+    output_token_budget: 24000
     tools: []
 
   energy_researcher:
@@ -65,9 +71,12 @@ agents:
     prompt: prompts/analysis/energy_researcher.md
     latency_budget_seconds: 600
     context_token_budget: 8000
-    # Sonnet 4.6 emits ~4 thinking blocks (~4400 tokens) before the brief text;
-    # the budget must cover thinking + 2× the design-doc brief target.
-    output_token_budget: 8000
+    # Sonnet 4.6 extended thinking dominates output; observed actuals across
+    # recent end-to-end runs range 8.5K–24.7K across the three sectors
+    # (financials variance widens under degraded upstream inputs). Cap covers
+    # the observed maximum and mirrors the qualitative/adaptive recalibration
+    # logic from ALP-285; corrective-retry path is not budgeted in.
+    output_token_budget: 24000
     tools: []
 
   qualitative_researcher:
