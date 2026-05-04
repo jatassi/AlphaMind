@@ -305,13 +305,9 @@ def assemble_sector_output(
             freshness_min=freshness_min,
         ),
         anomaly_summary,
-        "",
         "=== UNIVERSAL CONTEXT ===",
-        "",
         universal_text or "(no universal-broadcast blocks)\n",
-        "",
         "=== SECTOR INDICATORS ===",
-        "",
         sector_text or "(no sector indicator blocks)\n",
     ]
     text = "\n".join(body_parts)

@@ -39,14 +39,16 @@ from alphamind.data_sources.fred.macro import collect_series as fred_macro_colle
 from alphamind.data_sources.iborrowdesk.borrow_cost import (
     collect_borrow_cost as iborrowdesk_collect_borrow_cost,
 )
-from alphamind.data_sources.kalshi.contracts import collect_snapshots as kalshi_collect_snapshots
 from alphamind.data_sources.marketaux.news import collect_news as marketaux_news_collect_news
 from alphamind.data_sources.news.clustering import refresh_news_clusters
 from alphamind.data_sources.polygon.corporate_actions import collect_corporate_actions
 from alphamind.data_sources.polygon.equity import collect_universe_bars
 from alphamind.data_sources.polygon.options import collect_options_chains
 from alphamind.data_sources.polygon.reference import collect_reference
-from alphamind.data_sources.polymarket.contracts import (
+from alphamind.data_sources.prediction_market.kalshi.contracts import (
+    collect_snapshots as kalshi_collect_snapshots,
+)
+from alphamind.data_sources.prediction_market.polymarket.contracts import (
     collect_snapshots as polymarket_collect_snapshots,
 )
 from alphamind.data_sources.sec_edgar.rss import collect_8k_filings

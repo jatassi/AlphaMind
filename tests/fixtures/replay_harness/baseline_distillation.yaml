@@ -73,3 +73,5 @@ persistence_windows:
 prediction_market:
   prediction_market_delta_pp_threshold:           5.0
   prediction_market_low_liquidity_volume_min_usd: 10000
+  tracked_default_min_volume_24h_usd:             5000
+  tracked_categories: {}

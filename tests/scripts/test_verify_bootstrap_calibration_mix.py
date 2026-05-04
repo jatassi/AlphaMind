@@ -61,6 +61,7 @@ def _seed_baseline(
     kind: str,
     state: str,
     n_obs: int = 20,
+    window_days: int = 20,
 ) -> None:
     ts = _AS_OF.strftime("%Y-%m-%dT%H:%M:%SZ")
     session.add(
@@ -71,7 +72,7 @@ def _seed_baseline(
             mean=1_000_000.0,
             stdev=100_000.0,
             n_observations=n_obs,
-            window_days=20,
+            window_days=window_days,
             calibration_state=state,
             ingested_at=ts,
         )
@@ -210,3 +211,136 @@ def test_kind_distribution_records_share(session: Session) -> None:
     assert volume.calibrated == 9
     assert volume.bootstrap == 1
     assert 0.85 < volume.calibrated_share <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Cold-start exemption (ALP-273): fresh-DB first invocation should not fail
+# ---------------------------------------------------------------------------
+
+
+def _populate_cold_start(session: Session, *, universe_size: int = 10) -> None:
+    """Seed a fresh-DB first-invocation snapshot.
+
+    Every per-ticker baseline is ``bootstrap`` with ``n_observations < window_days``
+    — the rolling window has not yet filled — and one row per ticker covers the
+    configured universe. Lead-lag has no rows (event-driven, accumulates over
+    weeks).
+    """
+    for i in range(universe_size):
+        ticker = f"T{i:02d}"
+        _seed_ticker(session, ticker)
+    session.flush()
+    for kind in ("volume", "atr", "spread", "sentiment"):
+        for i in range(universe_size):
+            ticker = f"T{i:02d}"
+            _seed_baseline(
+                session,
+                ticker=ticker,
+                kind=kind,
+                state="bootstrap",
+                n_obs=5,
+                window_days=252,
+            )
+    session.commit()
+
+
+def test_cold_start_signature_passes_with_deferred_status(session: Session) -> None:
+    """Fresh DB on day 1: high-freq bands report DEFERRED, run passes."""
+    _populate_cold_start(session, universe_size=10)
+
+    report = compute_calibration_mix_report(session=session, ticker_universe_size=10)
+
+    assert report.passed is True
+    assert report.failures == ()
+    by_kind = {dist.kind: dist for dist in report.distributions}
+    for kind in ("volume", "atr", "spread"):
+        assert by_kind[kind].cold_start_deferred is True
+        assert by_kind[kind].in_band is False
+    # Sentiment trivially satisfies its upper-bound band on cold start;
+    # the deferred flag is reserved for kinds with a lower bound that
+    # would otherwise have failed.
+    assert by_kind["sentiment"].cold_start_deferred is False
+    assert by_kind["sentiment"].in_band is True
+
+
+def test_cold_start_renderer_shows_deferred(session: Session) -> None:
+    """The summary table renders ``DEFERRED`` for cold-start high-freq kinds."""
+    _populate_cold_start(session, universe_size=10)
+
+    report = compute_calibration_mix_report(session=session, ticker_universe_size=10)
+    rendered = format_calibration_mix_report(report)
+
+    assert "DEFERRED" in rendered
+    assert "RESULT: PASS" in rendered
+
+
+def test_cold_start_skipped_when_universe_coverage_partial(session: Session) -> None:
+    """All-bootstrap underaged but row count < universe → still fails.
+
+    Defends against misreading a stale partial state (some tickers never
+    processed) as cold-start. Drops the cold-start exemption when the
+    orchestrator has not covered the full universe.
+    """
+    # Seed only 3 of 10 tickers.
+    _populate_cold_start(session, universe_size=3)
+
+    report = compute_calibration_mix_report(session=session, ticker_universe_size=10)
+
+    assert report.passed is False
+    by_kind = {dist.kind: dist for dist in report.distributions}
+    assert by_kind["volume"].cold_start_deferred is False
+    codes = {f.code for f in report.failures}
+    assert "calibration-distribution-out-of-band" in codes
+
+
+def test_cold_start_skipped_when_window_already_filled(session: Session) -> None:
+    """All-bootstrap but ``n_observations >= window_days`` → not cold-start.
+
+    The ``n_observations < window_days`` clause distinguishes a fresh DB
+    from a long-running DB whose calibration is wedged in bootstrap for an
+    unrelated reason (e.g. ``min_observations`` raised above the window).
+    """
+    for i in range(10):
+        _seed_ticker(session, f"T{i:02d}")
+    session.flush()
+    for i in range(10):
+        _seed_baseline(
+            session,
+            ticker=f"T{i:02d}",
+            kind="volume",
+            state="bootstrap",
+            n_obs=252,
+            window_days=252,
+        )
+    session.commit()
+
+    report = compute_calibration_mix_report(session=session, ticker_universe_size=10)
+
+    assert report.passed is False
+    by_kind = {dist.kind: dist for dist in report.distributions}
+    assert by_kind["volume"].cold_start_deferred is False
+
+
+def test_cold_start_skipped_when_a_row_is_calibrated(session: Session) -> None:
+    """Mixed bootstrap + calibrated → not cold-start; band failure stands."""
+    for i in range(10):
+        _seed_ticker(session, f"T{i:02d}")
+    session.flush()
+    for i in range(10):
+        # 5 calibrated, 5 bootstrap → calibrated_share=0.5, below 0.80 lower bound.
+        state = "calibrated" if i < 5 else "bootstrap"
+        _seed_baseline(
+            session,
+            ticker=f"T{i:02d}",
+            kind="volume",
+            state=state,
+            n_obs=5 if state == "bootstrap" else 200,
+            window_days=252,
+        )
+    session.commit()
+
+    report = compute_calibration_mix_report(session=session, ticker_universe_size=10)
+
+    assert report.passed is False
+    by_kind = {dist.kind: dist for dist in report.distributions}
+    assert by_kind["volume"].cold_start_deferred is False

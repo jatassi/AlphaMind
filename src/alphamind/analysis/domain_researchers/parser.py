@@ -51,7 +51,20 @@ _VALID_SEVERITY: frozenset[str] = frozenset(
     ["investigate_now", "investigate_if_persists", "note_for_context"]
 )
 
-_DEGRADED_REASON_RE = re.compile(r"^\s*\[If DEGRADED:\s*reason\s*[—\-]\s*(.+?)\]\s*$")
+# Accept the canonical bracketed template, a `Reason: …` labeled line, or — when
+# signal_quality is DEGRADED — any non-blank non-section-marker continuation
+# line as free-form reason text. Sonnet drifts off the bracket template under
+# load; the parser must tolerate the drift rather than reject otherwise-valid
+# briefs.
+_DEGRADED_REASON_BRACKETED_RE = re.compile(
+    r"^\s*\[(?:If DEGRADED:\s*)?reason\s*[—\-:]\s*(.+?)\]\s*$",
+    re.IGNORECASE,
+)
+_DEGRADED_REASON_LABELED_RE = re.compile(
+    r"^\s*Reason\s*[:\-—]\s*(.+?)\s*$",
+    re.IGNORECASE,
+)
+_SECTION_MARKER_RE = re.compile(r"^\s*===.*===\s*$")
 
 
 # ---------------------------------------------------------------------------
@@ -240,21 +253,33 @@ def _parse_degraded_reason(
 ) -> str | None:
     """Check for and validate the optional DEGRADED reason line.
 
-    The reason line is required when ``signal_quality`` is DEGRADED and
-    prohibited otherwise.  Returns the reason string or ``None``.
+    Three reason shapes accepted: the canonical bracketed template, a
+    ``Reason: …`` labeled line, or — when ``signal_quality`` is DEGRADED — any
+    non-blank non-section-marker continuation line as free-form reason text.
+    The reason is required when DEGRADED and prohibited otherwise.
     """
     n = len(lines)
     j = start
     while j < n and not lines[j].strip():
         j += 1
 
-    if j < n and (reason_match := _DEGRADED_REASON_RE.match(lines[j])):
+    matched_reason: str | None = None
+    if j < n:
+        line = lines[j]
+        if (m := _DEGRADED_REASON_BRACKETED_RE.match(line)) or (
+            m := _DEGRADED_REASON_LABELED_RE.match(line)
+        ):
+            matched_reason = m.group(1).strip()
+        elif signal_quality == SignalQuality.DEGRADED and not _SECTION_MARKER_RE.match(line):
+            matched_reason = line.strip()
+
+    if matched_reason is not None:
         if signal_quality != SignalQuality.DEGRADED:
             raise ParseError(
                 field_path="header.signal_quality_reason",
                 message="signal_quality_reason present but signal_quality is not DEGRADED",
             )
-        return reason_match.group(1).strip()
+        return matched_reason
 
     if signal_quality == SignalQuality.DEGRADED:
         raise ParseError(
@@ -442,7 +467,13 @@ def _parse_anomalies(section_lines: list[str], sector: Sector) -> list[Anomaly]:
 # ---------------------------------------------------------------------------
 
 _TC_HEADER_RE = re.compile(r"^\[SA-(TECH|FIN|ENERGY)-TC-(\d+)\]\s*$")
-_CONVICTION_RE = re.compile(r"^(low|moderate|high)\s+with\s+(.+)$", re.IGNORECASE)
+# Accept any of: "with", em/en-dash, hyphen, colon, comma, or one+ whitespace as separator.
+# Sonnet drifts from the canonical "moderate with X" template into "moderate — X",
+# "moderate, X", "moderate: X" — all carry the same semantic content.
+_CONVICTION_RE = re.compile(
+    r"^(low|moderate|high)\s*(?:with\s+|[—\-:,]\s*|\s+)(.+)$",
+    re.IGNORECASE,
+)
 
 
 def _parse_thesis_candidates(section_lines: list[str], sector: Sector) -> list[ThesisCandidate]:
@@ -495,8 +526,8 @@ def _parse_thesis_candidates(section_lines: list[str], sector: Sector) -> list[T
             raise ParseError(
                 field_path=f"thesis_candidates[{ref_id}].conviction_sketch",
                 message=(
-                    f"conviction sketch must follow format "
-                    f"'{{low|moderate|high}} with justification'; got: {conviction_raw!r}"
+                    f"conviction sketch must start with 'low', 'moderate', or 'high' "
+                    f"followed by a justification; got: {conviction_raw!r}"
                 ),
             )
         try:

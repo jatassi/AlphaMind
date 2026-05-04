@@ -255,8 +255,8 @@ def test_orchestrator_exception_propagates_with_cleanup(
 
     The harness does not catch and continue; subsequent slices (story 08)
     handle per-slice failure at a higher layer. The temp dir is torn down
-    via the ``with tempfile.TemporaryDirectory(...)`` context — verified
-    by patching the constructor to record the path it produces, then
+    via :func:`_rmtree_with_retry` after the orchestrator unwinds — verified
+    by patching :func:`tempfile.mkdtemp` to record the path it produces, then
     asserting that path no longer exists once the exception unwinds.
     """
     from alphamind.distillation import orchestrator as orch_mod
@@ -269,25 +269,25 @@ def test_orchestrator_exception_propagates_with_cleanup(
 
     monkeypatch.setattr(orch_mod, "_compute_q12_blocks", _failing_q12)
 
-    # Capture the path of every temp directory the harness opens during
-    # the call. Wraps the real :func:`tempfile.TemporaryDirectory` so the
-    # production cleanup path runs unchanged.
+    # Capture the path of every temp directory the harness opens during the
+    # call. Wraps the real :func:`tempfile.mkdtemp` so the production cleanup
+    # path runs unchanged.
     opened_paths: list[Path] = []
-    real_tempdir = tempfile.TemporaryDirectory
+    real_mkdtemp = tempfile.mkdtemp
 
-    def _tracking_tempdir(prefix: str | None = None) -> tempfile.TemporaryDirectory[str]:
-        ctx: tempfile.TemporaryDirectory[str] = real_tempdir(prefix=prefix)
-        opened_paths.append(Path(ctx.name))
-        return ctx
+    def _tracking_mkdtemp(prefix: str | None = None) -> str:
+        produced = real_mkdtemp(prefix=prefix)
+        opened_paths.append(Path(produced))
+        return produced
 
-    monkeypatch.setattr(tempfile, "TemporaryDirectory", _tracking_tempdir)
+    monkeypatch.setattr(tempfile, "mkdtemp", _tracking_mkdtemp)
 
     fixture_slice = _build_synthesized_slice(tmp_path, invocation_count=1, days_of_history=30)
 
     with pytest.raises(_InjectedReplayError, match="simulated orchestrator failure"):
         replay_slice(fixture_slice, candidate)
 
-    assert opened_paths, "harness did not open a TemporaryDirectory during replay"
+    assert opened_paths, "harness did not open a temp directory during replay"
     for path in opened_paths:
         assert not path.exists(), f"harness left temp directory behind: {path}"
 

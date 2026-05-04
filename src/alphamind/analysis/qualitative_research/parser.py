@@ -71,7 +71,20 @@ __all__ = ["ParseError", "parse_qualitative_brief"]
 
 _FENCE_OPEN_RE = re.compile(r"^```\w*\s*$")
 _FENCE_CLOSE_RE = re.compile(r"^```\s*$")
-_DEGRADED_REASON_RE = re.compile(r"^\s*\[If DEGRADED:\s*reason\s*[—\-]\s*(.+?)\]\s*$")
+# Accept the canonical bracketed template, a `Reason: …` labeled line, or — when
+# signal_quality is DEGRADED — any non-blank non-section-marker continuation
+# line as free-form reason text. Sonnet drifts off the bracket template under
+# load; the parser must tolerate the drift rather than reject otherwise-valid
+# briefs.
+_DEGRADED_REASON_BRACKETED_RE = re.compile(
+    r"^\s*\[(?:If DEGRADED:\s*)?reason\s*[—\-:]\s*(.+?)\]\s*$",
+    re.IGNORECASE,
+)
+_DEGRADED_REASON_LABELED_RE = re.compile(
+    r"^\s*Reason\s*[:\-—]\s*(.+?)\s*$",
+    re.IGNORECASE,
+)
+_SECTION_MARKER_RE = re.compile(r"^\s*===.*===\s*$")
 _THREAD_HEADER_RE = re.compile(r"^\[QR-(\d+)\]\s+(.+)$")
 _CATALYST_HEADER_RE = re.compile(r"^\[QR-CW-(\d+)\]\s+(\S+?):\s+(.+?)\s+in\s+~?(\d+)h\s*$")
 
@@ -269,6 +282,9 @@ def _parse_degraded_reason(
 ) -> tuple[str | None, int]:
     """Check for and validate the optional DEGRADED reason line.
 
+    Three reason shapes accepted: the canonical bracketed template, a
+    ``Reason: …`` labeled line, or — when ``signal_quality`` is DEGRADED — any
+    non-blank non-section-marker continuation line as free-form reason text.
     Returns ``(reason_or_None, next_line_index)``.
     """
     n = len(lines)
@@ -276,13 +292,23 @@ def _parse_degraded_reason(
     while j < n and not lines[j].strip():
         j += 1
 
-    if j < n and (reason_match := _DEGRADED_REASON_RE.match(lines[j])):
+    matched_reason: str | None = None
+    if j < n:
+        line = lines[j]
+        if (m := _DEGRADED_REASON_BRACKETED_RE.match(line)) or (
+            m := _DEGRADED_REASON_LABELED_RE.match(line)
+        ):
+            matched_reason = m.group(1).strip()
+        elif signal_quality == SignalQuality.DEGRADED and not _SECTION_MARKER_RE.match(line):
+            matched_reason = line.strip()
+
+    if matched_reason is not None:
         if signal_quality != SignalQuality.DEGRADED:
             raise ParseError(
                 field_path="header.signal_quality_reason",
                 message="signal_quality_reason present but signal_quality is not DEGRADED",
             )
-        return reason_match.group(1).strip(), j + 1
+        return matched_reason, j + 1
 
     if signal_quality == SignalQuality.DEGRADED:
         raise ParseError(

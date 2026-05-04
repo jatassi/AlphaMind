@@ -1,5 +1,5 @@
 """
-Tests for kalshi/contracts.py.
+Tests for ``src/alphamind/data_sources/prediction_market/kalshi/contracts.py``.
 
 All HTTP calls are mocked — no real network traffic.
 Tests use an in-memory SQLite database.
@@ -30,7 +30,13 @@ def session_factory() -> sessionmaker[Session]:
     return sf
 
 
-def _make_events_payload(series_tickers: list[str]) -> dict[str, Any]:
+def _make_events_payload(
+    *,
+    series: list[tuple[str, str]] | None = None,
+) -> dict[str, Any]:
+    """Build an /events payload.  ``series`` is list of ``(series_ticker, category)``."""
+    if series is None:
+        series = [("KXFED", "Politics")]
     return {
         "events": [
             {
@@ -38,8 +44,9 @@ def _make_events_payload(series_tickers: list[str]) -> dict[str, Any]:
                 "series_ticker": st,
                 "title": f"{st} market",
                 "status": "open",
+                "category": cat,
             }
-            for st in series_tickers
+            for st, cat in series
         ]
     }
 
@@ -47,6 +54,7 @@ def _make_events_payload(series_tickers: list[str]) -> dict[str, Any]:
 def _make_markets_payload(
     series_ticker: str,
     market_ticker: str = "MKT-001",
+    title: str = "Will the Fed cut rates?",
     yes_bid: int = 60,
     yes_ask: int = 70,
     volume: int = 1000,
@@ -58,7 +66,7 @@ def _make_markets_payload(
     market: dict[str, Any] = {
         "ticker": market_ticker,
         "event_ticker": f"{series_ticker}-2024",
-        "title": f"{series_ticker} market question",
+        "title": title,
         "status": status,
         "yes_bid": yes_bid,
         "yes_ask": yes_ask,
@@ -91,85 +99,109 @@ def _make_mock_client(
 
 
 # ---------------------------------------------------------------------------
-# collect_snapshots: contracts upserted for in-scope categories
+# collect_snapshots
 # ---------------------------------------------------------------------------
 
 
 class TestCollectSnapshots:
-    def test_contracts_upserted_for_known_series(
+    def test_contracts_upserted_with_canonical_category(
         self, session_factory: sessionmaker[Session]
     ) -> None:
-        """Contracts for known series tickers are inserted into prediction_market_contracts."""
-        from alphamind.data_sources.kalshi.contracts import collect_snapshots
+        """Contracts derive canonical category from event.category + market.title."""
+        from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
         client = _make_mock_client(
-            _make_events_payload(["FED"]),
-            {"FED": _make_markets_payload("FED", "FED-24DEC-0525")},
+            _make_events_payload(series=[("KXFED", "Politics")]),
+            {
+                "KXFED": _make_markets_payload(
+                    "KXFED",
+                    "KXFED-25MAR-T5.00",
+                    title="Will the Fed cut rates in March?",
+                )
+            },
         )
 
-        since = "2024-01-01T00:00:00Z"
         repo = MagicMock()
         repo.insert_running.return_value = None
         repo.update_success.return_value = None
 
-        collect_snapshots(since, client=client, session_factory=session_factory, _repo=repo)
+        collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
 
         with session_factory() as sess:
             contracts = sess.query(PredictionMarketContracts).all()
             assert len(contracts) == 1
-            assert contracts[0].contract_id == "FED-24DEC-0525"
+            assert contracts[0].contract_id == "KXFED-25MAR-T5.00"
             assert contracts[0].platform == "kalshi"
-            assert contracts[0].category in ("monetary_policy", "fed", "other")
+            assert contracts[0].category == "monetary_policy"
 
-    def test_contracts_have_correct_category_for_fed(
+    def test_no_passthrough_event_category_falls_through_to_other(
         self, session_factory: sessionmaker[Session]
     ) -> None:
-        """FED series_ticker maps to monetary_policy category."""
-        from alphamind.data_sources.kalshi.contracts import SERIES_CATEGORY_MAP
-
-        assert "FED" in SERIES_CATEGORY_MAP
-        assert SERIES_CATEGORY_MAP["FED"] == "monetary_policy"
-
-    def test_unknown_series_defaults_to_other(self, session_factory: sessionmaker[Session]) -> None:
-        """Unknown series_ticker maps to 'other' with a warning."""
-        from alphamind.data_sources.kalshi.contracts import collect_snapshots
+        """Events with off-topic event.category short-circuit to 'other'."""
+        from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
         client = _make_mock_client(
-            _make_events_payload(["UNKNOWN_XYZ"]),
-            {"UNKNOWN_XYZ": _make_markets_payload("UNKNOWN_XYZ", "UNK-001")},
+            _make_events_payload(series=[("KXSPORTS", "Sports")]),
+            {
+                "KXSPORTS": _make_markets_payload(
+                    "KXSPORTS",
+                    "KXSPORTS-001",
+                    title="Will the Fed cut rates in March?",
+                )
+            },
         )
-        since = "2024-01-01T00:00:00Z"
+
         repo = MagicMock()
         repo.insert_running.return_value = None
         repo.update_success.return_value = None
 
-        collect_snapshots(since, client=client, session_factory=session_factory, _repo=repo)
+        collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
 
         with session_factory() as sess:
             contracts = sess.query(PredictionMarketContracts).all()
             assert len(contracts) == 1
             assert contracts[0].category == "other"
 
-    # ------------------------------------------------------------------
-    # Snapshot probability fields
-    # ------------------------------------------------------------------
-
-    def test_snapshot_yes_probability_derived_correctly(
+    def test_election_question_with_politics_category_maps_to_election(
         self, session_factory: sessionmaker[Session]
     ) -> None:
-        """yes_probability = (yes_bid + yes_ask) / 200."""
-        from alphamind.data_sources.kalshi.contracts import collect_snapshots
+        from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
         client = _make_mock_client(
-            _make_events_payload(["FED"]),
-            {"FED": _make_markets_payload("FED", "FED-001", yes_bid=60, yes_ask=70)},
+            _make_events_payload(series=[("KXPRES", "Elections")]),
+            {
+                "KXPRES": _make_markets_payload(
+                    "KXPRES",
+                    "KXPRES-2024",
+                    title="Will the Republican candidate win the presidential election?",
+                )
+            },
         )
-        since = "2024-01-01T00:00:00Z"
+
         repo = MagicMock()
         repo.insert_running.return_value = None
         repo.update_success.return_value = None
 
-        collect_snapshots(since, client=client, session_factory=session_factory, _repo=repo)
+        collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
+
+        with session_factory() as sess:
+            contracts = sess.query(PredictionMarketContracts).all()
+            assert contracts[0].category == "election"
+
+    def test_snapshot_yes_probability_derived_correctly(
+        self, session_factory: sessionmaker[Session]
+    ) -> None:
+        from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
+
+        client = _make_mock_client(
+            _make_events_payload(),
+            {"KXFED": _make_markets_payload("KXFED", "KXFED-001", yes_bid=60, yes_ask=70)},
+        )
+        repo = MagicMock()
+        repo.insert_running.return_value = None
+        repo.update_success.return_value = None
+
+        collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
 
         with session_factory() as sess:
             snap = sess.query(PredictionMarketSnapshots).first()
@@ -177,19 +209,17 @@ class TestCollectSnapshots:
             assert abs(snap.yes_probability - 0.65) < 1e-9  # (60+70)/200
 
     def test_snapshot_bid_ask_in_dollars(self, session_factory: sessionmaker[Session]) -> None:
-        """bid = yes_bid/100, ask = yes_ask/100 (dollars)."""
-        from alphamind.data_sources.kalshi.contracts import collect_snapshots
+        from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
         client = _make_mock_client(
-            _make_events_payload(["FED"]),
-            {"FED": _make_markets_payload("FED", "FED-001", yes_bid=60, yes_ask=70)},
+            _make_events_payload(),
+            {"KXFED": _make_markets_payload("KXFED", "KXFED-001", yes_bid=60, yes_ask=70)},
         )
-        since = "2024-01-01T00:00:00Z"
         repo = MagicMock()
         repo.insert_running.return_value = None
         repo.update_success.return_value = None
 
-        collect_snapshots(since, client=client, session_factory=session_factory, _repo=repo)
+        collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
 
         with session_factory() as sess:
             snap = sess.query(PredictionMarketSnapshots).first()
@@ -199,26 +229,24 @@ class TestCollectSnapshots:
             assert abs(snap.bid - 0.60) < 1e-9
             assert abs(snap.ask - 0.70) < 1e-9
 
-    # ------------------------------------------------------------------
-    # Closed markets update resolution_outcome
-    # ------------------------------------------------------------------
-
     def test_closed_market_sets_resolution_outcome_yes(
         self, session_factory: sessionmaker[Session]
     ) -> None:
-        """Closed market with result='yes' sets resolution_outcome on the contract."""
-        from alphamind.data_sources.kalshi.contracts import collect_snapshots
+        from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
         client = _make_mock_client(
-            _make_events_payload(["FED"]),
-            {"FED": _make_markets_payload("FED", "FED-001", status="finalized", result="yes")},
+            _make_events_payload(),
+            {
+                "KXFED": _make_markets_payload(
+                    "KXFED", "KXFED-001", status="finalized", result="yes"
+                )
+            },
         )
-        since = "2024-01-01T00:00:00Z"
         repo = MagicMock()
         repo.insert_running.return_value = None
         repo.update_success.return_value = None
 
-        collect_snapshots(since, client=client, session_factory=session_factory, _repo=repo)
+        collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
 
         with session_factory() as sess:
             contract = sess.query(PredictionMarketContracts).first()
@@ -228,55 +256,49 @@ class TestCollectSnapshots:
     def test_closed_market_sets_resolution_outcome_no(
         self, session_factory: sessionmaker[Session]
     ) -> None:
-        from alphamind.data_sources.kalshi.contracts import collect_snapshots
+        from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
         client = _make_mock_client(
-            _make_events_payload(["ELECTION"]),
+            _make_events_payload(series=[("KXPRES", "Elections")]),
             {
-                "ELECTION": _make_markets_payload(
-                    "ELECTION", "ELEC-001", status="closed", result="no"
+                "KXPRES": _make_markets_payload(
+                    "KXPRES",
+                    "KXPRES-001",
+                    title="Will the Republican candidate win the presidential election?",
+                    status="closed",
+                    result="no",
                 )
             },
         )
-        since = "2024-01-01T00:00:00Z"
         repo = MagicMock()
         repo.insert_running.return_value = None
         repo.update_success.return_value = None
 
-        collect_snapshots(since, client=client, session_factory=session_factory, _repo=repo)
+        collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
 
         with session_factory() as sess:
             contract = sess.query(PredictionMarketContracts).first()
             assert contract is not None
             assert contract.resolution_outcome == "no"
 
-    # ------------------------------------------------------------------
-    # No duplicate snapshot rows on re-run
-    # ------------------------------------------------------------------
-
     def test_no_duplicate_snapshots_on_rerun(self, session_factory: sessionmaker[Session]) -> None:
-        """Running collect_snapshots twice with the same window adds no duplicate rows."""
-        from alphamind.data_sources.kalshi.contracts import collect_snapshots
+        from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
         client = _make_mock_client(
-            _make_events_payload(["FED"]),
-            {"FED": _make_markets_payload("FED", "FED-001")},
+            _make_events_payload(),
+            {"KXFED": _make_markets_payload("KXFED", "KXFED-001")},
         )
-        since = "2024-01-01T00:00:00Z"
         repo = MagicMock()
         repo.insert_running.return_value = None
         repo.update_success.return_value = None
 
-        # Use a fixed snapshot_ts by freezing time via a fixed ingested_at
         collect_snapshots(
-            since,
             client=client,
             session_factory=session_factory,
             _repo=repo,
             _snapshot_ts="2024-06-01T12:00:00+00:00",
         )
         collect_snapshots(
-            since,
             client=client,
             session_factory=session_factory,
             _repo=repo,
@@ -287,63 +309,41 @@ class TestCollectSnapshots:
             snaps = sess.query(PredictionMarketSnapshots).all()
             assert len(snaps) == 1
 
-    # ------------------------------------------------------------------
-    # Failure records failed in collection_runs, no data rows
-    # ------------------------------------------------------------------
-
     def test_failure_records_failed_in_collection_runs(
         self, session_factory: sessionmaker[Session]
     ) -> None:
-        """When collection fails, the repo records failed and no data rows are written."""
-        from alphamind.data_sources.kalshi.contracts import collect_snapshots
+        from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
         client = MagicMock()
         client.get.side_effect = RuntimeError("network error")
 
-        since = "2024-01-01T00:00:00Z"
         repo = MagicMock()
         repo.insert_running.return_value = None
         repo.update_failed.return_value = None
 
         with pytest.raises(RuntimeError, match="network error"):
-            collect_snapshots(since, client=client, session_factory=session_factory, _repo=repo)
+            collect_snapshots(client=client, session_factory=session_factory, _repo=repo)
 
         repo.update_failed.assert_called_once()
-        # No data rows
         with session_factory() as sess:
             assert sess.query(PredictionMarketContracts).count() == 0
             assert sess.query(PredictionMarketSnapshots).count() == 0
 
-    # ------------------------------------------------------------------
-    # SERIES_CATEGORY_MAP coverage
-    # ------------------------------------------------------------------
-
-    def test_category_map_covers_key_series(self) -> None:
-        """SERIES_CATEGORY_MAP includes key Kalshi series tickers."""
-        from alphamind.data_sources.kalshi.contracts import SERIES_CATEGORY_MAP
-
-        for ticker in ("FED", "CPI", "OPEC", "ELECTION"):
-            assert ticker in SERIES_CATEGORY_MAP, f"{ticker} missing from SERIES_CATEGORY_MAP"
-
 
 # ---------------------------------------------------------------------------
-# Runner contract: callable with no args (mocked client + injected session_factory)
+# Runner contract
 # ---------------------------------------------------------------------------
 
 
 class TestNoArgsCallable:
     def test_collect_snapshots_callable_with_no_args(self) -> None:
-        """collect_snapshots() is callable with no positional args (runner contract)."""
-        from alphamind.data_sources.kalshi.contracts import collect_snapshots
+        from alphamind.data_sources.prediction_market.kalshi.contracts import collect_snapshots
 
         engine = make_engine(":memory:")
         Base.metadata.create_all(engine)
         sf = make_session_factory(engine)
 
-        mock_client = _make_mock_client(
-            {"events": []},
-            {},
-        )
+        mock_client = _make_mock_client({"events": []}, {})
         repo = MagicMock()
         repo.insert_running.return_value = None
         repo.update_success.return_value = None

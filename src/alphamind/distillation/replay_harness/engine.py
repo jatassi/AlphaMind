@@ -11,9 +11,11 @@ report renderer (story 07) to consume in-memory.
 State isolation is the central invariant: the engine MUST NOT read from or
 write to the runtime distillation database (resolved via the
 ``DATABASE_PATH`` environment variable). Every call uses a fresh temporary
-SQLite file under :func:`tempfile.TemporaryDirectory`, and the
-orchestrator's archive/provenance writes are redirected into the same
-temp directory so the operator's archive root is never touched.
+SQLite file under :func:`tempfile.mkdtemp`, and the orchestrator's
+archive/provenance writes are redirected into the same temp directory so
+the operator's archive root is never touched. Cleanup goes through
+:func:`_rmtree_with_retry` because Windows holds a mandatory share-lock on
+the SQLite file briefly after ``engine.dispose``.
 
 See ``docs/design/02-distillation-layer/replay-harness.md`` § Process for
 the design contract this module implements.
@@ -23,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import sqlite3
 import tempfile
 import time
@@ -170,6 +173,27 @@ def _migrate_isolated_db(db_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[4]
     cfg = Config(repo_root / "alembic.ini", cmd_opts=Namespace(x=[f"db={db_path}"]))
     command.upgrade(cfg, "head")
+
+
+def _rmtree_with_retry(path: Path) -> None:
+    """Recursively remove ``path``, tolerating Windows post-dispose share-locks.
+
+    SQLite handle finalizers can briefly outlive ``engine.dispose`` on Windows,
+    holding a mandatory share-lock that surfaces as
+    ``PermissionError [WinError 32]`` when ``shutil.rmtree`` calls ``os.unlink``.
+    POSIX never enters this branch — unlink succeeds against open files.
+    """
+    last_error: PermissionError | None = None
+    for _ in range(5):
+        try:
+            shutil.rmtree(path)
+        except PermissionError as exc:
+            last_error = exc
+            time.sleep(0.1)
+        else:
+            return
+    assert last_error is not None
+    raise last_error
 
 
 # Chunked-copy batch size — large enough to keep the inner loop's overhead
@@ -507,7 +531,7 @@ def replay_slice(
 
     Procedure (per ``replay-harness.md`` § Process):
 
-    1. Spin up an isolated SQLite database under :func:`tempfile.TemporaryDirectory`
+    1. Spin up an isolated SQLite database under :func:`tempfile.mkdtemp`
        and run :func:`alembic upgrade head` to land the schema.
     2. Copy every :data:`RAW_INPUT_TABLE_NAMES` table from the slice's
        ``raw_inputs.sqlite`` into the isolated DB.
@@ -530,8 +554,8 @@ def replay_slice(
         len(invocation_timestamps),
     )
 
-    with tempfile.TemporaryDirectory(prefix="alphamind_replay_") as tmp_dir_str:
-        tmp_dir = Path(tmp_dir_str)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="alphamind_replay_"))
+    try:
         isolated_db = tmp_dir / "isolated.sqlite"
         archive_root = tmp_dir / "archive"
         provenance_root = tmp_dir / "provenance"
@@ -560,6 +584,8 @@ def replay_slice(
                 cumulative_anomalies += len(invocation.anomaly_flags)
         finally:
             engine.dispose()
+    finally:
+        _rmtree_with_retry(tmp_dir)
 
     elapsed_s = time.monotonic() - overall_start
     logger.info(

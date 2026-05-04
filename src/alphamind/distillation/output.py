@@ -155,6 +155,7 @@ here so future call sites use the named constant rather than inlining ``.0f``.
 
 
 _PAYLOAD_INDENT = "  "
+_PER_TICKER_KEY = "per_ticker"
 
 
 def _format_value(value: Any) -> str:
@@ -164,13 +165,57 @@ def _format_value(value: Any) -> str:
     return str(value)
 
 
+def _format_inline_value(value: Any) -> str:
+    """Render a value inline for compact per-ticker rows.
+
+    Lists and mappings serialize JSON-like (``[]``, ``{k:v,...}``) so a row
+    stays on one line. Floats follow :data:`GENERAL_FLOAT_FORMAT`; nested
+    mappings recurse via the same inline rule.
+    """
+    if isinstance(value, float):
+        return format(value, GENERAL_FLOAT_FORMAT)
+    if isinstance(value, Mapping):
+        items = ",".join(f"{k}:{_format_inline_value(value[k])}" for k in sorted(value))
+        return "{" + items + "}"
+    if isinstance(value, list | tuple):
+        return "[" + ",".join(_format_inline_value(v) for v in value) + "]"
+    return str(value)
+
+
+def _format_per_ticker(per_ticker: Mapping[str, Any]) -> list[str]:
+    """Render the ``per_ticker`` mapping as one compact row per ticker.
+
+    Each row is ``<TICKER> key1=val1 key2=val2 ...`` with sorted keys; the
+    rendering compresses the per-ticker payloads that dominate sector-bundle
+    size (ALP-272). Tickers without a Mapping value (defensive) fall back to
+    inline-value rendering.
+    """
+    lines: list[str] = []
+    for ticker in sorted(per_ticker):
+        entry = per_ticker[ticker]
+        if isinstance(entry, Mapping):
+            fields = " ".join(f"{k}={_format_inline_value(entry[k])}" for k in sorted(entry))
+            lines.append(f"{ticker} {fields}" if fields else ticker)
+        else:
+            lines.append(f"{ticker} {_format_inline_value(entry)}")
+    return lines
+
+
 def _format_payload(payload: Mapping[str, Any], depth: int = 0) -> list[str]:
-    """Render a payload mapping as ``key: value`` lines, sorting keys."""
+    """Render a payload mapping as ``key: value`` lines, sorting keys.
+
+    The ``per_ticker`` key (only at the top level) renders compactly: one row
+    per ticker via :func:`_format_per_ticker` rather than a nested indented
+    block — this is the dominant whitespace win for sector bundles.
+    """
     lines: list[str] = []
     indent = _PAYLOAD_INDENT * depth
     for key in sorted(payload):
         value = payload[key]
-        if isinstance(value, Mapping):
+        if depth == 0 and key == _PER_TICKER_KEY and isinstance(value, Mapping):
+            lines.append(f"{key}:")
+            lines.extend(_format_per_ticker(value))
+        elif isinstance(value, Mapping):
             lines.append(f"{indent}{key}:")
             lines.extend(_format_payload(value, depth + 1))
         else:
@@ -188,23 +233,30 @@ def format_block(block: OutputBlock) -> str:
     the current wall clock is never embedded. The "byte-identical on
     repeated calls" property is what makes the invocation archive diffable
     per ``docs/architecture/infrastructure.md`` § Invocation archive.
+
+    Layout (compact per ALP-272): a single header line carries the block id,
+    freshness, calibration tag, and optional regime context, separated by
+    ``" | "``. The payload follows on the next line with no blank padding.
+    The trailing ``Anomaly flags`` line is omitted when the block carries
+    none — the universal anomaly summary already enumerates flags upstream.
     """
-    lines: list[str] = []
-    lines.append(f"### {block.block_id}")
-    lines.append(f"Freshness: {block.freshness_ts.isoformat()}")
-    calibration_line = f"Calibration: {block.calibration_state.value}"
+    header_parts = [
+        f"### {block.block_id}",
+        f"freshness {block.freshness_ts.isoformat()}",
+    ]
+    calibration_part = block.calibration_state.value
     if block.calibration_state is not CalibrationState.CALIBRATED:
-        calibration_line += f" — bootstrap_reason: {block.bootstrap_reason}"
-    lines.append(calibration_line)
+        calibration_part += f" — bootstrap_reason: {block.bootstrap_reason}"
+    header_parts.append(calibration_part)
     if block.regime_context is not None:
-        lines.append(f"Regime: {block.regime_context}")
-    lines.append("")
+        header_parts.append(f"regime: {block.regime_context}")
+    lines: list[str] = [" | ".join(header_parts)]
     lines.extend(_format_payload(block.payload))
-    lines.append("")
-    lines.append(f"Anomaly flags ({len(block.anomaly_flags)}):")
-    for flag in block.anomaly_flags:
-        magnitude = format(flag.magnitude, PERCENTAGE_FLOAT_FORMAT)
-        lines.append(f"  - {flag.name} | magnitude {magnitude} | severity {flag.severity}")
+    if block.anomaly_flags:
+        lines.append(f"Anomaly flags ({len(block.anomaly_flags)}):")
+        for flag in block.anomaly_flags:
+            magnitude = format(flag.magnitude, PERCENTAGE_FLOAT_FORMAT)
+            lines.append(f"  - {flag.name} | magnitude {magnitude} | severity {flag.severity}")
     return "\n".join(lines) + "\n"
 
 

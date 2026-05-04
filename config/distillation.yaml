@@ -78,3 +78,10 @@ persistence_windows:
 prediction_market:
   prediction_market_delta_pp_threshold:           5.0
   prediction_market_low_liquidity_volume_min_usd: 10000
+  tracked_default_min_volume_24h_usd:             5000   # default 24h volume floor for tracked_categories
+  tracked_categories:                                    # category-as-key, optional per-category min_volume_24h_usd override
+    monetary_policy: {}
+    opec:            { min_volume_24h_usd: 1000 }
+    election:        { min_volume_24h_usd: 25000 }
+    china_policy:    {}
+    conflict:        {}

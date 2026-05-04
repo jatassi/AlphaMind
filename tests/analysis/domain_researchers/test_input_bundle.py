@@ -436,6 +436,9 @@ _EVENT_LINE = (
     "- 2024-03-15T14:30:00Z | NVDA Earnings Call"
     " | sectors: tech_semis | tickers: NVDA | consensus: EPS $5.16, revenue $22.1B"
 )
+_HEADLINE_LINE = (
+    "[1] 2024-03-15T14:30:00Z [tier_1] Bloomberg | NVDA | earnings_related | NVDA beats estimates"
+)
 
 SNAPSHOT_BUNDLE_TEXT = "\n".join(
     [
@@ -456,8 +459,7 @@ SNAPSHOT_BUNDLE_TEXT = "\n".join(
         "Data freshness: 2024-03-15T14:00:00Z",
         "",
         "### HEADLINES (top 1 by composite score)",
-        "[1] 2024-03-15T14:30:00Z [tier_1] NVDA beats estimates",
-        "      Outlet: Bloomberg | Tickers: NVDA | Tags: earnings_related",
+        _HEADLINE_LINE,
         "",
         "### SCHEDULED EVENTS (next 72h)",
         _EVENT_LINE,

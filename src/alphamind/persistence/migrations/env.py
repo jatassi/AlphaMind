@@ -39,7 +39,8 @@ def _resolve_db_path() -> str:
     1. ``-x db=<path>`` CLI argument  (alembic -x db=path/to/db.sqlite ...)
     2. ``DATABASE_PATH`` env var
     3. ``main.yaml`` paths.database
-    4. Platform default
+
+    Raises :class:`RuntimeError` (via :func:`_resolve_path`) when none resolve.
     """
     x_args: dict[str, str] = context.get_x_argument(as_dictionary=True)
     return x_args["db"] if "db" in x_args else _resolve_path(None)

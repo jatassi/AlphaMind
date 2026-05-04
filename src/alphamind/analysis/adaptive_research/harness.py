@@ -29,10 +29,10 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -276,23 +276,33 @@ async def _collect_response(
     tokens = TokensUsed(input_tokens=0, output_tokens=0, cache_read_tokens=0, cache_write_tokens=0)
     tool_calls = 0
 
-    async for message in sdk_query_fn(prompt=prompt, options=options):
-        if isinstance(message, AssistantMessage):
-            for block in message.content:
-                if isinstance(block, TextBlock):
-                    text_parts.append(block.text)
-                elif isinstance(block, ToolUseBlock):
-                    tool_calls += 1
-            stop_reason, tokens = _absorb_metadata(message, stop_reason=stop_reason, tokens=tokens)
-        elif isinstance(message, ResultMessage):
-            stop_reason, tokens = _absorb_metadata(message, stop_reason=stop_reason, tokens=tokens)
-            if message.is_error:
-                raise _CLIResultError(
-                    error_text=message.result or "(no result text)",
-                    partial_response="".join(text_parts),
-                    stop_reason=stop_reason,
+    query_iter = sdk_query_fn(prompt=prompt, options=options)
+    try:
+        async for message in query_iter:
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        text_parts.append(block.text)
+                    elif isinstance(block, ToolUseBlock):
+                        tool_calls += 1
+                stop_reason, tokens = _absorb_metadata(
+                    message, stop_reason=stop_reason, tokens=tokens
                 )
-            break
+            elif isinstance(message, ResultMessage):
+                stop_reason, tokens = _absorb_metadata(
+                    message, stop_reason=stop_reason, tokens=tokens
+                )
+                if message.is_error:
+                    raise _CLIResultError(
+                        error_text=message.result or "(no result text)",
+                        partial_response="".join(text_parts),
+                        stop_reason=stop_reason,
+                    )
+                break
+    finally:
+        # Close from this task; GC-time aclose() races the SDK reader
+        # and prints "asynchronous generator is already running" to stderr.
+        await cast(AsyncGenerator[Any], query_iter).aclose()
 
     return "".join(text_parts), stop_reason, tokens, tool_calls
 
@@ -302,8 +312,9 @@ async def _collect_response(
 # ---------------------------------------------------------------------------
 
 _SECTION_DIRECTIVE = (
-    "Emit a single corrected adaptive research findings brief. "
-    "No prose preceding or following the structured content. "
+    "Output the corrected adaptive research findings brief and nothing else. "
+    "No preamble, no acknowledgment, no apology, no closing prose. "
+    "The first non-blank line of your response must be exactly `ADAPTIVE RESEARCH FINDINGS`. "
     "Use exactly the section header === INVESTIGATION THREADS ==="
 )
 

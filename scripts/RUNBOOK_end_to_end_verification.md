@@ -8,12 +8,13 @@ co-piloting the run.
 
 ## Important: this is NOT a single live composed pipeline run
 
-The analysis layer's downstream agents — **adaptive researcher** and
-**synthesizer** — currently consume *hand-constructed fixtures* in
-their verification scripts, not the live outputs of the upstream
-distillation/qualitative/domain-researcher chain. The live pipeline
-composition wiring is deferred work (see `docs/project-tracker.md` §
-Substantial → "Analysis-layer pipeline composition wiring").
+The composition runner itself landed in ALP-276
+(`src/alphamind/pipeline/analysis.py::run_analysis_pipeline`), but the
+analysis layer's per-script verifications — including **adaptive
+researcher** and **synthesizer** — still consume *hand-constructed
+fixtures*, not the runner's live output. Rewiring the verifications
+onto `run_analysis_pipeline` is a follow-up; until then the per-script
+caveats in phases 4 and 5 still hold.
 
 What this runbook gives you:
 
@@ -21,9 +22,10 @@ What this runbook gives you:
   state and the real Claude Agent SDK.
 - ✅ Confidence that the *pieces* talk to their substrates (DB, SDK,
   config) correctly.
-- ❌ Not: a guarantee that the full distillation→synthesizer flow
-  composes correctly when wired together. That story has not landed
-  yet — flag any cross-layer schema drift to the operator.
+- ❌ Not: a guarantee that today's actual upstream outputs flow
+  correctly through the live composition runner — phase 4 and phase 5
+  consume fixtures, not phase 2/3's live output. Flag any cross-layer
+  schema drift to the operator.
 
 ## TL;DR for the agent
 
@@ -140,6 +142,12 @@ state tables have rows within a 5-minute freshness window, and the
 invocation archive has 5 files (`prompt.md`, `user_message.md`,
 `response.md`, `errors.json`, `metadata.json`).
 
+`distillation_contract_history` is now an active probe (ALP-274 wired
+the prediction-market scope through to phase-1 ingestion). On a fresh
+DB whose `prediction_market_snapshots` table is still cold, the probe
+will fail freshness — re-snapshot or wait for the contract collector
+to run before re-verifying.
+
 ```bash
 uv run python scripts/verify_regime_transition.py \
     --db-path "$DB_PATH" \
@@ -160,6 +168,11 @@ Verifies the calibration state distribution in
 indicators (volume, ATR, spread) ≥80% calibrated; event-driven
 indicators (sentiment, lead-lag) ≤70%. These are broad bands, not
 SLAs — slight drift is expected.
+
+`DEFERRED` rows on the high-freq bands are expected on a freshly-migrated
+DB and exit 0 (ALP-273): the cold-start signature is all-bootstrap +
+every `n_observations < window_days` + full universe coverage. `OK`,
+`DEFERRED`, and `EMPTY` all pass; only `OUT` fails.
 
 **On failure:** if `verify_distillation` fails, the distillation
 orchestrator itself is broken or the data layer's snapshots aren't
@@ -236,8 +249,10 @@ allowlist, wall-clock < 300s, output_tokens < 1500, tool_calls < 25.
 as upstream input. It does **not** consume the live outputs from
 phases 2 and 3. So a PASS here means "the adaptive researcher works
 against well-formed inputs", not "the adaptive researcher works
-against today's live distillation/qualitative outputs". This is a
-known gap (deferred to the analysis-layer composition wiring story).
+against today's live distillation/qualitative outputs". The live
+composition runner exists (`pipeline/analysis.py::run_analysis_pipeline`,
+ALP-276) — what's still pending is rewiring this verification onto
+the runner's output.
 
 Runbook: `scripts/RUNBOOK_adaptive_researcher.md`.
 
@@ -267,7 +282,9 @@ brief tuple (3 sector briefs, correlation/regime, qualitative,
 adaptive) is **hand-constructed**, not pulled from phases 2–4's live
 outputs. PASS here means "the synthesizer pipeline works against a
 canonical fixture set"; it does not validate that today's actual
-upstream outputs flow correctly through the synthesizer.
+upstream outputs flow correctly through the synthesizer. The composition
+runner exists (`pipeline/analysis.py::run_analysis_pipeline`); rewiring
+this verification onto its output is the remaining follow-up.
 
 Runbook: `scripts/RUNBOOK_synthesizer.md`.
 
@@ -318,11 +335,17 @@ gratuitously.
 
 ## Known gaps (so the agent doesn't claim more than the run proved)
 
-1. **No live cross-layer composition.** The synthesizer and adaptive
-   researcher use hand-crafted upstream-brief fixtures. A green run
-   proves each agent works on canonical inputs; it does not prove
-   that phase 2's actual live outputs flow correctly into phase 4
-   and phase 5. Surface this distinction explicitly when reporting.
+1. **Verifications still consume fixtures, not live composition output.**
+   The composition runner exists
+   (`src/alphamind/pipeline/analysis.py::run_analysis_pipeline`, ALP-276)
+   and chains distillation → domain + qualitative parallel → adaptive
+   → synthesizer with typed `*Result` threading. But the per-script
+   verifications for adaptive researcher and synthesizer still consume
+   hand-crafted upstream-brief fixtures. A green run proves each agent
+   works on canonical inputs and that the runner *can* compose them; it
+   does not prove that phase 2's actual live outputs flow correctly
+   through the runner into phase 4 and phase 5. Surface this distinction
+   explicitly when reporting.
 
 2. **Regime-transition verification is lookback-only.** The script
    reads recent `distillation_regime_state` rows and checks
@@ -357,8 +380,9 @@ update the runbook in the same change.
 - `scripts/RUNBOOK_qualitative_researcher.md` — phase 4 failure triage.
 - `scripts/RUNBOOK_adaptive_researcher.md` — phase 4 failure triage.
 - `scripts/RUNBOOK_synthesizer.md` — phase 5 failure triage.
-- `docs/project-tracker.md` — current build status; see § Substantial
-  for the deferred "Analysis-layer pipeline composition wiring" story.
+- `docs/project-tracker.md` — current build status.
+- `src/alphamind/pipeline/analysis.py` — `run_analysis_pipeline` (ALP-276),
+  the composition runner the verifications will eventually be rewired onto.
 - `docs/design/cost-and-rate-limit-modeling.md` — cap budgets and
   per-agent token expectations.
 - `docs/architecture/llm-integration.md` § Authentication —

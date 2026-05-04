@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
-from alphamind.data_sources.kalshi.client import KalshiClient
+from alphamind.data_sources.prediction_market.kalshi.client import KalshiClient
 
 BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 

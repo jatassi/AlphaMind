@@ -1,9 +1,14 @@
 """
 Polymarket prediction-market contract and snapshot collector.
 
-Pulls active markets from the Gamma API, filters to in-scope categories with
-liquidity_usd >= 10_000, UPSERTs prediction_market_contracts, and writes one
-prediction_market_snapshots row per active contract per invocation.
+Pulls active markets from Gamma's ``/markets`` endpoint (snapshot fidelity —
+``outcomePrices``, ``liquidity``, ``bestBid/Ask``, ``volume24hr`` are populated
+there but stripped from the ``markets[]`` embedded inside ``/events``), then
+batch-fetches ``/events?id=...`` for the unique event ids referenced by those
+markets to recover ``tags[].label`` for the shared categorizer.  Filters by
+``liquidity_usd >= 10_000``, UPSERTs ``prediction_market_contracts``, and
+writes one ``prediction_market_snapshots`` row per active contract per
+invocation.
 """
 
 from __future__ import annotations
@@ -14,6 +19,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from alphamind.data_sources._common import default_session_factory, resume_since, track_run
+from alphamind.data_sources.prediction_market.categories import (
+    OTHER,
+    derive_canonical_category,
+)
 from alphamind.persistence.models import (
     PredictionMarketContracts,
     PredictionMarketSnapshots,
@@ -23,51 +32,7 @@ log = logging.getLogger(__name__)
 
 _PLATFORM = "polymarket"
 _LIQUIDITY_MIN = 10_000.0
-
-# ---------------------------------------------------------------------------
-# Category mapping
-# ---------------------------------------------------------------------------
-# Each entry is a set of lowercase substrings to match against the market's
-# tags (case-insensitive).  First match wins; unknown → "other".
-
-_CATEGORY_RULES: list[tuple[str, list[str]]] = [
-    (
-        "monetary_policy",
-        ["fed", "fomc", "federal reserve", "rate cut", "rate hike", "interest rate"],
-    ),
-    ("antitrust", ["antitrust", "ftc", "doj", "monopoly", "competition"]),
-    ("trade", ["tariff", "trade war", "trade deal", "import", "export control"]),
-    (
-        "financial_reg",
-        ["sec ", "cfpb", "dodd-frank", "banking reg", "financial reg", "capital req"],
-    ),
-    ("tax", ["tax ", "irs ", "corporate tax", "tax reform", "tax cut"]),
-    (
-        "election",
-        [
-            "election",
-            "president",
-            "congress",
-            "senate",
-            "ballot",
-            "vote",
-            "democrat",
-            "republican",
-        ],
-    ),
-    ("opec", ["opec", "oil production", "petroleum"]),
-    ("conflict", ["war", "conflict", "military", "invasion", "nato", "ukraine", "russia"]),
-    ("sanctions", ["sanction", "embargo", "export ban"]),
-]
-
-
-def _derive_category(tags: list[str]) -> str:
-    """Return the AlphaMind category for the given Polymarket tag list."""
-    lowered = " ".join(t.lower() for t in tags)
-    for category, keywords in _CATEGORY_RULES:
-        if any(kw in lowered for kw in keywords):
-            return category
-    return "other"
+_RESOLVED_PRICE_THRESHOLD = 0.99
 
 
 # ---------------------------------------------------------------------------
@@ -76,12 +41,8 @@ def _derive_category(tags: list[str]) -> str:
 
 
 def _fetch_markets(_since: datetime) -> list[dict[str, Any]]:
-    """
-    Fetch all active markets from the Gamma API.
-
-    Production implementation — replaced by patch in tests.
-    """
-    from alphamind.data_sources.polymarket.client import PolymarketClient
+    """Fetch all markets from Gamma.  Replaced by patch in tests."""
+    from alphamind.data_sources.prediction_market.polymarket.client import PolymarketClient
 
     client = PolymarketClient()
     results: list[dict[str, Any]] = []
@@ -98,18 +59,33 @@ def _fetch_markets(_since: datetime) -> list[dict[str, Any]]:
     return results
 
 
+def _fetch_event_labels(event_ids: list[str]) -> dict[str, tuple[str, ...]]:
+    """Return ``event_id → (tag.label, ...)`` for the given event ids.
+
+    Production implementation — replaced by patch in tests.
+    """
+    from alphamind.data_sources.prediction_market.polymarket.client import PolymarketClient
+
+    client = PolymarketClient()
+    events = client.get_events_by_ids(event_ids)
+    result: dict[str, tuple[str, ...]] = {}
+    for event in events:
+        eid = str(event.get("id", "")) or None
+        if eid is None:
+            continue
+        tags = event.get("tags") or []
+        labels = tuple(tag.get("label", "") for tag in tags if tag.get("label"))
+        result[eid] = labels
+    return result
+
+
 def _now() -> datetime:
     """Return current UTC time.  Replaced by patch in tests."""
     return datetime.now(UTC)
 
 
-def _yes_probability(market: dict[str, Any]) -> float | None:
-    """Parse YES probability from Gamma's ``outcomePrices`` field.
-
-    The field arrives as a JSON-encoded string like ``'["0.535", "0.465"]'``
-    where the array is parallel to ``outcomes`` (typically ``["Yes", "No"]``).
-    Returns None for non-binary markets or when prices are absent.
-    """
+def _parse_outcome_prices(market: dict[str, Any]) -> list[float] | None:
+    """Parse Gamma's JSON-encoded ``outcomePrices`` into floats."""
     raw = market.get("outcomePrices")
     if not raw:
         return None
@@ -120,9 +96,45 @@ def _yes_probability(market: dict[str, Any]) -> float | None:
     if not prices:
         return None
     try:
-        return float(prices[0])
+        return [float(p) for p in prices]
     except (TypeError, ValueError):
         return None
+
+
+def _yes_probability_from_prices(prices: list[float]) -> float:
+    """Return YES probability — first element of ``outcomePrices``."""
+    return prices[0]
+
+
+def _resolution_from_prices(prices: list[float], *, is_closed: bool) -> str | None:
+    """Derive ``resolution_outcome`` from ``outcomePrices``.
+
+    Polymarket's ``outcome`` field is universally null even for resolved
+    markets; the live signal lives in ``outcomePrices`` (parallel to the
+    ``["Yes", "No"]`` outcomes array).  When ``closed`` and the dominant
+    leg is ≥0.99 the market resolved to that side; when both prices are
+    zero Polymarket treats the market as canceled; otherwise we leave
+    resolution unset until a future ingestion catches it cleanly.
+    """
+    if not is_closed or len(prices) < 2:
+        return None
+    if all(abs(p) < 1e-9 for p in prices):
+        return "canceled"
+    top = max(prices)
+    if top < _RESOLVED_PRICE_THRESHOLD:
+        return None
+    return "yes" if prices[0] >= prices[1] else "no"
+
+
+def _extract_event_ids(market: dict[str, Any]) -> tuple[str, ...]:
+    """Return the event ids referenced by a Gamma market dict."""
+    events = market.get("events") or []
+    ids: list[str] = []
+    for event in events:
+        eid = event.get("id") if isinstance(event, dict) else None
+        if eid is not None:
+            ids.append(str(eid))
+    return tuple(ids)
 
 
 # ---------------------------------------------------------------------------
@@ -130,33 +142,39 @@ def _yes_probability(market: dict[str, Any]) -> float | None:
 # ---------------------------------------------------------------------------
 
 
-def _process_market(sess: Any, market: dict[str, Any], snapshot_ts: str) -> int:
-    """
-    Process one Polymarket market dict: upsert contract + write snapshot.
-
-    Returns 1 if a new snapshot row was written, 0 otherwise.
-    """
+def _process_market(
+    sess: Any,
+    market: dict[str, Any],
+    snapshot_ts: str,
+    labels_by_event: dict[str, tuple[str, ...]],
+) -> int:
+    """Upsert a contract and write one snapshot row.  Returns 1 on insert, else 0."""
     condition_id: str = market["conditionId"]
     liquidity: float = float(market.get("liquidity") or 0.0)
     if liquidity < _LIQUIDITY_MIN:
         return 0
 
-    tags: list[str] = market.get("tags") or []
-    category = _derive_category(tags)
-    if category == "other":
-        log.warning(
-            "polymarket: unknown category for contract %s tags=%r — defaulting to 'other'",
-            condition_id,
-            tags,
-        )
-
-    yes_prob = _yes_probability(market)
-    if yes_prob is None:
+    prices = _parse_outcome_prices(market)
+    if prices is None:
         log.warning(
             "polymarket: skipping contract %s — no parsable outcomePrices",
             condition_id,
         )
         return 0
+    yes_prob = _yes_probability_from_prices(prices)
+
+    description = market.get("question", "")
+    event_ids = _extract_event_ids(market)
+    vendor_labels: tuple[str, ...] = tuple(
+        label for eid in event_ids for label in labels_by_event.get(eid, ())
+    )
+    category = derive_canonical_category(description=description, vendor_labels=vendor_labels)
+    if category == OTHER:
+        log.debug(
+            "polymarket: contract %s categorized as 'other' (labels=%r)",
+            condition_id,
+            vendor_labels,
+        )
 
     raw_bid = market.get("bestBid")
     raw_ask = market.get("bestAsk")
@@ -165,10 +183,7 @@ def _process_market(sess: Any, market: dict[str, Any], snapshot_ts: str) -> int:
     volume_24h: float | None = float(market.get("volume24hr") or 0.0) or None
 
     is_closed: bool = bool(market.get("closed", False))
-    raw_outcome: str | None = market.get("outcome")
-    resolution: str | None = (
-        (raw_outcome.lower() if raw_outcome else "undecided") if is_closed else None
-    )
+    resolution = _resolution_from_prices(prices, is_closed=is_closed)
 
     existing = sess.get(PredictionMarketContracts, condition_id)
     if existing is None:
@@ -176,7 +191,7 @@ def _process_market(sess: Any, market: dict[str, Any], snapshot_ts: str) -> int:
             PredictionMarketContracts(
                 contract_id=condition_id,
                 platform=_PLATFORM,
-                description=market.get("question", ""),
+                description=description,
                 category=category,
                 resolution_date=market.get("endDate"),
                 resolution_outcome=resolution,
@@ -187,6 +202,7 @@ def _process_market(sess: Any, market: dict[str, Any], snapshot_ts: str) -> int:
     else:
         existing.last_seen_at = snapshot_ts
         existing.category = category
+        existing.description = description
         if resolution is not None:
             existing.resolution_outcome = resolution
 
@@ -248,8 +264,15 @@ def collect_snapshots(
         markets = _fetch_markets(since)
         snapshot_ts = _now().isoformat()
 
+        unique_event_ids: list[str] = sorted(
+            {eid for m in markets for eid in _extract_event_ids(m)}
+        )
+        labels_by_event = _fetch_event_labels(unique_event_ids)
+
         with _session_factory() as sess:
-            rows_written = sum(_process_market(sess, m, snapshot_ts) for m in markets)
+            rows_written = sum(
+                _process_market(sess, m, snapshot_ts, labels_by_event) for m in markets
+            )
             sess.commit()
 
         run.rows_written = rows_written

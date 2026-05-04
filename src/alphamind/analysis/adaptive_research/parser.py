@@ -123,22 +123,23 @@ def parse_adaptive_brief(raw_response: str, *, invocation_id: str) -> AdaptiveBr
         fence (bare ``` or ``text-tagged) is stripped before parsing.
     invocation_id:
         Canonical invocation identifier supplied by the harness. The brief's
-        own ``Invocation:`` header is parsed and cross-checked; a mismatch
-        raises :class:`ParseError`.
+        own ``Invocation:`` header is parsed but its value is discarded — the
+        caller-supplied id is canonical and is set on the returned
+        :class:`AdaptiveBrief`.
 
     Raises
     ------
     ParseError
         On any structural malformation: missing sections, unknown enum values,
-        invocation_id mismatch, out-of-sequence thread IDs, missing required
-        conditional fields, or model-invariant violation.
+        out-of-sequence thread IDs, missing required conditional fields, or
+        model-invariant violation.
     """
     text = raw_response.strip()
     text = _strip_code_fence(text)
     lines = text.splitlines()
 
     threads_investigated_count, anomalies_triaged_count, anomalies_deferred, marker_idx = (
-        _parse_header(lines, invocation_id)
+        _parse_header(lines)
     )
     threads = _parse_threads(lines[marker_idx + 1 :])
 
@@ -204,9 +205,7 @@ def _strip_code_fence(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _parse_header(
-    lines: list[str], expected_invocation_id: str
-) -> tuple[int, int, tuple[str, ...], int]:
+def _parse_header(lines: list[str]) -> tuple[int, int, tuple[str, ...], int]:
     """Parse the four-line header and locate the INVESTIGATION THREADS marker.
 
     Returns ``(threads_investigated_count, anomalies_triaged_count,
@@ -215,15 +214,10 @@ def _parse_header(
     i = _expect_literal(
         lines, 0, "ADAPTIVE RESEARCH FINDINGS", "envelope", "ADAPTIVE RESEARCH FINDINGS"
     )
-    invocation_value, i = _expect_prefix(lines, i, "Invocation:", "header.invocation_id")
-    if invocation_value != expected_invocation_id:
-        raise ParseError(
-            field_path="header.invocation_id",
-            message=(
-                f"Invocation header {invocation_value!r} does not match "
-                f"caller-supplied invocation_id {expected_invocation_id!r}"
-            ),
-        )
+    # The model occasionally invents its own invocation id under load; require
+    # the line to be present and well-formed but discard its value — the
+    # caller-supplied id is canonical. Mirrors the qualitative parser.
+    _, i = _expect_prefix(lines, i, "Invocation:", "header.invocation_id")
 
     threads_investigated_count, anomalies_triaged_count, i = _expect_counts_line(lines, i)
 

@@ -192,9 +192,13 @@ def format_anomaly_summary(summaries: Iterable[AnomalySummary]) -> str:
     archive diffs cleanly. Severity sections appear in the order
     pinned by :data:`_SEVERITY_ORDER`; empty sections are omitted.
     Within a section, summaries follow :func:`_anomaly_sort_key`
-    (magnitude descending, then ``source_block_id`` ascending).
+    (magnitude descending, then ``source_block_id`` ascending). The
+    zero-flag case renders as a single line so the empty summary doesn't
+    eat tokens (ALP-272).
     """
     materialized = list(summaries)
+    if not materialized:
+        return "=== ANOMALY FLAGS (0) ===\n"
     by_severity: dict[AnomalySeverity, list[AnomalySummary]] = {
         severity: [] for severity in _SEVERITY_ORDER
     }
@@ -206,7 +210,6 @@ def format_anomaly_summary(summaries: Iterable[AnomalySummary]) -> str:
         bucket = sorted(by_severity[severity], key=_anomaly_sort_key)
         if not bucket:
             continue
-        lines.append("")
         lines.append(f"--- {_SEVERITY_HEADER[severity]} ({len(bucket)}) ---")
         for summary in bucket:
             magnitude = format(summary.flag.magnitude, PERCENTAGE_FLOAT_FORMAT)

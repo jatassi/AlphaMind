@@ -5,7 +5,10 @@ Database path resolution order:
   1. Explicit ``path`` argument passed to :func:`make_engine`
   2. ``DATABASE_PATH`` environment variable
   3. ``main.yaml`` ``paths.database`` key
-  4. Platform default: ``%USERPROFILE%\\AlphaMind\\data\\alphamind.db``
+
+Raises :class:`RuntimeError` when none of the above resolves a path; a silent
+default would let SQLAlchemy create an empty SQLite file and downstream
+verifiers would mis-report "tables MISSING" instead of "no DB configured".
 
 Pragmas applied on every new connection (from data-and-state.md):
   - ``journal_mode = WAL``
@@ -17,6 +20,7 @@ Pragmas applied on every new connection (from data-and-state.md):
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -24,11 +28,7 @@ from sqlalchemy import Engine, event
 from sqlalchemy import create_engine as _sa_create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-
-def _default_db_path() -> str:
-    """Return the platform-default database path."""
-    userprofile = os.environ.get("USERPROFILE") or str(Path.home())
-    return str(Path(userprofile) / "AlphaMind" / "data" / "alphamind.db")
+_PERCENT_VAR_PATTERN = re.compile(r"%([A-Za-z_][A-Za-z0-9_]*)%")
 
 
 def _resolve_path(path: str | None) -> str:
@@ -47,12 +47,19 @@ def _resolve_path(path: str | None) -> str:
                 cfg: dict[str, Any] = yaml.safe_load(fh) or {}
             db_path: str | None = cfg.get("paths", {}).get("database")
             if db_path:
-                # main.yaml stores Windows ``%USERPROFILE%`` literally so the
-                # value is portable across machines; expand at the OS boundary.
-                return os.path.expandvars(db_path)
+                # ``os.path.expandvars`` only honors ``%VAR%`` on Windows; we
+                # substitute manually so a YAML value like ``%USERPROFILE%/...``
+                # expands identically on POSIX (test parity, replay harness).
+                return _PERCENT_VAR_PATTERN.sub(
+                    lambda m: os.environ.get(m.group(1), m.group(0)), db_path
+                )
     except Exception:
         pass
-    return _default_db_path()
+    raise RuntimeError(
+        "AlphaMind database path is not configured. "
+        "Pass an explicit path, set the DATABASE_PATH environment variable, "
+        "or populate paths.database in config/main.yaml."
+    )
 
 
 def _apply_pragmas(dbapi_connection: Any, _connection_record: Any) -> None:

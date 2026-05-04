@@ -218,12 +218,16 @@ async def run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 sp
     now_utc: datetime,
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
+    agent_config: BaseAgentConfig | None = None,
 ) -> SynthesizerResult:
     """Invoke the synthesizer and return a ``SynthesizerResult``.
 
     Resolves the synthesizer's :class:`BaseAgentConfig` from
     ``config/agents.yaml`` via the existing :class:`AgentsConfig`
-    loader, builds the retrieval store + input bundle from the upstream
+    loader unless an ``agent_config`` is supplied — the pipeline
+    composition runner forwards a per-trigger-overridden config so
+    ``run_types/<trigger>.yaml`` budget knobs reach the synthesizer
+    slot. Builds the retrieval store + input bundle from the upstream
     briefs, and invokes :func:`invoke_synthesizer` with
     ``sdk_query_fn`` forwarded for SDK-substitution in test contexts.
 
@@ -249,7 +253,7 @@ async def run_synthesizer(  # noqa: PLR0913 — signature dictated by ALP-210 sp
         )
 
     return await _run_synthesizer(
-        agent_config=load_synthesizer_agent_config(),
+        agent_config=agent_config or load_synthesizer_agent_config(),
         regime_label=regime_label,
         sector_briefs=sector_briefs,
         correlation_regime_brief=correlation_regime_brief,

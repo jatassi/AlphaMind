@@ -43,11 +43,8 @@ agents:
   tech_semis_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/tech_semis_researcher.md
-    # Cold-cache + extended thinking: an uncapped run took ~334s on the
-    # financials sector; budget includes headroom for that plus rate-limit
-    # backoff variance.
-    latency_budget_seconds: 480
-    context_token_budget: 16000
+    latency_budget_seconds: 120
+    context_token_budget: 8000
     # Sonnet 4.6 emits ~4 thinking blocks (~4400 tokens) before the brief text;
     # the budget must cover thinking + 2× the design-doc brief target.
     output_token_budget: 8000
@@ -56,11 +53,8 @@ agents:
   financials_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/financials_researcher.md
-    # Cold-cache + extended thinking: an uncapped run took ~334s on the
-    # financials sector; budget includes headroom for that plus rate-limit
-    # backoff variance.
-    latency_budget_seconds: 480
-    context_token_budget: 16000
+    latency_budget_seconds: 120
+    context_token_budget: 8000
     # Sonnet 4.6 emits ~4 thinking blocks (~4400 tokens) before the brief text;
     # the budget must cover thinking + 2× the design-doc brief target.
     output_token_budget: 8000
@@ -69,11 +63,8 @@ agents:
   energy_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/energy_researcher.md
-    # Cold-cache + extended thinking: an uncapped run took ~334s on the
-    # financials sector; budget includes headroom for that plus rate-limit
-    # backoff variance.
-    latency_budget_seconds: 480
-    context_token_budget: 16000
+    latency_budget_seconds: 120
+    context_token_budget: 8000
     # Sonnet 4.6 emits ~4 thinking blocks (~4400 tokens) before the brief text;
     # the budget must cover thinking + 2× the design-doc brief target.
     output_token_budget: 8000

@@ -111,3 +111,34 @@ class PolymarketClient:
         resp = self._get_with_retry(f"{_GAMMA_BASE}/markets", params=params)
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
+
+    def get_events_by_ids(self, event_ids: list[str]) -> list[dict[str, Any]]:
+        """
+        Fetch events from Gamma ``/events`` by id.
+
+        ``/events`` accepts repeated ``id=`` query params and returns the
+        matching event objects.  Used by the categorizer to read each event's
+        ``tags[].label`` after the per-market loop has already collected
+        snapshot fields from ``/markets``.
+
+        Returns the concatenated event list across all requested ids.
+        Empty input returns an empty list without issuing a request.
+        """
+        if not event_ids:
+            return []
+
+        results: list[dict[str, Any]] = []
+        # Gamma /events caps the request size at the same ~100 rows per page
+        # as /markets; chunk the id list to stay under any URL-length limit.
+        chunk_size = 100
+        for start in range(0, len(event_ids), chunk_size):
+            chunk = event_ids[start : start + chunk_size]
+            self.rate_limiter.acquire(_PROVIDER)
+            resp = self._get_with_retry(
+                f"{_GAMMA_BASE}/events",
+                params=[("id", eid) for eid in chunk],
+            )
+            resp.raise_for_status()
+            page: list[dict[str, Any]] = resp.json()
+            results.extend(page)
+        return results

@@ -102,7 +102,6 @@ _STATE_TABLES: tuple[_StateTableProbe, ...] = (
         "distillation_contract_history",
         DistillationContractHistory,
         "ingested_at",
-        deferred=True,
     ),
     _StateTableProbe(
         "distillation_event_history",

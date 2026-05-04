@@ -41,6 +41,7 @@ from alphamind.config.models.distillation import (
     PredictionMarket,
     RegimeClassification,
     RegimeTransition,
+    TrackedCategoryOverride,
 )
 from alphamind.distillation.orchestrator import (
     DistillationOutputs,
@@ -52,6 +53,8 @@ from alphamind.persistence.models import (
     Base,
     MacroObservations,
     OhlcvBars,
+    PredictionMarketContracts,
+    PredictionMarketSnapshots,
     SectorClassification,
 )
 
@@ -171,6 +174,8 @@ def _build_distillation_config() -> DistillationConfig:
         prediction_market=PredictionMarket(
             prediction_market_delta_pp_threshold=10.0,
             prediction_market_low_liquidity_volume_min_usd=10_000,
+            tracked_default_min_volume_24h_usd=5_000,
+            tracked_categories={},
         ),
     )
 
@@ -527,6 +532,7 @@ def test_orchestrator_refresh_failure_prevents_downstream_computation(
         *,
         config: DistillationConfig,
         ticker_scope: tuple[str, ...],
+        contract_scope: tuple[str, ...],
         as_of: datetime,
     ) -> int:
         raise _RefreshError("simulated refresh failure")
@@ -593,3 +599,109 @@ def test_orchestrator_deterministic_outputs_across_runs(tmp_path: Path) -> None:
         assert (archive_a / filename).read_bytes() == (archive_b / filename).read_bytes(), (
             f"{filename} differs between runs — determinism contract violated"
         )
+
+
+def _seed_prediction_market_contracts(session: Session) -> None:
+    """Seed two monetary_policy contracts — one above the volume floor, one
+    below — plus one election contract that is rejected by category.
+    """
+    contracts = (
+        ("ct-fed-active", "monetary_policy", None, 100_000.0),
+        ("ct-fed-low", "monetary_policy", None, 100.0),
+        ("ct-elec", "election", None, 100_000.0),
+    )
+    for contract_id, category, resolution_date, volume in contracts:
+        session.add(
+            PredictionMarketContracts(
+                contract_id=contract_id,
+                platform="polymarket",
+                description=f"desc {contract_id}",
+                category=category,
+                resolution_date=resolution_date,
+                resolution_outcome=None,
+                created_at="2026-01-01T00:00:00Z",
+                last_seen_at="2026-04-25T00:00:00Z",
+            )
+        )
+        session.add(
+            PredictionMarketSnapshots(
+                contract_id=contract_id,
+                snapshot_ts="2026-04-25T00:00:00Z",
+                yes_probability=0.5,
+                volume_24h_usd=volume,
+                liquidity_usd=20_000.0,
+                bid=0.49,
+                ask=0.51,
+                ingested_at="2026-04-25T00:00:00Z",
+            )
+        )
+    session.commit()
+
+
+def test_orchestrator_threads_resolved_contract_scope_to_both_consumers(
+    populated_session: Session, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The orchestrator must resolve scope ONCE and thread the same tuple to
+    ``refresh_contract_history`` and ``compute_prediction_market_deltas`` —
+    splitting would let the writer ingest one set while the reader reports
+    on another.
+    """
+    from alphamind.distillation import baselines as baselines_mod
+    from alphamind.distillation import qualitative_derived as qd_mod
+
+    _seed_prediction_market_contracts(populated_session)
+
+    config = _build_distillation_config().model_copy(
+        update={
+            "prediction_market": PredictionMarket(
+                prediction_market_delta_pp_threshold=10.0,
+                prediction_market_low_liquidity_volume_min_usd=10_000,
+                tracked_default_min_volume_24h_usd=5_000,
+                tracked_categories={
+                    "monetary_policy": TrackedCategoryOverride(),
+                },
+            )
+        }
+    )
+
+    captured: dict[str, tuple[str, ...]] = {}
+    real_refresh = baselines_mod.refresh_contract_history
+    real_compute = qd_mod.compute_prediction_market_deltas
+
+    def spy_refresh(session: Session, *, contract_scope, **kwargs):  # type: ignore[no-untyped-def]
+        captured["refresh"] = tuple(contract_scope)
+        return real_refresh(session, contract_scope=contract_scope, **kwargs)
+
+    def spy_compute(session: Session, *, contract_scope, **kwargs):  # type: ignore[no-untyped-def]
+        captured["compute"] = tuple(contract_scope)
+        return real_compute(session, contract_scope=contract_scope, **kwargs)
+
+    monkeypatch.setattr(baselines_mod, "refresh_contract_history", spy_refresh)
+    # Both call sites bind via direct-imported symbols on the orchestrator
+    # module; patch those bindings, not the source modules.
+    from alphamind.distillation import orchestrator as orch_mod
+
+    monkeypatch.setattr(orch_mod, "refresh_contract_history", spy_refresh)
+    monkeypatch.setattr(orch_mod, "compute_prediction_market_deltas", spy_compute)
+
+    as_of = datetime(2026, 4, 25, tzinfo=UTC)
+    asyncio.run(
+        run_external_distillation(
+            session=populated_session,
+            config=config,
+            ticker_scope=tuple(_SECTOR_TICKERS.keys()),
+            as_of=as_of,
+            invocation_id="20260425T120000Z-test",
+            archive_root=tmp_path,
+            provenance_root=tmp_path / "provenance",
+        )
+    )
+
+    assert "refresh" in captured, "refresh_contract_history was never invoked"
+    assert "compute" in captured, "compute_prediction_market_deltas was never invoked"
+    assert captured["refresh"] == captured["compute"], (
+        "scope tuple must be identical at both call sites"
+    )
+    # The above-floor monetary_policy contract is in scope; the low-volume
+    # one and the election contract are out.
+    assert captured["refresh"] == ("ct-fed-active",)
