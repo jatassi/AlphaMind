@@ -54,6 +54,7 @@ dev = [
     "pytest-cov>=6.0",
     "pytest-xdist>=3.6",
     "types-croniter>=2.0",
+    "types-jsonschema>=4.20",
     "types-pyyaml>=6.0",
 ]
 

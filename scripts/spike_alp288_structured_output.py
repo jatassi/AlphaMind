@@ -68,7 +68,30 @@ from claude_agent_sdk import (  # noqa: E402
     tool,
 )
 
-from alphamind.analysis.adaptive_research.models import AdaptiveBrief  # noqa: E402
+from alphamind.analysis._schema_tightening import _tighten_conditional_schema  # noqa: E402
+from alphamind.analysis.adaptive_research.models import (  # noqa: E402
+    AdaptiveBrief,
+    Assessment,
+    InvestigationThread,
+)
+
+# Mirrors the per-Assessment required-conditional-field map enforced by
+# AdaptiveBrief._assessment_invariant — the schema tightener narrows the
+# generated AdaptiveBrief schema so the API rejects the
+# `signal-with-empty-arrays-as-null` payload that scenario 5 hit pre-(A).
+_REQUIRED_BY_ASSESSMENT: dict[Assessment, frozenset[str]] = {
+    Assessment.SIGNAL: frozenset({"implication", "strengthens", "weakens"}),
+    Assessment.NOISE: frozenset({"dismissal_reason"}),
+    Assessment.INCONCLUSIVE: frozenset({"missing"}),
+}
+
+
+def _adaptive_brief_schema() -> dict[str, Any]:
+    """AdaptiveBrief schema with the conditional-field-null mitigation applied."""
+    schema = AdaptiveBrief.model_json_schema()
+    _tighten_conditional_schema(schema, InvestigationThread, "assessment", _REQUIRED_BY_ASSESSMENT)
+    return schema
+
 
 # ---------------------------------------------------------------------------
 # Mock research tools — minimal stand-ins for the adaptive-research toolset.
@@ -159,7 +182,7 @@ async def _run(
     max_output_tokens: int = 8000,
 ) -> dict[str, Any]:
     """Run one spike scenario and return a result dict."""
-    schema = AdaptiveBrief.model_json_schema()
+    schema = _adaptive_brief_schema()
 
     mcp_servers: dict[str, Any]
     allowed_tools: list[str]
@@ -356,7 +379,7 @@ SCENARIOS: list[dict[str, Any]] = [
 
 
 async def _main() -> None:
-    print(f"AdaptiveBrief schema bytes: {len(json.dumps(AdaptiveBrief.model_json_schema()))}")
+    print(f"AdaptiveBrief schema bytes: {len(json.dumps(_adaptive_brief_schema()))}")
     print()
     results: list[dict[str, Any]] = []
     for scenario in SCENARIOS:
