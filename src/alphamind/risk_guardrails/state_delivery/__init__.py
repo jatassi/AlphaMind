@@ -46,6 +46,10 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import (
     ValidationToolState,
     validate_guardrail,
 )
+from alphamind.risk_guardrails.state_delivery.validation_tool_mcp import (
+    build_initial_validation_state,
+    build_validate_guardrail_mcp_server,
+)
 
 __all__ = [
     "CorrelationState",
@@ -67,6 +71,8 @@ __all__ = [
     "ValidationStrategyLeg",
     "ValidationToolError",
     "ValidationToolState",
+    "build_initial_validation_state",
+    "build_validate_guardrail_mcp_server",
     "prepend_emergency_block",
     "render_analyst_header",
     "render_analyst_header_halt_mode",
