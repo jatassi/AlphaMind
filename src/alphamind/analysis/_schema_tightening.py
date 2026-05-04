@@ -18,6 +18,17 @@ adding a ``oneOf`` over the discriminator's enum values where each branch:
 
 See ``docs/_archive/spikes/alp-288-json-schema-output.md`` § Risk #1 for the
 spike output that motivated this.
+
+.. warning::
+    The Anthropic API's tool-input-schema validator rejects schemas with
+    ``oneOf``/``allOf``/``anyOf`` at the top level (the SDK forwards
+    ``output_format`` as a synthetic tool's input schema). This helper
+    enforces the constraint by raising :class:`ValueError` if asked to
+    tighten the root model: only nested ``$defs`` types are valid targets.
+    AdaptiveBrief.InvestigationThread is the canonical fit; QualitativeBrief
+    and SectorBrief are NOT — their top-level ``signal_quality`` invariant
+    is enforced by the Pydantic ``model_validator`` plus the harness's
+    parse-then-retry path instead.
 """
 
 from __future__ import annotations
@@ -123,10 +134,27 @@ def _tighten_conditional_schema[EnumT: enum.Enum](
 
 
 def _locate_object_schema(schema: dict[str, Any], model_class: type[BaseModel]) -> dict[str, Any]:
-    """Return the subschema dict in *schema* corresponding to *model_class*."""
+    """Return the subschema dict in *schema* corresponding to *model_class*.
+
+    Raises :class:`ValueError` when *model_class* is the root of *schema* —
+    tightening at root level produces ``oneOf`` at the schema's top level,
+    which the Anthropic API tool-input-schema validator rejects (see the
+    module docstring's warning). Callers wanting a root-level discriminated
+    invariant must rely on the Pydantic ``model_validator`` and the
+    harness's parse-then-retry path instead.
+    """
     name = model_class.__name__
     if schema.get("title") == name:
-        return schema
+        raise ValueError(
+            f"{name!r} is the root of the schema; tightening it would write "
+            "`oneOf` at the schema root, which the Anthropic API rejects "
+            "(`tools.0.custom.input_schema: input_schema does not support "
+            "oneOf, allOf, or anyOf at the top level`). Top-level "
+            "discriminated invariants must be enforced by the Pydantic "
+            "model_validator + the harness's parse-then-retry path; this "
+            "helper is only for nested $defs types (e.g. "
+            "AdaptiveBrief.InvestigationThread)."
+        )
     defs: dict[str, dict[str, Any]] = schema.get("$defs", {})
     if name in defs:
         return defs[name]

@@ -33,7 +33,12 @@ class _ToyChild(BaseModel):
 
 
 class _ToyRoot(BaseModel):
-    """Root with a top-level-discriminator fixture mirroring QualitativeBrief."""
+    """Root model that holds the nested ``_ToyChild`` discriminator fixture.
+
+    Used to exercise the helper's nested-``$defs`` lookup path; the helper
+    refuses to tighten the root itself (see
+    :func:`test_root_model_target_raises_value_error`).
+    """
 
     quality: _Quality
     quality_reason: str | None = None
@@ -46,16 +51,10 @@ _REQUIRED_BY_VERDICT: dict[_Verdict, frozenset[str]] = {
     _Verdict.INCONCLUSIVE: frozenset(),
 }
 
-_REQUIRED_BY_QUALITY: dict[_Quality, frozenset[str]] = {
-    _Quality.DEGRADED: frozenset({"quality_reason"}),
-    _Quality.HIGH: frozenset(),
-}
-
 
 def _tightened_root_schema() -> dict[str, Any]:
-    """Build a fully-tightened root schema covering both nested + top-level."""
+    """Build a schema with the nested ``_ToyChild`` $def tightened."""
     schema = _ToyRoot.model_json_schema()
-    _tighten_conditional_schema(schema, _ToyRoot, "quality", _REQUIRED_BY_QUALITY)
     _tighten_conditional_schema(schema, _ToyChild, "verdict", _REQUIRED_BY_VERDICT)
     return schema
 
@@ -73,15 +72,6 @@ def test_nested_object_gains_oneof_branches() -> None:
     assert len(branches) == 3
     consts = {branch["properties"]["verdict"]["const"] for branch in branches}
     assert consts == {"signal", "noise", "inconclusive"}
-
-
-def test_root_object_can_be_tightened_without_dollar_defs_lookup() -> None:
-    """Top-level discriminators (QualitativeBrief shape) work the same way."""
-    schema = _ToyRoot.model_json_schema()
-    _tighten_conditional_schema(schema, _ToyRoot, "quality", _REQUIRED_BY_QUALITY)
-    assert "oneOf" in schema
-    consts = {branch["properties"]["quality"]["const"] for branch in schema["oneOf"]}
-    assert consts == {"high", "degraded"}
 
 
 def test_required_by_value_field_strips_null_variant() -> None:
@@ -214,26 +204,18 @@ def test_noise_branch_requires_dismissal() -> None:
     )
 
 
-def test_top_level_degraded_requires_quality_reason() -> None:
-    """DEGRADED without quality_reason is rejected at the root branch."""
-    with pytest.raises(jsonschema.ValidationError):
-        _validate({"quality": "degraded", "quality_reason": None, "children": []})
-    _validate({"quality": "degraded", "quality_reason": "api partial", "children": []})
-
-
-def test_top_level_high_forbids_quality_reason() -> None:
-    """HIGH with a quality_reason is rejected — only DEGRADED may set it."""
-    with pytest.raises(jsonschema.ValidationError):
-        _validate({"quality": "high", "quality_reason": "should not be here", "children": []})
-
-
 # ---------------------------------------------------------------------------
 # Real-model integration tests
 # ---------------------------------------------------------------------------
 
 
 def test_helper_works_on_adaptive_investigation_thread() -> None:
-    """Smoke test: AdaptiveBrief.InvestigationThread tightens to a 3-branch oneOf."""
+    """Smoke test: AdaptiveBrief.InvestigationThread tightens to a 3-branch oneOf.
+
+    InvestigationThread is the canonical fit for the helper — a nested
+    ``$defs`` type whose tightened ``oneOf`` lands one level deep, well
+    clear of the schema root the Anthropic API forbids ``oneOf`` at.
+    """
     from alphamind.analysis.adaptive_research.models import (
         AdaptiveBrief,
         Assessment,
@@ -259,55 +241,49 @@ def test_helper_works_on_adaptive_investigation_thread() -> None:
     }
 
 
-def test_helper_works_on_qualitative_brief_top_level() -> None:
-    """Smoke test: QualitativeBrief signal_quality_reason invariant tightens at root."""
+# ---------------------------------------------------------------------------
+# Error-path tests
+# ---------------------------------------------------------------------------
+
+
+def test_root_model_target_raises_value_error() -> None:
+    """The helper refuses to tighten the schema's root model.
+
+    Writing ``oneOf`` at the schema root produces a payload the Anthropic
+    API tool-input-schema validator rejects (``input_schema does not
+    support oneOf, allOf, or anyOf at the top level``). This guard makes
+    the misuse fail fast at code-load time rather than silently producing
+    an API-rejected schema that surfaces only on a live SDK call.
+    """
+    schema = _ToyRoot.model_json_schema()
+    with pytest.raises(ValueError, match="root of the schema"):
+        _tighten_conditional_schema(
+            schema,
+            _ToyRoot,
+            "quality",
+            {_Quality.HIGH: frozenset(), _Quality.DEGRADED: frozenset({"quality_reason"})},
+        )
+
+
+def test_root_model_guard_fires_on_real_root_brief() -> None:
+    """Belt-and-suspenders: confirm the guard fires on the real top-level
+    briefs that the comment on Linear ALP-288 flagged as broken."""
     from alphamind.analysis._shared import SignalQuality
     from alphamind.analysis.qualitative_research.models import QualitativeBrief
 
     schema = QualitativeBrief.model_json_schema()
-    _tighten_conditional_schema(
-        schema,
-        QualitativeBrief,
-        "signal_quality",
-        {
-            SignalQuality.HIGH: frozenset(),
-            SignalQuality.MODERATE: frozenset(),
-            SignalQuality.LOW: frozenset(),
-            SignalQuality.DEGRADED: frozenset({"signal_quality_reason"}),
-        },
-    )
-    branches = schema["oneOf"]
-    consts = {b["properties"]["signal_quality"]["const"] for b in branches}
-    assert consts == {"high", "moderate", "low", "degraded"}
-    degraded = next(b for b in branches if b["properties"]["signal_quality"]["const"] == "degraded")
-    assert "signal_quality_reason" in degraded["properties"]
-    assert degraded["properties"]["signal_quality_reason"].get("type") == "string"
-
-
-def test_helper_works_on_sector_brief_top_level() -> None:
-    """Smoke test: SectorBrief signal_quality_reason invariant tightens at root."""
-    from alphamind.analysis._shared import SignalQuality
-    from alphamind.analysis.domain_researchers.models import SectorBrief
-
-    schema = SectorBrief.model_json_schema()
-    _tighten_conditional_schema(
-        schema,
-        SectorBrief,
-        "signal_quality",
-        {
-            SignalQuality.HIGH: frozenset(),
-            SignalQuality.MODERATE: frozenset(),
-            SignalQuality.LOW: frozenset(),
-            SignalQuality.DEGRADED: frozenset({"signal_quality_reason"}),
-        },
-    )
-    branches = schema["oneOf"]
-    assert len(branches) == 4
-
-
-# ---------------------------------------------------------------------------
-# Error-path tests
-# ---------------------------------------------------------------------------
+    with pytest.raises(ValueError, match="root of the schema"):
+        _tighten_conditional_schema(
+            schema,
+            QualitativeBrief,
+            "signal_quality",
+            {
+                SignalQuality.HIGH: frozenset(),
+                SignalQuality.MODERATE: frozenset(),
+                SignalQuality.LOW: frozenset(),
+                SignalQuality.DEGRADED: frozenset({"signal_quality_reason"}),
+            },
+        )
 
 
 def test_missing_branch_raises_value_error() -> None:
