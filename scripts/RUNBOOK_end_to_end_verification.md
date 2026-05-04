@@ -230,8 +230,10 @@ shared `_shared.py` types regressed. Read
 
 ## Phase 4 — Qualitative + adaptive researchers
 
-Two more analysis-layer agents against real Sonnet. They share state
-prerequisites (regime label, ticker pool).
+Two more analysis-layer agents against real Sonnet. Both consume
+phase-2 stage artifacts via `--upstream-from`; the adaptive researcher
+additionally consumes the phase-3 sector briefs and the phase-4
+qualitative brief, so run qualitative before adaptive.
 
 ```bash
 uv run python scripts/verify_qualitative_researcher.py \

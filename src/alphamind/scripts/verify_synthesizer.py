@@ -692,6 +692,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             verdict=verdict,
         )
     )
+    # Write the retrieval store on PASS *and* WARN — WARN means the synthesizer
+    # produced usable prose with a few invented references; the store still
+    # carries the resolved ones and is useful to any decision-layer follow-up.
+    # FAIL means the harness raised before producing a result, so there's
+    # nothing to dump. The synthesizer's archive is opt-in (no default), so
+    # operators running ad hoc without --archive-root skip the dump.
     if verdict is not Verdict.FAIL and args.archive_root is not None:
         stage_dir = stage_artifacts_dir(args.archive_root, invocation_id)
         dump_retrieval_store(result.retrieval_store, stage_dir)

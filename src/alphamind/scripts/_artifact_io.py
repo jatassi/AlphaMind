@@ -148,7 +148,13 @@ def _parse_dt(value: str) -> datetime:
 
 
 def _write_json(path: Path, payload: Any) -> None:
-    """Atomically write a JSON file with deterministic formatting."""
+    """Write a JSON file with deterministic formatting.
+
+    ``sort_keys=True`` + fixed indent so the on-disk artifact diffs
+    cleanly across repeated producer runs that emit equivalent
+    payloads. The write is not atomic — single-writer per invocation
+    means torn writes are not a concern in operator workflows.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2, sort_keys=True, default=_json_default)
