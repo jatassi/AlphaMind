@@ -87,6 +87,15 @@ from alphamind.portfolio_state.consumers.synthesizer import (
     SynthesizerThesisSummary,
 )
 from alphamind.portfolio_state.records.positions import Direction as PositionDirection
+from alphamind.scripts._artifact_io import (
+    dump_retrieval_store,
+    load_adaptive_brief,
+    load_correlation_regime_brief,
+    load_qualitative_brief,
+    load_sector_briefs,
+    load_universal_regime_label,
+    stage_artifacts_dir,
+)
 
 __all__ = [
     "ReferenceCoverage",
@@ -596,6 +605,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             "need an archive — pass an explicit path to keep one)."
         ),
     )
+    parser.add_argument(
+        "--upstream-from",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a stage-artifacts directory produced by earlier phases. "
+            "When supplied, the six-way upstream-brief tuple (sector_briefs, "
+            "correlation_regime_brief, qualitative_brief, adaptive_brief, "
+            "universal_regime_label) is loaded from this directory instead of "
+            "the in-script fixture builders — proving today's actual upstream "
+            "artifacts flow through the synthesizer."
+        ),
+    )
     args = parser.parse_args(argv)
 
     now = datetime.now(tz=UTC)
@@ -609,22 +631,34 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         _check_oauth_token_set(invocation_id)
-        sector_briefs = build_fixture_sector_briefs(invocation_id)
-        correlation_regime_brief = build_fixture_correlation_regime_brief(as_of)
-        qualitative_brief = build_fixture_qualitative_brief(invocation_id)
-        adaptive_brief = build_fixture_adaptive_brief(invocation_id)
+        if args.upstream_from is not None:
+            sector_briefs = load_sector_briefs(args.upstream_from)
+            correlation_regime_brief = load_correlation_regime_brief(args.upstream_from)
+            qualitative_brief = load_qualitative_brief(args.upstream_from)
+            adaptive_brief = load_adaptive_brief(args.upstream_from)
+            regime_label_payload = load_universal_regime_label(args.upstream_from)
+            regime_label = str(regime_label_payload.get("regime_label", ""))
+            upstream_source = f"stage artifacts at {args.upstream_from}"
+        else:
+            sector_briefs = build_fixture_sector_briefs(invocation_id)
+            correlation_regime_brief = build_fixture_correlation_regime_brief(as_of)
+            qualitative_brief = build_fixture_qualitative_brief(invocation_id)
+            adaptive_brief = build_fixture_adaptive_brief(invocation_id)
+            regime_label = "vol_expansion"
+            upstream_source = "in-script fixture builders"
         portfolio_reader = build_fixture_portfolio_reader()
         # Announce SDK invocation up front so the operator sees activity rather
         # than 10-30s of silence between script start and the SDK return.
         print(
             f"=== Synthesizer live-SDK verification: "
             f"invocation_id={invocation_id}, model={agent_config.model.value} ===\n"
+            f"Upstream: {upstream_source}\n"
             "Invoking SDK...",
             flush=True,
         )
         result = asyncio.run(
             run_synthesizer(
-                regime_label="vol_expansion",
+                regime_label=regime_label,
                 sector_briefs=sector_briefs,
                 correlation_regime_brief=correlation_regime_brief,
                 qualitative_brief=qualitative_brief,
@@ -658,6 +692,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             verdict=verdict,
         )
     )
+    # Write the retrieval store on PASS *and* WARN — WARN means the synthesizer
+    # produced usable prose with a few invented references; the store still
+    # carries the resolved ones and is useful to any decision-layer follow-up.
+    # FAIL means the harness raised before producing a result, so there's
+    # nothing to dump. The synthesizer's archive is opt-in (no default), so
+    # operators running ad hoc without --archive-root skip the dump.
+    if verdict is not Verdict.FAIL and args.archive_root is not None:
+        stage_dir = stage_artifacts_dir(args.archive_root, invocation_id)
+        dump_retrieval_store(result.retrieval_store, stage_dir)
+        print(f"[verify_synthesizer] stage artifacts written to {stage_dir}")
     return 0
 
 

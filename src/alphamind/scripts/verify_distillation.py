@@ -51,6 +51,12 @@ from alphamind.persistence.models import (
     DistillationTickerBaseline,
 )
 from alphamind.persistence.session import make_engine, make_session_factory
+from alphamind.scripts._artifact_io import (
+    dump_correlation_regime_brief,
+    dump_distillation_outputs,
+    dump_universal_regime_label,
+    stage_artifacts_dir,
+)
 from alphamind.scripts._common import (
     AssertionFailure,
     load_distillation_config,
@@ -578,6 +584,12 @@ def run_verification(
     placeholder-gap finding alone never fails the run — gaps are
     surfaced in the summary, not as assertion failures, per the story-13
     spec.
+
+    On a passing run, the orchestrator's outputs are also dumped to the
+    per-invocation stage-artifacts directory so downstream verification
+    scripts can consume them via ``--upstream-from`` (ALP-287). The dump
+    is skipped on a failed run — there's no point handing fail-state
+    artifacts to the next stage.
     """
     if config is None:
         config = load_distillation_config()
@@ -605,6 +617,12 @@ def run_verification(
         freshness_window_minutes=freshness_window_minutes,
     )
     print(format_report(report))
+    if report.passed:
+        stage_dir = stage_artifacts_dir(archive_root, invocation_id)
+        dump_distillation_outputs(outputs, stage_dir)
+        dump_correlation_regime_brief(outputs.correlation_regime_brief, stage_dir)
+        dump_universal_regime_label(outputs.universal_regime_label, stage_dir)
+        print(f"[verify_distillation] stage artifacts written to {stage_dir}")
     return 0 if report.passed else 1
 
 
@@ -647,6 +665,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=DEFAULT_FRESHNESS_WINDOW_MINUTES,
         help="Freshness window in minutes for the state-table probe.",
     )
+    parser.add_argument(
+        "--invocation-id",
+        type=str,
+        default=None,
+        help=(
+            "Override the invocation_id used for the distillation orchestrator's "
+            "archive layout AND the stage-artifacts directory shared with "
+            "downstream verification scripts. Defaults to "
+            "YYYYMMDDTHHMMSSZ-verify."
+        ),
+    )
     args = parser.parse_args(argv)
 
     engine = make_engine(args.db_path)
@@ -659,7 +688,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         archive_root = _default_archive_root()
 
     now = datetime.now(tz=UTC)
-    invocation_id = _format_invocation_id(now)
+    invocation_id = args.invocation_id or _format_invocation_id(now)
     ticker_scope = load_universe_scope()
 
     with factory() as session:

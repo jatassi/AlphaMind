@@ -43,6 +43,15 @@ from alphamind.persistence.models import (
     DistillationTickerBaseline,
     PredictionMarketContracts,
 )
+from alphamind.scripts._artifact_io import (
+    CORRELATION_REGIME_BRIEF_FILENAME,
+    DISTILLATION_OUTPUTS_FILENAME,
+    UNIVERSAL_REGIME_LABEL_FILENAME,
+    load_correlation_regime_brief,
+    load_distillation_outputs,
+    load_universal_regime_label,
+    stage_artifacts_dir,
+)
 from alphamind.scripts.verify_distillation import (
     compute_report,
     format_report,
@@ -571,3 +580,70 @@ def test_run_verification_returns_one_on_fail(
     captured = capsys.readouterr()
     assert exit_code == 1
     assert "RESULT: FAIL" in captured.out
+
+
+def test_run_verification_writes_stage_artifacts_on_pass(
+    populated_session_factory: Any,
+    tmp_path: Path,
+) -> None:
+    """A passing run dumps the 3 distillation artifacts the spec promises."""
+    sess = populated_session_factory()
+    _seed_state_tables(sess, now=_AS_OF)
+    archive_root = tmp_path / "archive_root"
+    archive_dir = archive_root / _AS_OF.strftime("%Y-%m-%d") / _INVOCATION_ID / "distillation"
+    _write_archive(archive_dir)
+
+    outputs = _make_outputs()
+
+    async def _fake_run_external_distillation(*_args: Any, **_kwargs: Any) -> DistillationOutputs:
+        return outputs
+
+    exit_code = run_verification(
+        session=sess,
+        ticker_scope=("AAA", "BBB"),
+        archive_root=archive_root,
+        as_of=_AS_OF,
+        invocation_id=_INVOCATION_ID,
+        orchestrator=_fake_run_external_distillation,
+    )
+
+    assert exit_code == 0
+    stage_dir = stage_artifacts_dir(archive_root, _INVOCATION_ID)
+    assert (stage_dir / DISTILLATION_OUTPUTS_FILENAME).exists()
+    assert (stage_dir / CORRELATION_REGIME_BRIEF_FILENAME).exists()
+    assert (stage_dir / UNIVERSAL_REGIME_LABEL_FILENAME).exists()
+    # And the writer's output round-trips back to equivalent objects.
+    assert load_distillation_outputs(stage_dir) == outputs
+    assert load_correlation_regime_brief(stage_dir) == outputs.correlation_regime_brief
+    assert load_universal_regime_label(stage_dir) == outputs.universal_regime_label
+
+
+def test_run_verification_skips_stage_artifacts_on_fail(
+    populated_session_factory: Any,
+    tmp_path: Path,
+) -> None:
+    """A failed run does not pollute the stage-artifacts directory."""
+    sess = populated_session_factory()
+    _seed_state_tables(sess, now=_AS_OF)
+    archive_root = tmp_path / "archive_root"
+    # Skip writing the archive → archive-file-missing failure.
+
+    outputs = _make_outputs()
+
+    async def _fake_run_external_distillation(*_args: Any, **_kwargs: Any) -> DistillationOutputs:
+        return outputs
+
+    exit_code = run_verification(
+        session=sess,
+        ticker_scope=("AAA", "BBB"),
+        archive_root=archive_root,
+        as_of=_AS_OF,
+        invocation_id=_INVOCATION_ID,
+        orchestrator=_fake_run_external_distillation,
+    )
+
+    assert exit_code == 1
+    stage_dir = stage_artifacts_dir(archive_root, _INVOCATION_ID)
+    assert not (stage_dir / DISTILLATION_OUTPUTS_FILENAME).exists()
+    assert not (stage_dir / CORRELATION_REGIME_BRIEF_FILENAME).exists()
+    assert not (stage_dir / UNIVERSAL_REGIME_LABEL_FILENAME).exists()

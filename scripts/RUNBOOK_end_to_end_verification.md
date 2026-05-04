@@ -6,36 +6,30 @@ layer) by running the existing per-layer verification scripts in
 dependency order. Targets a live operator, with a fresh agent session
 co-piloting the run.
 
-## Important: this is NOT a single live composed pipeline run
-
-The composition runner itself landed in ALP-276
-(`src/alphamind/pipeline/analysis.py::run_analysis_pipeline`), but the
-analysis layer's per-script verifications — including **adaptive
-researcher** and **synthesizer** — still consume *hand-constructed
-fixtures*, not the runner's live output. Rewiring the verifications
-onto `run_analysis_pipeline` is a follow-up; until then the per-script
-caveats in phases 4 and 5 still hold.
-
-What this runbook gives you:
-
-- ✅ Each layer independently verified end-to-end against real database
-  state and the real Claude Agent SDK.
-- ✅ Confidence that the *pieces* talk to their substrates (DB, SDK,
-  config) correctly.
-- ❌ Not: a guarantee that today's actual upstream outputs flow
-  correctly through the live composition runner — phase 4 and phase 5
-  consume fixtures, not phase 2/3's live output. Flag any cross-layer
-  schema drift to the operator.
+A green run proves today's actual distillation outputs flow correctly
+through the domain researchers AND the qualitative researcher; their
+actual outputs flow into the adaptive researcher; all five upstream
+briefs (3 sectors + correlation/regime + qualitative + adaptive) flow
+into the synthesizer. The cross-layer flow is enforced by a
+stage-artifact cache (ALP-287): each phase 2-5 script writes its parsed
+output to `<archive_root>/invocations/<invocation_id>/stage_artifacts/`
+on success, and the next script reads its predecessor's outputs via
+`--upstream-from`.
 
 ## TL;DR for the agent
 
 You're going to run 9 verification scripts in 5 phases. Three rules:
 
-1. **Stop on first FAIL.** Each phase depends on prior phases' state.
-   Don't continue past a red signal.
+1. **Stop on first FAIL.** Each phase depends on prior phases' state
+   AND its predecessor's stage artifacts. Don't continue past a red
+   signal — the next script will fail fast with a "run phase N first"
+   message anyway.
 2. **Track Sonnet cost.** The five live-SDK scripts together consume
    roughly 60–65K input + 8–12K output tokens (~10–15% of weekly cap).
-   If the operator wants to skip to a specific layer, support that.
+   If the operator wants to skip to a specific layer, support that —
+   but the downstream scripts will need a stage-artifacts directory
+   from a prior run, or they'll fall back to fixtures (and the run is
+   no longer end-to-end).
 3. **Reference the per-layer runbook for failure triage.** Each
    live-SDK layer has its own runbook with a failure-mode table. Don't
    reinvent triage — read those.
@@ -69,16 +63,23 @@ Before running anything, confirm:
    `set -a && source .env && set +a && uv run python scripts/...`
 4. **`uv sync` completed** — `uv run` is the entry point for every
    script.
-5. **Archive root chosen** — pick a directory like
-   `.archive/verify-pipeline-$(date +%Y%m%d)` for diagnostic outputs.
-   Reuse the same root across phases so all archives land together.
 
-Pick a `DB_PATH` shell variable so the per-phase commands stay
-short:
+Pick the shell variables once at the top so the per-phase commands
+stay short and every phase shares the same archive + invocation-id
+(stage-artifact cache requires both to match):
 ```bash
 DB_PATH="$(pwd)/data/alphamind-snapshot.db"  # macOS dev
 # DB_PATH="%USERPROFILE%\AlphaMind\data\alphamind.db"  # Windows prod
+ARCHIVE_ROOT=".archive/verify-pipeline-$(date +%Y%m%d)"
+INVOCATION_ID="$(date -u +%Y%m%dT%H%M%SZ)-verify-pipeline"
+STAGE_ARTIFACTS="$ARCHIVE_ROOT/invocations/$INVOCATION_ID/stage_artifacts"
 ```
+
+`STAGE_ARTIFACTS` is the directory each phase 2-5 script writes to on
+success and reads from via `--upstream-from`. Phase N requires phase
+M's artifacts under that path; if the directory is empty or missing
+the file the script needs, the script fails fast with a "run
+scripts/verify_M.py first" message.
 
 Pick an `--as-of` timestamp to use across phases for consistency. Use
 ISO-8601 UTC like `2026-05-03T14:30:00Z`. Defaulting to "now" is fine
@@ -132,7 +133,8 @@ DB-only state-machine checks.
 ```bash
 uv run python scripts/verify_distillation.py \
     --db-path "$DB_PATH" \
-    --archive-root .archive/verify-pipeline-YYYYMMDD
+    --archive-root "$ARCHIVE_ROOT" \
+    --invocation-id "$INVOCATION_ID"
 ```
 
 Verifies: `run_external_distillation()` produces `DistillationOutputs`
@@ -141,6 +143,10 @@ references, the regime label is one of the 4 valid strings, all 5
 state tables have rows within a 5-minute freshness window, and the
 invocation archive has 5 files (`prompt.md`, `user_message.md`,
 `response.md`, `errors.json`, `metadata.json`).
+
+On success, writes `distillation_outputs.json`,
+`correlation_regime_brief.json`, and `universal_regime_label.json` to
+`$STAGE_ARTIFACTS` for the downstream phases.
 
 `distillation_contract_history` is now an active probe (ALP-274 wired
 the prediction-market scope through to phase-1 ingestion). On a fresh
@@ -187,7 +193,9 @@ Three sector researchers running in parallel against real Sonnet.
 ```bash
 uv run python scripts/verify_domain_researchers.py \
     --db-path "$DB_PATH" \
-    --archive-root .archive/verify-pipeline-YYYYMMDD
+    --archive-root "$ARCHIVE_ROOT" \
+    --invocation-id "$INVOCATION_ID" \
+    --upstream-from "$STAGE_ARTIFACTS"
 ```
 
 Verifies: 3 populated `SectorBrief` results (tech_semis, financials,
@@ -195,12 +203,18 @@ energy), each brief re-validates through its parser, 4 diagnostic
 files per sector, wall-clock < latency_budget, tokens within
 (context + output) budget, retry counts tracked.
 
+`--upstream-from` makes the script load phase-2's
+`distillation_outputs.json` instead of re-running the distillation
+orchestrator (which would double-spend the phase-2 SDK tokens). On
+success, the 3-tuple of sector briefs is written to
+`$STAGE_ARTIFACTS/sector_briefs.json` for phases 4 and 5.
+
 The runbook for this script is `scripts/RUNBOOK_domain_researchers.md`
 — read it for the failure-mode triage table if anything trips.
 
 ```bash
 uv run python scripts/verify_domain_researcher_failure_modes.py \
-    --archive-root .archive/verify-pipeline-YYYYMMDD
+    --archive-root "$ARCHIVE_ROOT"
 ```
 
 No SDK calls. Runs three injection scenarios against a stubbed
@@ -216,27 +230,38 @@ shared `_shared.py` types regressed. Read
 
 ## Phase 4 — Qualitative + adaptive researchers
 
-Two more analysis-layer agents against real Sonnet. They share state
-prerequisites (regime label, ticker pool).
+Two more analysis-layer agents against real Sonnet. Both consume
+phase-2 stage artifacts via `--upstream-from`; the adaptive researcher
+additionally consumes the phase-3 sector briefs and the phase-4
+qualitative brief, so run qualitative before adaptive.
 
 ```bash
 uv run python scripts/verify_qualitative_researcher.py \
     --db-path "$DB_PATH" \
-    --archive-root .archive/verify-pipeline-YYYYMMDD \
+    --archive-root "$ARCHIVE_ROOT" \
+    --invocation-id "$INVOCATION_ID" \
+    --upstream-from "$STAGE_ARTIFACTS" \
     --as-of 2026-05-03T14:30:00Z
 ```
 
 Verifies: structured `QualitativeBrief` output, 5-file archive,
-wall-clock < 180s, output_tokens < 1000, tool_calls < 15. If the DB
-has no regime state for the as-of timestamp, the script falls back
-to a synthetic regime stub and reports it.
+wall-clock < 180s, output_tokens < 1000, tool_calls < 15.
+
+`--upstream-from` makes the script load phase-2's
+`universal_regime_label.json` instead of reading from
+`distillation_regime_state` — more reliable than the DB-state
+fallback, which can stub on a cold DB. On success, the qualitative
+brief is written to `$STAGE_ARTIFACTS/qualitative_brief.json` for
+phases 4 (adaptive) and 5 (synthesizer).
 
 Runbook: `scripts/RUNBOOK_qualitative_researcher.md`.
 
 ```bash
 uv run python scripts/verify_adaptive_researcher.py \
     --db-path "$DB_PATH" \
-    --archive-root .archive/verify-pipeline-YYYYMMDD \
+    --archive-root "$ARCHIVE_ROOT" \
+    --invocation-id "$INVOCATION_ID" \
+    --upstream-from "$STAGE_ARTIFACTS" \
     --as-of 2026-05-03T14:30:00Z
 ```
 
@@ -244,15 +269,12 @@ Verifies: `AdaptiveBrief` re-validates with Layer-3 reference
 resolution, 4 input-bundle section markers present, tool names in
 allowlist, wall-clock < 300s, output_tokens < 1500, tool_calls < 25.
 
-⚠️ **Heads up:** this script consumes a hand-constructed
-`SectorBrief` + `QualitativeBrief` + `CorrelationRegimeBrief` triple
-as upstream input. It does **not** consume the live outputs from
-phases 2 and 3. So a PASS here means "the adaptive researcher works
-against well-formed inputs", not "the adaptive researcher works
-against today's live distillation/qualitative outputs". The live
-composition runner exists (`pipeline/analysis.py::run_analysis_pipeline`,
-ALP-276) — what's still pending is rewiring this verification onto
-the runner's output.
+`--upstream-from` makes the script load the upstream-brief tuple
+(sector_briefs, qualitative_brief, correlation_regime_brief,
+distillation_outputs, universal_regime_label) from phase 2 and 3's
+artifacts — proving today's actual upstream artifacts flow through
+the adaptive researcher. On success, the adaptive brief is written
+to `$STAGE_ARTIFACTS/adaptive_brief.json` for phase 5.
 
 Runbook: `scripts/RUNBOOK_adaptive_researcher.md`.
 
@@ -269,7 +291,9 @@ upstream briefs).
 ```bash
 uv run python scripts/verify_synthesizer.py \
     --as-of 2026-05-03T14:30:00Z \
-    --archive-root .archive/verify-pipeline-YYYYMMDD
+    --archive-root "$ARCHIVE_ROOT" \
+    --invocation-id "$INVOCATION_ID" \
+    --upstream-from "$STAGE_ARTIFACTS"
 ```
 
 Verifies: non-empty prose response, every cited reference ID resolves
@@ -277,14 +301,13 @@ in the per-invocation retrieval store (invented references → WARN
 verdict, exit 0), `stop_reason` in `{end_turn, max_tokens}`. Three
 portfolio-state tool calls plus the final prose generation.
 
-⚠️ **Same caveat as adaptive researcher:** the synthesizer's six-way
-brief tuple (3 sector briefs, correlation/regime, qualitative,
-adaptive) is **hand-constructed**, not pulled from phases 2–4's live
-outputs. PASS here means "the synthesizer pipeline works against a
-canonical fixture set"; it does not validate that today's actual
-upstream outputs flow correctly through the synthesizer. The composition
-runner exists (`pipeline/analysis.py::run_analysis_pipeline`); rewiring
-this verification onto its output is the remaining follow-up.
+`--upstream-from` makes the script load the six-way upstream-brief
+tuple (3 sector briefs + correlation/regime + qualitative + adaptive
++ universal regime label) from phase 2-4's artifacts — proving
+today's actual upstream artifacts flow through the synthesizer. On
+success, the populated retrieval store is written to
+`$STAGE_ARTIFACTS/retrieval_store.json` for any decision-layer
+verification work that picks up downstream.
 
 Runbook: `scripts/RUNBOOK_synthesizer.md`.
 
@@ -335,30 +358,18 @@ gratuitously.
 
 ## Known gaps (so the agent doesn't claim more than the run proved)
 
-1. **Verifications still consume fixtures, not live composition output.**
-   The composition runner exists
-   (`src/alphamind/pipeline/analysis.py::run_analysis_pipeline`, ALP-276)
-   and chains distillation → domain + qualitative parallel → adaptive
-   → synthesizer with typed `*Result` threading. But the per-script
-   verifications for adaptive researcher and synthesizer still consume
-   hand-crafted upstream-brief fixtures. A green run proves each agent
-   works on canonical inputs and that the runner *can* compose them; it
-   does not prove that phase 2's actual live outputs flow correctly
-   through the runner into phase 4 and phase 5. Surface this distinction
-   explicitly when reporting.
-
-2. **Regime-transition verification is lookback-only.** The script
+1. **Regime-transition verification is lookback-only.** The script
    reads recent `distillation_regime_state` rows and checks
    invariants; it does not exercise a fresh transition end-to-end
    (would require a live regime shift in the market data).
 
-3. **No ongoing-execution-layer verification.** Anything downstream
+2. **No ongoing-execution-layer verification.** Anything downstream
    of the synthesizer (analyst, strategist, PM, breach behavior,
    execution) is outside this runbook's scope — those layers are
    either in progress or not yet built. Check
    `docs/project-tracker.md` for current status.
 
-4. **No "run all" wrapper.** This runbook is the closest thing.
+3. **No "run all" wrapper.** This runbook is the closest thing.
    Sequence is manual; if any phase changes (new script, removed
    script, args drift), this runbook needs updating.
 
@@ -382,7 +393,12 @@ update the runbook in the same change.
 - `scripts/RUNBOOK_synthesizer.md` — phase 5 failure triage.
 - `docs/project-tracker.md` — current build status.
 - `src/alphamind/pipeline/analysis.py` — `run_analysis_pipeline` (ALP-276),
-  the composition runner the verifications will eventually be rewired onto.
+  the composition runner the runtime pipeline calls. The per-script
+  verifications mirror its stage threading via the stage-artifact cache
+  (ALP-287) instead of calling the runner directly so each phase stays
+  independently iterable.
+- `src/alphamind/scripts/_artifact_io.py` — the typed dump/load helpers
+  the verification scripts use to thread stage artifacts (ALP-287).
 - `docs/design/cost-and-rate-limit-modeling.md` — cap budgets and
   per-agent token expectations.
 - `docs/architecture/llm-integration.md` § Authentication —

@@ -61,6 +61,11 @@ from alphamind.config.models.agents import (
 from alphamind.distillation.orchestrator import _default_archive_root
 from alphamind.persistence.models import DistillationRegimeState
 from alphamind.persistence.session import make_engine, make_session_factory
+from alphamind.scripts._artifact_io import (
+    dump_qualitative_brief,
+    load_universal_regime_label,
+    stage_artifacts_dir,
+)
 from alphamind.scripts._common import AssertionFailure, load_universe_scope
 
 # ---------------------------------------------------------------------------
@@ -484,6 +489,10 @@ def run_verification(
     :func:`run_qualitative_researcher` wrapped with bound config, or a stub
     in tests). The function does I/O (prints to stdout) but every
     dependency is injected.
+
+    On a passing run, the qualitative brief is dumped to the per-invocation
+    stage-artifacts directory so downstream verification scripts can consume
+    it via ``--upstream-from`` (ALP-287).
     """
     result = asyncio.run(
         runner_fn(
@@ -499,6 +508,10 @@ def run_verification(
         budgets=budgets,
     )
     print(format_report(report))
+    if report.passed:
+        stage_dir = stage_artifacts_dir(archive_root, invocation_id)
+        dump_qualitative_brief(result.brief, stage_dir)
+        print(f"[verify_qualitative_researcher] stage artifacts written to {stage_dir}")
     return 0 if report.passed else 1
 
 
@@ -676,6 +689,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             "%%USERPROFILE%%/AlphaMind/archive on Windows, ~/AlphaMind/archive elsewhere)."
         ),
     )
+    parser.add_argument(
+        "--invocation-id",
+        type=str,
+        default=None,
+        help=(
+            "Override the invocation_id used for the diagnostic-archive layout AND "
+            "the stage-artifacts directory shared with downstream verification "
+            "scripts. Defaults to YYYYMMDDTHHMMSSZ-verify-qualitative-researcher."
+        ),
+    )
+    parser.add_argument(
+        "--upstream-from",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a stage-artifacts directory produced by an earlier phase. "
+            "When supplied, universal_regime_label.json is loaded from this "
+            "directory instead of reading from distillation_regime_state (more "
+            "reliable than the DB-state fallback, which can stub on a cold DB)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     _check_oauth_token_set()
@@ -687,7 +721,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.last_invocation
         else as_of.replace(microsecond=0).astimezone(UTC) - _ONE_HOUR
     )
-    invocation_id = _format_invocation_id(now)
+    invocation_id = args.invocation_id or _format_invocation_id(now)
 
     archive_root = args.archive_root if args.archive_root is not None else _default_archive_root()
     universe = frozenset(load_universe_scope())
@@ -701,8 +735,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     engine = make_engine(args.db_path)
     factory = make_session_factory(engine)
     with factory() as session:
-        regime_label, regime_source = _load_recent_regime_label(session)
-        print(f"[verify_qualitative_researcher] universal_regime_label source: {regime_source}")
+        if args.upstream_from is not None:
+            regime_label = load_universal_regime_label(args.upstream_from)
+            print(
+                f"[verify_qualitative_researcher] universal_regime_label loaded from "
+                f"{args.upstream_from / 'universal_regime_label.json'}"
+            )
+        else:
+            regime_label, regime_source = _load_recent_regime_label(session)
+            print(f"[verify_qualitative_researcher] universal_regime_label source: {regime_source}")
         runner_fn = _bind_production_runner(
             session=session,
             universal_regime_label=regime_label,

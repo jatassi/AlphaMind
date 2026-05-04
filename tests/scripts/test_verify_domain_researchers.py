@@ -39,6 +39,11 @@ from alphamind.analysis.domain_researchers.models import (
 from alphamind.analysis.domain_researchers.orchestrator import DomainResearchersOutput
 from alphamind.analysis.domain_researchers.runner import DomainResearcherResult
 from alphamind.config.models.agents import AgentName, AllowedModel, BaseAgentConfig
+from alphamind.scripts._artifact_io import (
+    SECTOR_BRIEFS_FILENAME,
+    load_sector_briefs,
+    stage_artifacts_dir,
+)
 from alphamind.scripts.verify_domain_researchers import (
     BudgetThresholds,
     compute_report,
@@ -498,6 +503,54 @@ def test_run_verification_returns_one_on_fail(
     captured = capsys.readouterr()
     assert exit_code == 1
     assert "RESULT: FAIL" in captured.out
+
+
+def test_run_verification_writes_sector_briefs_on_pass(tmp_path: Path) -> None:
+    """A passing run dumps the 3-tuple of sector briefs to the stage-artifacts dir."""
+    archive_root = tmp_path / "archive"
+    _seed_archive(archive_root, _INVOCATION_ID)
+
+    output = _make_output()
+
+    async def _stub_runner(**_kwargs: Any) -> DomainResearchersOutput:
+        return output
+
+    exit_code = run_verification(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        archive_root=archive_root,
+        budgets=_budgets(),
+        researchers_fn=_stub_runner,
+    )
+
+    assert exit_code == 0
+    stage_dir = stage_artifacts_dir(archive_root, _INVOCATION_ID)
+    assert (stage_dir / SECTOR_BRIEFS_FILENAME).exists()
+    loaded = load_sector_briefs(stage_dir)
+    assert loaded == (output.tech_semis.brief, output.financials.brief, output.energy.brief)
+
+
+def test_run_verification_skips_sector_briefs_on_fail(tmp_path: Path) -> None:
+    """A failed run does not dump artifacts."""
+    archive_root = tmp_path / "archive"
+    _seed_archive(archive_root, _INVOCATION_ID, missing_files=("metadata.json",))
+
+    output = _make_output()
+
+    async def _stub_runner(**_kwargs: Any) -> DomainResearchersOutput:
+        return output
+
+    exit_code = run_verification(
+        invocation_id=_INVOCATION_ID,
+        as_of=_AS_OF,
+        archive_root=archive_root,
+        budgets=_budgets(),
+        researchers_fn=_stub_runner,
+    )
+
+    assert exit_code == 1
+    stage_dir = stage_artifacts_dir(archive_root, _INVOCATION_ID)
+    assert not (stage_dir / SECTOR_BRIEFS_FILENAME).exists()
 
 
 # ---------------------------------------------------------------------------
