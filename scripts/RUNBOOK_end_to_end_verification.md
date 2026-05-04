@@ -209,6 +209,16 @@ orchestrator (which would double-spend the phase-2 SDK tokens). On
 success, the 3-tuple of sector briefs is written to
 `$STAGE_ARTIFACTS/sector_briefs.json` for phases 4 and 5.
 
+Post-ALP-288 the harness runs in `output_format = {"type": "json_schema",
+...}` mode: it reads `ResultMessage.structured_output` and the
+diagnostic `response_initial.md` / `response_retry.md` files contain
+JSON-rendered payloads (text-block prefix prepended only when the model
+narrated alongside, which is rare in JSON mode). The `tool_calls_used`
+counter in `metadata.json` filters to `mcp__alphamind_<server>__*` so
+the SDK's `ToolSearch` / `StructuredOutput` pseudo-events do not inflate
+the budget — the recorded count is the agent's real research-tool spend
+(domain researchers run tool-less, so this should be 0).
+
 The runbook for this script is `scripts/RUNBOOK_domain_researchers.md`
 — read it for the failure-mode triage table if anything trips.
 
@@ -254,6 +264,16 @@ fallback, which can stub on a cold DB. On success, the qualitative
 brief is written to `$STAGE_ARTIFACTS/qualitative_brief.json` for
 phases 4 (adaptive) and 5 (synthesizer).
 
+Post-ALP-288 the harness runs in JSON-Schema output mode (see Phase 3
+note for details). `tool_calls_used` filters to
+`mcp__alphamind_qualitative__*` so the budget reflects real
+`news_search` / `prediction_markets` / `earnings_commentary` calls
+exclusive of SDK pseudo-events; the diagnostic `response_*.md` files
+contain JSON-rendered payloads. Output-token usage may run modestly
+higher than the legacy text format (JSON syntax overhead), but the
+spike's cost-regression estimate is <10% per call, so the existing
+`output_tokens < 1000` threshold should hold.
+
 Runbook: `scripts/RUNBOOK_qualitative_researcher.md`.
 
 ```bash
@@ -275,6 +295,20 @@ distillation_outputs, universal_regime_label) from phase 2 and 3's
 artifacts — proving today's actual upstream artifacts flow through
 the adaptive researcher. On success, the adaptive brief is written
 to `$STAGE_ARTIFACTS/adaptive_brief.json` for phase 5.
+
+Post-ALP-288 the harness runs in JSON-Schema output mode with
+`_tighten_conditional_schema` applied to the InvestigationThread
+SIGNAL/NOISE/INCONCLUSIVE invariant — the API rejects payloads that
+emit `null` for a branch's required-conditional fields rather than
+deferring the failure to the Pydantic validator. `tool_calls_used`
+filters to `mcp__alphamind_adaptive__*` so the cumulative-25 cap is
+measured against real research-tool spend exclusive of pseudo-events
+(spike scenario 2 reported 4 tool calls when only 2 were real); the
+diagnostic `response_*.md` files contain JSON-rendered payloads. The
+parser still normalizes the wire-shape habits Sonnet retains under
+load — `tools_used` parens commentary stripped, `strengthens` /
+`weakens` bracket+free-text refs extracted — so the validator sees
+clean inputs.
 
 Runbook: `scripts/RUNBOOK_adaptive_researcher.md`.
 
@@ -355,6 +389,14 @@ the operator can act.
 Roughly 10–15% of the nominal weekly Sonnet cap per
 `docs/design/cost-and-rate-limit-modeling.md`. Don't re-run
 gratuitously.
+
+Post-ALP-288, output tokens for the three analysis-layer scripts
+(domain / qualitative / adaptive researchers) may run a touch higher
+than the table above — JSON syntax adds 15–25% over the legacy text
+format on the brief itself, though the spike's measured cost regression
+was <10% per call because extended thinking dominates the output budget.
+Re-baseline these ranges after the first few clean post-migration runs
+if the existing thresholds become misleading.
 
 ## Known gaps (so the agent doesn't claim more than the run proved)
 

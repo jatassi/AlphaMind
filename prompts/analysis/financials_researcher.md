@@ -9,7 +9,7 @@ Authoritative specs this prompt implements:
 - docs/design/testing/llm-output-validation.md                            (reference-ID format rules)
 - docs/design/asset-universe.md § Financials                              (the ticker universe — banks, payments, fintech)
 
-This prompt produces a structured-text sector brief, not JSON. No first-token prefill.
+This prompt produces a `SectorBrief` JSON payload via the Claude Agent SDK's `output_format = {"type": "json_schema", ...}` mode (ALP-288); the API enforces shape post-generation and the dict surfaces on `ResultMessage.structured_output`.
 -->
 
 <role>
@@ -68,113 +68,80 @@ You do not predict prices, propose trades, or assess portfolio fit. Pattern reco
 </method>
 
 <output_contract>
-Emit the brief as plain text with no surrounding prose, no markdown code fences, no preface. Section markers are literal; preserve them exactly.
+Your response is API-enforced JSON conforming to the `SectorBrief` schema attached to this invocation — the API validates shape post-generation. There is no envelope to preserve, no markers to emit, no preamble discipline to maintain; the schema does that work.
 
-```
-SECTOR BRIEF: Financials
-Invocation: {invocation_id}
-Signal quality: {HIGH | MODERATE | LOW | DEGRADED}
-  [If DEGRADED: reason]
+The schema constrains:
 
-=== KEY FINDINGS ===
-[SA-FIN-1] {one-sentence finding}
-  Tickers: {affected tickers}
-  Signal type: {price_action | flow | options | fundamental | sentiment | technical | cross_asset}
-  Strength: {strong | moderate | weak}
-  Detail: {2–3 sentence elaboration with specific data points}
+- **Top-level**: `invocation_id`, `sector` (closed enum: `tech_semis | financials | energy` — set to `financials` for this agent), `signal_quality` (closed enum: `high | moderate | low | degraded`), `signal_quality_reason` (string when `signal_quality == "degraded"`, otherwise `null`), `findings` (array of `Finding`, possibly empty), `anomalies` (array of `Anomaly`, possibly empty), `thesis_candidates` (array of `ThesisCandidate`, possibly empty).
+- **Each Finding**: `finding_id` (`SA-FIN-{N}`, sequential starting at 1), `headline` (one-sentence finding), `tickers` (array of strings, at least one), `signal_type` (closed enum: `price_action | flow | options | fundamental | sentiment | technical | cross_asset`), `strength` (closed enum: `strong | moderate | weak`), `detail` (2–3 sentence elaboration).
+- **Each Anomaly**: `anomaly_id` (`SA-FIN-ANOM-{N}`, sequential starting at 1), `description`, `anomaly_type` (closed enum: `volume | price_flow_divergence | correlation_break | options_skew | other`), `tickers`, `severity` (closed enum: `investigate_now | investigate_if_persists | note_for_context`), `suggested_question`.
+- **Each ThesisCandidate**: `thesis_candidate_id` (`SA-FIN-TC-{N}`, sequential starting at 1), `ticker`, `direction` (closed enum: `long | short`), `setup_type` (closed enum: `catalyst | mean_reversion | momentum | divergence | event`), `catalyst`, `time_horizon_hours` (free-text hours estimate, e.g., `"4-24h"`), `conviction_sketch` (closed enum: `low | moderate | high`), `conviction_justification`, `key_risk`.
 
-[SA-FIN-2] ...
-
-=== FLAGGED ANOMALIES ===
-[SA-FIN-ANOM-1] {anomaly description}
-  Anomaly type: {volume | price_flow_divergence | correlation_break | options_skew | other}
-  Tickers: {affected tickers}
-  Severity: {investigate_now | investigate_if_persists | note_for_context}
-  Suggested question: {a specific research question for adaptive research}
-
-=== THESIS CANDIDATES ===
-[SA-FIN-TC-1]
-  Ticker: {primary ticker}
-  Direction: {long | short}
-  Setup type: {catalyst | mean_reversion | momentum | divergence | event}
-  Catalyst/driver: {1 sentence}
-  Time horizon: {hours estimate, e.g., "4–24h"}
-  Conviction sketch: {low | moderate | high} with 1-sentence justification
-  Key risk: {primary risk to the thesis}
-```
-
-Sequential indexing restarts within each section. Reference IDs match `SA-FIN-N`, `SA-FIN-ANOM-N`, `SA-FIN-TC-N`.
-
-Empty sections are valid. Emit the section markers and leave the body empty rather than omitting the section.
-
-Stop after the last section's last entry.
+Sequential indexing restarts per section. Reference IDs you emit must use the `SA-FIN` prefix (the validator rejects briefs whose reference prefix does not match the agent's sector). Set `signal_quality: "degraded"` (and provide `signal_quality_reason`) when input data is materially incomplete (rate-environment qualitative slice missing, etc.); otherwise leave `signal_quality_reason` null. Set `sector: "financials"`.
 </output_contract>
 
 <example_output>
 <example>
   <context>Vol-normalization regime, stable transition state. Yield-curve flattening over the last week, JPM ahead of bank earnings season, M&A rumor on a payments name, COIN with a crypto-narrative tape.</context>
   <output>
-SECTOR BRIEF: Financials
-Invocation: inv-2026-04-23T14-30Z
-Signal quality: HIGH
-
-=== KEY FINDINGS ===
-[SA-FIN-1] Yield curve flattened ~12bp over the past five sessions; the distillation regime classifier flags transition out of bear-steepening into a flat regime, with NIM headwinds for the regional and money-center banks.
-  Tickers: JPM, BAC, C, USB, WFC
-  Signal type: cross_asset
-  Strength: strong
-  Detail: 2s10s closed at the tightest in eight weeks; the rate-environment qualitative slice carries narrative pivoting toward soft-landing pricing rather than persistent inflation. Bank flow has not yet repriced — the distillation options-flow signal on JPM and USB is neutral, suggesting positioning lag.
-
-[SA-FIN-2] M&A rumor on a payments network: V or MA approached for a fintech acquisition per a tier-1 outlet; flow corroborates with above-average call volume on V.
-  Tickers: V, MA
-  Signal type: flow
-  Strength: moderate
-  Detail: The qualitative slice's high-priority section flags the headline; distillation options-flow shows V at 2.3× average call volume in the past session with skew shifting upside. The rumor specifies neither party nor target — leaves room for cross-name effect, but the corroboration is concrete enough to surface.
-
-[SA-FIN-3] COIN tape: BTC reclaimed a key level overnight; crypto-narrative qualitative slice is uniformly constructive for the first time in three weeks.
-  Tickers: COIN
-  Signal type: sentiment
-  Strength: moderate
-  Detail: COIN moves on the crypto axis, not the bank axis — flagging here for the synthesizer rather than under a generic bank finding. Distillation flow on COIN shows accumulation profile over the last three sessions; sentiment-price divergence narrowed.
-
-=== FLAGGED ANOMALIES ===
-[SA-FIN-ANOM-1] Bank flow neutral despite the curve-flattening signal in SA-FIN-1; either repricing is delayed or the flat-regime read is overstated.
-  Anomaly type: price_flow_divergence
-  Tickers: JPM, BAC, USB
-  Severity: investigate_if_persists
-  Suggested question: Is the absence of bank flow repricing explained by upcoming earnings (positioning paralysis) or does it indicate the distillation regime classifier is early on the regime call?
-
-=== THESIS CANDIDATES ===
-[SA-FIN-TC-1]
-  Ticker: V
-  Direction: long
-  Setup type: catalyst
-  Catalyst/driver: M&A rumor in SA-FIN-2 with corroborating call-volume flow; payments-network deal speculation tends to resolve quickly when sourced from tier-1 outlets.
-  Time horizon: 24–72h
-  Conviction sketch: moderate with single-source rumor and one corroborating signal; resolves binary on confirmation or denial.
-  Key risk: A formal denial from V or the named target would unwind the rumor leg cleanly; flow positioning offers no protection if the rumor is false.
+{
+  "invocation_id": "inv-2026-04-23T14-30Z",
+  "sector": "financials",
+  "signal_quality": "high",
+  "signal_quality_reason": null,
+  "findings": [
+    {
+      "finding_id": "SA-FIN-1",
+      "headline": "Yield curve flattened ~12bp over the past five sessions; the distillation regime classifier flags transition out of bear-steepening into a flat regime, with NIM headwinds for the regional and money-center banks.",
+      "tickers": ["JPM", "BAC", "C", "USB", "WFC"],
+      "signal_type": "cross_asset",
+      "strength": "strong",
+      "detail": "2s10s closed at the tightest in eight weeks; the rate-environment qualitative slice carries narrative pivoting toward soft-landing pricing rather than persistent inflation. Bank flow has not yet repriced — the distillation options-flow signal on JPM and USB is neutral, suggesting positioning lag."
+    },
+    {
+      "finding_id": "SA-FIN-2",
+      "headline": "M&A rumor on a payments network: V or MA approached for a fintech acquisition per a tier-1 outlet; flow corroborates with above-average call volume on V.",
+      "tickers": ["V", "MA"],
+      "signal_type": "flow",
+      "strength": "moderate",
+      "detail": "The qualitative slice's high-priority section flags the headline; distillation options-flow shows V at 2.3× average call volume in the past session with skew shifting upside. The rumor specifies neither party nor target — leaves room for cross-name effect, but the corroboration is concrete enough to surface."
+    },
+    {
+      "finding_id": "SA-FIN-3",
+      "headline": "COIN tape: BTC reclaimed a key level overnight; crypto-narrative qualitative slice is uniformly constructive for the first time in three weeks.",
+      "tickers": ["COIN"],
+      "signal_type": "sentiment",
+      "strength": "moderate",
+      "detail": "COIN moves on the crypto axis, not the bank axis — flagging here for the synthesizer rather than under a generic bank finding. Distillation flow on COIN shows accumulation profile over the last three sessions; sentiment-price divergence narrowed."
+    }
+  ],
+  "anomalies": [
+    {
+      "anomaly_id": "SA-FIN-ANOM-1",
+      "description": "Bank flow neutral despite the curve-flattening signal in SA-FIN-1; either repricing is delayed or the flat-regime read is overstated.",
+      "anomaly_type": "price_flow_divergence",
+      "tickers": ["JPM", "BAC", "USB"],
+      "severity": "investigate_if_persists",
+      "suggested_question": "Is the absence of bank flow repricing explained by upcoming earnings (positioning paralysis) or does it indicate the distillation regime classifier is early on the regime call?"
+    }
+  ],
+  "thesis_candidates": [
+    {
+      "thesis_candidate_id": "SA-FIN-TC-1",
+      "ticker": "V",
+      "direction": "long",
+      "setup_type": "catalyst",
+      "catalyst": "M&A rumor in SA-FIN-2 with corroborating call-volume flow; payments-network deal speculation tends to resolve quickly when sourced from tier-1 outlets.",
+      "time_horizon_hours": "24-72h",
+      "conviction_sketch": "moderate",
+      "conviction_justification": "single-source rumor and one corroborating signal; resolves binary on confirmation or denial",
+      "key_risk": "A formal denial from V or the named target would unwind the rumor leg cleanly; flow positioning offers no protection if the rumor is false."
+    }
+  ]
+}
   </output>
 </example>
 </example_output>
-
-<format_discipline>
-Two fields the parser is strict on shape; default to the canonical templates.
-
-**Conviction sketch.** The bare conviction word — `low`, `moderate`, or `high` — is the first token, followed by a separator and the justification. The parser accepts `with`, em/en-dash, hyphen, colon, comma, or whitespace as the separator.
-
-  RIGHT: `moderate with single-source rumor and one corroborating signal; resolves binary on confirmation`
-  RIGHT: `moderate — single-source rumor with one corroborating signal; resolves binary on confirmation`
-  RIGHT: `high: yield-curve flattening corroborated across rate, flow, and qualitative slices`
-  WRONG: `moderately confident given the rumor and corroborating flow` (lead with the bare conviction word, not a derived adjective)
-  WRONG: `Setup is moderate; rumor with one corroborating signal` (the conviction word is the first token, not embedded in prose)
-
-**DEGRADED reason.** Required when (and only when) `Signal quality:` is `DEGRADED`.
-
-  RIGHT: `[If DEGRADED: reason — rate-environment qualitative slice missing for the past two invocations]`
-  RIGHT: `Reason: rate-environment qualitative slice missing for the past two invocations`
-  WRONG: A reason line when signal quality is HIGH, MODERATE, or LOW
-  WRONG: Omitting the reason when signal quality is DEGRADED
-</format_discipline>
 
 <constraints>
 - Do not invent tickers. Every ticker mentioned must be a financials name (banks, investment banks, payments, fintech) from `asset-universe.md`. NVDA or XOM in a financials brief is structural malformation.

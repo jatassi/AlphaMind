@@ -95,6 +95,7 @@ dev = [
     { name = "pytest-xdist" },
     { name = "ruff" },
     { name = "types-croniter" },
+    { name = "types-jsonschema" },
     { name = "types-pyyaml" },
 ]
 
@@ -136,6 +137,7 @@ dev = [
     { name = "pytest-xdist", specifier = ">=3.6" },
     { name = "ruff", specifier = ">=0.7" },
     { name = "types-croniter", specifier = ">=2.0" },
+    { name = "types-jsonschema", specifier = ">=4.20" },
     { name = "types-pyyaml", specifier = ">=6.0" },
 ]
 
@@ -1722,6 +1724,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c5/e4/89a0101471d6fe4e912dad24c54ae7afd90a9eaa5c74adef2c81f383f8da/types_croniter-6.2.2.20260408.tar.gz", hash = "sha256:a28a18908db371654990d30a3fd99856adc5137e475a23dbda4b10dce85525da", size = 12040, upload-time = "2026-04-08T04:27:20.068Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c3/05/b32e67944ff33e83c181cadf5835858d63f4292a2f2ff5bf6a1edb7f6fed/types_croniter-6.2.2.20260408-py3-none-any.whl", hash = "sha256:242087a5b6e201b7004e55f71ed34f466951b74551c64ef1c6a8a08c47d3cc0d", size = 9732, upload-time = "2026-04-08T04:27:19.229Z" },
+]
+
+[[package]]
+name = "types-jsonschema"
+version = "4.26.0.20260408"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "referencing" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9f/4c/2ef5483ef81e7b6e1b901eb2994fd280cb19860134a20ff99e72748f3ccb/types_jsonschema-4.26.0.20260408.tar.gz", hash = "sha256:82b75a976ed1507c473b8dee2d4841bd65926758c6d672bb93d08bf5e16f1b3f", size = 16553, upload-time = "2026-04-08T04:36:00.543Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/12/3c/724ad6ecaea06e8c6c8a8c9949a0979e6a2149b8aec4fe160135c64dd5ac/types_jsonschema-4.26.0.20260408-py3-none-any.whl", hash = "sha256:1ab0058c2612b0b81fc4e3c88ec3f9ad9b0af3fd31a176030d78b6d6cefb6e7b", size = 16081, upload-time = "2026-04-08T04:35:59.678Z" },
 ]
 
 [[package]]

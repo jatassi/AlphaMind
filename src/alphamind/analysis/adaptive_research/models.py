@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field, model_validator
 from alphamind.analysis._shared import Sector
 
 __all__ = [
+    "REQUIRED_BY_ASSESSMENT",
     "AdaptiveBrief",
     "Assessment",
     "Confidence",
@@ -70,14 +71,15 @@ class Confidence(enum.StrEnum):
 
 #: Fields required by each :class:`Assessment` value. The set of all conditional
 #: fields is :data:`_CONDITIONAL_FIELDS`; for a given assessment, fields not in
-#: its required set must be ``None``.
-_REQUIRED_BY_ASSESSMENT: dict[Assessment, frozenset[str]] = {
+#: its required set must be ``None``. Public so the harness can pass it to
+#: :func:`alphamind.analysis._schema_tightening._tighten_conditional_schema`.
+REQUIRED_BY_ASSESSMENT: dict[Assessment, frozenset[str]] = {
     Assessment.SIGNAL: frozenset({"implication", "strengthens", "weakens"}),
     Assessment.NOISE: frozenset({"dismissal_reason"}),
     Assessment.INCONCLUSIVE: frozenset({"missing"}),
 }
 
-_CONDITIONAL_FIELDS: frozenset[str] = frozenset().union(*_REQUIRED_BY_ASSESSMENT.values())
+_CONDITIONAL_FIELDS: frozenset[str] = frozenset().union(*REQUIRED_BY_ASSESSMENT.values())
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +114,7 @@ class InvestigationThread(BaseModel, frozen=True):
 
     @model_validator(mode="after")
     def _assessment_invariant(self) -> InvestigationThread:
-        required = _REQUIRED_BY_ASSESSMENT[self.assessment]
+        required = REQUIRED_BY_ASSESSMENT[self.assessment]
         for name in required:
             if getattr(self, name) is None:
                 raise ValueError(f"{self.assessment.value} assessment requires {name} to be set")

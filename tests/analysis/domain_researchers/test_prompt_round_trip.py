@@ -1,13 +1,15 @@
-"""Round-trip tests for domain-researcher system prompts (ALP-195 et al.).
+"""Round-trip tests for domain-researcher system prompts (ALP-195 / ALP-288).
 
-Each test extracts the ``<example_output>`` block from a prompt file, parses
-it with ``parse_brief``, and validates it with ``validate_brief``.  A green
-suite here means the shipped example output conforms to the contract enforced
-by the production parser and validator.
+Post-ALP-288 the prompt examples are JSON. Each test extracts the
+``<example_output>`` block from a prompt file, ``json.loads`` it to the dict
+shape ``ResultMessage.structured_output`` would deliver, then runs the
+production parser + validator. A green suite here means the shipped example
+matches the schema and Layer-2/3 invariants.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -32,48 +34,48 @@ def _extract_example_output(prompt_path: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
-# ALP-193 — tech & semis researcher
+# ALP-193 / ALP-288 — tech & semis researcher
 # ---------------------------------------------------------------------------
 
 
 def test_tech_semis_prompt_round_trip() -> None:
     """Example output in tech_semis_researcher.md round-trips through parser and validator."""
     prompt_path = _PROMPTS_DIR / "tech_semis_researcher.md"
-    example = _extract_example_output(prompt_path)
+    payload = json.loads(_extract_example_output(prompt_path))
 
-    brief = parse_brief(example, Sector.TECH_SEMIS)
+    brief = parse_brief(payload, Sector.TECH_SEMIS)
     result = validate_brief(brief)
 
     assert result.is_valid is True, f"Validation errors: {result.errors}"
 
 
 # ---------------------------------------------------------------------------
-# ALP-195 — financials researcher
+# ALP-195 / ALP-288 — financials researcher
 # ---------------------------------------------------------------------------
 
 
 def test_financials_prompt_round_trip() -> None:
     """Example output in financials_researcher.md round-trips through parser and validator."""
     prompt_path = _PROMPTS_DIR / "financials_researcher.md"
-    example = _extract_example_output(prompt_path)
+    payload = json.loads(_extract_example_output(prompt_path))
 
-    brief = parse_brief(example, Sector.FINANCIALS)
+    brief = parse_brief(payload, Sector.FINANCIALS)
     result = validate_brief(brief)
 
     assert result.is_valid is True, f"Validation errors: {result.errors}"
 
 
 # ---------------------------------------------------------------------------
-# ALP-197 — energy researcher
+# ALP-197 / ALP-288 — energy researcher
 # ---------------------------------------------------------------------------
 
 
 def test_energy_prompt_round_trip() -> None:
     """Example output in energy_researcher.md round-trips through parser and validator."""
     prompt_path = _PROMPTS_DIR / "energy_researcher.md"
-    example = _extract_example_output(prompt_path)
+    payload = json.loads(_extract_example_output(prompt_path))
 
-    brief = parse_brief(example, Sector.ENERGY)
+    brief = parse_brief(payload, Sector.ENERGY)
     result = validate_brief(brief)
 
     assert result.is_valid is True, f"Validation errors: {result.errors}"

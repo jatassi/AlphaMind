@@ -281,54 +281,65 @@ async def run_validation_failure_then_success_scenario(
 # ---------------------------------------------------------------------------
 
 
-_MINIMAL_BRIEF_TEXT = """\
-SECTOR BRIEF: Tech & Semis
-Invocation: failure-mode-verify
-Signal quality: HIGH
+_MINIMAL_BRIEF_PAYLOAD: dict[str, Any] = {
+    "invocation_id": "failure-mode-verify",
+    "sector": "tech_semis",
+    "signal_quality": "high",
+    "signal_quality_reason": None,
+    "findings": [
+        {
+            "finding_id": "SA-TECH-1",
+            "headline": "NVDA breakout",
+            "tickers": ["NVDA"],
+            "signal_type": "price_action",
+            "strength": "strong",
+            "detail": "NVDA broke resistance.",
+        }
+    ],
+    "anomalies": [],
+    "thesis_candidates": [],
+}
 
-=== KEY FINDINGS ===
-[SA-TECH-1] NVDA breakout
-  Tickers: NVDA
-  Signal type: price_action
-  Strength: strong
-  Detail: NVDA broke resistance.
 
-=== FLAGGED ANOMALIES ===
-
-=== THESIS CANDIDATES ===
-"""
-
-
-_BAD_VALIDATION_BRIEF = """\
-SECTOR BRIEF: Tech & Semis
-Invocation: failure-mode-verify
-Signal quality: HIGH
-
-=== KEY FINDINGS ===
-[SA-TECH-1] First finding
-  Tickers: NVDA
-  Signal type: price_action
-  Strength: strong
-  Detail: First detail.
-
-[SA-TECH-1] Duplicate index
-  Tickers: AMD
-  Signal type: flow
-  Strength: weak
-  Detail: Duplicate detail.
-
-=== FLAGGED ANOMALIES ===
-
-=== THESIS CANDIDATES ===
-"""
+_BAD_VALIDATION_PAYLOAD: dict[str, Any] = {
+    "invocation_id": "failure-mode-verify",
+    "sector": "tech_semis",
+    "signal_quality": "high",
+    "signal_quality_reason": None,
+    "findings": [
+        {
+            "finding_id": "SA-TECH-1",
+            "headline": "First finding",
+            "tickers": ["NVDA"],
+            "signal_type": "price_action",
+            "strength": "strong",
+            "detail": "First detail.",
+        },
+        {
+            "finding_id": "SA-TECH-1",  # duplicate of the first — Layer-2 violation
+            "headline": "Duplicate index",
+            "tickers": ["AMD"],
+            "signal_type": "flow",
+            "strength": "weak",
+            "detail": "Duplicate detail.",
+        },
+    ],
+    "anomalies": [],
+    "thesis_candidates": [],
+}
 
 
 def _make_sdk_response(
-    text: str,
+    structured_output: dict[str, Any] | None,
     stop_reason: str | None = "end_turn",
 ) -> list[Any]:
-    """Build the SDK message sequence a stub async-generator yields."""
-    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+    """Build the SDK message sequence a stub async-generator yields.
+
+    Post-ALP-288 the harness reads ``ResultMessage.structured_output`` rather
+    than concatenated text. ``None`` simulates the SDK failing to populate
+    the field — a parse-stage failure that triggers the corrective retry.
+    """
+    from claude_agent_sdk import AssistantMessage, ResultMessage
 
     usage = {
         "input_tokens": 100,
@@ -337,7 +348,7 @@ def _make_sdk_response(
         "cache_creation_input_tokens": 0,
     }
     assistant = AssistantMessage(
-        content=[TextBlock(text=text)],
+        content=[],
         model="claude-sonnet-4-6",
         stop_reason=stop_reason,
         usage=usage,
@@ -351,6 +362,7 @@ def _make_sdk_response(
         session_id="failure-mode-verify",
         stop_reason=stop_reason,
         usage=usage,
+        structured_output=structured_output,
     )
     return [assistant, result]
 
@@ -385,8 +397,8 @@ def make_parse_failure_then_success_stub() -> Callable[..., AsyncIterator[Any]]:
     """Stub SDK that returns a malformed response then a clean brief."""
     return _scripted_query(
         [
-            _make_sdk_response("Totally malformed — no structure at all."),
-            _make_sdk_response(_MINIMAL_BRIEF_TEXT),
+            _make_sdk_response(None),  # structured_output not populated → ParseError
+            _make_sdk_response(_MINIMAL_BRIEF_PAYLOAD),
         ]
     )
 
@@ -395,8 +407,8 @@ def make_two_parse_failures_stub() -> Callable[..., AsyncIterator[Any]]:
     """Stub SDK that returns malformed responses on both calls."""
     return _scripted_query(
         [
-            _make_sdk_response("Totally malformed — no structure at all."),
-            _make_sdk_response("Still malformed — no structure at all."),
+            _make_sdk_response(None),
+            _make_sdk_response(None),
         ]
     )
 
@@ -405,8 +417,8 @@ def make_validation_failure_then_success_stub() -> Callable[..., AsyncIterator[A
     """Stub SDK that returns a brief failing validation, then a clean brief."""
     return _scripted_query(
         [
-            _make_sdk_response(_BAD_VALIDATION_BRIEF),
-            _make_sdk_response(_MINIMAL_BRIEF_TEXT),
+            _make_sdk_response(_BAD_VALIDATION_PAYLOAD),
+            _make_sdk_response(_MINIMAL_BRIEF_PAYLOAD),
         ]
     )
 
