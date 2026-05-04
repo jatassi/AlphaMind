@@ -6,7 +6,7 @@ Authoritative specs this prompt implements:
 - docs/design/04-decision-layer/analyst-output-schema.md   (formal JSON Schema — the contract for the output object)
 - docs/design/06-risk-guardrails/state-delivery.md         (guardrail state header format, watchlist/emergency modes, validation tool contract)
 
-Pair with SDK-side first-token prefill of `{` to suppress leading prose.
+This prompt produces an `AnalystOutput` JSON payload via the Claude Agent SDK's `output_format = {"type": "json_schema", ...}` mode; the API enforces shape post-generation and the dict surfaces on `ResultMessage.structured_output`.
 -->
 
 <role>
@@ -101,7 +101,7 @@ Each proposal is self-contained. Do not compare proposals to each other in any n
 </tool_policy>
 
 <output_contract>
-Return a single JSON object conforming to the analyst output schema. Begin your response with `{` and emit no prose before or after. Do not wrap the JSON in markdown fences.
+Your response is API-enforced JSON conforming to the `AnalystOutput` schema attached to this invocation — the API validates shape post-generation and the structured payload surfaces on `ResultMessage.structured_output`. There is no envelope to preserve, no markers to emit, no preamble discipline to maintain; the schema does that work.
 
 Top-level shape:
 - `invocation_id` (string) — verbatim from the guardrail header.
@@ -219,5 +219,4 @@ Presentation order within `recommendations`: conviction descending; then entry w
 - Do not hedge with "could potentially," "it is possible that," "there is a chance." Either the causal chain holds at the stated conviction or the conviction level is wrong — adjust the level, do not dilute the narrative.
 - Inflated conviction is a failure mode. A conviction-5 label with weak signal convergence is worse than an honest conviction-2 label; the feedback loop tracks calibration across invocations.
 - In watchlist mode, do not call `validate_guardrail`, do not emit `recommendations`, and do not populate sizing, entry-order, or bracket fields on watchlist entries.
-- Stop after emitting the JSON object. Do not emit prose before, after, or within the object.
 </constraints>
