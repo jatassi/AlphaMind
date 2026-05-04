@@ -140,7 +140,7 @@ A question is **dispatch-time** if it requires actual implementation discovery �
 
 **Common decision categories that surface here:**
 
-- **As-built / design divergences.** The yaml or schema differs from what the design doc names. Recommend keeping or changing; don't punt.
+- **As-built / design divergences.** The yaml or schema differs from what the design doc names. Recommend keeping or changing; don't punt. **Verify before surfacing:** apparent divergences frequently turn out to be intentional dual taxonomies on closer reading (e.g., a 3-way analysis-side sector enum coexisting with a 4-way risk-side enum). Before treating a divergence as real, grep the term across at least two layers (design docs + as-built code + config) — a single mismatch in one place doesn't establish drift. False alarms cost operator attention.
 - **Threshold encoding.** Definitional cutoff (named constant) vs. Class A tunable (yaml-loaded). Default to definitional unless the design doc explicitly names a calibration cadence.
 - **Pipeline cadence.** Per-invocation render vs. cron-scheduled producer + on-demand consumer. Default to producer-cadence-named-by-design-doc.
 - **Tool / contract scope.** Ship N tools or N+1; defer one for downstream-data-readiness reasons.
@@ -189,6 +189,8 @@ Parent Issue description template (Markdown — fill the bracketed sections; rem
 ## Pre-resolved configuration decisions
 
 [Include this section iff Phase 6 produced resolved decisions. Omit entirely otherwise. Use bold-text paragraphs, NOT bullets — the Linear renderer drops bullet lists that follow a colon-ending paragraph or a heading-then-prose stanza, but bold-text paragraphs survive.]
+
+[**Inline-code-in-bold-prefix gotcha.** A bold prefix containing inline code, like `**(A) `code` rest of label.**`, is truncated by Linear's renderer at the first backtick — the closing `**` lands inside the inline-code span and the bold span ends prematurely. The label degrades to `**(A)** ` `code` ` rest of label. ...` (bold ends after the letter; the rest is plain prose). The content survives but the labeled-paragraph structure is degraded. To prevent: keep the bold prefix free of inline code (move backticks out of the bold span and into the following prose), OR phrase the label without the code reference.]
 
 The following choices were settled at drafting time and baked into the relevant stories. The orchestrator does not need to surface them at dispatch.
 
