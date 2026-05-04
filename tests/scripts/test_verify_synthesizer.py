@@ -120,6 +120,78 @@ def test_reference_coverage_classifier_correct() -> None:
     assert coverage.invented == frozenset({"SA-FIN-99"})
 
 
+def test_reference_coverage_classifier_flags_bare_prefix() -> None:
+    """Bare-prefix citations land in ``invented`` (ALP-290).
+
+    The synthesizer prompt forbids `[CR]`, `[SA-TECH]`, and other
+    bracketed-prefix-without-index forms; the verifier's classifier must
+    surface them as contract violations so the verdict rubric WARNs
+    rather than passing silently. The 2026-05-04 E2E run produced four
+    bare `[CR]` references and the original regex (which required the
+    trailing index) treated them as unfalsifiable prose.
+    """
+    store = _make_retrieval_store(("CR-1", "CR-3", "CR-4", "SA-TECH-2"))
+    synthesis_text = (
+        "Correlation divergences (2.30 [CR]) and (2.29 [CR]) confirm META "
+        "broke from peer group. INTC:MRVL (2.40 [CR]) and a paired "
+        "AMZN:DDOG (2.38 [CR]) point in the same direction. The valid "
+        "[CR-1], [CR-3], and [CR-4] anchor the broader frame; [SA-TECH-2] "
+        "corroborates from the sector vantage."
+    )
+
+    coverage = classify_reference_coverage(synthesis_text, store)
+
+    # The bare `CR` lands in `cited` and `invented` (deduplicated to a
+    # single token regardless of how many times it appears in prose).
+    assert "CR" in coverage.cited
+    assert "CR" in coverage.invented
+    assert "CR" not in coverage.resolved
+    # The well-formed citations resolve normally.
+    assert {"CR-1", "CR-3", "CR-4", "SA-TECH-2"}.issubset(coverage.resolved)
+
+
+def test_reference_coverage_classifier_ignores_non_prefix_brackets() -> None:
+    """Bracketed tokens that are not synthesizer prefixes are ignored.
+
+    `[note]` (lowercase) does not match the regex; `[FOO]` matches the
+    regex but is not a known synthesizer prefix, so the classifier
+    drops it. The carve-out keeps the violation surface scoped to
+    actual prefix-shaped citations rather than every bracketed string.
+    """
+    store = _make_retrieval_store(("CR-1",))
+    synthesis_text = (
+        "The macro frame [CR-1] anchors the read. A footnote [note] and an "
+        "unknown bracket [FOO] should not contaminate the cited set."
+    )
+
+    coverage = classify_reference_coverage(synthesis_text, store)
+
+    assert coverage.cited == frozenset({"CR-1"})
+    assert coverage.invented == frozenset()
+
+
+def test_verdict_warn_on_bare_prefix_citation() -> None:
+    """A response containing only a bare `[CR]` produces WARN, not PASS (ALP-290).
+
+    Reproduces the gap in the 2026-05-04 E2E run where the runbook
+    reported PASS while the synthesizer output contained four bare
+    `[CR]` references. After the regex fix, such a response routes
+    through the WARN branch of the verdict rubric.
+    """
+    store = _make_retrieval_store(("CR-1",))
+    result = _make_synthesizer_result(
+        synthesis_text="Correlation divergence (2.30 [CR]) sits against [CR-1].",
+        stop_reason="end_turn",
+        retrieval_store=store,
+    )
+    coverage = classify_reference_coverage(result.synthesis_text, result.retrieval_store)
+
+    verdict = verdict_for_success(result, coverage)
+
+    assert verdict is Verdict.WARN
+    assert "CR" in coverage.invented
+
+
 # ---------------------------------------------------------------------------
 # Verdict rubric
 # ---------------------------------------------------------------------------

@@ -68,7 +68,7 @@ from alphamind.analysis.qualitative_research.models import (
     TimeHorizon,
 )
 from alphamind.analysis.synthesizer.harness import HarnessFailure, SDKFailure
-from alphamind.analysis.synthesizer.models import parse_reference_id
+from alphamind.analysis.synthesizer.models import ReferencePrefix, parse_reference_id
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.analysis.synthesizer.runner import (
     SynthesizerResult,
@@ -138,9 +138,18 @@ class Verdict(enum.StrEnum):
 
 
 # Reference-ID literal in the synthesis text: an uppercase prefix of one or
-# more `-`-joined segments, hyphen-bound to a positive integer index. The
-# `[` / `]` brackets bound the citation form the synthesizer prompt requires.
-_CITATION_RE = re.compile(r"\[([A-Z]+(?:-[A-Z]+)*-\d+)\]")
+# more `-`-joined segments, optionally hyphen-bound to a positive integer
+# index. The `[` / `]` brackets bound the citation form the synthesizer
+# prompt requires. The trailing index is optional in the regex so the
+# classifier can also surface bare-prefix forms (`[CR]`, `[SA-TECH]`) as
+# contract violations — see `classify_reference_coverage` for the partition
+# rule.
+_CITATION_RE = re.compile(r"\[([A-Z]+(?:-[A-Z]+)*(?:-\d+)?)\]")
+
+# Known synthesizer-side reference prefixes — the set the synthesizer can
+# legally cite. A bracketed token whose body equals one of these but carries
+# no index is the bare-prefix-citation contract violation ALP-290 surfaced.
+_KNOWN_PREFIXES: frozenset[str] = frozenset(p.value for p in ReferencePrefix)
 
 
 @dataclass(frozen=True)
@@ -161,16 +170,23 @@ class ReferenceCoverage:
 def classify_reference_coverage(synthesis_text: str, store: RetrievalStore) -> ReferenceCoverage:
     """Partition the citations in *synthesis_text* against *store*.
 
-    Extracts every well-formed ``[<prefix>-<index>]`` citation, drops
-    duplicates and tokens that fail :func:`parse_reference_id` (so
-    bracketed prose like ``[note]`` does not contaminate the count),
-    then partitions the survivors into resolved (present as a key in
+    Extracts every bracketed reference-shaped token, drops bracketed prose
+    like ``[note]`` (lowercase, never matches the regex) and unknown
+    uppercase tokens like ``[FOO]`` (not a synthesizer-side prefix), then
+    partitions the survivors into resolved (present as a key in
     ``store.entries``) and invented (absent).
+
+    Bare-prefix forms — ``[CR]``, ``[SA-TECH]``, ``[QR]`` — are surfaced
+    in ``cited`` whenever the body equals a known synthesizer prefix
+    (ALP-290). Such forms always land in ``invented`` because the
+    retrieval store keys are always indexed (``CR-1``, ``SA-TECH-3``, …);
+    a bare prefix can never resolve, and the verdict rubric correctly
+    treats the violation as a prompt-tightening signal (WARN).
     """
     cited: set[str] = set()
     for match in _CITATION_RE.finditer(synthesis_text):
         ref_id = match.group(1)
-        if parse_reference_id(ref_id) is not None:
+        if parse_reference_id(ref_id) is not None or ref_id in _KNOWN_PREFIXES:
             cited.add(ref_id)
     resolved = {ref_id for ref_id in cited if ref_id in store.entries}
     invented = cited - resolved

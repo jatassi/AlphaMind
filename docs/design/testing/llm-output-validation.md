@@ -151,6 +151,7 @@ Every LLM output passes through four layers in order. Each layer has a single ma
 **Failure modes detected here:**
 
 - Invented reference ID (syntactically well-formed, does not resolve).
+- Bare-prefix citation — a bracketed token whose body matches a known reference prefix but carries no index (`[CR]`, `[SA-TECH]`, `[QR]`). The retrieval store is always keyed by `<prefix>-<index>` so a bare prefix can never resolve; the validator treats this as an invented reference rather than ignoring it as prose. Surfaced from the 2026-05-04 E2E run where the synthesizer emitted four bare `[CR]` correlation-pair references that the original consumer-side regex (which required the trailing index) silently dropped.
 - Mismatched sequential indexing (REC-1, REC-3 with no REC-2).
 - Cross-element correspondence failure (invalidation leg without matching rationale entry).
 - Foreign-key-style failure (position_id for a non-open position, assessment_id cited in pending_order_assessment that doesn't exist).
