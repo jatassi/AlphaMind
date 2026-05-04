@@ -30,8 +30,12 @@ from typing import Any, cast
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from alphamind.analysis._schema_tightening import _tighten_conditional_schema
 from alphamind.analysis._shared import TokensUsed
-from alphamind.analysis.qualitative_research.models import QualitativeBrief
+from alphamind.analysis.qualitative_research.models import (
+    REQUIRED_BY_SIGNAL_QUALITY,
+    QualitativeBrief,
+)
 from alphamind.analysis.qualitative_research.parser import ParseError, parse_qualitative_brief
 from alphamind.analysis.qualitative_research.validation import (
     ValidationResult,
@@ -82,6 +86,14 @@ async def _load_prompt(prompt_path: str) -> str:
 # soft, with headroom for the agent's reasoning turns.  ``max_turns`` bounds
 # the SDK loop covering tool calls + final text generation.
 _MAX_TURNS = 25
+
+# Real tool calls go through the in-process MCP server registered as
+# ``alphamind_qualitative`` (see :func:`_resolve_tools`); the bundled CLI
+# rewrites those names to ``mcp__alphamind_qualitative__<tool>`` on the wire.
+# Any other ``ToolUseBlock.name`` (``ToolSearch``, ``StructuredOutput``, …)
+# is an SDK-internal pseudo-event injected by the JSON-Schema output mode and
+# must not count against the agent's tool budget.
+_TOOL_NAME_PREFIX = "mcp__alphamind_qualitative__"
 
 
 # ---------------------------------------------------------------------------
@@ -250,18 +262,28 @@ async def _collect_response(
     *,
     prompt: str,
     options: Any,
-) -> tuple[str, str | None, TokensUsed, int]:
+) -> tuple[dict[str, Any] | None, str, str | None, TokensUsed, int]:
     """Drive the SDK generator to completion.
 
-    Returns ``(response_text, stop_reason, tokens_used, tool_calls)``.
-    ``stop_reason`` is ``None`` when the SDK did not surface it (treated as
-    ``end_turn`` by the harness per the spec: "missing metadata → malformed_output,
-    not context_overflow"). ``tool_calls`` counts ``ToolUseBlock`` instances in
-    assistant messages — this is the qualitative-researcher's tool-budget metric.
+    Returns ``(structured_output, response_text, stop_reason, tokens_used,
+    tool_calls)``.
+
+    ``structured_output`` is the dict the API delivers on ``ResultMessage``
+    when ``output_format`` is set; ``None`` when the SDK did not populate it
+    (the harness's parse path treats ``None`` as a parse failure). The
+    concatenated ``response_text`` is preserved alongside for diagnostic-
+    record forensics — JSON-mode runs typically have empty text but Sonnet
+    occasionally narrates between tool calls.
+
+    ``tool_calls`` counts only ``ToolUseBlock``s whose ``name`` starts with
+    :data:`_TOOL_NAME_PREFIX`; the SDK's JSON-Schema output mode injects
+    ``ToolSearch`` and ``StructuredOutput`` pseudo-events that would
+    otherwise inflate the count.
     """
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
     text_parts: list[str] = []
+    structured_output: dict[str, Any] | None = None
     stop_reason: str | None = None
     tokens = TokensUsed(input_tokens=0, output_tokens=0, cache_read_tokens=0, cache_write_tokens=0)
     tool_calls = 0
@@ -273,7 +295,9 @@ async def _collect_response(
                 for block in message.content:
                     if isinstance(block, TextBlock):
                         text_parts.append(block.text)
-                    elif isinstance(block, ToolUseBlock):
+                    elif isinstance(block, ToolUseBlock) and block.name.startswith(
+                        _TOOL_NAME_PREFIX
+                    ):
                         tool_calls += 1
                 stop_reason, tokens = _absorb_metadata(
                     message, stop_reason=stop_reason, tokens=tokens
@@ -282,6 +306,9 @@ async def _collect_response(
                 stop_reason, tokens = _absorb_metadata(
                     message, stop_reason=stop_reason, tokens=tokens
                 )
+                raw_so = getattr(message, "structured_output", None)
+                if isinstance(raw_so, dict):
+                    structured_output = raw_so
                 if message.is_error:
                     raise _CLIResultError(
                         error_text=message.result or "(no result text)",
@@ -294,7 +321,7 @@ async def _collect_response(
         # and prints "asynchronous generator is already running" to stderr.
         await cast(AsyncGenerator[Any], query_iter).aclose()
 
-    return "".join(text_parts), stop_reason, tokens, tool_calls
+    return structured_output, "".join(text_parts), stop_reason, tokens, tool_calls
 
 
 # ---------------------------------------------------------------------------
@@ -302,11 +329,11 @@ async def _collect_response(
 # ---------------------------------------------------------------------------
 
 _SECTION_DIRECTIVE = (
-    "Output the corrected qualitative brief and nothing else. "
-    "No preamble, no acknowledgment, no apology, no closing prose. "
-    "The first non-blank line of your response must be exactly `QUALITATIVE BRIEF`. "
-    "Use exactly the section headers "
-    "=== NARRATIVE THREADS ===, === CATALYST WATCH ===, === SENTIMENT SNAPSHOT ==="
+    "Re-emit the qualitative brief as a JSON payload conforming to the "
+    "QualitativeBrief schema attached to this invocation. The shape is "
+    "API-enforced; fix the specific field named above and resubmit. When "
+    "`signal_quality` is `degraded`, `signal_quality_reason` must be a "
+    "non-empty string; otherwise it must be `null`."
 )
 
 _CONTRACT_REF = (
@@ -413,22 +440,28 @@ class _DiagState:
 
 
 def _parse_and_validate(
-    response: str,
+    payload: dict[str, Any] | None,
+    response_text: str,
     invocation_id: str,
     universe: frozenset[str],
     stop_reason: str | None,
     attempt: int,
     diag: _DiagState,
 ) -> tuple[QualitativeBrief | None, str | None]:
-    """Parse *response* and validate the result.
+    """Parse the structured *payload* and validate the result.
 
     Returns ``(brief, retry_message)``.  When the brief is ``None``, a
     corrective-retry message is returned.  Raises
     :class:`ContextOverflowFailure` immediately when the failure is paired
     with ``stop_reason == 'max_tokens'``.
+
+    *response_text* is the concatenated text-block content from the same
+    SDK call, carried forward only for the ContextOverflowFailure raw_response
+    field — JSON-mode runs may have empty text but the diagnostic must still
+    carry whatever the model said.
     """
     try:
-        brief = parse_qualitative_brief(response, invocation_id=invocation_id)
+        brief = parse_qualitative_brief(payload, invocation_id=invocation_id)
     except ParseError as exc:
         diag.errors.append(
             {
@@ -443,7 +476,7 @@ def _parse_and_validate(
                 "Parse failure with stop_reason=max_tokens — context overflow, no retry",
                 agent_name=diag.agent_name,
                 invocation_id=diag.invocation_id,
-                raw_response=response,
+                raw_response=_render_raw_response(payload, response_text),
             ) from exc
         return None, _build_retry_message_for_parse_error(exc)
 
@@ -464,11 +497,28 @@ def _parse_and_validate(
                 "Validation failure with stop_reason=max_tokens — context overflow, no retry",
                 agent_name=diag.agent_name,
                 invocation_id=diag.invocation_id,
-                raw_response=response,
+                raw_response=_render_raw_response(payload, response_text),
             )
         return None, _build_retry_message_for_validation_failure(validation)
 
     return brief, None
+
+
+def _render_raw_response(payload: dict[str, Any] | None, response_text: str) -> str:
+    """Format the SDK response for HarnessSuccess.raw_response and the diagnostic.
+
+    The structured-output dict is the load-bearing artifact; any text the
+    agent emitted alongside (rare in JSON mode but seen under provocation)
+    is preserved as a leading section so forensic review is not lossy.
+    """
+    parts: list[str] = []
+    if response_text:
+        parts.append(response_text)
+    if payload is not None:
+        parts.append(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        parts.append("(structured_output not populated)")
+    return "\n\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +566,23 @@ def _resolve_tools(
     return allowed, mcp_servers
 
 
+def _build_qualitative_brief_schema() -> dict[str, Any]:
+    """Generate QualitativeBrief's JSON schema with the conditional-field tightener.
+
+    Without the tightener, the ``signal_quality_reason ↔ signal_quality``
+    invariant lives only in Pydantic's ``_brief_invariants`` and the API will
+    accept payloads that emit ``null`` for ``signal_quality_reason`` on the
+    DEGRADED branch (or a non-null reason on a non-DEGRADED branch). The
+    tightener rewrites the brief schema with a per-quality ``oneOf`` so the
+    API rejects those payloads pre-parse.
+    """
+    schema = QualitativeBrief.model_json_schema()
+    _tighten_conditional_schema(
+        schema, QualitativeBrief, "signal_quality", REQUIRED_BY_SIGNAL_QUALITY
+    )
+    return schema
+
+
 def _build_sdk_options(
     agent_config: BaseAgentConfig,
     *,
@@ -532,6 +599,9 @@ def _build_sdk_options(
     an output-token cap.  ``mcp_servers`` registers the in-process SDK
     MCP server that backs the tool callables; without it the SDK CLI
     returns "tool not found" when the model emits a tool_use block.
+    ``output_format`` flips the agent into JSON-Schema mode so the API
+    enforces the ``QualitativeBrief`` shape post-generation; the dict
+    surfaces on ``ResultMessage.structured_output``.
     """
     from claude_agent_sdk import ClaudeAgentOptions
 
@@ -543,6 +613,7 @@ def _build_sdk_options(
         max_turns=_MAX_TURNS,
         setting_sources=[],
         env={"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(agent_config.output_token_budget)},
+        output_format={"type": "json_schema", "schema": _build_qualitative_brief_schema()},
     )
 
 
@@ -554,7 +625,7 @@ def _build_sdk_options(
 async def _run_retry_attempt(
     *,
     retry_message: str,
-    response1: str,
+    raw_response_initial: str,
     tokens1: TokensUsed,
     tool_calls1: int,
     universe: frozenset[str],
@@ -569,13 +640,14 @@ async def _run_retry_attempt(
     """
     diag.retry_count = 1
 
-    response2, stop_reason2, tokens2, tool_calls2 = await invoke(retry_message)
-    diag.response_retry = response2
+    payload2, text2, stop_reason2, tokens2, tool_calls2 = await invoke(retry_message)
+    raw_response_retry = _render_raw_response(payload2, text2)
+    diag.response_retry = raw_response_retry
     diag.tokens_used = _add_tokens(tokens1, tokens2)
     diag.tool_calls_used = tool_calls1 + tool_calls2
 
     brief2, _ = _parse_and_validate(
-        response2, diag.invocation_id, universe, stop_reason2, attempt=2, diag=diag
+        payload2, text2, diag.invocation_id, universe, stop_reason2, attempt=2, diag=diag
     )
 
     wall_elapsed = time.monotonic() - wall_start
@@ -587,14 +659,14 @@ async def _run_retry_attempt(
             f"First retry error: {diag.errors[-1].get('message', '')}",
             agent_name=diag.agent_name,
             invocation_id=diag.invocation_id,
-            raw_response_initial=response1,
-            raw_response_retry=response2,
+            raw_response_initial=raw_response_initial,
+            raw_response_retry=raw_response_retry,
         )
 
     diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
     return HarnessSuccess(
         brief=brief2,
-        raw_response=response2,
+        raw_response=raw_response_retry,
         retry_count=1,
         tokens_used=diag.tokens_used,
         tool_calls_used=diag.tool_calls_used,
@@ -689,8 +761,14 @@ async def invoke_qualitative_researcher(
             stop_reason=stop_reason,
         )
 
-    async def _invoke(prompt: str) -> tuple[str, str | None, TokensUsed, int]:
-        """Run one SDK call with the configured timeout."""
+    async def _invoke(
+        prompt: str,
+    ) -> tuple[dict[str, Any] | None, str, str | None, TokensUsed, int]:
+        """Run one SDK call with the configured timeout.
+
+        Returns ``(structured_output, response_text, stop_reason, tokens,
+        tool_calls)``.
+        """
         try:
             return await asyncio.wait_for(
                 _collect_response(sdk_query_fn, prompt=prompt, options=options),
@@ -732,14 +810,15 @@ async def invoke_qualitative_researcher(
     # ------------------------------------------------------------------
     # Attempt 1: initial call
     # ------------------------------------------------------------------
-    response1, stop_reason1, tokens1, tool_calls1 = await _invoke(user_message)
-    diag.response_initial = response1
+    payload1, text1, stop_reason1, tokens1, tool_calls1 = await _invoke(user_message)
+    raw_response_initial = _render_raw_response(payload1, text1)
+    diag.response_initial = raw_response_initial
     diag.tokens_used = tokens1
     diag.tool_calls_used = tool_calls1
 
     try:
         brief, retry_message = _parse_and_validate(
-            response1, invocation_id, universe, stop_reason1, attempt=1, diag=diag
+            payload1, text1, invocation_id, universe, stop_reason1, attempt=1, diag=diag
         )
     except ContextOverflowFailure:
         diag.write(
@@ -754,7 +833,7 @@ async def invoke_qualitative_researcher(
         diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason1)
         return HarnessSuccess(
             brief=brief,
-            raw_response=response1,
+            raw_response=raw_response_initial,
             retry_count=0,
             tokens_used=tokens1,
             tool_calls_used=tool_calls1,
@@ -767,7 +846,7 @@ async def invoke_qualitative_researcher(
     assert retry_message is not None
     return await _run_retry_attempt(
         retry_message=retry_message,
-        response1=response1,
+        raw_response_initial=raw_response_initial,
         tokens1=tokens1,
         tool_calls1=tool_calls1,
         universe=universe,

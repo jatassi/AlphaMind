@@ -1,15 +1,15 @@
-"""Round-trip test for the qualitative-researcher system prompt (ALP-250).
+"""Round-trip test for the qualitative-researcher system prompt (ALP-250 / ALP-288).
 
-Extracts the ``<example_output>`` block from
-``prompts/analysis/qualitative_researcher.md``, parses each ``<output>``
-entry with ``parse_qualitative_brief``, and validates it with
-``validate_qualitative_brief``.  A green suite confirms the shipped example
-output conforms to the contract enforced by the production parser and
-validator.
+Post-ALP-288 the prompt example is JSON. This test extracts each ``<output>``
+block from ``prompts/analysis/qualitative_researcher.md``, ``json.loads`` it
+to the dict shape ``ResultMessage.structured_output`` would deliver, then
+runs the production parser + validator. A green suite confirms the shipped
+example matches the schema and Layer-2/3 invariants.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -43,7 +43,7 @@ def _extract_example_outputs(prompt_path: Path) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# ALP-250 — qualitative researcher
+# ALP-250 / ALP-288 — qualitative researcher
 # ---------------------------------------------------------------------------
 
 
@@ -53,6 +53,7 @@ def test_qualitative_researcher_prompt_round_trip() -> None:
     examples = _extract_example_outputs(prompt_path)
 
     for i, example in enumerate(examples):
-        brief = parse_qualitative_brief(example, invocation_id=f"inv-round-trip-{i + 1}")
+        payload = json.loads(example)
+        brief = parse_qualitative_brief(payload, invocation_id=f"inv-round-trip-{i + 1}")
         result = validate_qualitative_brief(brief, universe=_TEST_UNIVERSE)
         assert result.is_valid is True, f"Example {i + 1} failed validation: {result.errors}"
