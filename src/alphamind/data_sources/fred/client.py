@@ -67,19 +67,24 @@ class FredClient:
     # Rate-limited, retried SDK calls
     # ------------------------------------------------------------------
 
-    @with_retries(RetryShape.critical)
+    # FRED's free-tier endpoints intermittently return 502/503 for several
+    # minutes during vendor outages; the standard ``critical`` 1s/2s schedule
+    # exhausts before the vendor recovers and the 4h-cadence collector misses
+    # its freshness window after two consecutive misses. ``vendor_outage_extended``
+    # buys 65s of in-line wait per call — well under the 4h cadence.
+    @with_retries(RetryShape.vendor_outage_extended)
     def get_series(self, series_id: str, **kwargs: object) -> object:
         """Fetch a time series from FRED with retries and rate limiting."""
         self._rl.acquire("fred")
         return self._fred.get_series(series_id, **kwargs)
 
-    @with_retries(RetryShape.critical)
+    @with_retries(RetryShape.vendor_outage_extended)
     def get_series_info(self, series_id: str) -> pd.Series:
         """Fetch series metadata from FRED with retries and rate limiting."""
         self._rl.acquire("fred")
         return self._fred.get_series_info(series_id)
 
-    @with_retries(RetryShape.critical)
+    @with_retries(RetryShape.vendor_outage_extended)
     def get_series_all_releases(self, series_id: str, **kwargs: object) -> object:
         """
         Fetch all vintages (first release + revisions) for a series.

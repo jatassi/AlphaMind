@@ -148,12 +148,21 @@ class KindDistribution:
     """Per-kind calibration distribution snapshot.
 
     ``calibrated_share`` is ``calibrated / total`` in [0, 1]. ``None``
-    when ``total == 0`` (empty table). ``cold_start_deferred`` is True
-    when the band would otherwise have failed but every row carries the
-    fresh-DB cold-start signature (all bootstrap, all underaged, full
-    universe coverage); the failure is reported as DEFERRED instead, in
-    the same spirit as ``verify_distillation``'s ``deferred=True``
-    state-table probes.
+    when ``total == 0`` (empty table). Two deferral flags exist for
+    the cases where the qualitative band is structurally inapplicable:
+
+    - ``cold_start_deferred`` — fresh-DB first invocation: all rows are
+      ``bootstrap`` with ``n_observations < window_days``. Applies to
+      lower-bound bands (volume / atr / spread) only — the upper-bound
+      bands trivially pass on cold start.
+    - ``post_bootstrap_deferred`` — system has matured past the warm-up
+      window: every row is ``calibrated``. Applies to upper-bound bands
+      (sentiment / lead_lag) only — once those have fully calibrated by
+      design, the "≤ X% calibrated" assertion has nothing left to catch.
+
+    Either flag turns a would-be band failure into a DEFERRED row, in the
+    same spirit as ``verify_distillation``'s ``deferred=True`` state-table
+    probes.
     """
 
     kind: str
@@ -166,12 +175,17 @@ class KindDistribution:
     expected_calibrated_share_upper: float | None
     in_band: bool
     cold_start_deferred: bool = False
+    post_bootstrap_deferred: bool = False
 
     @property
     def calibrated_share(self) -> float:
         if self.total == 0:
             return 0.0
         return self.calibrated / self.total
+
+    @property
+    def deferred(self) -> bool:
+        return self.cold_start_deferred or self.post_bootstrap_deferred
 
 
 @dataclass(frozen=True)
@@ -284,6 +298,40 @@ def _cold_start_signature_holds(
     )
 
 
+def _post_bootstrap_signature_holds(session: Session, *, band: _KindBand) -> bool:
+    """Return True when every row in ``band``'s table is ``calibrated``.
+
+    Mirror of :func:`_cold_start_signature_holds` for the upper-bound case:
+    once a kind has fully matured past the warm-up window, the "≤ X%
+    calibrated" band has nothing left to catch — the signature it was
+    written against (sentiment vendor backfill / lead-lag event accumulation)
+    has resolved by design. The check is gated on ``calibrated_share_upper``
+    so it only fires for sentiment / lead_lag; lower-bound kinds use the
+    cold-start path instead.
+
+    A row's ``calibration_state == 'calibrated'`` already implies its
+    underlying threshold (``n_observations >= min_observations`` for tickers,
+    ``n_pair_events >= min_events`` for pairs) has been crossed, so no
+    additional row-level threshold check is needed here.
+    """
+    if band.calibrated_share_upper is None:
+        return False
+    if band.table_name == "distillation_ticker_baseline":
+        rows = session.execute(
+            select(DistillationTickerBaseline.calibration_state).where(
+                DistillationTickerBaseline.baseline_kind == band.kind
+            )
+        ).all()
+    elif band.table_name == "distillation_pair_lag":
+        rows = session.execute(select(DistillationPairLag.calibration_state)).all()
+    else:
+        return False
+    if not rows:
+        return False
+    calibrated_value = CalibrationState.CALIBRATED.value
+    return all(state == calibrated_value for (state,) in rows)
+
+
 def compute_calibration_mix_report(
     *,
     session: Session,
@@ -309,6 +357,12 @@ def compute_calibration_mix_report(
                 session, band=band, ticker_universe_size=ticker_universe_size
             )
         )
+        post_bootstrap_deferred = (
+            total > 0
+            and not in_band
+            and not cold_start_deferred
+            and _post_bootstrap_signature_holds(session, band=band)
+        )
         distributions.append(
             KindDistribution(
                 kind=band.kind,
@@ -321,9 +375,10 @@ def compute_calibration_mix_report(
                 expected_calibrated_share_upper=band.calibrated_share_upper,
                 in_band=in_band,
                 cold_start_deferred=cold_start_deferred,
+                post_bootstrap_deferred=post_bootstrap_deferred,
             )
         )
-        if total > 0 and not in_band and not cold_start_deferred:
+        if total > 0 and not in_band and not cold_start_deferred and not post_bootstrap_deferred:
             failures.append(
                 AssertionFailure(
                     code="calibration-distribution-out-of-band",
@@ -380,7 +435,7 @@ def format_calibration_mix_report(report: CalibrationMixReport) -> str:
             status = "OK"
         elif dist.total == 0:
             status = "EMPTY"
-        elif dist.cold_start_deferred:
+        elif dist.deferred:
             status = "DEFERRED"
         else:
             status = "OUT"

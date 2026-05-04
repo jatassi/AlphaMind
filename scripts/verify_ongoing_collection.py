@@ -2,11 +2,19 @@
 Verify that all collectors are producing fresh data within their expected
 cadence windows.
 
-For each collector / table pair the script finds the most recent ``ingested_at``
-timestamp and checks whether it is within ``2x cadence_minutes`` of the
-current UTC time.  For market-hours collectors (polygon.equity,
-polygon.options) the check is skipped when the NYSE is currently closed, using
-``exchange_calendars`` to determine market status.
+For each spec the script reads the most recent ``completed_at`` timestamp from
+``collection_runs`` (matching any of the spec's ``track_run_names``, status
+``success``) and checks whether it is within ``2x cadence_minutes`` of the
+current UTC time. For market-hours collectors (polygon.equity, polygon.options)
+the check is skipped when the NYSE is currently closed.
+
+The ``track_run_names`` indirection exists because some scheduler IDs fan out
+to several ``track_run`` calls (e.g. ``finnhub.calendar`` fans out to
+``finnhub.{earnings,economic,ipo,fda}_calendar``), and a few historical
+collector IDs differ from the names actually written to ``collection_runs``.
+Using row-freshness on the data table is unreliable for sparse upserts that
+no-op when content is unchanged, so ``collection_runs`` is the only source of
+truth here.
 
 Exit codes:
   0 — all checked collectors are within their freshness window
@@ -24,7 +32,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -43,45 +51,64 @@ from alphamind.persistence.session import make_engine
 
 @dataclass(frozen=True)
 class CollectorSpec:
-    """Freshness expectation for one collector."""
+    """Freshness expectation for one collector.
+
+    ``track_run_names`` lists the actual ``track_run(name=...)`` strings the
+    collector writes to ``collection_runs``. Defaults to ``(collector_id,)``
+    when omitted; supply explicit names when the scheduler ID fans out (e.g.
+    ``finnhub.calendar``) or when the historical track_run name diverges from
+    the scheduler ID (e.g. ``sec_edgar.rss`` → ``sec_edgar.8k_rss``).
+    """
 
     collector_id: str
-    table: str
     cadence_minutes: int
     market_hours_only: bool = False
+    track_run_names: tuple[str, ...] = field(default=())
+
+    @property
+    def effective_run_names(self) -> tuple[str, ...]:
+        return self.track_run_names or (self.collector_id,)
 
 
 COLLECTOR_SPECS: list[CollectorSpec] = [
     # polygon.equity fires every 15 min during market hours
-    CollectorSpec("polygon.equity", "ohlcv_bars", 15, market_hours_only=True),
+    CollectorSpec("polygon.equity", 15, market_hours_only=True),
     # polygon.options fires every 30 min during market hours
-    CollectorSpec("polygon.options", "options_contract_snapshots", 30, market_hours_only=True),
+    CollectorSpec("polygon.options", 30, market_hours_only=True),
     # polygon.corporate_actions fires once daily at 06:00 ET on weekdays
-    CollectorSpec(
-        "polygon.corporate_actions", "corporate_actions", 60 * 24, market_hours_only=True
-    ),
-    # polygon.reference fires weekly
-    CollectorSpec("polygon.reference", "asset_universe", 60 * 24 * 7),
+    CollectorSpec("polygon.corporate_actions", 60 * 24, market_hours_only=True),
+    # polygon.reference fires weekly (Saturday 06:00 ET)
+    CollectorSpec("polygon.reference", 60 * 24 * 7),
     # fred.macro fires every 4h
-    CollectorSpec("fred.macro", "macro_observations", 60 * 4),
+    CollectorSpec("fred.macro", 60 * 4),
     # eia.energy fires every 4h
-    CollectorSpec("eia.energy", "macro_observations", 60 * 4),
+    CollectorSpec("eia.energy", 60 * 4),
     # bls.macro fires daily at 09:00 ET
-    CollectorSpec("bls.macro", "macro_observations", 60 * 24),
+    CollectorSpec("bls.macro", 60 * 24),
     # treasury.auctions fires daily at 17:00 ET on weekdays
-    CollectorSpec("treasury.auctions", "treasury_auctions", 60 * 24, market_hours_only=True),
+    CollectorSpec("treasury.auctions", 60 * 24, market_hours_only=True),
     # finnhub.news fires every 30 min
-    CollectorSpec("finnhub.news", "news_articles", 30),
-    # finnhub.calendar fires daily
-    CollectorSpec("finnhub.calendar", "event_calendar", 60 * 24),
-    # marketaux.news fires every 30 min
-    CollectorSpec("marketaux.news", "news_articles", 30),
-    # sec_edgar.rss fires every 15 min
-    CollectorSpec("sec_edgar.rss", "news_articles", 15),
-    # polymarket fires every 30 min
-    CollectorSpec("polymarket", "prediction_market_snapshots", 30),
-    # kalshi fires every 30 min
-    CollectorSpec("kalshi", "prediction_market_snapshots", 30),
+    CollectorSpec("finnhub.news", 30),
+    # finnhub.calendar fires daily at 06:00 ET; the scheduler entry fans out
+    # to four sub-collectors, each writing its own collection_runs row.
+    CollectorSpec(
+        "finnhub.calendar",
+        60 * 24,
+        track_run_names=(
+            "finnhub.earnings_calendar",
+            "finnhub.economic_calendar",
+            "finnhub.ipo_calendar",
+            "finnhub.fda_calendar",
+        ),
+    ),
+    # marketaux.news fires every 4h (sized for the 100-req/day free-tier quota)
+    CollectorSpec("marketaux.news", 60 * 4),
+    # sec_edgar.rss fires every 15 min; track_run name is "sec_edgar.8k_rss"
+    CollectorSpec("sec_edgar.rss", 15, track_run_names=("sec_edgar.8k_rss",)),
+    # polymarket fires every 30 min; track_run name is "polymarket.contracts"
+    CollectorSpec("polymarket", 30, track_run_names=("polymarket.contracts",)),
+    # kalshi fires every 30 min; track_run name is "kalshi.contracts"
+    CollectorSpec("kalshi", 30, track_run_names=("kalshi.contracts",)),
 ]
 
 
@@ -114,35 +141,25 @@ def _nyse_is_open(now_utc: datetime) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _latest_ingested(conn: Any, table: str, collector_id: str) -> datetime | None:
-    """
-    Return the most recent ``ingested_at`` for the given collector (matched via
-    ``collection_runs``) or fall back to the most recent ``ingested_at`` in the
-    data table itself.
-    """
-    # First try collection_runs for a precise per-collector timestamp
-    try:
-        row = conn.execute(
-            text(
-                "SELECT MAX(completed_at) FROM collection_runs "
-                "WHERE collector = :cid AND status = 'success'"
-            ),
-            {"cid": collector_id},
-        ).fetchone()
-        if row and row[0]:
-            return datetime.fromisoformat(row[0].rstrip("Z")).replace(tzinfo=UTC)
-    except Exception:
-        pass
+def _latest_run_completion(conn: Any, run_names: tuple[str, ...]) -> datetime | None:
+    """Return the most recent ``completed_at`` across collection_runs matching any of ``run_names``.
 
-    # Fall back to the data table's ingested_at
-    try:
-        row = conn.execute(text(f"SELECT MAX(ingested_at) FROM {table}")).fetchone()
-        if row and row[0]:
-            ts_str: str = row[0]
-            return datetime.fromisoformat(ts_str.rstrip("Z")).replace(tzinfo=UTC)
-    except Exception:
-        pass
-
+    ``status = 'success'`` is required so an in-flight or failed run does not
+    mask a true freshness gap. ``run_names`` may carry one entry (the common
+    case) or several (fan-out collectors like ``finnhub.calendar``); the most
+    recent successful completion across the set wins.
+    """
+    placeholders = ", ".join(f":n{i}" for i in range(len(run_names)))
+    params: dict[str, str] = {f"n{i}": name for i, name in enumerate(run_names)}
+    row = conn.execute(
+        text(
+            f"SELECT MAX(completed_at) FROM collection_runs "
+            f"WHERE collector IN ({placeholders}) AND status = 'success'"
+        ),
+        params,
+    ).fetchone()
+    if row and row[0]:
+        return datetime.fromisoformat(row[0].rstrip("Z")).replace(tzinfo=UTC)
     return None
 
 
@@ -158,8 +175,8 @@ def run_verification(db_path: str | None = None) -> bool:
     print(f"Now (UTC): {now_utc.isoformat()}")
     print(f"NYSE currently open: {nyse_open}")
     print("=" * 70)
-    print(f"\n  {'Collector':<35} {'Table':<35} {'Last seen':<30} {'Age':>10}  {'Status'}")
-    print("  " + "-" * 120)
+    print(f"\n  {'Collector':<35} {'Last seen':<30} {'Age':>10}  {'Status'}")
+    print("  " + "-" * 95)
 
     with engine.connect() as conn:
         for spec in COLLECTOR_SPECS:
@@ -167,18 +184,14 @@ def run_verification(db_path: str | None = None) -> bool:
 
             # Skip market-hours collectors when the market is closed
             if spec.market_hours_only and not nyse_open:
-                print(
-                    f"  {spec.collector_id:<35} {spec.table:<35} "
-                    f"{'(market closed)':<30} {'':>10}  SKIP"
-                )
+                print(f"  {spec.collector_id:<35} {'(market closed)':<30} {'':>10}  SKIP")
                 continue
 
-            latest = _latest_ingested(conn, spec.table, spec.collector_id)
+            latest = _latest_run_completion(conn, spec.effective_run_names)
 
             if latest is None:
                 print(
-                    f"  {spec.collector_id:<35} {spec.table:<35} "
-                    f"{'no data':<30} {'':>10}  FAIL (no rows)"
+                    f"  {spec.collector_id:<35} {'no successful run':<30} {'':>10}  FAIL (no rows)"
                 )
                 all_pass = False
                 continue
@@ -191,10 +204,7 @@ def run_verification(db_path: str | None = None) -> bool:
             if not ok:
                 all_pass = False
 
-            print(
-                f"  {spec.collector_id:<35} {spec.table:<35} "
-                f"{latest.isoformat():<30} {age_str:>10}  {status}"
-            )
+            print(f"  {spec.collector_id:<35} {latest.isoformat():<30} {age_str:>10}  {status}")
 
     print("\n" + "=" * 70)
     if all_pass:
