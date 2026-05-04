@@ -1,0 +1,425 @@
+AdaptiveBrief schema bytes: 3358
+
+--- 1_schema_only_baseline_no_tools ---
+{
+  "label": "1_schema_only_baseline_no_tools",
+  "structured_output_present": true,
+  "structured_output_type": "dict",
+  "pydantic_ok": true,
+  "pydantic_error": null,
+  "tool_calls": [
+    "StructuredOutput"
+  ],
+  "stop_reason": "end_turn",
+  "is_error": false,
+  "error_text": null,
+  "session_id": "477543a4-2604-4751-97b7-a4bd5846ba8e",
+  "usage": {
+    "input_tokens": 4,
+    "cache_creation_input_tokens": 14431,
+    "cache_read_input_tokens": 13422,
+    "output_tokens": 1337,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 14431,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 323,
+        "cache_read_input_tokens": 13422,
+        "cache_creation_input_tokens": 1009,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1009
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "total_cost_usd": 0.07871185,
+  "wall_seconds": 27.41,
+  "text_parts_concat_len": 1279,
+  "text_parts_first_120": "**AR-1 \u2014 NVDA volume anomaly (no-tool run)**\n\n| Field | Value |\n|---|---|\n| **Assessment** | `inconclusive` |\n| **Confid"
+}
+structured_output payload:
+{
+  "invocation_id": "AR-20260504-NVDA-001",
+  "threads_investigated_count": 1,
+  "anomalies_triaged_count": 1,
+  "anomalies_deferred": [],
+  "threads": [
+    {
+      "thread_id": "AR-1",
+      "trigger": "NVDA volume 3.2 sigma over 5-day average, no price move",
+      "question": "Does the elevated NVDA volume without a corresponding price reaction indicate informed accumulation/distribution, mechanical flow (index rebalance, options hedging), or noise?",
+      "tickers": [
+        "NVDA"
+      ],
+      "sector": "tech_semis",
+      "tools_used": [],
+      "findings": [
+        "No external sources queried \u2014 assessment is inference-only based on structural pattern: high volume / flat price is consistent with both institutional block crossing (noise) and stealthy accumulation ahead of a catalyst (signal), and cannot be distinguished without options flow or news context."
+      ],
+      "assessment": "inconclusive",
+      "confidence": "low",
+      "missing": "mock_options_flow(NVDA) to check for unusual call/put skew or large-strike positioning, and mock_news_search(NVDA, 'volume block trade rebalance') to rule out mechanical explanations such as index reconstitution or ETF creation/redemption; without at least one of these, the structural pattern is genuinely ambiguous."
+    }
+  ]
+}
+
+--- 2_schema_plus_tools_signal_path ---
+{
+  "label": "2_schema_plus_tools_signal_path",
+  "structured_output_present": true,
+  "structured_output_type": "dict",
+  "pydantic_ok": true,
+  "pydantic_error": null,
+  "tool_calls": [
+    "ToolSearch",
+    "mcp__alphamind_spike__mock_news_search",
+    "mcp__alphamind_spike__mock_options_flow",
+    "StructuredOutput"
+  ],
+  "stop_reason": "end_turn",
+  "is_error": false,
+  "error_text": null,
+  "session_id": "f92e4ce1-94a3-4405-b63e-3169d4d40158",
+  "usage": {
+    "input_tokens": 8,
+    "cache_creation_input_tokens": 4573,
+    "cache_read_input_tokens": 52665,
+    "output_tokens": 1887,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 4573,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 220,
+        "cache_read_input_tokens": 14387,
+        "cache_creation_input_tokens": 1099,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1099
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "total_cost_usd": 0.06181325,
+  "wall_seconds": 35.37,
+  "text_parts_concat_len": 1388,
+  "text_parts_first_120": "Now I'll fire both research tools in parallel \u2014 they're independent of each other.Both tools returned clean synthetic da"
+}
+structured_output payload:
+{
+  "invocation_id": "AR-NVDA-20260504-001",
+  "threads_investigated_count": 1,
+  "anomalies_triaged_count": 1,
+  "anomalies_deferred": [],
+  "threads": [
+    {
+      "thread_id": "AR-1",
+      "trigger": "[SA-TECH-ANOM-1] NVDA volume spike 3.2 sigma with no price move.",
+      "question": "Does the combination of news flow and options activity explain the volume dislocation as institutional pre-earnings accumulation with a directional bias, making it actionable?",
+      "tickers": [
+        "NVDA"
+      ],
+      "sector": "tech_semis",
+      "tools_used": [
+        "mock_news_search",
+        "mock_options_flow"
+      ],
+      "findings": [
+        "mock_news_search: Three sell-side notes flagging pre-earnings repositioning published in the last 36 hours; no new fundamental information surfaced.",
+        "mock_options_flow: Upside-call bias running at 2.1\u00d7 recent baseline with unchanged skew, consistent with directional accumulation rather than tail hedging."
+      ],
+      "assessment": "signal",
+      "confidence": "moderate",
+      "implication": "The 3.2\u03c3 volume spike without a price move, corroborated by elevated call-side flow and pre-earnings repositioning narratives, is consistent with quiet institutional accumulation ahead of earnings. The upside-call bias signals a bullish directional lean, making this an actionable long setup in NVDA on any near-term dip into the volume node.",
+      "strengthens": [
+        "SA-TECH-2"
+      ],
+      "weakens": []
+    }
+  ]
+}
+
+--- 3_schema_plus_tools_noise_path ---
+{
+  "label": "3_schema_plus_tools_noise_path",
+  "structured_output_present": true,
+  "structured_output_type": "dict",
+  "pydantic_ok": true,
+  "pydantic_error": null,
+  "tool_calls": [
+    "ToolSearch",
+    "mcp__alphamind_spike__mock_news_search",
+    "StructuredOutput"
+  ],
+  "stop_reason": "end_turn",
+  "is_error": false,
+  "error_text": null,
+  "session_id": "f97fd72b-6e09-4d2d-beff-e41716d4dc00",
+  "usage": {
+    "input_tokens": 8,
+    "cache_creation_input_tokens": 3751,
+    "cache_read_input_tokens": 52183,
+    "output_tokens": 1200,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 3751,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 219,
+        "cache_read_input_tokens": 14010,
+        "cache_creation_input_tokens": 654,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 654
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "total_cost_usd": 0.04826815,
+  "wall_seconds": 24.82,
+  "text_parts_concat_len": 999,
+  "text_parts_first_120": "Now I'll call `mock_news_search` to confirm whether the catalyst is stale recycled news.The search result confirms no ne"
+}
+structured_output payload:
+{
+  "invocation_id": "SA-TECH-ANOM-2",
+  "threads_investigated_count": 1,
+  "anomalies_triaged_count": 1,
+  "anomalies_deferred": [],
+  "threads": [
+    {
+      "thread_id": "AR-1",
+      "trigger": "[SA-TECH-ANOM-2] AAPL pre-market gap of 0.4% on stale headline.",
+      "question": "Is the AAPL 0.4% pre-market gap driven by a genuine new catalyst, or is it a stale headline re-circulating?",
+      "tickers": [
+        "AAPL"
+      ],
+      "sector": "tech_semis",
+      "tools_used": [
+        "mock_news_search"
+      ],
+      "findings": [
+        "mock_news_search('AAPL', 'pre-market gap'): returned three sell-side notes flagging pre-earnings repositioning published in the last 36 hours \u2014 no new fundamental information identified."
+      ],
+      "assessment": "noise",
+      "confidence": "high",
+      "dismissal_reason": "The 0.4% pre-market gap is attributed entirely to 36-hour-old sell-side repositioning notes re-circulating with no new fundamental catalyst. The move is consistent with thin pre-market liquidity amplifying stale flow rather than any informational event; no actionable signal is present."
+    }
+  ]
+}
+
+--- 4_schema_plus_tools_provocation ---
+{
+  "label": "4_schema_plus_tools_provocation",
+  "structured_output_present": true,
+  "structured_output_type": "dict",
+  "pydantic_ok": true,
+  "pydantic_error": null,
+  "tool_calls": [
+    "ToolSearch",
+    "mcp__alphamind_spike__mock_news_search",
+    "mcp__alphamind_spike__mock_options_flow",
+    "StructuredOutput"
+  ],
+  "stop_reason": "end_turn",
+  "is_error": false,
+  "error_text": null,
+  "session_id": "821b0114-0ba9-4a0a-85e7-c45aab053408",
+  "usage": {
+    "input_tokens": 8,
+    "cache_creation_input_tokens": 5319,
+    "cache_read_input_tokens": 52706,
+    "output_tokens": 2568,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 5319,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 221,
+        "cache_read_input_tokens": 14325,
+        "cache_creation_input_tokens": 1907,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1907
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "total_cost_usd": 0.07490804999999999,
+  "wall_seconds": 46.05,
+  "text_parts_concat_len": 2598,
+  "text_parts_first_120": "Tools loaded. Now I'll fire both research calls in parallel \u2014 no reason to sequence them.\n\n**Calling `mock_news_search(N"
+}
+structured_output payload:
+{
+  "invocation_id": "AR-INV-2026-05-04-NVDA-001",
+  "threads_investigated_count": 1,
+  "anomalies_triaged_count": 1,
+  "anomalies_deferred": [],
+  "threads": [
+    {
+      "thread_id": "AR-1",
+      "trigger": "[SA-TECH-ANOM-1] NVDA volume spike",
+      "question": "Is the NVDA volume spike driven by a fresh fundamental catalyst, or does it reflect coordinated pre-earnings repositioning?",
+      "tickers": [
+        "NVDA"
+      ],
+      "sector": "tech_semis",
+      "tools_used": [
+        "mock_news_search (NVDA, volume spike catalyst)",
+        "mock_options_flow (NVDA)"
+      ],
+      "findings": [
+        "mock_news_search: Three sell-side notes flagging pre-earnings repositioning published within the last 36 hours; no new fundamental information (no product announcement, guidance revision, or material filing) identified.",
+        "mock_options_flow: Upside-call bias running at 2.1\u00d7 recent baseline with implied-vol skew unchanged, consistent with directional bullish positioning rather than tail-risk hedging."
+      ],
+      "assessment": "signal",
+      "confidence": "moderate",
+      "implication": "NVDA volume spike reflects coordinated pre-earnings directional accumulation; the absence of skew expansion alongside elevated call flow suggests market participants are positioning for an upside move rather than hedging downside \u2014 the setup warrants a long-side tactical flag ahead of the earnings window.",
+      "strengthens": [
+        "[SA-TECH-ANOM-1] (sell-side note cluster and 2.1\u00d7 call-flow lift arrive in the same 36-hour window \u2014 the move appears to share a common pre-earnings sentiment driver, reinforcing that this is not random volume noise)"
+      ],
+      "weakens": [
+        "No hard fundamental catalyst was identified \u2014 the signal rests entirely on positioning behaviour, which is susceptible to rapid unwind if earnings disappoint; crowded pre-earnings call buying has historically preceded both large wins and sharp reversals."
+      ]
+    }
+  ]
+}
+
+--- 5_schema_plus_tools_token_budget_check ---
+{
+  "label": "5_schema_plus_tools_token_budget_check",
+  "structured_output_present": true,
+  "structured_output_type": "dict",
+  "pydantic_ok": false,
+  "pydantic_error": "1 validation error for AdaptiveBrief\nthreads.0\n  Value error, signal assessment requires weakens to be set [type=value_error, input_value={'thread_id': 'AR-1', 'tr...CH-2'], 'weakens': None}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.13/v/value_error",
+  "tool_calls": [
+    "ToolSearch",
+    "mcp__alphamind_spike__mock_news_search",
+    "mcp__alphamind_spike__mock_options_flow",
+    "StructuredOutput"
+  ],
+  "stop_reason": "end_turn",
+  "is_error": false,
+  "error_text": null,
+  "session_id": "6a4e06a2-48d2-4903-b5e7-16c7f0baada2",
+  "usage": {
+    "input_tokens": 8,
+    "cache_creation_input_tokens": 3645,
+    "cache_read_input_tokens": 52230,
+    "output_tokens": 993,
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 3645,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [
+      {
+        "input_tokens": 1,
+        "output_tokens": 200,
+        "cache_read_input_tokens": 14114,
+        "cache_creation_input_tokens": 444,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 444
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard"
+  },
+  "total_cost_usd": 0.044738749999999994,
+  "wall_seconds": 17.37,
+  "text_parts_concat_len": 686,
+  "text_parts_first_120": "Now I'll call both tools in parallel.Both tools returned. Emitting the brief now.**AR-1 \u2014 SIGNAL (high confidence)**\n\n| "
+}
+structured_output payload:
+{
+  "invocation_id": "AR-NVDA-SA-TECH-ANOM-1-20260504",
+  "threads_investigated_count": 1,
+  "anomalies_triaged_count": 1,
+  "anomalies_deferred": [],
+  "threads": [
+    {
+      "thread_id": "AR-1",
+      "trigger": "[SA-TECH-ANOM-1] NVDA volume spike",
+      "question": "Is the NVDA volume spike driven by informed directional positioning ahead of earnings, or is it noise?",
+      "tickers": [
+        "NVDA"
+      ],
+      "sector": "tech_semis",
+      "tools_used": [
+        "mock_news_search",
+        "mock_options_flow"
+      ],
+      "findings": [
+        "mock_news_search: Three sell-side notes flagging pre-earnings repositioning published in the last 36 hours; no new fundamental information.",
+        "mock_options_flow: Upside-call bias at 2.1\u00d7 recent baseline with skew unchanged \u2014 consistent with directional positioning, not tail hedging."
+      ],
+      "assessment": "signal",
+      "confidence": "high",
+      "implication": "Volume spike reflects coordinated pre-earnings repositioning with a bullish directional lean; elevated call flow without skew widening suggests conviction buying rather than hedging, warranting upside exposure consideration.",
+      "strengthens": [
+        "SA-TECH-2"
+      ],
+      "weakens": null
+    }
+  ]
+}
+
+================================================================================
+SUMMARY
+================================================================================
+label                                         so?   pyd?   tools  stop_reason    wall    cost_usd  
+1_schema_only_baseline_no_tools               Y     Y      1      end_turn       27.41   0.07871185
+2_schema_plus_tools_signal_path               Y     Y      4      end_turn       35.37   0.06181325
+3_schema_plus_tools_noise_path                Y     Y      3      end_turn       24.82   0.04826815
+4_schema_plus_tools_provocation               Y     Y      4      end_turn       46.05   0.07490804999999999
+5_schema_plus_tools_token_budget_check        Y     N      4      end_turn       17.37   0.044738749999999994
