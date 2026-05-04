@@ -38,6 +38,7 @@ from alphamind.persistence.session import make_engine, make_session_factory
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
+
 def _minimal_brief_payload(invocation_id: str = "inv-test-001") -> dict[str, Any]:
     return {
         "invocation_id": invocation_id,
@@ -460,6 +461,7 @@ async def test_slow_sdk_stub_raises_timeout_failure(
 # ---------------------------------------------------------------------------
 # 7. Ticker validation — catalyst-watch ticker not in universe triggers a retry
 # ---------------------------------------------------------------------------
+
 
 def _payload_with_off_universe_ticker() -> dict[str, Any]:
     payload = _minimal_brief_payload("inv-test-001")

@@ -628,9 +628,7 @@ def _build_adaptive_brief_schema() -> dict[str, Any]:
     pre-parse.
     """
     schema = AdaptiveBrief.model_json_schema()
-    _tighten_conditional_schema(
-        schema, InvestigationThread, "assessment", REQUIRED_BY_ASSESSMENT
-    )
+    _tighten_conditional_schema(schema, InvestigationThread, "assessment", REQUIRED_BY_ASSESSMENT)
     return schema
 
 
