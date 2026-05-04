@@ -7,6 +7,15 @@ reaching into the submodules. Later stories add harness/runner under the same
 package.
 """
 
+from alphamind.decision.analyst.harness import (
+    ContextOverflowFailure,
+    HarnessFailure,
+    HarnessSuccess,
+    MalformedOutputFailure,
+    SDKFailure,
+    TimeoutFailure,
+    invoke_analyst,
+)
 from alphamind.decision.analyst.models import (
     AnalystOutput,
     EntryOrder,
@@ -43,11 +52,14 @@ from alphamind.decision.analyst.validation import (
 __all__ = [
     "DEFAULT_CONVICTION_BANDS",
     "AnalystOutput",
+    "ContextOverflowFailure",
     "EntryOrder",
     "EntryWindow",
     "EventCondition",
     "Greeks",
     "GuardrailValidationResult",
+    "HarnessFailure",
+    "HarnessSuccess",
     "Instrument",
     "InstrumentEquity",
     "InstrumentOption",
@@ -55,19 +67,23 @@ __all__ = [
     "InvalidationCondition",
     "InvalidationLeg",
     "InvalidationRationale",
+    "MalformedOutputFailure",
     "OrderParameters",
     "ParseError",
     "PositionSize",
     "PriceCondition",
     "Recommendation",
     "RuleProjection",
+    "SDKFailure",
     "StrategyLeg",
     "Target",
     "TimeCondition",
+    "TimeoutFailure",
     "ValidationError",
     "ValidationResult",
     "ValidationWarning",
     "WatchlistEntry",
+    "invoke_analyst",
     "parse_analyst_output",
     "validate_analyst_output",
 ]
