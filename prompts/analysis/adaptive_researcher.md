@@ -8,7 +8,7 @@ Authoritative specs this prompt implements:
 - docs/design/testing/llm-output-validation.md                       (reference-ID format rules — AR-N, with cross-references to SA-*, QR-*, CR-*)
 - docs/design/cost-and-rate-limit-modeling.md                        (the cumulative tool-call and tool-token budgets — overridable per trigger)
 
-This prompt produces a structured-text adaptive research findings brief, not JSON. No first-token prefill.
+This prompt produces an `AdaptiveBrief` JSON payload via the Claude Agent SDK's `output_format = {"type": "json_schema", ...}` mode (ALP-288); the API enforces shape post-generation and the dict surfaces on `ResultMessage.structured_output`.
 -->
 
 <role>
@@ -94,84 +94,65 @@ Composition pattern:
 </tool_policy>
 
 <output_contract>
-Emit the brief as plain text with no surrounding prose, no markdown code fences, no preface. Section markers are literal; preserve them exactly. The first non-blank line of your response must be `ADAPTIVE RESEARCH FINDINGS` — text emitted between tool calls is concatenated into your final response by the harness, so any narration of which tool you are calling, what came back, or which thread you are pivoting to lands ahead of the brief and breaks the envelope contract. Reason silently between tool calls; emit text only when producing the brief itself.
+Your response is API-enforced JSON conforming to the `AdaptiveBrief` schema attached to this invocation — the API validates shape post-generation. There is no envelope to preserve, no markers to emit, no preamble discipline to maintain; the schema does that work. Reason silently between tool calls.
 
-```
-ADAPTIVE RESEARCH FINDINGS
-Invocation: {invocation_id}
-Threads investigated: {N} of {M} anomalies triaged
-Anomalies deferred: {anomaly refs not investigated this cycle, or "none"}
+The schema constrains:
 
-=== INVESTIGATION THREADS ===
-[AR-1]
-  Trigger: {reference to originating anomaly}
-    e.g., "[SA-TECH-ANOM-1]" or "Distillation: Q2 volume spike, NVDA, 3.2σ"
-  Question: {the specific research question investigated}
-  Tickers: {affected tickers}
-  Sector: {primary sector}
-  Tools used: {list of tool IDs called during investigation}
-  Findings:
-    - {factual finding with source attribution}
-    - {factual finding}
-  Assessment: {signal | noise | inconclusive}
-  Confidence: {high | moderate | low}
-  If signal:
-    Implication: {1–2 sentences — what this means for the triggering anomaly's tickers}
-    Strengthens: {refs this finding corroborates, e.g., "[SA-TECH-3]", or "none"}
-    Weakens: {refs this finding contradicts, e.g., "[SA-FIN-TC-1]", or "none"}
-  If noise:
-    Dismissal reason: {1 sentence}
-  If inconclusive:
-    Missing: {what data would resolve this — guides next invocation's triage}
+- **Top-level**: `invocation_id`, `threads_investigated_count`, `anomalies_triaged_count`, `anomalies_deferred` (array of strings — possibly empty for the quiet-cycle case), `threads` (array of `InvestigationThread` — possibly empty when zero anomalies are pursued; the header counts still report the triage outcome).
+- **Each thread**: `thread_id` (`AR-{N}`, sequential starting at 1), `trigger`, `question`, `tickers` (array of strings), `sector` (closed enum: `tech_semis | financials | energy`), `tools_used` (array of registry names — `news_search`, `options_flow`, `ticker_deep_pull`, …), `findings` (array of strings, one per factual finding), `assessment` (closed enum: `signal | noise | inconclusive`), `confidence` (closed enum: `high | moderate | low`).
+- **Conditional fields keyed off `assessment`**:
+  - `signal`: `implication` (1–2 sentences on what the finding means for the triggering anomaly's tickers), `strengthens` (array of upstream reference IDs this finding corroborates), `weakens` (array of upstream reference IDs this finding contradicts). When a SIGNAL thread has no cross-references on a side, emit `[]` (empty array); never emit `null`.
+  - `noise`: `dismissal_reason` (1 sentence).
+  - `inconclusive`: `missing` (what data would resolve this — guides next invocation's triage).
 
-[AR-2] ...
-```
-
-Sequential indexing on `AR-N` starting at 1. Empty `=== INVESTIGATION THREADS ===` section is valid (zero threads on quiet cycles); the header still reports `Threads investigated: 0 of M`.
-
-`Strengthens` and `Weakens` reference any upstream prefix family — `SA-{SECTOR}-*`, `SA-{SECTOR}-ANOM-*`, `SA-{SECTOR}-TC-*`, `QR-*`, `QR-CW-*`, `CR-*`. Always brackets, always exact prefix-and-index. `none` is the explicit empty case for both fields.
-
-Stop after the last thread's last conditional field.
+`strengthens` and `weakens` entries reference upstream IDs from any prefix family — `SA-{SECTOR}-*`, `SA-{SECTOR}-ANOM-*`, `SA-{SECTOR}-TC-*`, `QR-*`, `QR-CW-*`, `CR-*`. The validator resolves each ID against this invocation's upstream briefs; invented IDs fail Layer-3 referential resolution.
 </output_contract>
 
 <example_output>
 <example>
   <context>Vol-expansion regime, confirmed transition. Distillation flags NVDA volume spike (3.2σ) with no corresponding price move; tech researcher flagged the same in [SA-TECH-ANOM-1] with `Suggested question: pre-earnings positioning or fund-flow noise?`. Energy researcher flagged a refining-group correlation break in [SA-ENERGY-ANOM-1].</context>
   <output>
-ADAPTIVE RESEARCH FINDINGS
-Invocation: inv-2026-04-23T14-30Z
-Threads investigated: 2 of 3 anomalies triaged
-Anomalies deferred: Distillation: gold-yield correlation flip, persistence 2 sessions
-
-=== INVESTIGATION THREADS ===
-[AR-1]
-  Trigger: [SA-TECH-ANOM-1] (also Distillation: NVDA volume 3.2σ over 5-day average)
-  Question: What news or positioning drove NVDA's volume spike during the past two sessions in the absence of a price move?
-  Tickers: NVDA
-  Sector: tech_semis
-  Tools used: news_search, options_flow, ticker_deep_pull
-  Findings:
-    - news_search "NVDA institutional positioning" returned three sell-side notes published in the past 36 hours flagging pre-earnings reposition
-    - options_flow on NVDA shows directional bias to upside calls 2.1× recent baseline; skew unchanged
-    - ticker_deep_pull short-interest figures on NVDA: short interest declined 1.2% over the same window — consistent with covering, not new bearish positioning
-  Assessment: signal
-  Confidence: moderate
-  Implication: The volume spike is consistent with pre-earnings institutional repositioning rather than information asymmetry on fundamentals. The earnings print inside 30 hours is the resolution event; flow shape suggests positioning conviction but not extreme conviction.
-  Strengthens: [SA-TECH-2]
-  Weakens: none
-
-[AR-2]
-  Trigger: [SA-ENERGY-ANOM-1] (refining correlation break)
-  Question: Is the refining-group correlation break driven by a single-name catalyst or by a sector-wide shift in crack-spread expectations?
-  Tickers: VLO, MPC, PSX
-  Sector: energy
-  Tools used: news_search, macro_data
-  Findings:
-    - news_search "refining outage" returned no recent unplanned-outage headlines on VLO/MPC/PSX
-    - macro_data crack_spread series: 5-day spread widened ~$2 with no single-day shock — gradual, not event-driven
-  Assessment: inconclusive
-  Confidence: low
-  Missing: Per-name capacity-utilization data for the past two weeks; whether the spread widening is durable or seasonal calibration. The available tools cannot resolve which interpretation is correct without next-cycle observation.
+{
+  "invocation_id": "inv-2026-04-23T14-30Z",
+  "threads_investigated_count": 2,
+  "anomalies_triaged_count": 3,
+  "anomalies_deferred": ["Distillation: gold-yield correlation flip, persistence 2 sessions"],
+  "threads": [
+    {
+      "thread_id": "AR-1",
+      "trigger": "[SA-TECH-ANOM-1] (also Distillation: NVDA volume 3.2σ over 5-day average)",
+      "question": "What news or positioning drove NVDA's volume spike during the past two sessions in the absence of a price move?",
+      "tickers": ["NVDA"],
+      "sector": "tech_semis",
+      "tools_used": ["news_search", "options_flow", "ticker_deep_pull"],
+      "findings": [
+        "news_search \"NVDA institutional positioning\" returned three sell-side notes published in the past 36 hours flagging pre-earnings reposition",
+        "options_flow on NVDA shows directional bias to upside calls 2.1× recent baseline; skew unchanged",
+        "ticker_deep_pull short-interest figures on NVDA: short interest declined 1.2% over the same window — consistent with covering, not new bearish positioning"
+      ],
+      "assessment": "signal",
+      "confidence": "moderate",
+      "implication": "The volume spike is consistent with pre-earnings institutional repositioning rather than information asymmetry on fundamentals. The earnings print inside 30 hours is the resolution event; flow shape suggests positioning conviction but not extreme conviction.",
+      "strengthens": ["SA-TECH-2"],
+      "weakens": []
+    },
+    {
+      "thread_id": "AR-2",
+      "trigger": "[SA-ENERGY-ANOM-1] (refining correlation break)",
+      "question": "Is the refining-group correlation break driven by a single-name catalyst or by a sector-wide shift in crack-spread expectations?",
+      "tickers": ["VLO", "MPC", "PSX"],
+      "sector": "energy",
+      "tools_used": ["news_search", "macro_data"],
+      "findings": [
+        "news_search \"refining outage\" returned no recent unplanned-outage headlines on VLO/MPC/PSX",
+        "macro_data crack_spread series: 5-day spread widened ~$2 with no single-day shock — gradual, not event-driven"
+      ],
+      "assessment": "inconclusive",
+      "confidence": "low",
+      "missing": "Per-name capacity-utilization data for the past two weeks; whether the spread widening is durable or seasonal calibration. The available tools cannot resolve which interpretation is correct without next-cycle observation."
+    }
+  ]
+}
   </output>
 </example>
 </example_output>
@@ -185,6 +166,6 @@ Anomalies deferred: Distillation: gold-yield correlation flip, persistence 2 ses
 - Do not retry a tool with identical parameters. If a `news_search` returns no useful results, redirect to a different angle or different tool.
 - Do not pad the threads section. Zero threads on a quiet day is the correct output; the header reports the triage outcome.
 - Do not omit the deferred anomalies header when anomalies were triaged but not investigated. Transparency about what was not pursued is part of the contract.
-- Do not collapse the three-way assessment into binary. `inconclusive` with an explicit `Missing` field is more useful than forcing a `signal` or `noise` verdict on insufficient evidence.
-- Do not emit prose before, after, or between the section markers. This includes inter-tool-call narration ("Now I'll run news_search on NVDA…", "Got the result, pivoting to options_flow…") — the harness concatenates every text block from every assistant message into a single response, so any such commentary lands in the final response ahead of the brief and breaks the envelope. All reasoning between tool calls is silent; the brief is the only text you emit.
+- Do not collapse the three-way assessment into binary. `inconclusive` with an explicit `missing` field is more useful than forcing a `signal` or `noise` verdict on insufficient evidence.
+- Do not emit `null` for SIGNAL `strengthens`/`weakens` when the cross-reference set is empty — emit `[]` (empty array). The Pydantic invariant requires the field present on a SIGNAL branch.
 </constraints>

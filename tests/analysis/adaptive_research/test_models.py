@@ -385,4 +385,5 @@ class TestDunderAll:
             "Assessment",
             "Confidence",
             "InvestigationThread",
+            "REQUIRED_BY_ASSESSMENT",
         }

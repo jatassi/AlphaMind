@@ -62,36 +62,39 @@ from alphamind.persistence.session import make_engine, make_session_factory
 # ---------------------------------------------------------------------------
 
 
-# A brief with one SIGNAL thread whose Strengthens references resolve into
-# the upstream-brief fixtures below (SA-TECH-1 lives in the tech sector
-# brief's findings). Parameterised on invocation_id because the parser
-# cross-checks the brief header against the caller-supplied invocation_id.
-def _minimal_brief_text(invocation_id: str = "inv-test-001") -> str:
-    return f"""\
-ADAPTIVE RESEARCH FINDINGS
-Invocation: {invocation_id}
-Threads investigated: 1 of 1 anomalies triaged
-Anomalies deferred: none
+# A brief payload (the dict shape ``ResultMessage.structured_output`` carries
+# post-ALP-288 migration) with one SIGNAL thread whose Strengthens reference
+# resolves into the upstream-brief fixtures below (SA-TECH-1 lives in the
+# tech sector brief's findings).
+def _minimal_brief_payload(invocation_id: str = "inv-test-001") -> dict[str, Any]:
+    return {
+        "invocation_id": invocation_id,
+        "threads_investigated_count": 1,
+        "anomalies_triaged_count": 1,
+        "anomalies_deferred": [],
+        "threads": [
+            {
+                "thread_id": "AR-1",
+                "trigger": "SA-TECH-ANOM-1",
+                "question": "What drove NVDA volume spike?",
+                "tickers": ["NVDA"],
+                "sector": "tech_semis",
+                "tools_used": ["news_search", "prediction_markets"],
+                "findings": [
+                    "news_search returned pre-earnings notes",
+                    "prediction_markets show repricing",
+                ],
+                "assessment": "signal",
+                "confidence": "moderate",
+                "implication": "Pre-earnings repositioning.",
+                "strengthens": ["SA-TECH-1"],
+                "weakens": [],
+            }
+        ],
+    }
 
-=== INVESTIGATION THREADS ===
-[AR-1]
-  Trigger: SA-TECH-ANOM-1
-  Question: What drove NVDA volume spike?
-  Tickers: NVDA
-  Sector: tech_semis
-  Tools used: news_search, prediction_markets
-  Findings:
-    - news_search returned pre-earnings notes
-    - prediction_markets show repricing
-  Assessment: signal
-  Confidence: moderate
-  Implication: Pre-earnings repositioning.
-  Strengthens: SA-TECH-1
-  Weakens: none
-"""
 
-
-_MINIMAL_BRIEF_TEXT = _minimal_brief_text()
+_MINIMAL_BRIEF_PAYLOAD = _minimal_brief_payload()
 
 
 # ---------------------------------------------------------------------------
@@ -251,17 +254,28 @@ def correlation_regime_brief() -> CorrelationRegimeBrief:
 
 
 def _make_sdk_response(
-    text: str,
+    structured_output: dict[str, Any] | None = None,
+    *,
+    text: str = "",
     stop_reason: str | None = "end_turn",
     input_tokens: int = 100,
     output_tokens: int = 200,
     tool_use_blocks: int = 0,
+    tool_use_block_name: str = "mcp__alphamind_adaptive__news_search",
 ) -> list[Any]:
     """Build a minimal sequence of SDK messages a stub async-generator yields.
 
+    *structured_output* is delivered on the terminating :class:`ResultMessage`
+    (the post-migration JSON-mode payload path); ``None`` simulates the SDK
+    failing to populate it. *text* is concatenated by the harness for the
+    diagnostic record only — usually empty in JSON mode but Sonnet sometimes
+    narrates between tool calls.
+
     When ``tool_use_blocks > 0``, an :class:`AssistantMessage` containing that
     many ``ToolUseBlock`` instances is emitted *before* the text-bearing
-    assistant message, so harness-side tool counting can be exercised.
+    assistant message. Pass ``tool_use_block_name`` to simulate the pseudo-
+    events the SDK injects for ``ToolSearch`` / ``StructuredOutput``; the
+    harness must filter those out of its tool counter.
     """
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
@@ -269,7 +283,7 @@ def _make_sdk_response(
 
     if tool_use_blocks:
         tool_blocks: list[Any] = [
-            ToolUseBlock(id=f"tu-{i}", name="news_search", input={"query": "FOMC"})
+            ToolUseBlock(id=f"tu-{i}", name=tool_use_block_name, input={"query": "FOMC"})
             for i in range(tool_use_blocks)
         ]
         messages.append(
@@ -282,7 +296,7 @@ def _make_sdk_response(
         )
 
     assistant = AssistantMessage(
-        content=[TextBlock(text=text)],
+        content=[TextBlock(text=text)] if text else [],
         model="claude-sonnet-4-6",
         stop_reason=stop_reason,
         usage={
@@ -306,6 +320,7 @@ def _make_sdk_response(
             "cache_read_input_tokens": 0,
             "cache_creation_input_tokens": 0,
         },
+        structured_output=structured_output,
     )
     messages.extend([assistant, result])
     return messages
@@ -364,7 +379,7 @@ async def test_happy_path_returns_harness_success(
     correlation_regime_brief: CorrelationRegimeBrief,
 ) -> None:
     """invoke_adaptive_researcher returns HarnessSuccess on a valid SDK response."""
-    stub = _make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_TEXT)])
+    stub = _make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)])
 
     result = await invoke_adaptive_researcher(
         agent_config=agent_config,
@@ -384,7 +399,9 @@ async def test_happy_path_returns_harness_success(
     assert result.retry_count == 0
     assert result.tool_calls_used == 0
     assert result.wall_clock_seconds >= 0.0
-    assert result.raw_response == _MINIMAL_BRIEF_TEXT
+    # raw_response is the JSON-rendered structured output post-migration.
+    assert "AR-1" in result.raw_response
+    assert "tech_semis" in result.raw_response
     assert isinstance(result.tokens_used, TokensUsed)
 
 
@@ -404,16 +421,18 @@ async def test_parse_failure_retry_recovers(
     correlation_regime_brief: CorrelationRegimeBrief,
 ) -> None:
     """Parse failure followed by a corrected response returns retry_count=1."""
-    bad = "no structure"
     captured_prompts: list[str] = []
 
     async def _stub(**kwargs: Any) -> AsyncIterator[Any]:
         captured_prompts.append(str(kwargs.get("prompt", "")))
         if len(captured_prompts) == 1:
-            async for msg in _async_iter(_make_sdk_response(bad)):
+            # ``structured_output=None`` simulates the SDK failing to populate
+            # the field — a parse-stage failure that triggers the corrective
+            # retry path.
+            async for msg in _async_iter(_make_sdk_response(None)):
                 yield msg
         else:
-            async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_TEXT)):
+            async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)):
                 yield msg
 
     result = await invoke_adaptive_researcher(
@@ -431,12 +450,12 @@ async def test_parse_failure_retry_recovers(
 
     assert result.retry_count == 1
     assert isinstance(result.brief, AdaptiveBrief)
-    # Corrective-retry message structure: framing, contract ref, section directive,
-    # content-preservation directive.
+    # Corrective-retry message names the failed contract, the schema mode, and
+    # carries the content-preservation directive.
     retry_prompt = captured_prompts[1]
     assert "adaptive researcher output" in retry_prompt.lower()
     assert "adaptive-research.md" in retry_prompt
-    assert "=== INVESTIGATION THREADS ===" in retry_prompt
+    assert "AdaptiveBrief schema" in retry_prompt
     # Sonnet was observed to abandon prior analytical work on retry under the
     # bare strict directive; this directive nudges same-context preservation.
     assert "prior analytical content" in retry_prompt.lower()
@@ -458,16 +477,15 @@ async def test_retry_call_passes_session_id_for_resume(
     response is invisible — the content-preservation directive in the retry
     message has nothing to reference and Sonnet collapses to an empty brief.
     """
-    bad = "no structure"
     captured_options: list[Any] = []
 
     async def _stub(**kwargs: Any) -> AsyncIterator[Any]:
         captured_options.append(kwargs.get("options"))
         if len(captured_options) == 1:
-            async for msg in _async_iter(_make_sdk_response(bad)):
+            async for msg in _async_iter(_make_sdk_response(None)):
                 yield msg
         else:
-            async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_TEXT)):
+            async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)):
                 yield msg
 
     await invoke_adaptive_researcher(
@@ -497,28 +515,10 @@ async def test_retry_call_passes_session_id_for_resume(
 
 # Brief whose Strengthens reference does not resolve into upstream briefs;
 # this is a Layer-3 validation failure (not a parse failure).
-_BRIEF_WITH_INVENTED_REFERENCE = """\
-ADAPTIVE RESEARCH FINDINGS
-Invocation: inv-test-001
-Threads investigated: 1 of 1 anomalies triaged
-Anomalies deferred: none
-
-=== INVESTIGATION THREADS ===
-[AR-1]
-  Trigger: SA-TECH-ANOM-1
-  Question: What drove NVDA volume spike?
-  Tickers: NVDA
-  Sector: tech_semis
-  Tools used: news_search, prediction_markets
-  Findings:
-    - news_search returned pre-earnings notes
-    - prediction_markets show repricing
-  Assessment: signal
-  Confidence: moderate
-  Implication: Pre-earnings repositioning.
-  Strengthens: [SA-TECH-99]
-  Weakens: none
-"""
+def _payload_with_invented_reference() -> dict[str, Any]:
+    payload = _minimal_brief_payload("inv-test-001")
+    payload["threads"][0]["strengthens"] = ["SA-TECH-99"]
+    return payload
 
 
 @pytest.mark.asyncio
@@ -537,10 +537,10 @@ async def test_validation_failure_retry_recovers(
     async def _stub(**kwargs: Any) -> AsyncIterator[Any]:
         captured_prompts.append(str(kwargs.get("prompt", "")))
         if len(captured_prompts) == 1:
-            async for msg in _async_iter(_make_sdk_response(_BRIEF_WITH_INVENTED_REFERENCE)):
+            async for msg in _async_iter(_make_sdk_response(_payload_with_invented_reference())):
                 yield msg
         else:
-            async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_TEXT)):
+            async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)):
                 yield msg
 
     result = await invoke_adaptive_researcher(
@@ -561,7 +561,7 @@ async def test_validation_failure_retry_recovers(
     retry_prompt = captured_prompts[1]
     # Validation retry surfaces the structural-contract framing (not parse).
     assert "structural contract" in retry_prompt.lower()
-    assert "[SA-TECH-99]" in retry_prompt or "referential" in retry_prompt.lower()
+    assert "SA-TECH-99" in retry_prompt or "referential" in retry_prompt.lower()
     # Same content-preservation directive on the validation path.
     assert "prior analytical content" in retry_prompt.lower()
 
@@ -582,8 +582,8 @@ async def test_both_attempts_malformed_raises_with_both_raw_responses(
     correlation_regime_brief: CorrelationRegimeBrief,
 ) -> None:
     """Two consecutive parse failures raise MalformedOutputFailure with both raw responses."""
-    bad_initial = "first malformed response"
-    bad_retry = "second malformed response"
+    bad_initial = {"shape": "wrong"}  # missing required AdaptiveBrief fields
+    bad_retry = {"still": "wrong"}
     stub = _make_stub_query([_make_sdk_response(bad_initial), _make_sdk_response(bad_retry)])
 
     with pytest.raises(MalformedOutputFailure) as exc_info:
@@ -602,8 +602,12 @@ async def test_both_attempts_malformed_raises_with_both_raw_responses(
 
     err = exc_info.value
     assert isinstance(err, HarnessFailure)
-    assert err.raw_response_initial == bad_initial
-    assert err.raw_response_retry == bad_retry
+    # Both raw responses are JSON-rendered structured outputs; verify each
+    # carries the load-bearing key from its corresponding stubbed payload.
+    assert err.raw_response_initial is not None
+    assert err.raw_response_retry is not None
+    assert "shape" in err.raw_response_initial
+    assert "still" in err.raw_response_retry
     assert err.invocation_id == "inv-test-001"
     assert err.agent_name == "adaptive_researcher"
 
@@ -625,13 +629,15 @@ async def test_max_tokens_with_parse_error_raises_context_overflow_no_retry(
 ) -> None:
     """Parse failure paired with stop_reason=max_tokens raises ContextOverflowFailure
     immediately without attempting a retry."""
-    truncated = "ADAPTIVE RESEARCH FINDINGS\nInvocation: inv-test-001"
     call_count = 0
 
     async def _stub(**kwargs: Any) -> AsyncIterator[Any]:
         nonlocal call_count
         call_count += 1
-        async for msg in _async_iter(_make_sdk_response(truncated, stop_reason="max_tokens")):
+        # ``structured_output=None`` simulates the API truncating before the
+        # final structured payload could be emitted — paired with max_tokens
+        # this is the canonical context-overflow signal.
+        async for msg in _async_iter(_make_sdk_response(None, stop_reason="max_tokens")):
             yield msg
 
     with pytest.raises(ContextOverflowFailure):
@@ -687,7 +693,7 @@ async def test_tool_allowlist_drift_raises_sdk_failure_at_startup(
     async def _stub(**kwargs: Any) -> AsyncIterator[Any]:
         nonlocal sdk_called
         sdk_called = True
-        async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_TEXT)):
+        async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)):
             yield msg
 
     with pytest.raises(SDKFailure) as exc_info:
@@ -809,7 +815,7 @@ async def test_diagnostic_files_written_when_archive_root_provided(
     correlation_regime_brief: CorrelationRegimeBrief,
 ) -> None:
     """Diagnostic files written to archive_root/invocations/<id>/analysis/<agent>/."""
-    stub = _make_stub_query([_make_sdk_response(_minimal_brief_text("inv-diag-001"))])
+    stub = _make_stub_query([_make_sdk_response(_minimal_brief_payload("inv-diag-001"))])
 
     await invoke_adaptive_researcher(
         agent_config=agent_config,
@@ -848,7 +854,7 @@ async def test_archive_root_none_skips_disk_io(
     tmp_path: Path,
 ) -> None:
     """Passing archive_root=None skips diagnostic writes and does not crash."""
-    stub = _make_stub_query([_make_sdk_response(_minimal_brief_text("inv-no-archive"))])
+    stub = _make_stub_query([_make_sdk_response(_minimal_brief_payload("inv-no-archive"))])
 
     sentinel = tmp_path / "should-not-exist"
     result = await invoke_adaptive_researcher(
@@ -884,9 +890,8 @@ async def test_diagnostic_files_include_retry_on_corrective_loop(
     correlation_regime_brief: CorrelationRegimeBrief,
 ) -> None:
     """Retry path produces a response_retry.md and an error trail in errors.json."""
-    bad = "no structure"
-    valid_retry = _minimal_brief_text("inv-retry-001")
-    stub = _make_stub_query([_make_sdk_response(bad), _make_sdk_response(valid_retry)])
+    valid_retry = _minimal_brief_payload("inv-retry-001")
+    stub = _make_stub_query([_make_sdk_response(None), _make_sdk_response(valid_retry)])
 
     await invoke_adaptive_researcher(
         agent_config=agent_config,
@@ -902,8 +907,13 @@ async def test_diagnostic_files_include_retry_on_corrective_loop(
     )
 
     diag_dir = archive_root / "invocations" / "inv-retry-001" / "analysis" / "adaptive_researcher"
-    assert (diag_dir / "response_initial.md").read_text() == bad
-    assert (diag_dir / "response_retry.md").read_text() == valid_retry
+    initial_text = (diag_dir / "response_initial.md").read_text()
+    retry_text = (diag_dir / "response_retry.md").read_text()
+    # The initial attempt's structured_output was None — the diagnostic
+    # records the rendered placeholder. The retry succeeded with the JSON
+    # payload, which renders to a dict containing the AR-1 thread.
+    assert "structured_output not populated" in initial_text
+    assert "AR-1" in retry_text
     errors = json.loads((diag_dir / "errors.json").read_text())
     assert any(e.get("attempt") == 1 for e in errors)
 
@@ -925,7 +935,7 @@ async def test_tool_calls_used_counts_tool_use_blocks(
 ) -> None:
     """When the SDK emits ToolUseBlocks, the harness counts them into tool_calls_used."""
     stub = _make_stub_query(
-        [_make_sdk_response(_minimal_brief_text("inv-tools-001"), tool_use_blocks=3)]
+        [_make_sdk_response(_minimal_brief_payload("inv-tools-001"), tool_use_blocks=3)]
     )
 
     result = await invoke_adaptive_researcher(
@@ -955,11 +965,10 @@ async def test_tool_calls_used_accumulates_across_retry(
     correlation_regime_brief: CorrelationRegimeBrief,
 ) -> None:
     """tool_calls_used sums across the initial attempt and the retry."""
-    bad = "no structure"
     stub = _make_stub_query(
         [
-            _make_sdk_response(bad, tool_use_blocks=2),
-            _make_sdk_response(_minimal_brief_text("inv-tools-retry"), tool_use_blocks=1),
+            _make_sdk_response(None, tool_use_blocks=2),
+            _make_sdk_response(_minimal_brief_payload("inv-tools-retry"), tool_use_blocks=1),
         ]
     )
 
@@ -978,6 +987,56 @@ async def test_tool_calls_used_accumulates_across_retry(
 
     assert result.retry_count == 1
     assert result.tool_calls_used == 3
+
+
+# ---------------------------------------------------------------------------
+# 11b. Pseudo-event filter — ToolSearch/StructuredOutput must not count
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pseudo_event_tool_blocks_excluded_from_count(
+    agent_config: AdaptiveAgentConfig,
+    archive_root: Path,
+    session: Session,
+    universe: frozenset[str],
+    sector_briefs: tuple[SectorBrief, ...],
+    qualitative_brief: QualitativeBrief,
+    correlation_regime_brief: CorrelationRegimeBrief,
+) -> None:
+    """The SDK's JSON-mode ToolSearch / StructuredOutput pseudo-events do not count.
+
+    Real research tool calls go through the in-process MCP server and arrive
+    as ``mcp__alphamind_adaptive__<tool>``; the JSON-output mode injects
+    ``ToolSearch`` and ``StructuredOutput`` blocks the harness must exclude
+    from the agent's tool budget. Spike output documented this inflation
+    (scenario 2 reported 4 tool_calls when only 2 were real).
+    """
+    payload = _minimal_brief_payload("inv-pseudo-001")
+    stub = _make_stub_query(
+        [
+            _make_sdk_response(
+                payload,
+                tool_use_blocks=2,
+                tool_use_block_name="ToolSearch",
+            )
+        ]
+    )
+
+    result = await invoke_adaptive_researcher(
+        agent_config=agent_config,
+        user_message="Produce an adaptive brief.",
+        invocation_id="inv-pseudo-001",
+        session=session,
+        universe=universe,
+        sector_briefs=sector_briefs,
+        qualitative_brief=qualitative_brief,
+        correlation_regime_brief=correlation_regime_brief,
+        archive_root=archive_root,
+        sdk_query_fn=stub,
+    )
+
+    assert result.tool_calls_used == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1013,7 +1072,7 @@ async def test_claude_agent_options_structure_uses_alphamind_adaptive_server(
 
     async def _capturing_stub(**kwargs: Any) -> AsyncIterator[Any]:
         captured_options.append(kwargs.get("options"))
-        async for msg in _async_iter(_make_sdk_response(_minimal_brief_text("inv-opt-001"))):
+        async for msg in _async_iter(_make_sdk_response(_minimal_brief_payload("inv-opt-001"))):
             yield msg
 
     await invoke_adaptive_researcher(
@@ -1078,32 +1137,14 @@ async def test_mcp_servers_empty_when_no_tools_configured(
     # When the agent has no registered tools, the brief's tools_used must be
     # empty too — the validator's tools_used_in_allowlist check rejects any
     # tool name not in agent_config.tools.
-    no_tools_brief = """\
-ADAPTIVE RESEARCH FINDINGS
-Invocation: inv-no-tools
-Threads investigated: 1 of 1 anomalies triaged
-Anomalies deferred: none
-
-=== INVESTIGATION THREADS ===
-[AR-1]
-  Trigger: SA-TECH-ANOM-1
-  Question: What drove NVDA volume spike?
-  Tickers: NVDA
-  Sector: tech_semis
-  Tools used: none
-  Findings:
-    - reasoning-only conclusion based on upstream context
-  Assessment: signal
-  Confidence: moderate
-  Implication: Pre-earnings repositioning.
-  Strengthens: SA-TECH-1
-  Weakens: none
-"""
+    no_tools_payload = _minimal_brief_payload("inv-no-tools")
+    no_tools_payload["threads"][0]["tools_used"] = []
+    no_tools_payload["threads"][0]["findings"] = ["reasoning-only conclusion from upstream context"]
     captured_options: list[Any] = []
 
     async def _capturing_stub(**kwargs: Any) -> AsyncIterator[Any]:
         captured_options.append(kwargs.get("options"))
-        async for msg in _async_iter(_make_sdk_response(no_tools_brief)):
+        async for msg in _async_iter(_make_sdk_response(no_tools_payload)):
             yield msg
 
     await invoke_adaptive_researcher(
@@ -1140,7 +1181,7 @@ async def test_sdk_query_fn_is_used_real_query_never_called(
     correlation_regime_brief: CorrelationRegimeBrief,
 ) -> None:
     """When sdk_query_fn is supplied, the real claude_agent_sdk.query is never called."""
-    stub = _make_stub_query([_make_sdk_response(_minimal_brief_text("inv-stub-001"))])
+    stub = _make_stub_query([_make_sdk_response(_minimal_brief_payload("inv-stub-001"))])
 
     with patch("claude_agent_sdk.query") as mock_real:
         await invoke_adaptive_researcher(
@@ -1197,7 +1238,7 @@ async def test_system_prompt_cached_per_process(
             correlation_regime_brief=correlation_regime_brief,
             archive_root=archive_root,
             sdk_query_fn=_make_stub_query(
-                [_make_sdk_response(_minimal_brief_text("inv-cache-001"))]
+                [_make_sdk_response(_minimal_brief_payload("inv-cache-001"))]
             ),
         )
         await invoke_adaptive_researcher(
@@ -1211,7 +1252,7 @@ async def test_system_prompt_cached_per_process(
             correlation_regime_brief=correlation_regime_brief,
             archive_root=archive_root,
             sdk_query_fn=_make_stub_query(
-                [_make_sdk_response(_minimal_brief_text("inv-cache-002"))]
+                [_make_sdk_response(_minimal_brief_payload("inv-cache-002"))]
             ),
         )
 
