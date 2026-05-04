@@ -19,7 +19,12 @@ agents:
     prompt: prompts/decision/analyst.md
     latency_budget_seconds: 180
     context_token_budget: 8000
-    output_token_budget: 2000
+    # Each recommendation serializes to ~500–800 tokens with the rich nested
+    # shape (instrument + entry_order + position_size + target +
+    # invalidation_legs + 4 narrative fields + guardrail_validation_result
+    # mirror). 1–3 recommendations sit at 1500–2500 tokens with no headroom
+    # for retry or empty-day clarifications. 4000 leaves ~50% headroom (ALP-291).
+    output_token_budget: 4000
     tools: [retrieve_brief, validate_guardrail]
 
   strategist:
