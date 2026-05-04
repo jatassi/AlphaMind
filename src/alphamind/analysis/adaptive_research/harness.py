@@ -644,12 +644,16 @@ def _build_sdk_options(
     """Build :class:`ClaudeAgentOptions` for the adaptive-researcher invocation.
 
     ``setting_sources=[]`` keeps the SDK from loading developer
-    ``.claude/settings.json`` (hooks/permissions) — this agent must run
-    system_prompt + user_message + the allowlisted tools only.
+    ``.claude/settings.json`` (hooks/permissions); ``tools=[]`` disables all
+    built-in CLI tools (Bash/Read/Edit/etc.); ``strict-mcp-config`` tells the
+    CLI to ignore plugin-level MCP servers (e.g. Linear, GitHub registered
+    via user-scope plugins) and only use ``--mcp-config``. Together these
+    guarantee the agent runs system_prompt + user_message + the allowlisted
+    research-tool MCP server only.
     ``CLAUDE_CODE_MAX_OUTPUT_TOKENS`` is the only path the CLI exposes for
-    an output-token cap.  ``mcp_servers`` registers the in-process SDK
-    MCP server that backs the tool callables; without it the SDK CLI
-    returns "tool not found" when the model emits a tool_use block.
+    an output-token cap. ``mcp_servers`` registers the in-process SDK MCP
+    server that backs the tool callables; without it the SDK CLI returns
+    "tool not found" when the model emits a tool_use block.
     ``output_format`` flips the agent into JSON-Schema mode so the API
     enforces the ``AdaptiveBrief`` shape post-generation; the dict surfaces
     on ``ResultMessage.structured_output``.
@@ -659,10 +663,12 @@ def _build_sdk_options(
     return ClaudeAgentOptions(
         system_prompt=prompt_text,
         model=agent_config.model,
+        tools=[],
         allowed_tools=allowed_tools,
         mcp_servers=mcp_servers,
         max_turns=_MAX_TURNS,
         setting_sources=[],
+        extra_args={"strict-mcp-config": None},
         env={"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(agent_config.output_token_budget)},
         output_format={"type": "json_schema", "schema": _build_adaptive_brief_schema()},
     )

@@ -25,7 +25,6 @@ from pydantic import BaseModel, Field, model_validator
 from alphamind.analysis._shared import SignalQuality
 
 __all__ = [
-    "REQUIRED_BY_SIGNAL_QUALITY",
     "TIME_HORIZON_DISPLAY",
     "CatalystWatch",
     "EvidenceLine",
@@ -36,19 +35,6 @@ __all__ = [
     "ThreadDirection",
     "TimeHorizon",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Per-signal-quality required-conditional-field map (ALP-288)
-# ---------------------------------------------------------------------------
-
-#: Fields required by each :class:`SignalQuality` value on
-#: :class:`QualitativeBrief`. Mirrors the per-Assessment map in
-#: ``adaptive_research.models``: shape consumed by
-#: :func:`alphamind.analysis._schema_tightening._tighten_conditional_schema`
-#: so the API rejects payloads that emit ``null`` for
-#: ``signal_quality_reason`` on the DEGRADED branch.
-REQUIRED_BY_SIGNAL_QUALITY: dict[SignalQuality, frozenset[str]] = {}  # populated below
 
 
 # ---------------------------------------------------------------------------
@@ -186,14 +172,3 @@ class QualitativeBrief(BaseModel, frozen=True):
                 "use a 'nothing is happening' thread on quiet days"
             )
         return self
-
-
-# Populate after class definitions so the dict literal can name SignalQuality.
-REQUIRED_BY_SIGNAL_QUALITY.update(
-    {
-        SignalQuality.HIGH: frozenset(),
-        SignalQuality.MODERATE: frozenset(),
-        SignalQuality.LOW: frozenset(),
-        SignalQuality.DEGRADED: frozenset({"signal_quality_reason"}),
-    }
-)

@@ -28,12 +28,8 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
-from alphamind.analysis._schema_tightening import _tighten_conditional_schema
 from alphamind.analysis._shared import Sector, TokensUsed
-from alphamind.analysis.domain_researchers.models import (
-    REQUIRED_BY_SIGNAL_QUALITY,
-    SectorBrief,
-)
+from alphamind.analysis.domain_researchers.models import SectorBrief
 from alphamind.analysis.domain_researchers.parser import ParseError, parse_brief
 from alphamind.analysis.domain_researchers.validation import (
     ValidationResult,
@@ -643,22 +639,6 @@ def _render_raw_response(payload: dict[str, Any] | None, response_text: str) -> 
     return "\n\n".join(parts)
 
 
-def _build_sector_brief_schema() -> dict[str, Any]:
-    """Generate SectorBrief's JSON schema with the conditional-field tightener.
-
-    A single schema serves all three sectors — the harness sets ``sector``
-    on the payload pre-validate so the API only checks the closed-set enum.
-    The tightener wraps the brief in a per-signal_quality ``oneOf`` so a
-    DEGRADED branch with ``signal_quality_reason: null`` is rejected
-    pre-parse.
-    """
-    schema = SectorBrief.model_json_schema()
-    _tighten_conditional_schema(
-        schema, SectorBrief, "signal_quality", REQUIRED_BY_SIGNAL_QUALITY
-    )
-    return schema
-
-
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -717,21 +697,31 @@ async def invoke_domain_researcher(
     prompt_text = await _load_prompt(agent_config.prompt)
 
     # ``setting_sources=[]`` keeps the SDK from loading developer
-    # ``.claude/settings.json`` (hooks/permissions) — this agent must run
-    # system_prompt + user_message only.  ``CLAUDE_CODE_MAX_OUTPUT_TOKENS``
-    # is the only path the CLI exposes for an output-token cap (no
-    # ``max_tokens`` field on ``ClaudeAgentOptions``, no ``--max-tokens``
-    # CLI flag). ``output_format`` flips the agent into JSON-Schema mode so
-    # the API enforces the ``SectorBrief`` shape post-generation; the dict
-    # surfaces on ``ResultMessage.structured_output``.
+    # ``.claude/settings.json`` (hooks/permissions); ``tools=[]`` disables
+    # all built-in CLI tools (Bash/Read/Edit/etc.); ``strict-mcp-config``
+    # tells the CLI to ignore plugin-level MCP servers (e.g. Linear, GitHub
+    # registered via user-scope plugins) and only use ``--mcp-config``.
+    # Together these guarantee the agent runs system_prompt + user_message
+    # only.  ``CLAUDE_CODE_MAX_OUTPUT_TOKENS`` is the only path the CLI
+    # exposes for an output-token cap (no ``max_tokens`` field on
+    # ``ClaudeAgentOptions``, no ``--max-tokens`` CLI flag).
+    # ``output_format`` flips the agent into JSON-Schema mode so the API
+    # enforces the ``SectorBrief`` shape post-generation; the dict surfaces
+    # on ``ResultMessage.structured_output``. The schema is the raw
+    # Pydantic-generated form — the conditional-field tightener cannot apply
+    # at the root model (Anthropic API rejects top-level ``oneOf``); the
+    # ``signal_quality_reason ↔ signal_quality`` invariant is enforced
+    # post-parse by the model_validator + the harness's retry path.
     options = ClaudeAgentOptions(
         system_prompt=prompt_text,
         model=agent_config.model,
+        tools=[],
         allowed_tools=[],
         max_turns=1,
         setting_sources=[],
+        extra_args={"strict-mcp-config": None},
         env={"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(agent_config.output_token_budget)},
-        output_format={"type": "json_schema", "schema": _build_sector_brief_schema()},
+        output_format={"type": "json_schema", "schema": SectorBrief.model_json_schema()},
     )
 
     diag = _DiagState(
