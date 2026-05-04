@@ -34,6 +34,7 @@ from alphamind.config.models.agents import AllowedModel, BaseAgentConfig
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
+
 def _minimal_brief_payload(invocation_id: str = "inv-test-001") -> dict[str, Any]:
     return {
         "invocation_id": invocation_id,
@@ -755,7 +756,7 @@ async def test_harness_claude_agent_options_structure(
     options = captured_options[0]
 
     assert options.allowed_tools == []
-    assert options.max_turns == 1
+    assert options.max_turns == 2
     assert isinstance(options.system_prompt, str)
     assert options.system_prompt  # non-empty
     # ``setting_sources=[]`` blocks .claude/settings.json from loading hooks/permissions.

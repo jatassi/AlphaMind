@@ -388,9 +388,12 @@ async def _collect_response(
     cache_read_tokens = 0
     cache_write_tokens = 0
 
-    # ``max_turns=1`` (set on options) is load-bearing for this loop:
-    # we overwrite per-message usage rather than summing across turns,
-    # which is correct only when there's exactly one assistant turn.
+    # ``ResultMessage.usage`` carries the cumulative usage across the
+    # invocation, so overwriting per-message values from successive
+    # AssistantMessages is fine — the final ResultMessage seen here always
+    # supplies the aggregate. JSON-Schema output mode produces two assistant
+    # turns (ToolUse(StructuredOutput), then a closing end_turn), and the
+    # totals still come out correct.
     query_iter = sdk_query_fn(prompt=prompt, options=options)
     async_iter = aiter(query_iter)
     pending_stall = init_stall_timeout_seconds
@@ -717,7 +720,12 @@ async def invoke_domain_researcher(
         model=agent_config.model,
         tools=[],
         allowed_tools=[],
-        max_turns=1,
+        # JSON-Schema output mode emits a synthetic ``StructuredOutput`` tool
+        # call as turn 1; the SDK injects a ``ToolResultBlock`` and the model
+        # needs turn 2 to emit the closing ``end_turn``. ``max_turns=1``
+        # starves the close-out and the SDK reports ``is_error=True`` even
+        # when the structured payload was produced successfully.
+        max_turns=2,
         setting_sources=[],
         extra_args={"strict-mcp-config": None},
         env={"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(agent_config.output_token_budget)},
