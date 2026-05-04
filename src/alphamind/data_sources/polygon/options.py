@@ -12,6 +12,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
 from alphamind.data_sources._common import (
     RetryShape,
     active_universe_tickers,
@@ -21,6 +23,29 @@ from alphamind.data_sources._common import (
 )
 from alphamind.data_sources.polygon.client import PolygonClient
 from alphamind.persistence.models import OptionsContracts, OptionsContractSnapshots
+
+# ALP-289: bulk INSERT...ON CONFLICT DO UPDATE replaced per-row sess.merge.
+# Chunk size keeps each statement well below SQLite's 32_766 host-parameter
+# limit (16 cols x 500 rows = 8000 params).
+_UPSERT_CHUNK_SIZE = 500
+
+_SNAPSHOT_UPDATE_COLS: tuple[str, ...] = (
+    "underlying_ticker",
+    "open_interest",
+    "volume_today",
+    "last_price",
+    "bid",
+    "ask",
+    "implied_volatility",
+    "delta",
+    "gamma",
+    "theta",
+    "vega",
+    "rho",
+    "underlying_price",
+    "source",
+    "ingested_at",
+)
 
 
 def collect_options_chains(
@@ -91,10 +116,10 @@ def _build_rows(
     underlying: str,
     snapshot_ts: str,
     ingested_at: str,
-) -> tuple[list[OptionsContracts], list[OptionsContractSnapshots]]:
-    """Convert a Polygon snapshot list to ORM rows for both options tables."""
-    contract_rows: list[OptionsContracts] = []
-    snapshot_rows: list[OptionsContractSnapshots] = []
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Convert a Polygon snapshot list to row-dicts for both options tables."""
+    contract_rows: list[dict[str, Any]] = []
+    snapshot_rows: list[dict[str, Any]] = []
     for snap in snapshots:
         details = snap.details
         greeks = snap.greeks
@@ -104,67 +129,88 @@ def _build_rows(
         ua = snap.underlying_asset
 
         contract_rows.append(
-            OptionsContracts(
-                contract_ticker=details.ticker,
-                underlying_ticker=underlying,
-                expiration_date=details.expiration_date,
-                strike_price=float(details.strike_price),
-                contract_type=details.contract_type,
-                first_seen_at=snapshot_ts,
-                last_seen_at=snapshot_ts,
-                source="polygon",
-            )
+            {
+                "contract_ticker": details.ticker,
+                "underlying_ticker": underlying,
+                "expiration_date": details.expiration_date,
+                "strike_price": float(details.strike_price),
+                "contract_type": details.contract_type,
+                "first_seen_at": snapshot_ts,
+                "last_seen_at": snapshot_ts,
+                "source": "polygon",
+            }
         )
+        rho_val = getattr(snap, "rho", None)
         snapshot_rows.append(
-            OptionsContractSnapshots(
-                snapshot_ts=snapshot_ts,
-                contract_ticker=details.ticker,
-                underlying_ticker=underlying,
-                open_interest=int(snap.open_interest) if snap.open_interest is not None else None,
-                volume_today=int(day.volume) if day and day.volume is not None else None,
-                last_price=float(lt.price) if lt and lt.price is not None else None,
-                bid=float(lq.bid) if lq and lq.bid is not None else None,
-                ask=float(lq.ask) if lq and lq.ask is not None else None,
-                implied_volatility=float(snap.implied_volatility)
+            {
+                "snapshot_ts": snapshot_ts,
+                "contract_ticker": details.ticker,
+                "underlying_ticker": underlying,
+                "open_interest": (
+                    int(snap.open_interest) if snap.open_interest is not None else None
+                ),
+                "volume_today": int(day.volume) if day and day.volume is not None else None,
+                "last_price": float(lt.price) if lt and lt.price is not None else None,
+                "bid": float(lq.bid) if lq and lq.bid is not None else None,
+                "ask": float(lq.ask) if lq and lq.ask is not None else None,
+                "implied_volatility": float(snap.implied_volatility)
                 if snap.implied_volatility is not None
                 else None,
-                delta=float(greeks.delta) if greeks and greeks.delta is not None else None,
-                gamma=float(greeks.gamma) if greeks and greeks.gamma is not None else None,
-                theta=float(greeks.theta) if greeks and greeks.theta is not None else None,
-                vega=float(greeks.vega) if greeks and greeks.vega is not None else None,
-                rho=float(rho_val) if (rho_val := getattr(snap, "rho", None)) is not None else None,
-                underlying_price=float(ua.price) if ua and ua.price is not None else None,
-                source="polygon",
-                ingested_at=ingested_at,
-            )
+                "delta": float(greeks.delta) if greeks and greeks.delta is not None else None,
+                "gamma": float(greeks.gamma) if greeks and greeks.gamma is not None else None,
+                "theta": float(greeks.theta) if greeks and greeks.theta is not None else None,
+                "vega": float(greeks.vega) if greeks and greeks.vega is not None else None,
+                "rho": float(rho_val) if rho_val is not None else None,
+                "underlying_price": float(ua.price) if ua and ua.price is not None else None,
+                "source": "polygon",
+                "ingested_at": ingested_at,
+            }
         )
     return contract_rows, snapshot_rows
 
 
-def _upsert_contracts(session_factory: Any, rows: list[OptionsContracts], snapshot_ts: str) -> None:
+def _upsert_contracts(session_factory: Any, rows: list[dict[str, Any]], snapshot_ts: str) -> None:
+    """Bulk-upsert per contract.
+
+    INSERT new contracts (keeping ``first_seen_at`` from the inbound row);
+    on conflict refresh ``last_seen_at`` only so the audit trail of when a
+    contract was first observed is preserved.
     """
-    For each contract: INSERT if new (preserving ``first_seen_at``),
-    UPDATE ``last_seen_at`` if already present.
-    """
+    del snapshot_ts  # not needed: last_seen_at is already set in each row
     if not rows:
         return
     with session_factory() as sess:
-        for row in rows:
-            existing = sess.get(OptionsContracts, row.contract_ticker)
-            if existing is None:
-                sess.add(row)
-            else:
-                existing.last_seen_at = snapshot_ts
+        for i in range(0, len(rows), _UPSERT_CHUNK_SIZE):
+            chunk = rows[i : i + _UPSERT_CHUNK_SIZE]
+            stmt = sqlite_insert(OptionsContracts).values(chunk)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[OptionsContracts.contract_ticker],
+                set_={"last_seen_at": stmt.excluded.last_seen_at},
+            )
+            sess.execute(stmt)
         sess.commit()
 
 
-def _upsert_snapshots(session_factory: Any, rows: list[OptionsContractSnapshots]) -> None:
-    """UPSERT snapshot rows keyed on (snapshot_ts, contract_ticker)."""
+def _upsert_snapshots(session_factory: Any, rows: list[dict[str, Any]]) -> None:
+    """Bulk-upsert snapshot rows keyed on ``(snapshot_ts, contract_ticker)``.
+
+    Re-running with the same primary key replaces the row's payload so
+    duplicate or re-fired runs at a given snapshot timestamp are idempotent.
+    """
     if not rows:
         return
     with session_factory() as sess:
-        for row in rows:
-            sess.merge(row)
+        for i in range(0, len(rows), _UPSERT_CHUNK_SIZE):
+            chunk = rows[i : i + _UPSERT_CHUNK_SIZE]
+            stmt = sqlite_insert(OptionsContractSnapshots).values(chunk)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[
+                    OptionsContractSnapshots.snapshot_ts,
+                    OptionsContractSnapshots.contract_ticker,
+                ],
+                set_={col: getattr(stmt.excluded, col) for col in _SNAPSHOT_UPDATE_COLS},
+            )
+            sess.execute(stmt)
         sess.commit()
 
 

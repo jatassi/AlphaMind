@@ -7,7 +7,7 @@ timezone: US/Eastern
 collectors:
   polygon.equity:            { cron: "*/15 9-16 * * mon-fri" }
   polygon.equity_offhrs:     { cron: "0 17-23,0-8 * * mon-fri" }
-  polygon.options:           { cron: "0,30 9-16 * * mon-fri" }
+  polygon.options:           { cron: "8,38 9-16 * * mon-fri" }   # ALP-289: staggered out of polygon.equity (`*/15`) start windows
   polygon.corporate_actions: { cron: "0 6 * * mon-fri" }
   polygon.reference:         { cron: "0 6 * * sat" }
   fred.macro:                { cron: "0 */4 * * *" }

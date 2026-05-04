@@ -167,3 +167,95 @@ def test_catchup_run_all_calls_every_collector_with_since_none() -> None:
 
     for mock in mock_fns.values():
         mock.assert_called_once_with(since=None)
+
+
+# ---------------------------------------------------------------------------
+# Slice 7 — register_jobs sets coalesce + misfire_grace_time on every job
+# ---------------------------------------------------------------------------
+
+
+def test_every_job_has_coalesce_and_misfire_grace_time() -> None:
+    """ALP-289: backlog-of-missed-fires hygiene applies to every collector."""
+    from alphamind.collector.scheduler import build_scheduler, register_jobs
+
+    sched = build_scheduler()
+    register_jobs(sched)
+
+    for job in sched.get_jobs():
+        assert job.coalesce is True, f"Job {job.id!r}: expected coalesce=True"
+        assert job.misfire_grace_time == 60, (
+            f"Job {job.id!r}: expected misfire_grace_time=60, got {job.misfire_grace_time}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Slice 8 — mark_orphan_runs flips stale 'running' rows to 'failed'
+# ---------------------------------------------------------------------------
+
+
+def test_mark_orphan_runs_marks_running_rows_as_failed() -> None:
+    """ALP-289: a hard-killed scheduler leaves zombie 'running' rows; the
+    next startup must reconcile them so observability stays honest."""
+    from alphamind.collector.scheduler import mark_orphan_runs
+    from alphamind.persistence.models import Base, CollectionRuns
+    from alphamind.persistence.session import make_engine, make_session_factory
+
+    engine = make_engine(":memory:")
+    Base.metadata.create_all(engine)
+    sf = make_session_factory(engine)
+
+    with sf() as sess:
+        sess.add(
+            CollectionRuns(
+                run_id="orphan",
+                collector="polygon.options",
+                started_at="2026-01-01T00:00:00+00:00",
+                status="running",
+            )
+        )
+        sess.add(
+            CollectionRuns(
+                run_id="ok",
+                collector="polygon.equity",
+                started_at="2026-01-01T00:00:00+00:00",
+                completed_at="2026-01-01T00:05:00+00:00",
+                status="success",
+            )
+        )
+        sess.add(
+            CollectionRuns(
+                run_id="prior_fail",
+                collector="finnhub.news",
+                started_at="2026-01-01T00:00:00+00:00",
+                completed_at="2026-01-01T00:00:30+00:00",
+                status="failed",
+            )
+        )
+        sess.commit()
+
+    count = mark_orphan_runs(session_factory=sf)
+    assert count == 1
+
+    with sf() as sess:
+        rows = {r.run_id: r for r in sess.query(CollectionRuns).all()}
+
+    orphan = rows["orphan"]
+    assert orphan.status == "failed"
+    assert orphan.error_summary == "orphaned by scheduler restart"
+    assert orphan.completed_at is not None
+    # Pre-existing terminal rows are untouched.
+    assert rows["ok"].status == "success"
+    assert rows["prior_fail"].status == "failed"
+    assert rows["prior_fail"].error_summary is None
+
+
+def test_mark_orphan_runs_returns_zero_when_no_orphans() -> None:
+    from alphamind.collector.scheduler import mark_orphan_runs
+    from alphamind.persistence.models import Base
+    from alphamind.persistence.session import make_engine, make_session_factory
+
+    engine = make_engine(":memory:")
+    Base.metadata.create_all(engine)
+    sf = make_session_factory(engine)
+
+    assert mark_orphan_runs(session_factory=sf) == 0

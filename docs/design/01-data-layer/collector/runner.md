@@ -44,7 +44,7 @@ Vendor-serialization handles "no two collectors fight at once"; the library's pe
 | Collector | Cron | Notes |
 |---|---|---|
 | `polygon.equity` | `*/15 9-16 * * mon-fri`, `0 17-23,0-8 * * mon-fri` | 15 min market hours, 1 h off-hours |
-| `polygon.options` | `0,30 9-16 * * mon-fri` | 30 min market hours |
+| `polygon.options` | `8,38 9-16 * * mon-fri` | 30 min market hours; staggered out of `polygon.equity` (`*/15`) start windows so the two collectors don't compete for the polygon rate-limit budget at the same instant (ALP-289) |
 | `polygon.corporate_actions` | `0 6 * * mon-fri` | Daily |
 | `polygon.reference` | `0 6 * * sat` | Weekly |
 | `fred.macro` | `0 */4 * * *` | 4 h |

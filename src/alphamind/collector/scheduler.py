@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
+from datetime import UTC, datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from alphamind.data_sources._common import default_session_factory
 from alphamind.data_sources.bls.macro import collect_series as bls_macro_collect_series
 from alphamind.data_sources.eia.energy import collect_series as eia_energy_collect_series
 from alphamind.data_sources.finnhub.calendar import (
@@ -217,12 +219,43 @@ def register_jobs(scheduler: BlockingScheduler) -> None:
             id=collector_id,
             executor=vendor,
             max_instances=1,
+            # ``coalesce`` collapses any backlog of missed fires (e.g. after a
+            # service restart) into a single run. ``misfire_grace_time`` drops
+            # fires that are >60s late so a stalled previous run does not
+            # trigger a catch-up storm once it finally completes. (ALP-289.)
+            coalesce=True,
+            misfire_grace_time=60,
         )
+
+
+def mark_orphan_runs(session_factory: Any = None) -> int:
+    """Mark any pre-existing ``status='running'`` rows as ``failed``.
+
+    Called at scheduler startup so a hard-killed run (whose ``track_run``
+    handler could not write the failure status before the process died) does
+    not leave stale ``running`` rows in ``collection_runs``. Returns the count
+    of rows updated. (ALP-289.)
+    """
+    from alphamind.persistence.models import CollectionRuns
+
+    factory = session_factory or default_session_factory()
+    now_iso = datetime.now(UTC).isoformat()
+    with factory() as sess:
+        rows = sess.query(CollectionRuns).filter(CollectionRuns.status == "running").all()
+        for row in rows:
+            row.status = "failed"
+            row.error_summary = "orphaned by scheduler restart"
+            row.completed_at = now_iso
+        sess.commit()
+        return len(rows)
 
 
 def start_blocking() -> None:
     """Build scheduler, register all jobs, and start (blocks until interrupted)."""
     _configure_logging()
+    n_orphans = mark_orphan_runs()
+    if n_orphans:
+        log.info("scheduler startup: marked %d orphan run(s) as failed", n_orphans)
     sched = build_scheduler()
     register_jobs(sched)
     log.info("collector scheduler starting")
