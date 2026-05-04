@@ -28,8 +28,12 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
+from alphamind.analysis._schema_tightening import _tighten_conditional_schema
 from alphamind.analysis._shared import Sector, TokensUsed
-from alphamind.analysis.domain_researchers.models import SectorBrief
+from alphamind.analysis.domain_researchers.models import (
+    REQUIRED_BY_SIGNAL_QUALITY,
+    SectorBrief,
+)
 from alphamind.analysis.domain_researchers.parser import ParseError, parse_brief
 from alphamind.analysis.domain_researchers.validation import (
     ValidationResult,
@@ -294,6 +298,15 @@ def _convert_invoke_error(
     raise exc  # pragma: no cover  # caller should not pass other exception types
 
 
+def _absorb_assistant_message(message: Any, text_parts: list[str]) -> None:
+    """Append every TextBlock in *message*'s content to *text_parts* in place."""
+    from claude_agent_sdk import TextBlock
+
+    for block in message.content:
+        if isinstance(block, TextBlock):
+            text_parts.append(block.text)
+
+
 def _absorb_result_metadata(
     message: Any,
     *,
@@ -348,13 +361,17 @@ async def _collect_response(
     prompt: str,
     options: Any,
     init_stall_timeout_seconds: float | None = None,
-) -> tuple[str, str | None, TokensUsed]:
+) -> tuple[dict[str, Any] | None, str, str | None, TokensUsed]:
     """Drive the SDK generator to completion.
 
-    Returns ``(response_text, stop_reason, tokens_used)``.  ``stop_reason``
-    is ``None`` when the SDK did not surface it (treated as ``end_turn`` by
-    the harness per the spec: "missing metadata → malformed_output, not
-    context_overflow").
+    Returns ``(structured_output, response_text, stop_reason, tokens_used)``.
+
+    ``structured_output`` is the dict the API delivers on ``ResultMessage``
+    when ``output_format`` is set; ``None`` when the SDK did not populate it
+    (the harness's parse path treats ``None`` as a parse failure). The
+    concatenated ``response_text`` is preserved alongside for diagnostic-
+    record forensics — JSON-mode runs typically have empty text but Sonnet
+    occasionally narrates between turns.
 
     When ``init_stall_timeout_seconds`` is set, the wait for the *first*
     SDK message is bounded by that timeout. A healthy call emits a
@@ -365,9 +382,10 @@ async def _collect_response(
     no longer applies — extended thinking can take minutes between
     messages and is not a stall.
     """
-    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+    from claude_agent_sdk import AssistantMessage, ResultMessage
 
     text_parts: list[str] = []
+    structured_output: dict[str, Any] | None = None
     stop_reason: str | None = None
     input_tokens = 0
     output_tokens = 0
@@ -387,9 +405,7 @@ async def _collect_response(
                 break
             pending_stall = None  # only the first message is watchdogged
             if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        text_parts.append(block.text)
+                _absorb_assistant_message(message, text_parts)
                 if message.stop_reason:
                     stop_reason = message.stop_reason
                 if message.usage:
@@ -413,6 +429,9 @@ async def _collect_response(
                     cache_read_tokens=cache_read_tokens,
                     cache_write_tokens=cache_write_tokens,
                 )
+                raw_so = getattr(message, "structured_output", None)
+                if isinstance(raw_so, dict):
+                    structured_output = raw_so
                 if message.is_error:
                     raise _CLIResultError(
                         error_text=message.result or "(no result text)",
@@ -432,7 +451,7 @@ async def _collect_response(
         cache_read_tokens=cache_read_tokens,
         cache_write_tokens=cache_write_tokens,
     )
-    return response_text, stop_reason, tokens
+    return structured_output, response_text, stop_reason, tokens
 
 
 # ---------------------------------------------------------------------------
@@ -440,12 +459,12 @@ async def _collect_response(
 # ---------------------------------------------------------------------------
 
 _SECTION_DIRECTIVE = (
-    "Output the corrected sector brief and nothing else. "
-    "No preamble, no acknowledgment, no apology, no closing prose. "
-    "The first non-blank line of your response must begin with "
-    "the envelope marker `SECTOR BRIEF:`. "
-    "Use exactly the section headers "
-    "=== KEY FINDINGS ===, === FLAGGED ANOMALIES ===, === THESIS CANDIDATES ==="
+    "Re-emit the sector brief as a JSON payload conforming to the "
+    "SectorBrief schema attached to this invocation. The shape is "
+    "API-enforced; fix the specific field named above and resubmit. When "
+    "`signal_quality` is `degraded`, `signal_quality_reason` must be a "
+    "non-empty string; otherwise it must be `null`. Reference IDs must use "
+    "the sector's prefix (`SA-TECH`, `SA-FIN`, or `SA-ENERGY`)."
 )
 
 _CONTRACT_REF = (
@@ -548,21 +567,28 @@ class _DiagState:
 
 
 def _parse_and_validate(
-    response: str,
+    payload: dict[str, Any] | None,
+    response_text: str,
     sector: Sector,
+    invocation_id: str,
     stop_reason: str | None,
     attempt: int,
     diag: _DiagState,
 ) -> tuple[SectorBrief | None, str | None]:
-    """Parse *response* and validate the result.
+    """Parse the structured *payload* and validate the result.
 
     Returns ``(brief, retry_message)``.  When the brief is ``None``, a
     corrective-retry message is returned.  Raises
     :class:`ContextOverflowFailure` immediately when the failure is paired
     with ``stop_reason == 'max_tokens'``.
+
+    *response_text* is the concatenated text-block content from the same
+    SDK call, carried forward only for the ContextOverflowFailure raw_response
+    field — JSON-mode runs may have empty text but the diagnostic must still
+    carry whatever the model said.
     """
     try:
-        brief = parse_brief(response, sector)
+        brief = parse_brief(payload, sector, invocation_id=invocation_id)
     except ParseError as exc:
         diag.errors.append(
             {
@@ -577,7 +603,7 @@ def _parse_and_validate(
                 "Parse failure with stop_reason=max_tokens — context overflow, no retry",
                 agent_name=diag.agent_name,
                 invocation_id=diag.invocation_id,
-                raw_response=response,
+                raw_response=_render_raw_response(payload, response_text),
             ) from exc
         return None, _build_retry_message_for_parse_error(exc)
 
@@ -598,11 +624,39 @@ def _parse_and_validate(
                 "Validation failure with stop_reason=max_tokens — context overflow, no retry",
                 agent_name=diag.agent_name,
                 invocation_id=diag.invocation_id,
-                raw_response=response,
+                raw_response=_render_raw_response(payload, response_text),
             )
         return None, _build_retry_message_for_validation_failure(validation)
 
     return brief, None
+
+
+def _render_raw_response(payload: dict[str, Any] | None, response_text: str) -> str:
+    """Format the SDK response for HarnessSuccess.raw_response and the diagnostic."""
+    parts: list[str] = []
+    if response_text:
+        parts.append(response_text)
+    if payload is not None:
+        parts.append(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        parts.append("(structured_output not populated)")
+    return "\n\n".join(parts)
+
+
+def _build_sector_brief_schema() -> dict[str, Any]:
+    """Generate SectorBrief's JSON schema with the conditional-field tightener.
+
+    A single schema serves all three sectors — the harness sets ``sector``
+    on the payload pre-validate so the API only checks the closed-set enum.
+    The tightener wraps the brief in a per-signal_quality ``oneOf`` so a
+    DEGRADED branch with ``signal_quality_reason: null`` is rejected
+    pre-parse.
+    """
+    schema = SectorBrief.model_json_schema()
+    _tighten_conditional_schema(
+        schema, SectorBrief, "signal_quality", REQUIRED_BY_SIGNAL_QUALITY
+    )
+    return schema
 
 
 # ---------------------------------------------------------------------------
@@ -667,7 +721,9 @@ async def invoke_domain_researcher(
     # system_prompt + user_message only.  ``CLAUDE_CODE_MAX_OUTPUT_TOKENS``
     # is the only path the CLI exposes for an output-token cap (no
     # ``max_tokens`` field on ``ClaudeAgentOptions``, no ``--max-tokens``
-    # CLI flag).
+    # CLI flag). ``output_format`` flips the agent into JSON-Schema mode so
+    # the API enforces the ``SectorBrief`` shape post-generation; the dict
+    # surfaces on ``ResultMessage.structured_output``.
     options = ClaudeAgentOptions(
         system_prompt=prompt_text,
         model=agent_config.model,
@@ -675,6 +731,7 @@ async def invoke_domain_researcher(
         max_turns=1,
         setting_sources=[],
         env={"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(agent_config.output_token_budget)},
+        output_format={"type": "json_schema", "schema": _build_sector_brief_schema()},
     )
 
     diag = _DiagState(
@@ -687,7 +744,9 @@ async def invoke_domain_researcher(
     )
     wall_start = time.monotonic()
 
-    async def _invoke(prompt: str) -> tuple[str, str | None, TokensUsed]:
+    async def _invoke(
+        prompt: str,
+    ) -> tuple[dict[str, Any] | None, str, str | None, TokensUsed]:
         """Run one SDK call with stall-retry and the configured timeout.
 
         Retries once if the SDK call stalls before producing any message —
@@ -744,13 +803,14 @@ async def invoke_domain_researcher(
     # ------------------------------------------------------------------
     # Attempt 1: initial call
     # ------------------------------------------------------------------
-    response1, stop_reason1, tokens1 = await _invoke(user_message)
-    diag.response_initial = response1
+    payload1, text1, stop_reason1, tokens1 = await _invoke(user_message)
+    raw_response_initial = _render_raw_response(payload1, text1)
+    diag.response_initial = raw_response_initial
     diag.tokens_used = tokens1
 
     try:
         brief, retry_message = _parse_and_validate(
-            response1, sector, stop_reason1, attempt=1, diag=diag
+            payload1, text1, sector, invocation_id, stop_reason1, attempt=1, diag=diag
         )
     except ContextOverflowFailure:
         diag.write(
@@ -765,7 +825,7 @@ async def invoke_domain_researcher(
         diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason1)
         return HarnessSuccess(
             brief=brief,
-            raw_response=response1,
+            raw_response=raw_response_initial,
             retry_count=0,
             tokens_used=tokens1,
             wall_clock_seconds=wall_elapsed,
@@ -777,8 +837,9 @@ async def invoke_domain_researcher(
     assert retry_message is not None
     diag.retry_count = 1
 
-    response2, stop_reason2, tokens2 = await _invoke(retry_message)
-    diag.response_retry = response2
+    payload2, text2, stop_reason2, tokens2 = await _invoke(retry_message)
+    raw_response_retry = _render_raw_response(payload2, text2)
+    diag.response_retry = raw_response_retry
     diag.tokens_used = TokensUsed(
         input_tokens=tokens1.input_tokens + tokens2.input_tokens,
         output_tokens=tokens1.output_tokens + tokens2.output_tokens,
@@ -786,7 +847,9 @@ async def invoke_domain_researcher(
         cache_write_tokens=tokens1.cache_write_tokens + tokens2.cache_write_tokens,
     )
 
-    brief2, _ = _parse_and_validate(response2, sector, stop_reason2, attempt=2, diag=diag)
+    brief2, _ = _parse_and_validate(
+        payload2, text2, sector, invocation_id, stop_reason2, attempt=2, diag=diag
+    )
 
     wall_elapsed = time.monotonic() - wall_start
 
@@ -797,14 +860,14 @@ async def invoke_domain_researcher(
             f"First retry error: {diag.errors[-1].get('message', '')}",
             agent_name=agent_name,
             invocation_id=invocation_id,
-            raw_response_initial=response1,
-            raw_response_retry=response2,
+            raw_response_initial=raw_response_initial,
+            raw_response_retry=raw_response_retry,
         )
 
     diag.write(success=True, wall_clock_seconds=wall_elapsed, stop_reason=stop_reason2)
     return HarnessSuccess(
         brief=brief2,
-        raw_response=response2,
+        raw_response=raw_response_retry,
         retry_count=1,
         tokens_used=diag.tokens_used,
         wall_clock_seconds=wall_elapsed,

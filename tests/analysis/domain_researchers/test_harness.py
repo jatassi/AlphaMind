@@ -34,22 +34,28 @@ from alphamind.config.models.agents import AllowedModel, BaseAgentConfig
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
-_MINIMAL_BRIEF_TEXT = """\
-SECTOR BRIEF: Tech & Semis
-Invocation: inv-test-001
-Signal quality: HIGH
+def _minimal_brief_payload(invocation_id: str = "inv-test-001") -> dict[str, Any]:
+    return {
+        "invocation_id": invocation_id,
+        "sector": "tech_semis",
+        "signal_quality": "high",
+        "signal_quality_reason": None,
+        "findings": [
+            {
+                "finding_id": "SA-TECH-1",
+                "headline": "NVDA breakout",
+                "tickers": ["NVDA"],
+                "signal_type": "price_action",
+                "strength": "strong",
+                "detail": "NVDA broke resistance.",
+            }
+        ],
+        "anomalies": [],
+        "thesis_candidates": [],
+    }
 
-=== KEY FINDINGS ===
-[SA-TECH-1] NVDA breakout
-  Tickers: NVDA
-  Signal type: price_action
-  Strength: strong
-  Detail: NVDA broke resistance.
 
-=== FLAGGED ANOMALIES ===
-
-=== THESIS CANDIDATES ===
-"""
+_MINIMAL_BRIEF_PAYLOAD = _minimal_brief_payload()
 
 
 @pytest.fixture()
@@ -71,16 +77,25 @@ def archive_root(tmp_path: Path) -> Path:
 
 
 def _make_sdk_response(
-    text: str,
+    structured_output: dict[str, Any] | None = None,
+    *,
+    text: str = "",
     stop_reason: str | None = "end_turn",
     input_tokens: int = 100,
     output_tokens: int = 200,
 ) -> list[Any]:
-    """Build a minimal sequence of SDK messages a stub async-generator yields."""
+    """Build a minimal sequence of SDK messages a stub async-generator yields.
+
+    *structured_output* is delivered on the terminating :class:`ResultMessage`
+    (the post-migration JSON-mode payload path); ``None`` simulates the SDK
+    failing to populate it. *text* is concatenated for the diagnostic record
+    only — usually empty in JSON mode but Sonnet sometimes narrates between
+    turns.
+    """
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     assistant = AssistantMessage(
-        content=[TextBlock(text=text)],
+        content=[TextBlock(text=text)] if text else [],
         model="claude-sonnet-4-6",
         stop_reason=stop_reason,
         usage={
@@ -104,6 +119,7 @@ def _make_sdk_response(
             "cache_read_input_tokens": 0,
             "cache_creation_input_tokens": 0,
         },
+        structured_output=structured_output,
     )
     return [assistant, result]
 
@@ -139,7 +155,7 @@ async def test_happy_path_returns_harness_success(
     agent_config: BaseAgentConfig, archive_root: Path
 ) -> None:
     """invoke_domain_researcher returns HarnessSuccess on a valid SDK response."""
-    stub = _make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_TEXT)])
+    stub = _make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)])
 
     result = await invoke_domain_researcher(
         agent_config=agent_config,
@@ -154,7 +170,9 @@ async def test_happy_path_returns_harness_success(
     assert isinstance(result.brief, SectorBrief)
     assert result.retry_count == 0
     assert result.wall_clock_seconds >= 0.0
-    assert result.raw_response == _MINIMAL_BRIEF_TEXT
+    # raw_response is the JSON-rendered structured output post-migration.
+    assert "SA-TECH-1" in result.raw_response
+    assert "tech_semis" in result.raw_response
 
 
 # ---------------------------------------------------------------------------
@@ -207,19 +225,18 @@ async def test_parse_failure_triggers_retry_with_correct_message(
     agent_config: BaseAgentConfig, archive_root: Path
 ) -> None:
     """Parse failure produces a corrective retry with the right framing."""
-    bad_response = "This is totally wrong — no structure at all."
-    good_response = _MINIMAL_BRIEF_TEXT
-
     captured_prompts: list[str] = []
 
     async def _stub(**kwargs: Any) -> AsyncIterator[Any]:
         prompt = kwargs.get("prompt", "")
         captured_prompts.append(str(prompt))
         if len(captured_prompts) == 1:
-            async for msg in _async_iter(_make_sdk_response(bad_response)):
+            # ``structured_output=None`` simulates the SDK failing to populate
+            # the field — a parse-stage failure that triggers the retry path.
+            async for msg in _async_iter(_make_sdk_response(None)):
                 yield msg
         else:
-            async for msg in _async_iter(_make_sdk_response(good_response)):
+            async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)):
                 yield msg
 
     result = await invoke_domain_researcher(
@@ -240,10 +257,8 @@ async def test_parse_failure_triggers_retry_with_correct_message(
         "domain researcher output contract" in retry_prompt.lower()
         or "tech-semis.md" in retry_prompt.lower()
     )
-    # Directive with section headers
-    assert "=== KEY FINDINGS ===" in retry_prompt
-    assert "=== FLAGGED ANOMALIES ===" in retry_prompt
-    assert "=== THESIS CANDIDATES ===" in retry_prompt
+    # Directive references the schema mode, not the legacy section markers.
+    assert "SectorBrief schema" in retry_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -256,11 +271,11 @@ async def test_two_parse_failures_raise_malformed_output(
     agent_config: BaseAgentConfig, archive_root: Path
 ) -> None:
     """Two consecutive parse failures raise MalformedOutputFailure."""
-    bad_response = "No structure here at all."
+    bad_payload = {"shape": "wrong"}  # missing required SectorBrief fields
     stub = _make_stub_query(
         [
-            _make_sdk_response(bad_response),
-            _make_sdk_response(bad_response),
+            _make_sdk_response(bad_payload),
+            _make_sdk_response(bad_payload),
         ]
     )
 
@@ -276,10 +291,12 @@ async def test_two_parse_failures_raise_malformed_output(
 
     err = exc_info.value
     assert isinstance(err, HarnessFailure)
-    # Both raw responses should be preserved
-    assert bad_response in str(err) or (
-        err.raw_response_initial is not None and err.raw_response_initial == bad_response
-    )
+    # Both raw responses are JSON-rendered; verify each carries the load-bearing
+    # key from the stubbed payload.
+    assert err.raw_response_initial is not None
+    assert err.raw_response_retry is not None
+    assert "shape" in err.raw_response_initial
+    assert "shape" in err.raw_response_retry
 
 
 # ---------------------------------------------------------------------------
@@ -292,33 +309,24 @@ async def test_validation_failure_then_success_returns_retry_count_1(
     agent_config: BaseAgentConfig, archive_root: Path
 ) -> None:
     """Validation failure followed by a corrected response returns retry_count=1."""
-    # A brief that parses OK but has duplicate index (validation fails)
-    bad_brief = """\
-SECTOR BRIEF: Tech & Semis
-Invocation: inv-test-001
-Signal quality: HIGH
-
-=== KEY FINDINGS ===
-[SA-TECH-1] Finding one
-  Tickers: NVDA
-  Signal type: price_action
-  Strength: strong
-  Detail: Detail one.
-
-[SA-TECH-1] Duplicate index
-  Tickers: AMD
-  Signal type: flow
-  Strength: weak
-  Detail: Detail two.
-
-=== FLAGGED ANOMALIES ===
-
-=== THESIS CANDIDATES ===
-"""
+    # A brief that parses OK but has duplicate finding_id (validation fails on the
+    # findings_sequential_indexing rule via the duplicate-index check).
+    bad_payload = _minimal_brief_payload("inv-test-001")
+    bad_payload["findings"] = [
+        bad_payload["findings"][0],
+        {
+            "finding_id": "SA-TECH-1",  # duplicate of the first
+            "headline": "Duplicate index",
+            "tickers": ["AMD"],
+            "signal_type": "flow",
+            "strength": "weak",
+            "detail": "Detail two.",
+        },
+    ]
     stub = _make_stub_query(
         [
-            _make_sdk_response(bad_brief),
-            _make_sdk_response(_MINIMAL_BRIEF_TEXT),
+            _make_sdk_response(bad_payload),
+            _make_sdk_response(_MINIMAL_BRIEF_PAYLOAD),
         ]
     )
 
@@ -345,8 +353,7 @@ async def test_parse_failure_with_max_tokens_raises_context_overflow(
     agent_config: BaseAgentConfig, archive_root: Path
 ) -> None:
     """Parse failure paired with stop_reason=max_tokens raises ContextOverflowFailure."""
-    bad_response = "Truncated output..."
-    stub = _make_stub_query([_make_sdk_response(bad_response, stop_reason="max_tokens")])
+    stub = _make_stub_query([_make_sdk_response(None, stop_reason="max_tokens")])
 
     with pytest.raises(ContextOverflowFailure):
         await invoke_domain_researcher(
@@ -364,29 +371,19 @@ async def test_validation_failure_with_max_tokens_raises_context_overflow(
     agent_config: BaseAgentConfig, archive_root: Path
 ) -> None:
     """Validation failure with max_tokens raises ContextOverflowFailure immediately."""
-    bad_brief = """\
-SECTOR BRIEF: Tech & Semis
-Invocation: inv-test-001
-Signal quality: HIGH
-
-=== KEY FINDINGS ===
-[SA-TECH-1] Finding one
-  Tickers: NVDA
-  Signal type: price_action
-  Strength: strong
-  Detail: Detail one.
-
-[SA-TECH-1] Duplicate index
-  Tickers: AMD
-  Signal type: flow
-  Strength: weak
-  Detail: Duplicate.
-
-=== FLAGGED ANOMALIES ===
-
-=== THESIS CANDIDATES ===
-"""
-    stub = _make_stub_query([_make_sdk_response(bad_brief, stop_reason="max_tokens")])
+    bad_payload = _minimal_brief_payload("inv-test-001")
+    bad_payload["findings"] = [
+        bad_payload["findings"][0],
+        {
+            "finding_id": "SA-TECH-1",  # duplicate
+            "headline": "Duplicate index",
+            "tickers": ["AMD"],
+            "signal_type": "flow",
+            "strength": "weak",
+            "detail": "Duplicate.",
+        },
+    ]
+    stub = _make_stub_query([_make_sdk_response(bad_payload, stop_reason="max_tokens")])
 
     with pytest.raises(ContextOverflowFailure):
         await invoke_domain_researcher(
@@ -473,7 +470,6 @@ async def test_retry_message_omits_full_error_list_and_raw_input(
     agent_config: BaseAgentConfig, archive_root: Path
 ) -> None:
     """Corrective retry message does not contain the full error list or raw input data."""
-    bad_response = "No structure."
     raw_input = "Analyse tech sector with very specific data payload XYZ123ABC."
 
     captured_prompts: list[str] = []
@@ -481,10 +477,10 @@ async def test_retry_message_omits_full_error_list_and_raw_input(
     async def _stub(**kwargs: Any) -> AsyncIterator[Any]:
         captured_prompts.append(str(kwargs.get("prompt", "")))
         if len(captured_prompts) == 1:
-            async for msg in _async_iter(_make_sdk_response(bad_response)):
+            async for msg in _async_iter(_make_sdk_response(None)):
                 yield msg
         else:
-            async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_TEXT)):
+            async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)):
                 yield msg
 
     await invoke_domain_researcher(
@@ -517,7 +513,7 @@ async def test_diagnostic_files_written_on_success(
     agent_config: BaseAgentConfig, archive_root: Path
 ) -> None:
     """Diagnostic record written under archive_root/invocations/<id>/analysis/<agent>/."""
-    stub = _make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_TEXT)])
+    stub = _make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)])
 
     await invoke_domain_researcher(
         agent_config=agent_config,
@@ -548,8 +544,7 @@ async def test_diagnostic_files_written_on_failure(
     agent_config: BaseAgentConfig, archive_root: Path
 ) -> None:
     """Diagnostic record written even when the invocation fails."""
-    bad = "No structure."
-    stub = _make_stub_query([_make_sdk_response(bad), _make_sdk_response(bad)])
+    stub = _make_stub_query([_make_sdk_response(None), _make_sdk_response(None)])
 
     with pytest.raises(MalformedOutputFailure):
         await invoke_domain_researcher(
@@ -578,7 +573,7 @@ async def test_metadata_json_contains_expected_fields(
     agent_config: BaseAgentConfig, archive_root: Path
 ) -> None:
     """metadata.json contains model, retry_count, tokens_used, wall_clock_seconds, stop_reason."""
-    stub = _make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_TEXT)])
+    stub = _make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)])
 
     await invoke_domain_researcher(
         agent_config=agent_config,
@@ -632,7 +627,7 @@ async def test_system_prompt_cached_per_process(
             user_message="Call 1.",
             invocation_id="inv-cache-001",
             archive_root=archive_root,
-            sdk_query_fn=_make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_TEXT)]),
+            sdk_query_fn=_make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)]),
         )
         await invoke_domain_researcher(
             agent_config=agent_config,
@@ -640,7 +635,7 @@ async def test_system_prompt_cached_per_process(
             user_message="Call 2.",
             invocation_id="inv-cache-002",
             archive_root=archive_root,
-            sdk_query_fn=_make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_TEXT)]),
+            sdk_query_fn=_make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)]),
         )
 
     # Only one read for the prompt file across both calls
@@ -660,7 +655,7 @@ async def test_sdk_is_stubbed_no_real_api_call(
     agent_config: BaseAgentConfig, archive_root: Path
 ) -> None:
     """The harness uses the injected sdk_query_fn; the real query() is never called."""
-    stub = _make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_TEXT)])
+    stub = _make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)])
 
     with patch("claude_agent_sdk.query") as mock_real:
         await invoke_domain_researcher(
@@ -684,8 +679,7 @@ async def test_malformed_output_failure_carries_agent_name(
     agent_config: BaseAgentConfig, archive_root: Path
 ) -> None:
     """MalformedOutputFailure carries the agent name for diagnostics."""
-    bad = "No structure."
-    stub = _make_stub_query([_make_sdk_response(bad), _make_sdk_response(bad)])
+    stub = _make_stub_query([_make_sdk_response(None), _make_sdk_response(None)])
 
     with pytest.raises(MalformedOutputFailure) as exc_info:
         await invoke_domain_researcher(
@@ -712,7 +706,7 @@ async def test_no_archive_root_no_crash(
     agent_config: BaseAgentConfig,
 ) -> None:
     """Passing archive_root=None skips diagnostic writes without crashing."""
-    stub = _make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_TEXT)])
+    stub = _make_stub_query([_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)])
 
     result = await invoke_domain_researcher(
         agent_config=agent_config,
@@ -745,7 +739,7 @@ async def test_harness_claude_agent_options_structure(
 
     async def _capturing_stub(**kwargs: Any) -> AsyncIterator[Any]:
         captured_options.append(kwargs.get("options"))
-        async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_TEXT)):
+        async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_PAYLOAD)):
             yield msg
 
     await invoke_domain_researcher(

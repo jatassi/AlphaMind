@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, model_validator
 from alphamind.analysis._shared import AnomalySeverity, Sector, SignalQuality
 
 __all__ = [
+    "REQUIRED_BY_SIGNAL_QUALITY",
     "SECTOR_PREFIX",
     "Anomaly",
     "AnomalyType",
@@ -38,6 +39,14 @@ __all__ = [
     "Strength",
     "ThesisCandidate",
 ]
+
+
+# Per-signal-quality required-conditional-field map (ALP-288). Mirrors the
+# qualitative-research equivalent — shape consumed by
+# :func:`alphamind.analysis._schema_tightening._tighten_conditional_schema`
+# so the API rejects payloads that emit ``null`` for ``signal_quality_reason``
+# on the DEGRADED branch.
+REQUIRED_BY_SIGNAL_QUALITY: dict[SignalQuality, frozenset[str]] = {}  # populated below
 
 
 # ---------------------------------------------------------------------------
@@ -200,3 +209,13 @@ SECTOR_PREFIX: dict[Sector, str] = {
     Sector.FINANCIALS: "SA-FIN",
     Sector.ENERGY: "SA-ENERGY",
 }
+
+
+REQUIRED_BY_SIGNAL_QUALITY.update(
+    {
+        SignalQuality.HIGH: frozenset(),
+        SignalQuality.MODERATE: frozenset(),
+        SignalQuality.LOW: frozenset(),
+        SignalQuality.DEGRADED: frozenset({"signal_quality_reason"}),
+    }
+)
