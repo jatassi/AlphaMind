@@ -127,11 +127,20 @@ def load_config(
 
 
 class RetryShape(StrEnum):
-    """Retry tier matching api-failure-handling.md § Criticality tiers."""
+    """Retry tier matching api-failure-handling.md § Criticality tiers.
+
+    ``vendor_outage_extended`` is a fourth tier outside the criticality matrix:
+    use it for idempotent GET-style fetches against vendors prone to multi-
+    minute 5xx outages (e.g. FRED) where the standard ``critical`` 1s/2s
+    schedule exhausts before the vendor recovers. Costs ~65 s of in-line wait
+    in the worst case, so reserve it for collectors whose cadence is hours,
+    not seconds.
+    """
 
     critical = "critical"
     important = "important"
     optional = "optional"
+    vendor_outage_extended = "vendor_outage_extended"
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +279,12 @@ def _is_retryable(exc: BaseException) -> bool:
     if isinstance(exc, urllib.error.HTTPError):
         # fredapi may raise urllib.error.HTTPError directly; mirror the httpx rule
         return exc.code == 429 or exc.code >= 500
+    if isinstance(exc, urllib.error.URLError | ConnectionResetError):
+        # Connection-reset / refused / DNS failure surface as URLError (or a
+        # bare ConnectionResetError) without an HTTP status. Treat as
+        # transient — they share the vendor-outage blast radius and retrying
+        # them is the same idempotent GET.
+        return True
     if isinstance(exc, ValueError):
         # fredapi catches urllib.HTTPError internally and re-raises as ValueError
         # carrying the FRED API's text status. Match the standard 5xx/429 names.
@@ -288,18 +303,21 @@ _SHAPE_ATTEMPTS: dict[RetryShape, int] = {
     RetryShape.critical: 3,  # 2 retries → sleeps of 1.0s, 2.0s
     RetryShape.important: 2,  # 1 retry  → sleep  of 1.0s
     RetryShape.optional: 2,  # 1 retry  → sleep  of 0.5s
+    RetryShape.vendor_outage_extended: 4,  # 3 retries → sleeps of 5s, 15s, 45s
 }
 
 _SHAPE_INITIAL_DELAY: dict[RetryShape, float] = {
     RetryShape.critical: 1.0,
     RetryShape.important: 1.0,
     RetryShape.optional: 0.5,
+    RetryShape.vendor_outage_extended: 5.0,
 }
 
 _SHAPE_BACKOFF_MULTIPLIER: dict[RetryShape, float] = {
     RetryShape.critical: 2.0,
     RetryShape.important: 2.0,
     RetryShape.optional: 1.0,  # flat — Optional uses brief, non-growing delay
+    RetryShape.vendor_outage_extended: 3.0,
 }
 
 

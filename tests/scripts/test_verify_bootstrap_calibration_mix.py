@@ -79,7 +79,14 @@ def _seed_baseline(
     )
 
 
-def _seed_pair(session: Session, *, lead: str, lag: str, state: str) -> None:
+def _seed_pair(
+    session: Session,
+    *,
+    lead: str,
+    lag: str,
+    state: str,
+    n_pair_events: int = 5,
+) -> None:
     ts = _AS_OF.strftime("%Y-%m-%dT%H:%M:%SZ")
     session.add(
         DistillationPairLag(
@@ -87,7 +94,7 @@ def _seed_pair(session: Session, *, lead: str, lag: str, state: str) -> None:
             lag_ticker=lag,
             as_of=ts,
             lead_lag_days_estimate=1.0,
-            n_pair_events=5,
+            n_pair_events=n_pair_events,
             last_overdue_flag=0,
             calibration_state=state,
             ingested_at=ts,
@@ -344,3 +351,115 @@ def test_cold_start_skipped_when_a_row_is_calibrated(session: Session) -> None:
     assert report.passed is False
     by_kind = {dist.kind: dist for dist in report.distributions}
     assert by_kind["volume"].cold_start_deferred is False
+
+
+# ---------------------------------------------------------------------------
+# Post-bootstrap exit ramp (ALP-285): mature DB shouldn't fail on upper bound
+# ---------------------------------------------------------------------------
+
+
+def test_fully_calibrated_lead_lag_defers_upper_bound(session: Session) -> None:
+    """All pairs calibrated past warm-up → DEFERRED on the ≤ 50% upper bound.
+
+    Mirrors the production case from the 2026-05-03 e2e run: 4 pair-lag rows,
+    all calibrated with substantial event counts. The qualitative
+    "≤ 50% calibrated immediately post-bootstrap" band has nothing left to
+    catch once the system has matured by design.
+    """
+    for i in range(8):
+        _seed_ticker(session, f"T{i:02d}")
+    session.flush()
+    pair_specs = (("T00", "T01"), ("T02", "T03"), ("T04", "T05"), ("T06", "T07"))
+    for lead, lag in pair_specs:
+        _seed_pair(session, lead=lead, lag=lag, state="calibrated", n_pair_events=38)
+    session.commit()
+
+    report = compute_calibration_mix_report(session=session)
+
+    by_kind = {dist.kind: dist for dist in report.distributions}
+    lead_lag = by_kind["lead_lag"]
+    assert lead_lag.in_band is False
+    assert lead_lag.post_bootstrap_deferred is True
+    assert lead_lag.deferred is True
+    # The lead_lag failure should not appear in the failures list.
+    codes = {f.code for f in report.failures}
+    assert "calibration-distribution-out-of-band" not in codes
+
+
+def test_fully_calibrated_sentiment_defers_upper_bound(session: Session) -> None:
+    """All sentiment rows calibrated → DEFERRED on the ≤ 50% upper bound."""
+    for i in range(10):
+        _seed_ticker(session, f"T{i:02d}")
+    session.flush()
+    for i in range(10):
+        _seed_baseline(
+            session,
+            ticker=f"T{i:02d}",
+            kind="sentiment",
+            state="calibrated",
+            n_obs=200,
+            window_days=180,
+        )
+    session.commit()
+
+    report = compute_calibration_mix_report(session=session)
+
+    by_kind = {dist.kind: dist for dist in report.distributions}
+    sentiment = by_kind["sentiment"]
+    assert sentiment.in_band is False
+    assert sentiment.post_bootstrap_deferred is True
+
+
+def test_partially_calibrated_lead_lag_still_fails_when_above_upper(
+    session: Session,
+) -> None:
+    """Mixed bootstrap + calibrated above 50% → real FAIL (not deferred).
+
+    Defends the regression-detection signal: only "every row calibrated"
+    qualifies for the post-bootstrap exemption. A 75% / 25% split is the
+    band's intended catch case.
+    """
+    for i in range(8):
+        _seed_ticker(session, f"T{i:02d}")
+    session.flush()
+    pair_specs = (
+        ("T00", "T01"),
+        ("T02", "T03"),
+        ("T04", "T05"),
+        ("T06", "T07"),
+    )
+    for i, (lead, lag) in enumerate(pair_specs):
+        state = "calibrated" if i < 3 else "bootstrap"
+        _seed_pair(session, lead=lead, lag=lag, state=state, n_pair_events=20)
+    session.commit()
+
+    report = compute_calibration_mix_report(session=session)
+
+    by_kind = {dist.kind: dist for dist in report.distributions}
+    lead_lag = by_kind["lead_lag"]
+    assert lead_lag.in_band is False
+    assert lead_lag.post_bootstrap_deferred is False
+    codes = {f.code for f in report.failures}
+    assert "calibration-distribution-out-of-band" in codes
+
+
+def test_post_bootstrap_renderer_shows_deferred(session: Session) -> None:
+    """The summary table renders ``DEFERRED`` for the post-bootstrap case."""
+    for i in range(8):
+        _seed_ticker(session, f"T{i:02d}")
+    session.flush()
+    pair_specs = (("T00", "T01"), ("T02", "T03"), ("T04", "T05"), ("T06", "T07"))
+    for lead, lag in pair_specs:
+        _seed_pair(session, lead=lead, lag=lag, state="calibrated", n_pair_events=38)
+    # Need at least one ticker baseline row so the empty-table failure
+    # doesn't fire and clobber the PASS we want to assert.
+    _seed_baseline(
+        session, ticker="T00", kind="volume", state="calibrated", n_obs=200, window_days=20
+    )
+    session.commit()
+
+    report = compute_calibration_mix_report(session=session)
+    rendered = format_calibration_mix_report(report)
+
+    assert "DEFERRED" in rendered
+    assert "RESULT: PASS" in rendered

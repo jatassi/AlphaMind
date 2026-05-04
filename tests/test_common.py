@@ -449,6 +449,96 @@ class TestWithRetriesOptional:
 
 
 # ---------------------------------------------------------------------------
+# AC: with_retries — vendor_outage_extended shape (4 attempts, 5s/15s/45s)
+# ---------------------------------------------------------------------------
+
+
+class TestWithRetriesVendorOutageExtended:
+    """ALP-285: tier added for FRED-style vendors with multi-minute 5xx outages."""
+
+    def test_vendor_outage_extended_has_four_attempts(self) -> None:
+        """4 attempts total (3 retries) per the documented schedule."""
+        call_count = 0
+
+        @with_retries(RetryShape.vendor_outage_extended, _sleep=_no_sleep)
+        def always_fails() -> None:
+            nonlocal call_count
+            call_count += 1
+            raise httpx.TimeoutException("timeout")
+
+        with pytest.raises(httpx.TimeoutException):
+            always_fails()
+
+        assert call_count == 4
+
+    def test_vendor_outage_extended_uses_documented_backoff(self) -> None:
+        """Sleeps follow 5s, 15s, 45s — the schedule documented on RetryShape."""
+        sleeps: list[float] = []
+
+        @with_retries(RetryShape.vendor_outage_extended, _sleep=sleeps.append)
+        def always_fails() -> None:
+            raise httpx.TimeoutException("timeout")
+
+        with pytest.raises(httpx.TimeoutException):
+            always_fails()
+
+        assert sleeps == [5.0, 15.0, 45.0]
+
+    def test_vendor_outage_extended_recovers_after_two_failures(self) -> None:
+        """Succeeds on attempt 3 → returns the value, no further sleeps."""
+        call_count = 0
+        sleeps: list[float] = []
+
+        @with_retries(RetryShape.vendor_outage_extended, _sleep=sleeps.append)
+        def server_error() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise urllib.error.HTTPError(
+                    url="https://api.stlouisfed.org/fred/series",
+                    code=502,
+                    msg="Bad Gateway",
+                    hdrs=None,  # type: ignore[arg-type]
+                    fp=None,
+                )
+            return "ok"
+
+        assert server_error() == "ok"
+        assert call_count == 3
+        assert sleeps == [5.0, 15.0]
+
+    def test_vendor_outage_extended_retries_on_url_error(self) -> None:
+        """Connection-reset / refused surface as URLError without status — retry."""
+        call_count = 0
+
+        @with_retries(RetryShape.vendor_outage_extended, _sleep=_no_sleep)
+        def reset_then_ok() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise urllib.error.URLError("Connection reset by peer")
+            return "ok"
+
+        assert reset_then_ok() == "ok"
+        assert call_count == 2
+
+    def test_vendor_outage_extended_retries_on_connection_reset(self) -> None:
+        """Bare ConnectionResetError (no URLError wrapping) is also retryable."""
+        call_count = 0
+
+        @with_retries(RetryShape.vendor_outage_extended, _sleep=_no_sleep)
+        def reset_then_ok() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ConnectionResetError("peer reset")
+            return "ok"
+
+        assert reset_then_ok() == "ok"
+        assert call_count == 2
+
+
+# ---------------------------------------------------------------------------
 # AC: RateLimiter — blocks when budget exhausted
 # ---------------------------------------------------------------------------
 
