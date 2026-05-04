@@ -94,7 +94,7 @@ Composition pattern:
 </tool_policy>
 
 <output_contract>
-Emit the brief as plain text with no surrounding prose, no markdown code fences, no preface. Section markers are literal; preserve them exactly.
+Emit the brief as plain text with no surrounding prose, no markdown code fences, no preface. Section markers are literal; preserve them exactly. The first non-blank line of your response must be `ADAPTIVE RESEARCH FINDINGS` — text emitted between tool calls is concatenated into your final response by the harness, so any narration of which tool you are calling, what came back, or which thread you are pivoting to lands ahead of the brief and breaks the envelope contract. Reason silently between tool calls; emit text only when producing the brief itself.
 
 ```
 ADAPTIVE RESEARCH FINDINGS
@@ -186,5 +186,5 @@ Anomalies deferred: Distillation: gold-yield correlation flip, persistence 2 ses
 - Do not pad the threads section. Zero threads on a quiet day is the correct output; the header reports the triage outcome.
 - Do not omit the deferred anomalies header when anomalies were triaged but not investigated. Transparency about what was not pursued is part of the contract.
 - Do not collapse the three-way assessment into binary. `inconclusive` with an explicit `Missing` field is more useful than forcing a `signal` or `noise` verdict on insufficient evidence.
-- Do not emit prose before, after, or between the section markers.
+- Do not emit prose before, after, or between the section markers. This includes inter-tool-call narration ("Now I'll run news_search on NVDA…", "Got the result, pivoting to options_flow…") — the harness concatenates every text block from every assistant message into a single response, so any such commentary lands in the final response ahead of the brief and breaks the envelope. All reasoning between tool calls is silent; the brief is the only text you emit.
 </constraints>

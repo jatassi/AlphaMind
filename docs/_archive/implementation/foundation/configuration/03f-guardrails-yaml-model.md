@@ -25,7 +25,7 @@ Land `config/guardrails.yaml` (the rule registry that names every guardrail rule
 ## Scope
 
 In scope:
-- `config/guardrails.yaml` populated with one entry per rule (18 entries) and the `emergency_invocation:` block. Use the **suffixed** rule-ID convention from the per-profile worked example in `configuration-management.md`. Rule IDs:
+- `config/guardrails.yaml` populated with one entry per rule (19 entries) and the `emergency_invocation:` block. Use the **suffixed** rule-ID convention from the per-profile worked example in `configuration-management.md`. Rule IDs:
   - `position_max_size_pct`
   - `position_max_loss_equity_pct`
   - `position_max_loss_options_pct`

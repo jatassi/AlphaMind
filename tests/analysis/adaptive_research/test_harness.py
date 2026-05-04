@@ -431,11 +431,64 @@ async def test_parse_failure_retry_recovers(
 
     assert result.retry_count == 1
     assert isinstance(result.brief, AdaptiveBrief)
-    # Corrective-retry message structure: framing, contract ref, section directive.
+    # Corrective-retry message structure: framing, contract ref, section directive,
+    # content-preservation directive.
     retry_prompt = captured_prompts[1]
     assert "adaptive researcher output" in retry_prompt.lower()
     assert "adaptive-research.md" in retry_prompt
     assert "=== INVESTIGATION THREADS ===" in retry_prompt
+    # Sonnet was observed to abandon prior analytical work on retry under the
+    # bare strict directive; this directive nudges same-context preservation.
+    assert "prior analytical content" in retry_prompt.lower()
+
+
+@pytest.mark.asyncio
+async def test_retry_call_passes_session_id_for_resume(
+    agent_config: AdaptiveAgentConfig,
+    archive_root: Path,
+    session: Session,
+    universe: frozenset[str],
+    sector_briefs: tuple[SectorBrief, ...],
+    qualitative_brief: QualitativeBrief,
+    correlation_regime_brief: CorrelationRegimeBrief,
+) -> None:
+    """The retry SDK call must set ``options.resume`` to the prior call's session_id.
+
+    Without this, the retry runs in a fresh SDK session and the agent's prior
+    response is invisible — the content-preservation directive in the retry
+    message has nothing to reference and Sonnet collapses to an empty brief.
+    """
+    bad = "no structure"
+    captured_options: list[Any] = []
+
+    async def _stub(**kwargs: Any) -> AsyncIterator[Any]:
+        captured_options.append(kwargs.get("options"))
+        if len(captured_options) == 1:
+            async for msg in _async_iter(_make_sdk_response(bad)):
+                yield msg
+        else:
+            async for msg in _async_iter(_make_sdk_response(_MINIMAL_BRIEF_TEXT)):
+                yield msg
+
+    await invoke_adaptive_researcher(
+        agent_config=agent_config,
+        user_message="Produce an adaptive brief.",
+        invocation_id="inv-test-resume",
+        session=session,
+        universe=universe,
+        sector_briefs=sector_briefs,
+        qualitative_brief=qualitative_brief,
+        correlation_regime_brief=correlation_regime_brief,
+        archive_root=archive_root,
+        sdk_query_fn=_stub,
+    )
+
+    assert len(captured_options) == 2
+    # First call starts a fresh session.
+    assert captured_options[0].resume is None
+    # Second call resumes the session_id reported by the first ResultMessage
+    # (the test stub stamps `sess-1`).
+    assert captured_options[1].resume == "sess-1"
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +516,7 @@ Anomalies deferred: none
   Assessment: signal
   Confidence: moderate
   Implication: Pre-earnings repositioning.
-  Strengthens: SA-TECH-99
+  Strengthens: [SA-TECH-99]
   Weakens: none
 """
 
@@ -508,7 +561,9 @@ async def test_validation_failure_retry_recovers(
     retry_prompt = captured_prompts[1]
     # Validation retry surfaces the structural-contract framing (not parse).
     assert "structural contract" in retry_prompt.lower()
-    assert "SA-TECH-99" in retry_prompt or "referential" in retry_prompt.lower()
+    assert "[SA-TECH-99]" in retry_prompt or "referential" in retry_prompt.lower()
+    # Same content-preservation directive on the validation path.
+    assert "prior analytical content" in retry_prompt.lower()
 
 
 # ---------------------------------------------------------------------------

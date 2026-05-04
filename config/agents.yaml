@@ -100,7 +100,7 @@ agents:
   adaptive_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/adaptive_researcher.md
-    latency_budget_seconds: 480
+    latency_budget_seconds: 600
     context_token_budget: 4000
     # Same rationale as qualitative_researcher: extended thinking (~4400 tok)
     # plus the brief itself, with headroom.

@@ -173,7 +173,7 @@ def test_two_thread_brief_parses() -> None:
     signal, inconclusive = brief.threads
     assert signal.assessment.value == "signal"
     assert signal.implication is not None
-    assert signal.strengthens == ("[SA-TECH-2]",)
+    assert signal.strengthens == ("SA-TECH-2",)
     assert signal.weakens == ()
     assert signal.dismissal_reason is None
     assert signal.missing is None
@@ -464,8 +464,13 @@ def _render_brief(brief: object) -> str:
             assert t.strengthens is not None
             assert t.weakens is not None
             out.append(f"  Implication: {t.implication}")
-            strengthens_repr = ", ".join(t.strengthens) if t.strengthens else "none"
-            weakens_repr = ", ".join(t.weakens) if t.weakens else "none"
+            # Brackets are wire syntax; the parser strips them and the
+            # validator universe stores unbracketed IDs, so re-add brackets
+            # here when serializing back to wire format.
+            strengthens_repr = (
+                ", ".join(f"[{r}]" for r in t.strengthens) if t.strengthens else "none"
+            )
+            weakens_repr = ", ".join(f"[{r}]" for r in t.weakens) if t.weakens else "none"
             out.append(f"  Strengthens: {strengthens_repr}")
             out.append(f"  Weakens: {weakens_repr}")
         elif t.assessment.value == "noise":
@@ -484,6 +489,236 @@ def test_round_trip_structural_equality() -> None:
     rendered = _render_brief(first)
     second = parse_adaptive_brief(rendered, invocation_id=EXAMPLE_INVOCATION_ID)
     assert first.model_dump() == second.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Preamble tolerance — text emitted between tool calls is concatenated into
+# the response by the harness, so the parser tolerates lines preceding the
+# `ADAPTIVE RESEARCH FINDINGS` header. Discovered during ALP-287 end-to-end
+# verification: a substantive 6-thread brief was rejected because the agent
+# emitted intra-tool-call narration ahead of the header.
+# ---------------------------------------------------------------------------
+
+
+def test_single_line_preamble_before_header_is_tolerated() -> None:
+    """A single narration line preceding the header is discarded; brief parses."""
+    text = "Good. All tools have returned results. Emitting the brief now.\n" + _empty_brief()
+    brief = parse_adaptive_brief(text, invocation_id="inv-test")
+    assert brief.threads == ()
+    assert brief.threads_investigated_count == 0
+
+
+def test_multi_paragraph_preamble_before_header_is_tolerated() -> None:
+    """Multiple narration paragraphs before the header are discarded; brief parses."""
+    text = (
+        "Now I'll execute the first wave of parallel research calls.\n"
+        "News feed unavailable; pivoting to remaining tools.\n"
+        "All tools returned. Sufficient data to verdict.\n"
+        "\n"
+        "---\n"
+        "\n" + _brief_with(_signal_thread(1), _inconclusive_thread(2))
+    )
+    brief = parse_adaptive_brief(text, invocation_id="inv-test")
+    assert len(brief.threads) == 2
+    assert brief.threads[0].assessment.value == "signal"
+
+
+def test_absent_header_still_raises() -> None:
+    """Preamble tolerance does not weaken the absent-header check."""
+    text = (
+        "I investigated three threads but forgot the header.\n"
+        "[AR-1]\n  Trigger: foo\n  Question: bar\n"
+    )
+    with pytest.raises(ParseError) as exc_info:
+        parse_adaptive_brief(text, invocation_id="inv-test")
+    assert exc_info.value.field_path == "envelope"
+    assert "ADAPTIVE RESEARCH FINDINGS" in exc_info.value.message
+
+
+# ---------------------------------------------------------------------------
+# Counts-line tolerance — Sonnet has been observed to write
+# "anomaly groups triaged" instead of "anomalies triaged" and append a
+# parenthetical explanation. The regex extracts the two integers and
+# tolerates these natural variations as long as "triaged" appears.
+# ---------------------------------------------------------------------------
+
+
+def test_counts_line_accepts_anomaly_groups_phrasing() -> None:
+    """`0 of 10 anomaly groups triaged` is accepted; the two counts parse."""
+    text = (
+        "ADAPTIVE RESEARCH FINDINGS\n"
+        "Invocation: inv-test\n"
+        "Threads investigated: 0 of 10 anomaly groups triaged\n"
+        "Anomalies deferred: none\n"
+        "\n"
+        "=== INVESTIGATION THREADS ===\n"
+    )
+    brief = parse_adaptive_brief(text, invocation_id="inv-test")
+    assert brief.threads_investigated_count == 0
+    assert brief.anomalies_triaged_count == 10
+
+
+def test_counts_line_accepts_trailing_parenthetical() -> None:
+    """Trailing parenthetical commentary after `triaged` is accepted."""
+    text = (
+        "ADAPTIVE RESEARCH FINDINGS\n"
+        "Invocation: inv-test\n"
+        "Threads investigated: 0 of 10 anomalies triaged "
+        "(52 distillation flags consolidated into 4 logical clusters)\n"
+        "Anomalies deferred: none\n"
+        "\n"
+        "=== INVESTIGATION THREADS ===\n"
+    )
+    brief = parse_adaptive_brief(text, invocation_id="inv-test")
+    assert brief.threads_investigated_count == 0
+    assert brief.anomalies_triaged_count == 10
+
+
+def test_counts_line_without_triaged_still_raises() -> None:
+    """The regex still anchors on `triaged`; absent token raises ParseError."""
+    text = (
+        "ADAPTIVE RESEARCH FINDINGS\n"
+        "Invocation: inv-test\n"
+        "Threads investigated: 0 of 10 anomalies inspected\n"
+        "Anomalies deferred: none\n"
+        "\n"
+        "=== INVESTIGATION THREADS ===\n"
+    )
+    with pytest.raises(ParseError) as exc_info:
+        parse_adaptive_brief(text, invocation_id="inv-test")
+    assert exc_info.value.field_path == "header.threads_investigated_count"
+
+
+# ---------------------------------------------------------------------------
+# Marker scan tolerance — Sonnet has been observed to insert auxiliary
+# "Note:" prose between `Anomalies deferred:` and the threads section
+# marker. The parser scans forward to the marker rather than requiring it
+# on the next non-blank line.
+# ---------------------------------------------------------------------------
+
+
+def test_marker_scan_skips_intervening_note_lines() -> None:
+    """Auxiliary `Note:` lines between header and marker are tolerated."""
+    text = (
+        "ADAPTIVE RESEARCH FINDINGS\n"
+        "Invocation: inv-test\n"
+        "Threads investigated: 0 of 3 anomalies triaged\n"
+        "Anomalies deferred: none\n"
+        "Note: news_search universally unavailable this cycle.\n"
+        "Note: short_interest metrics null across all queried tickers.\n"
+        "\n"
+        "=== INVESTIGATION THREADS ===\n"
+    )
+    brief = parse_adaptive_brief(text, invocation_id="inv-test")
+    assert brief.threads_investigated_count == 0
+    assert brief.anomalies_triaged_count == 3
+
+
+# ---------------------------------------------------------------------------
+# Strengthens/Weakens reference extraction — Sonnet has been observed to
+# append free-text rationale after each bracketed reference. The parser
+# extracts only the bracketed IDs and discards the trailing commentary.
+# ---------------------------------------------------------------------------
+
+
+def test_strengthens_with_trailing_commentary_extracts_id() -> None:
+    """`Strengthens: [SA-TECH-1] (commentary)` parses to the bare ID."""
+    thread = (
+        "[AR-1]\n"
+        "  Trigger: [SA-TECH-ANOM-1]\n"
+        "  Question: What drove the volume spike?\n"
+        "  Tickers: NVDA\n"
+        "  Sector: tech_semis\n"
+        "  Tools used: news_search\n"
+        "  Findings:\n"
+        "    - news_search returned pre-earnings notes\n"
+        "  Assessment: signal\n"
+        "  Confidence: moderate\n"
+        "  Implication: Pre-earnings repositioning.\n"
+        "  Strengthens: [SA-TECH-1] (the move shares a common macro driver)\n"
+        "  Weakens: [SA-FIN-2] (V's neutral volume argues against this)\n"
+    )
+    text = _brief_with(thread, triaged=1)
+    brief = parse_adaptive_brief(text, invocation_id="inv-test")
+    assert brief.threads[0].strengthens == ("SA-TECH-1",)
+    assert brief.threads[0].weakens == ("SA-FIN-2",)
+
+
+def test_strengthens_multiple_refs_with_commentary() -> None:
+    """Multiple bracketed refs separated by commentary are all extracted."""
+    thread = (
+        "[AR-1]\n"
+        "  Trigger: [SA-TECH-ANOM-1]\n"
+        "  Question: What drove the volume spike?\n"
+        "  Tickers: NVDA\n"
+        "  Sector: tech_semis\n"
+        "  Tools used: news_search\n"
+        "  Findings:\n"
+        "    - news_search returned pre-earnings notes\n"
+        "  Assessment: signal\n"
+        "  Confidence: moderate\n"
+        "  Implication: Pre-earnings repositioning.\n"
+        "  Strengthens: [SA-TECH-1] (note A) and [SA-TECH-2] (note B)\n"
+        "  Weakens: none\n"
+    )
+    text = _brief_with(thread, triaged=1)
+    brief = parse_adaptive_brief(text, invocation_id="inv-test")
+    assert brief.threads[0].strengthens == ("SA-TECH-1", "SA-TECH-2")
+    assert brief.threads[0].weakens == ()
+
+
+# ---------------------------------------------------------------------------
+# Tools used — Sonnet has been observed to attach the ticker its tool call
+# targeted in parentheses (e.g., `ticker_deep_pull (COP)`). The parser
+# strips trailing "(...)" commentary so the validator's allowlist match
+# sees the bare tool name.
+# ---------------------------------------------------------------------------
+
+
+def test_sector_abbreviation_aliases_resolve() -> None:
+    """`Sector: tech` resolves to `tech_semis`; `fin` resolves to `financials`."""
+    thread_tech = (
+        "[AR-1]\n"
+        "  Trigger: [SA-TECH-ANOM-1]\n"
+        "  Question: What drove the volume spike?\n"
+        "  Tickers: NVDA\n"
+        "  Sector: tech\n"
+        "  Tools used: news_search\n"
+        "  Findings:\n"
+        "    - news_search returned pre-earnings notes\n"
+        "  Assessment: signal\n"
+        "  Confidence: moderate\n"
+        "  Implication: Pre-earnings repositioning.\n"
+        "  Strengthens: [SA-TECH-1]\n"
+        "  Weakens: none\n"
+    )
+    text = _brief_with(thread_tech, triaged=1)
+    brief = parse_adaptive_brief(text, invocation_id="inv-test")
+    assert brief.threads[0].sector.value == "tech_semis"
+
+
+def test_tools_used_with_ticker_in_parens_is_stripped() -> None:
+    """`ticker_deep_pull (COP)` parses to bare `ticker_deep_pull`."""
+    thread = (
+        "[AR-1]\n"
+        "  Trigger: [SA-ENERGY-ANOM-1]\n"
+        "  Question: Refining-margin shift?\n"
+        "  Tickers: COP, MPC\n"
+        "  Sector: energy\n"
+        "  Tools used: ticker_deep_pull (COP), news_search, ticker_deep_pull (MPC)\n"
+        "  Findings:\n"
+        "    - ticker_deep_pull returned utilization detail\n"
+        "  Assessment: inconclusive\n"
+        "  Confidence: low\n"
+        "  Missing: capacity-utilization data\n"
+    )
+    text = _brief_with(thread, triaged=1)
+    brief = parse_adaptive_brief(text, invocation_id="inv-test")
+    # Repeated `ticker_deep_pull` calls (with different targets in the parens)
+    # collapse to a single entry — the validator's distinct-within-thread
+    # check would otherwise reject the brief, and `tools_used` semantically
+    # describes which tools the thread invoked, not call counts.
+    assert brief.threads[0].tools_used == ("ticker_deep_pull", "news_search")
 
 
 # ---------------------------------------------------------------------------

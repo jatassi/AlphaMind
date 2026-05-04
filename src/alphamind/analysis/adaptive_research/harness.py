@@ -30,7 +30,7 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -260,14 +260,17 @@ async def _collect_response(
     *,
     prompt: str,
     options: Any,
-) -> tuple[str, str | None, TokensUsed, int]:
+) -> tuple[str, str | None, TokensUsed, int, str | None]:
     """Drive the SDK generator to completion.
 
-    Returns ``(response_text, stop_reason, tokens_used, tool_calls)``.
+    Returns ``(response_text, stop_reason, tokens_used, tool_calls, session_id)``.
     ``stop_reason`` is ``None`` when the SDK did not surface it (treated as
     ``end_turn`` by the harness per the spec: "missing metadata → malformed_output,
     not context_overflow"). ``tool_calls`` counts ``ToolUseBlock`` instances in
     assistant messages — this is the adaptive-researcher's tool-budget metric.
+    ``session_id`` is the SDK session identifier carried on the terminating
+    ``ResultMessage``; threaded back to the caller so the corrective retry can
+    pass it via ``options.resume`` to keep the agent's prior response in scope.
     """
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
@@ -275,6 +278,7 @@ async def _collect_response(
     stop_reason: str | None = None
     tokens = TokensUsed(input_tokens=0, output_tokens=0, cache_read_tokens=0, cache_write_tokens=0)
     tool_calls = 0
+    session_id: str | None = None
 
     query_iter = sdk_query_fn(prompt=prompt, options=options)
     try:
@@ -292,6 +296,7 @@ async def _collect_response(
                 stop_reason, tokens = _absorb_metadata(
                     message, stop_reason=stop_reason, tokens=tokens
                 )
+                session_id = message.session_id
                 if message.is_error:
                     raise _CLIResultError(
                         error_text=message.result or "(no result text)",
@@ -304,7 +309,7 @@ async def _collect_response(
         # and prints "asynchronous generator is already running" to stderr.
         await cast(AsyncGenerator[Any], query_iter).aclose()
 
-    return "".join(text_parts), stop_reason, tokens, tool_calls
+    return "".join(text_parts), stop_reason, tokens, tool_calls, session_id
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +323,14 @@ _SECTION_DIRECTIVE = (
     "Use exactly the section header === INVESTIGATION THREADS ==="
 )
 
+_CONTENT_PRESERVATION_DIRECTIVE = (
+    "Your prior analytical content remains valid in this conversation; the retry "
+    "is for envelope correction only. Re-emit the threads you already investigated "
+    "with their existing Trigger, Question, Tickers, Sector, Tools used, Findings, "
+    "Assessment, Confidence, and conditional fields preserved. Do not collapse to "
+    "an empty brief unless you truly investigated zero threads."
+)
+
 _CONTRACT_REF = "See docs/design/03-analysis-layer/adaptive-research.md § Output § Output schema."
 
 
@@ -329,9 +342,22 @@ def _build_retry_message(framing: str, error_detail: str) -> str:
     - First error only (caller extracts it)
     - Contract reference
     - Directive with exact section header
+    - Content-preservation directive: nudges the agent to re-emit its prior
+      analytical work rather than collapse to an empty brief — same-context
+      retry already preserves the prior response in session history, but
+      Sonnet has been observed to interpret a strict "output the brief and
+      nothing else" directive as license to abandon prior work.
     - Does NOT contain: full error list, analytical guidance, raw input data
     """
-    return "\n\n".join([framing, error_detail, _CONTRACT_REF, _SECTION_DIRECTIVE])
+    return "\n\n".join(
+        [
+            framing,
+            error_detail,
+            _CONTRACT_REF,
+            _SECTION_DIRECTIVE,
+            _CONTENT_PRESERVATION_DIRECTIVE,
+        ]
+    )
 
 
 def _build_retry_message_for_parse_error(error: ParseError) -> str:
@@ -579,6 +605,7 @@ async def _run_retry_attempt(
     response1: str,
     tokens1: TokensUsed,
     tool_calls1: int,
+    session_id_initial: str | None,
     universe: frozenset[str],
     sector_briefs: tuple[SectorBrief, ...],
     qualitative_brief: QualitativeBrief,
@@ -592,10 +619,18 @@ async def _run_retry_attempt(
 
     Extracted to keep ``invoke_adaptive_researcher`` below the C901/PLR0915
     thresholds.  All mutable state is passed explicitly.
+
+    ``session_id_initial`` is threaded into the SDK retry call as
+    ``options.resume`` so the prior assistant response remains in scope —
+    without it, the retry runs in a fresh session and the
+    content-preservation directive in the retry message has no prior
+    analytical work to reference.
     """
     diag.retry_count = 1
 
-    response2, stop_reason2, tokens2, tool_calls2 = await invoke(retry_message)
+    response2, stop_reason2, tokens2, tool_calls2, _session_id2 = await invoke(
+        retry_message, resume_session_id=session_id_initial
+    )
     diag.response_retry = response2
     diag.tokens_used = _add_tokens(tokens1, tokens2)
     diag.tool_calls_used = tool_calls1 + tool_calls2
@@ -740,11 +775,24 @@ async def invoke_adaptive_researcher(
             stop_reason=stop_reason,
         )
 
-    async def _invoke(prompt: str) -> tuple[str, str | None, TokensUsed, int]:
-        """Run one SDK call with the configured timeout."""
+    async def _invoke(
+        prompt: str,
+        *,
+        resume_session_id: str | None = None,
+    ) -> tuple[str, str | None, TokensUsed, int, str | None]:
+        """Run one SDK call with the configured timeout.
+
+        Pass ``resume_session_id`` to continue an existing SDK session — the
+        corrective retry uses this so the agent's prior response remains in
+        scope and the content-preservation directive in the retry message has
+        something to reference.
+        """
+        call_options = (
+            options if resume_session_id is None else replace(options, resume=resume_session_id)
+        )
         try:
             return await asyncio.wait_for(
-                _collect_response(sdk_query_fn, prompt=prompt, options=options),
+                _collect_response(sdk_query_fn, prompt=prompt, options=call_options),
                 timeout=float(agent_config.latency_budget_seconds),
             )
         except TimeoutError as exc:
@@ -783,7 +831,7 @@ async def invoke_adaptive_researcher(
     # ------------------------------------------------------------------
     # Attempt 1: initial call
     # ------------------------------------------------------------------
-    response1, stop_reason1, tokens1, tool_calls1 = await _invoke(user_message)
+    response1, stop_reason1, tokens1, tool_calls1, session_id1 = await _invoke(user_message)
     diag.response_initial = response1
     diag.tokens_used = tokens1
     diag.tool_calls_used = tool_calls1
@@ -830,6 +878,7 @@ async def invoke_adaptive_researcher(
         response1=response1,
         tokens1=tokens1,
         tool_calls1=tool_calls1,
+        session_id_initial=session_id1,
         universe=universe,
         sector_briefs=sector_briefs,
         qualitative_brief=qualitative_brief,

@@ -61,9 +61,8 @@ __all__ = ["ParseError", "parse_adaptive_brief"]
 _FENCE_OPEN_RE = re.compile(r"^```\w*\s*$")
 _FENCE_CLOSE_RE = re.compile(r"^```\s*$")
 _THREAD_HEADER_RE = re.compile(r"^\[AR-(\d+)\]\s*$")
-_HEADER_COUNTS_RE = re.compile(
-    r"^Threads investigated:\s*(\d+)\s+of\s+(\d+)\s+anomalies triaged\s*$"
-)
+_HEADER_COUNTS_RE = re.compile(r"^Threads investigated:\s*(\d+)\s+of\s+(\d+)\s+.*?\btriaged\b.*$")
+_HEADER_LITERAL = "ADAPTIVE RESEARCH FINDINGS"
 _INVESTIGATION_THREADS_MARKER = "=== INVESTIGATION THREADS ==="
 
 # Conditional-field allowlists keyed off Assessment, in wire-key form (lower-
@@ -210,10 +209,14 @@ def _parse_header(lines: list[str]) -> tuple[int, int, tuple[str, ...], int]:
 
     Returns ``(threads_investigated_count, anomalies_triaged_count,
     anomalies_deferred, marker_line_index)``.
+
+    Tolerant of preamble before the header literal. The SDK harness concatenates
+    every ``TextBlock`` from every assistant message, so any narration the agent
+    emits between tool calls lands in the raw response ahead of the brief
+    proper. The first line equal to ``ADAPTIVE RESEARCH FINDINGS`` is treated
+    as the start of the brief; everything before it is discarded.
     """
-    i = _expect_literal(
-        lines, 0, "ADAPTIVE RESEARCH FINDINGS", "envelope", "ADAPTIVE RESEARCH FINDINGS"
-    )
+    i = _locate_header(lines)
     # The model occasionally invents its own invocation id under load; require
     # the line to be present and well-formed but discard its value — the
     # caller-supplied id is canonical. Mirrors the qualitative parser.
@@ -224,13 +227,30 @@ def _parse_header(lines: list[str]) -> tuple[int, int, tuple[str, ...], int]:
     deferred_value, i = _expect_prefix(lines, i, "Anomalies deferred:", "header.anomalies_deferred")
     anomalies_deferred = _parse_deferred_value(deferred_value)
 
-    marker_idx = _skip_blanks(lines, i)
-    if marker_idx >= len(lines) or lines[marker_idx].strip() != _INVESTIGATION_THREADS_MARKER:
+    # Sonnet has been observed to insert auxiliary "Note:" lines after the
+    # deferred field, before the threads section. Scan forward for the marker
+    # rather than requiring it on the immediate next non-blank line.
+    marker_idx = _scan_to_line(lines, i, _INVESTIGATION_THREADS_MARKER)
+    if marker_idx is None:
         raise ParseError(
             field_path="header.investigation_threads_marker",
             message=f"missing required section marker {_INVESTIGATION_THREADS_MARKER!r}",
         )
     return threads_investigated_count, anomalies_triaged_count, anomalies_deferred, marker_idx
+
+
+def _locate_header(lines: list[str]) -> int:
+    """Return the index *after* the first line equal to :data:`_HEADER_LITERAL`.
+
+    Raises :class:`ParseError` if the header is absent.
+    """
+    for i, line in enumerate(lines):
+        if line.strip() == _HEADER_LITERAL:
+            return i + 1
+    raise ParseError(
+        field_path="envelope",
+        message=f"missing required line {_HEADER_LITERAL!r}",
+    )
 
 
 def _skip_blanks(lines: list[str], start: int) -> int:
@@ -242,15 +262,13 @@ def _skip_blanks(lines: list[str], start: int) -> int:
     return i
 
 
-def _expect_literal(lines: list[str], start: int, literal: str, field_path: str, what: str) -> int:
-    """Skip blanks, require ``lines[i].strip() == literal``, return next index."""
-    i = _skip_blanks(lines, start)
-    if i >= len(lines) or lines[i].strip() != literal:
-        raise ParseError(
-            field_path=field_path,
-            message=f"missing required line {what!r}",
-        )
-    return i + 1
+def _scan_to_line(lines: list[str], start: int, target: str) -> int | None:
+    """Return the index of the first line at or after ``start`` whose stripped
+    text equals ``target``, or ``None`` if no such line exists."""
+    for i in range(start, len(lines)):
+        if lines[i].strip() == target:
+            return i
+    return None
 
 
 def _expect_prefix(lines: list[str], start: int, prefix: str, field_path: str) -> tuple[str, int]:
@@ -370,8 +388,8 @@ def _parse_single_thread(index: int, thread_id: str, body_lines: list[str]) -> I
 
     if assessment is Assessment.SIGNAL:
         implication = _require(fields, "implication", field_prefix)
-        strengthens = _parse_csv_or_none(_require(fields, "strengthens", field_prefix))
-        weakens = _parse_csv_or_none(_require(fields, "weakens", field_prefix))
+        strengthens = _parse_references_or_none(_require(fields, "strengthens", field_prefix))
+        weakens = _parse_references_or_none(_require(fields, "weakens", field_prefix))
         dismissal_reason = None
         missing = None
     elif assessment is Assessment.NOISE:
@@ -394,7 +412,7 @@ def _parse_single_thread(index: int, thread_id: str, body_lines: list[str]) -> I
             question=_require(fields, "question", field_prefix),
             tickers=_parse_csv_or_none(fields.get("tickers", "")),
             sector=_parse_sector(_require(fields, "sector", field_prefix), field_prefix),
-            tools_used=_parse_csv_or_none(fields.get("tools used", "")),
+            tools_used=_parse_tool_names(fields.get("tools used", "")),
             findings=findings,
             assessment=assessment,
             confidence=_parse_confidence(
@@ -502,15 +520,88 @@ def _parse_csv_or_none(value: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in stripped.split(",") if part.strip())
 
 
+def _parse_tool_names(value: str) -> tuple[str, ...]:
+    """Parse a comma-separated tool-name list, stripping trailing parenthetical
+    commentary and de-duplicating preserved-order entries.
+
+    Sonnet has been observed to attach the ticker its tool call targeted in
+    parentheses (e.g., ``ticker_deep_pull (COP), news_search, ticker_deep_pull
+    (MPC)``); the validator strict-matches against the agent's tool allowlist
+    AND rejects duplicates within a thread. Stripping the parens unifies the
+    repeated-tool entries, which would then fail the duplicate check — so this
+    helper de-duplicates while preserving first-occurrence order. The
+    ``tools_used`` field is descriptive (which tools the thread invoked), not
+    a call-count, so collapsing repeats is sound.
+    """
+    stripped = value.strip()
+    if not stripped or stripped.lower() == "none":
+        return ()
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in stripped.split(","):
+        s = part.strip()
+        if not s:
+            continue
+        paren_idx = s.find("(")
+        if paren_idx >= 0:
+            s = s[:paren_idx].strip()
+        if s and s not in seen:
+            out.append(s)
+            seen.add(s)
+    return tuple(out)
+
+
+_REFERENCE_RE = re.compile(r"\[([^\[\]]+)\]")
+
+
+def _parse_references_or_none(value: str) -> tuple[str, ...]:
+    """Parse a Strengthens/Weakens reference list, extracting bracket contents.
+
+    Brackets are wire-syntax delimiters per the prompt's output contract
+    (e.g. ``[SA-TECH-3]``); the stored IDs in the upstream briefs are
+    unbracketed (``SA-TECH-3``). The validator's reference universe contains
+    unbracketed IDs, so this parser captures the bracket contents and
+    returns them without brackets so the Layer-3 referential check matches.
+
+    Sonnet has been observed to append free-text rationale after each
+    reference (e.g. ``[SA-TECH-1] (the move appears to share a common
+    macro driver)``); the extra prose is informational and harmless to
+    discard. Returns the bracket contents in source order; the literal
+    ``none`` (case-insensitive) yields ``()``.
+    """
+    stripped = value.strip()
+    if not stripped or stripped.lower() == "none":
+        return ()
+    return tuple(_REFERENCE_RE.findall(stripped))
+
+
+_SECTOR_ALIASES: dict[str, Sector] = {
+    "tech": Sector.TECH_SEMIS,
+    "semis": Sector.TECH_SEMIS,
+    "tech_semis": Sector.TECH_SEMIS,
+    "fin": Sector.FINANCIALS,
+    "financial": Sector.FINANCIALS,
+    "financials": Sector.FINANCIALS,
+    "energy": Sector.ENERGY,
+}
+
+
 def _parse_sector(value: str, context: str) -> Sector:
-    """Parse a Sector enum value or raise :class:`ParseError`."""
-    try:
-        return Sector(value.strip().lower())
-    except ValueError:
-        raise ParseError(
-            field_path=f"{context}.sector",
-            message=f"invalid sector value: {value!r}",
-        ) from None
+    """Parse a Sector enum value (with common abbreviation aliases) or raise.
+
+    Sonnet has been observed to abbreviate sector names (``tech`` for
+    ``tech_semis``, ``fin`` for ``financials``); the alias table accepts the
+    same set of abbreviations the prompt's example output and the upstream
+    sector_briefs use interchangeably.
+    """
+    normalized = value.strip().lower()
+    sector = _SECTOR_ALIASES.get(normalized)
+    if sector is not None:
+        return sector
+    raise ParseError(
+        field_path=f"{context}.sector",
+        message=f"invalid sector value: {value!r}",
+    )
 
 
 def _parse_assessment(value: str, context: str) -> Assessment:
