@@ -443,10 +443,19 @@ async def test_claude_agent_options_wires_two_mcp_servers_and_json_schema(
     }
     assert set(options.allowed_tools) == expected_allowed
 
-    # JSON-Schema output mode targeted at AnalystOutput.
+    # JSON-Schema output mode targeted at AnalystOutput, with Anthropic-API
+    # incompatible keys stripped (see _strip_anthropic_incompat_keys docstring
+    # in harness.py — `format` and `discriminator` cause silent fallback to
+    # text-output mode).
     assert options.output_format is not None
     assert options.output_format["type"] == "json_schema"
-    assert options.output_format["schema"] == AnalystOutput.model_json_schema()
+    schema = options.output_format["schema"]
+    assert schema["title"] == "AnalystOutput"
+    serialized = json.dumps(schema)
+    assert '"format"' not in serialized, "schema must not contain `format` keys"
+    assert '"discriminator"' not in serialized, "schema must not contain `discriminator` keys"
+    # Validation power is preserved: oneOf for the Instrument union remains.
+    assert '"oneOf"' in serialized
 
     # Hardening contract: no developer settings, no built-in tools, strict MCP,
     # output-token cap pinned via env.

@@ -559,6 +559,45 @@ def _build_mcp_wiring(
     )
 
 
+def _strip_anthropic_incompat_keys(obj: Any) -> Any:
+    """Strip JSON Schema keys the Anthropic API JSON-Schema mode silently rejects.
+
+    Empirically determined via direct SDK testing: the Anthropic API silently
+    falls back to text-output mode (the model emits JSON in TextBlocks rather
+    than calling the SDK-injected ``StructuredOutput`` tool, leaving
+    ``ResultMessage.structured_output`` ``None``) when the supplied schema
+    contains either of:
+
+    - ``format`` keys (notably ``"date-time"`` and ``"date"``) — Pydantic emits
+      these for ``datetime`` / ``date`` fields. The analyst's schema has four
+      such occurrences (``timestamp``, ``InvalidationLeg.condition.deadline``,
+      ``EntryWindow.deadline``, ``GuardrailValidationResult.checked_at``).
+    - ``discriminator`` keyword — Pydantic emits this for
+      ``Annotated[Union[...], Discriminator(...)]``. The analyst's schema has
+      one such occurrence on ``Recommendation.instrument`` (the
+      equity/option/strategy union).
+
+    Stripping these does not weaken validation: the ``datetime`` Python type
+    coerces ISO-8601 strings on parse; the ``oneOf`` array still enforces
+    union membership without the ``discriminator`` hint. The keys are purely
+    metadata for the API's schema-binding step.
+
+    Sibling agents that already work in JSON-Schema mode (qualitative-research,
+    adaptive-research) ship schemas that emit neither key — qualitative has no
+    ``datetime`` fields and no discriminated unions; adaptive's schema is built
+    via :func:`_tighten_conditional_schema` which strips these as a side effect.
+    """
+    if isinstance(obj, dict):
+        return {
+            k: _strip_anthropic_incompat_keys(v)
+            for k, v in obj.items()
+            if k not in {"format", "discriminator"}
+        }
+    if isinstance(obj, list):
+        return [_strip_anthropic_incompat_keys(x) for x in obj]
+    return obj
+
+
 def _build_sdk_options(
     agent_config: BaseAgentConfig,
     *,
@@ -579,7 +618,9 @@ def _build_sdk_options(
     servers that back the tool callables.
     ``output_format`` flips the agent into JSON-Schema mode so the API
     enforces the :class:`AnalystOutput` shape post-generation; the dict
-    surfaces on ``ResultMessage.structured_output``.
+    surfaces on ``ResultMessage.structured_output``. The schema is passed
+    through :func:`_strip_anthropic_incompat_keys` to remove keywords that
+    the API silently rejects (see that function's docstring).
     """
     from claude_agent_sdk import ClaudeAgentOptions
 
@@ -593,7 +634,10 @@ def _build_sdk_options(
         setting_sources=[],
         extra_args={"strict-mcp-config": None},
         env={"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(agent_config.output_token_budget)},
-        output_format={"type": "json_schema", "schema": AnalystOutput.model_json_schema()},
+        output_format={
+            "type": "json_schema",
+            "schema": _strip_anthropic_incompat_keys(AnalystOutput.model_json_schema()),
+        },
     )
 
 
