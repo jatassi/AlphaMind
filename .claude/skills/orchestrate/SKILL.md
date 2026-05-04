@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: Use to drive an AlphaMind feature's implementation work tree end-to-end — fetch the parent Linear Issue, dispatch its sub-issues to subagents in dependency-respecting waves, verify each, integrate to a feature branch, then PR → /review → address feedback → land → update project-tracker → notify. Triggers on `/orchestrate <Feature>` and operator phrases like "orchestrate Breach behavior", "implement the Synthesizer feature", "drive Domain researchers to completion", "build out State persistence", "execute the Portfolio manager work tree", "land the X feature". Assumes the work tree has already been drafted via `/draft-user-stories` (parent Issue exists with sub-issues + dependency graph + orchestrator notes). Use this skill whenever the operator asks to implement, build, drive, execute, land, or complete an AlphaMind feature that has a drafted Linear work tree, even if they don't say "orchestrate". Do NOT use for one-off story dispatch (just call `Agent` directly), bug fixes, refactors, or features without a Linear parent Issue.
+description: Use to drive an AlphaMind feature's implementation work tree end-to-end — fetch the parent Linear Issue, dispatch its sub-issues to subagents in dependency-respecting waves, verify each, integrate to a feature branch, then PR → e2e verification → /review → address feedback → land → update project-tracker → notify. Triggers on `/orchestrate <Feature>` and operator phrases like "orchestrate Breach behavior", "implement the Synthesizer feature", "drive Domain researchers to completion", "build out State persistence", "execute the Portfolio manager work tree", "land the X feature". Assumes the work tree has already been drafted via `/draft-user-stories` (parent Issue exists with sub-issues + dependency graph + orchestrator notes). Use this skill whenever the operator asks to implement, build, drive, execute, land, or complete an AlphaMind feature that has a drafted Linear work tree, even if they don't say "orchestrate". Do NOT use for one-off story dispatch (just call `Agent` directly), bug fixes, refactors, or features without a Linear parent Issue.
 ---
 
 # Orchestrate an AlphaMind feature implementation
@@ -19,7 +19,7 @@ These are project invariants that override any default behavior. Track them with
 - **Always tag the model in the `Agent` tool's `description` field** (`[Sonnet] 04a — Zone classifier`, `[Opus] 03 — Canonical types`). Visible-at-a-glance model selection is a CLAUDE.md requirement.
 - **Run the full lint + test chain after each parallelized wave merges** to the feature branch. Catches integration issues that pass per-story but fail in combination. Commands: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest -n auto`. The `-n auto` is mandatory per CLAUDE.md — never invoke `pytest` without it, including from subagents.
 - **A story blocked mid-implementation gets `state="Blocked"` in Linear,** plus a `blockedBy` link to the blocking issue if one exists in Linear (use `save_issue(id=..., state="Blocked", blockedBy=[...])`). If the blocker isn't in Linear, surface it in the final summary instead.
-- **Do not skip the post-completion sequence.** PR → /review → address feedback → land → update `docs/project-tracker.md` → clean local git → PushNotification. Add these as tasks before the work begins (see below).
+- **Do not skip the post-completion sequence.** PR → e2e verification → /review → address feedback → land → update `docs/project-tracker.md` → clean local git → PushNotification. Add these as tasks before the work begins (see below).
 
 ## Pre-flight
 
@@ -59,13 +59,14 @@ Before any dispatch:
 Use `TaskCreate` once, up front, to register everything you must not drop. Two groups:
 
 - **One task per sub-issue** — title `<NN — Title>`, status `pending`. As you dispatch, mark `in_progress`; as you verify and merge, mark `completed`.
-- **Completion-sequence tasks** — register all six before the work begins so they cannot be forgotten:
+- **Completion-sequence tasks** — register all seven before the work begins so they cannot be forgotten:
   1. `Open PR to main`
-  2. `Spawn /review subagent`
-  3. `Address review feedback`
-  4. `Update docs/project-tracker.md status to _done_`
-  5. `Land PR and clean local git state`
-  6. `Send PushNotification summarizing completed work`
+  2. `Run end-to-end verification (per-feature verify script)`
+  3. `Spawn /review subagent`
+  4. `Address review feedback`
+  5. `Update docs/project-tracker.md status to _done_`
+  6. `Land PR and clean local git state`
+  7. `Send PushNotification summarizing completed work`
 
 ### 5. Create and push the feature branch
 
@@ -211,7 +212,7 @@ For everything else, delegate.
 
 ## Completion sequence
 
-When every sub-issue is `Done` (no blockers, no deferrals), execute the six completion-sequence tasks you registered up front. Mark each `in_progress` when you start, `completed` when finished.
+When every sub-issue is `Done` (no blockers, no deferrals), execute the seven completion-sequence tasks you registered up front. Mark each `in_progress` when you start, `completed` when finished.
 
 ### 1. Open PR to main
 
@@ -237,7 +238,26 @@ The explicit `--head <feature-branch> --base main` is required: without it, gh r
 
 Capture the PR URL.
 
-### 2. Spawn /review subagent
+### 2. Run end-to-end verification
+
+The work tree's final story produced (or updated) the per-feature verify script and runbook, plus an insertion into `scripts/RUNBOOK_end_to_end_verification.md`. From that story's body, identify the verify-script path (typically `scripts/verify_<feature>.py`) and run it from the feature-branch checkout:
+
+```bash
+uv run python scripts/verify_<feature>.py
+```
+
+Confirm the output matches the pass/fail shape documented in `scripts/RUNBOOK_<feature>.md`. Read the runbook's failure-mode triage table before reacting to any red signal — most failures have known causes documented there.
+
+**On failure**, classify and act in-session where possible:
+
+- **Straightforward fixes** — apply directly on the feature branch, commit with a descriptive message, push to the PR, and re-run the verify script. Repeat until green. Examples: missing import, stale fixture, config-key typo, runbook command that drifted from the actual script flag, output-shape mismatch from a recent rename, an env-var the script expects but the runbook didn't document. The wave-end gate covered unit-test regressions; this step covers what only e2e exercises.
+- **Fixes requiring operator input** — surface to the operator with the verify-script output and your recommended next step, then pause. Examples: an algorithmic bug uncovered by e2e but masked by unit tests, schema drift between this work tree's expected inputs and a sibling's actually-produced shape, vendor API behavior the spec didn't anticipate, a missing API key, a failure that points to a design-doc ambiguity.
+
+The bar for "straightforward": the fix is contained to one or two files in this work tree, has no behavioral implication beyond the work tree's existing scope, and you can describe both the bug and the fix in two sentences. Anything that rewrites an algorithm, expands scope, or touches a sibling work tree's contract is operator-input territory.
+
+Do not advance to the /review step on a failing or unrun verification — the verification establishes that what the PR ships actually runs end-to-end, and a /review on broken code wastes the reviewer's cycles on issues a re-run would have caught.
+
+### 3. Spawn /review subagent
 
 ```
 Agent({
@@ -251,7 +271,7 @@ Agent({
 
 Wait for completion. The result is a list of suggestions.
 
-### 3. Address review feedback
+### 4. Address review feedback
 
 Assess each suggestion with **bias toward acceptance** — the reviewer is calibrated and the feedback typically warrants action. Reject only with explicit reason (e.g., "this would re-introduce the X anti-pattern", "this contradicts the Y design constraint"). For accepted suggestions:
 
@@ -273,11 +293,11 @@ After the subagent reports back, verify and merge into the feature branch as in 
 
 After all accepted feedback is addressed, push the new commits to the PR.
 
-### 4. Update docs/project-tracker.md
+### 5. Update docs/project-tracker.md
 
 Edit the feature's bullet under "Ready for implementation": change `_in progress_` (or whatever transient status it had) to `_done_`. Commit with a message like `chore(project-tracker): mark <feature> done`. This commit goes on the feature branch and rides the same PR.
 
-### 5. Land PR and clean local git state
+### 6. Land PR and clean local git state
 
 - Wait for CI green on the PR (if CI exists).
 - Merge the PR (squash-merge or merge per repo convention; check `gh pr view` for repo defaults).
@@ -322,7 +342,7 @@ This discards uncommitted edits and untracked files inside the worktree without 
 
 Verify clean state: `git status` shows nothing pending.
 
-### 6. PushNotification
+### 7. PushNotification
 
 Send a notification summarizing the run:
 

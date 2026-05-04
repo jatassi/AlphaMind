@@ -90,6 +90,14 @@ Indicators a candidate is too small — fold it:
 
 Don't worry about ordering or naming conventions yet — those happen in Phase 5.
 
+**Always include a final story for end-to-end verification + runbook updates.** Every feature work tree concludes with one story covering three deliverables:
+
+- A per-feature `scripts/verify_<feature>.py` that exercises the feature's golden path against real or representative inputs and prints a pass/fail summary an operator can read.
+- A per-feature `scripts/RUNBOOK_<feature>.md` with operator prerequisites, the verify-script invocation, expected output shape, and a failure-mode triage table.
+- An update to the central `scripts/RUNBOOK_end_to_end_verification.md` inserting the new feature into the dependency-ordered phase list, including any stage-artifact handoff to its downstream consumer.
+
+This story sits last in the sequence — its `blockedBy` list names every story whose deliverable the verify script must exercise. If the feature genuinely produces no operator-runnable behavior (e.g., a pure typed-records package with no executable surface), surface that in Phase 6 and get the operator's explicit nod before omitting the story.
+
 ### Phase 5 — Order by dependency, name with parallelism convention
 
 Build the dependency graph between candidates. A depends on B if A's tests cannot run until B's code lands.
@@ -346,6 +354,7 @@ If a `blockedBy` link fails (e.g., the upstream issue doesn't exist), surface th
 - **Numeric thresholds in story bodies.** Per `feedback_avoid_numeric_anchors`, don't bake `70/85/95`, `60%`, `30 minutes` etc. into acceptance criteria. Reference the configuration source (`config/<feature>.yaml`, `BreachBehaviorConfig`, etc.) and let the verification test load the value.
 - **Decision trails in story descriptions.** Per `feedback_no_decision_trails`, state contracts positively. Don't write "this story does NOT cover X" unless X is genuinely a likely-but-wrong reading; if X is obviously someone else's job, just don't mention it.
 - **Stories that bundle "and" of two algorithmic concerns.** Re-split. The dependency graph is cheaper to maintain than ambiguous scope.
+- **Omitting the final e2e verification + runbook story.** Every feature work tree ends with the story that ships `scripts/verify_<feature>.py`, `scripts/RUNBOOK_<feature>.md`, and the central `scripts/RUNBOOK_end_to_end_verification.md` insertion. Skip only with explicit operator sign-off after raising it in Phase 6.
 - **Acceptance criteria that test "the system works".** Replace with criteria that test *observable behaviors* of *named functions* with *named inputs*.
 - **Skipping the operator-confirmation step in Phase 1** when the feature's status isn't `_requirements pending_`. Drafting stories on top of an in-progress work tree without confirming intent corrupts that tree.
 - **"Surface to operator" gates for drafting-time decisions.** Per Phase 6: if a decision can be made without running code (yaml value, encoding choice, pipeline cadence, scope boundary, stub strategy), settle it during drafting. Writing "the orchestrator should surface this before dispatch" turns the operator's review into N small interruptions during dispatch instead of one batched session before drafting — and the orchestrator typically lacks the context the drafter had to recommend a default.
