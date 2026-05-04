@@ -155,7 +155,7 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     """
     resolved = _fixture_resolved()
     digest = compute_snapshot_hash(serialize_resolved_config(resolved))
-    expected = "00132a4ebd458092598fbd0fa2b2697dca910d4af62c2e5b08f81e10ac8abb47"
+    expected = "ee6a8fcbef6fc6ac5d91627392786fe9620c3862e4ab7274f2db1cb36c65c8a1"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

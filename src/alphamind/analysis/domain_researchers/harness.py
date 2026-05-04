@@ -186,6 +186,17 @@ class _CLIResultError(Exception):
         self.stop_reason = stop_reason
 
 
+class _StuckSDKCall(Exception):
+    """Internal signal: SDK produced no message before the init-stall timeout.
+
+    A healthy SDK call emits ``SystemMessage`` within a few seconds of
+    spawning the CLI subprocess. A multi-minute silence with zero messages
+    indicates a stalled subprocess or backend admit-rate starvation when
+    several researcher invocations race for the same OAuth token. ``_invoke``
+    retries once on this signal before giving up.
+    """
+
+
 # ---------------------------------------------------------------------------
 # HarnessSuccess
 # ---------------------------------------------------------------------------
@@ -220,6 +231,69 @@ def _record_failure_diag(
     )
 
 
+def _convert_invoke_error(
+    exc: Exception,
+    *,
+    diag: Any,
+    wall_start: float,
+    agent_name: str,
+    invocation_id: str,
+    budget_seconds: float,
+    init_stall_timeout: float,
+) -> HarnessFailure:
+    """Map an SDK-call exception to the matching :class:`HarnessFailure`.
+
+    Centralizes the diag-write + exception-translation that ``_invoke``
+    runs on every failure path. The retry-on-stall loop in ``_invoke``
+    only invokes this for *terminal* failures (second stall attempt or any
+    non-stall error), so every call here corresponds to one diag write.
+    """
+    from claude_agent_sdk import ClaudeSDKError, CLIConnectionError
+
+    if isinstance(exc, _StuckSDKCall):
+        _record_failure_diag(diag, wall_start, stop_reason=None)
+        return TimeoutFailure(
+            f"SDK call stalled before producing any message on two consecutive "
+            f"attempts ({init_stall_timeout}s init timeout). Likely OAuth-token "
+            f"concurrency starvation or local CLI subprocess hang.",
+            agent_name=agent_name,
+            invocation_id=invocation_id,
+        )
+    if isinstance(exc, TimeoutError):
+        _record_failure_diag(diag, wall_start, stop_reason=None)
+        return TimeoutFailure(
+            f"Invocation exceeded latency budget of {budget_seconds}s",
+            agent_name=agent_name,
+            invocation_id=invocation_id,
+        )
+    if isinstance(exc, _CLIResultError):
+        _record_failure_diag(diag, wall_start, stop_reason=exc.stop_reason)
+        return ContextOverflowFailure(
+            f"CLI returned is_error=True: {exc.error_text}",
+            agent_name=agent_name,
+            invocation_id=invocation_id,
+            raw_response=exc.partial_response,
+        )
+    if isinstance(exc, CLIConnectionError):
+        _record_failure_diag(diag, wall_start, stop_reason=None)
+        return SDKFailure(
+            f"Authentication or connection failure — ensure CLAUDE_CODE_OAUTH_TOKEN "
+            f"is set and valid. Underlying error: {exc}",
+            agent_name=agent_name,
+            invocation_id=invocation_id,
+            cause=exc,
+        )
+    if isinstance(exc, ClaudeSDKError):
+        _record_failure_diag(diag, wall_start, stop_reason=None)
+        return SDKFailure(
+            f"Non-recoverable SDK error: {exc}",
+            agent_name=agent_name,
+            invocation_id=invocation_id,
+            cause=exc,
+        )
+    raise exc  # pragma: no cover  # caller should not pass other exception types
+
+
 def _absorb_result_metadata(
     message: Any,
     *,
@@ -241,11 +315,39 @@ def _absorb_result_metadata(
     return stop_reason, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
 
 
+async def _next_message(
+    async_iter: AsyncIterator[Any],
+    *,
+    init_stall_timeout_seconds: float | None,
+) -> Any:
+    """Pull the next SDK message, applying the init-stall timeout if requested.
+
+    Returns ``None`` on iterator exhaustion. Raises :class:`_StuckSDKCall`
+    when ``init_stall_timeout_seconds`` is set and no message arrives in
+    that window — the caller passes ``None`` after the first message to
+    drop the watchdog.
+    """
+    if init_stall_timeout_seconds is None:
+        try:
+            return await anext(async_iter)
+        except StopAsyncIteration:
+            return None
+    try:
+        return await asyncio.wait_for(anext(async_iter), timeout=init_stall_timeout_seconds)
+    except StopAsyncIteration:
+        return None
+    except TimeoutError as exc:
+        raise _StuckSDKCall(
+            f"No SDK message received within {init_stall_timeout_seconds}s"
+        ) from exc
+
+
 async def _collect_response(
     sdk_query_fn: Callable[..., AsyncIterator[Any]],
     *,
     prompt: str,
     options: Any,
+    init_stall_timeout_seconds: float | None = None,
 ) -> tuple[str, str | None, TokensUsed]:
     """Drive the SDK generator to completion.
 
@@ -253,6 +355,15 @@ async def _collect_response(
     is ``None`` when the SDK did not surface it (treated as ``end_turn`` by
     the harness per the spec: "missing metadata → malformed_output, not
     context_overflow").
+
+    When ``init_stall_timeout_seconds`` is set, the wait for the *first*
+    SDK message is bounded by that timeout. A healthy call emits a
+    ``SystemMessage`` within a few seconds of spawn; multi-minute silence
+    with zero messages signals a stuck local CLI subprocess or backend
+    admit-rate starvation, in which case :class:`_StuckSDKCall` is raised
+    so the caller can retry. After the first message arrives the timeout
+    no longer applies — extended thinking can take minutes between
+    messages and is not a stall.
     """
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
@@ -267,8 +378,14 @@ async def _collect_response(
     # we overwrite per-message usage rather than summing across turns,
     # which is correct only when there's exactly one assistant turn.
     query_iter = sdk_query_fn(prompt=prompt, options=options)
+    async_iter = aiter(query_iter)
+    pending_stall = init_stall_timeout_seconds
     try:
-        async for message in query_iter:
+        while True:
+            message = await _next_message(async_iter, init_stall_timeout_seconds=pending_stall)
+            if message is None:
+                break
+            pending_stall = None  # only the first message is watchdogged
             if isinstance(message, AssistantMessage):
                 for block in message.content:
                     if isinstance(block, TextBlock):
@@ -571,44 +688,58 @@ async def invoke_domain_researcher(
     wall_start = time.monotonic()
 
     async def _invoke(prompt: str) -> tuple[str, str | None, TokensUsed]:
-        """Run one SDK call with the configured timeout."""
-        try:
-            return await asyncio.wait_for(
-                _collect_response(sdk_query_fn, prompt=prompt, options=options),
-                timeout=float(agent_config.latency_budget_seconds),
-            )
-        except TimeoutError as exc:
-            _record_failure_diag(diag, wall_start, stop_reason=None)
-            raise TimeoutFailure(
-                f"Invocation exceeded latency budget of {agent_config.latency_budget_seconds}s",
-                agent_name=agent_name,
-                invocation_id=invocation_id,
-            ) from exc
-        except _CLIResultError as exc:
-            _record_failure_diag(diag, wall_start, stop_reason=exc.stop_reason)
-            raise ContextOverflowFailure(
-                f"CLI returned is_error=True: {exc.error_text}",
-                agent_name=agent_name,
-                invocation_id=invocation_id,
-                raw_response=exc.partial_response,
-            ) from exc
-        except CLIConnectionError as exc:
-            _record_failure_diag(diag, wall_start, stop_reason=None)
-            raise SDKFailure(
-                f"Authentication or connection failure — ensure CLAUDE_CODE_OAUTH_TOKEN "
-                f"is set and valid. Underlying error: {exc}",
-                agent_name=agent_name,
-                invocation_id=invocation_id,
-                cause=exc,
-            ) from exc
-        except ClaudeSDKError as exc:
-            _record_failure_diag(diag, wall_start, stop_reason=None)
-            raise SDKFailure(
-                f"Non-recoverable SDK error: {exc}",
-                agent_name=agent_name,
-                invocation_id=invocation_id,
-                cause=exc,
-            ) from exc
+        """Run one SDK call with stall-retry and the configured timeout.
+
+        Retries once if the SDK call stalls before producing any message —
+        a healthy call emits a ``SystemMessage`` within seconds of spawn,
+        so a 60s init silence signals either an unhealthy local CLI
+        subprocess or backend admit-rate starvation when multiple sibling
+        researcher invocations race for the same OAuth token. Other failure
+        modes (budget timeout, CLI error, auth failure) are not retried.
+        """
+        init_stall_timeout = 60.0
+        budget = float(agent_config.latency_budget_seconds)
+        for stall_attempt in (1, 2):
+            try:
+                return await asyncio.wait_for(
+                    _collect_response(
+                        sdk_query_fn,
+                        prompt=prompt,
+                        options=options,
+                        init_stall_timeout_seconds=init_stall_timeout,
+                    ),
+                    timeout=budget,
+                )
+            except _StuckSDKCall as exc:
+                if stall_attempt == 1:
+                    continue
+                raise _convert_invoke_error(
+                    exc,
+                    diag=diag,
+                    wall_start=wall_start,
+                    agent_name=agent_name,
+                    invocation_id=invocation_id,
+                    budget_seconds=budget,
+                    init_stall_timeout=init_stall_timeout,
+                ) from exc
+            except (
+                TimeoutError,
+                _CLIResultError,
+                CLIConnectionError,
+                ClaudeSDKError,
+            ) as exc:
+                raise _convert_invoke_error(
+                    exc,
+                    diag=diag,
+                    wall_start=wall_start,
+                    agent_name=agent_name,
+                    invocation_id=invocation_id,
+                    budget_seconds=budget,
+                    init_stall_timeout=init_stall_timeout,
+                ) from exc
+        raise AssertionError(  # pragma: no cover
+            "unreachable: stall retry loop exhausted without returning or raising"
+        )
 
     # ------------------------------------------------------------------
     # Attempt 1: initial call

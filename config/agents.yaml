@@ -43,7 +43,7 @@ agents:
   tech_semis_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/tech_semis_researcher.md
-    latency_budget_seconds: 120
+    latency_budget_seconds: 600
     context_token_budget: 8000
     # Sonnet 4.6 emits ~4 thinking blocks (~4400 tokens) before the brief text;
     # the budget must cover thinking + 2× the design-doc brief target.
@@ -53,7 +53,7 @@ agents:
   financials_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/financials_researcher.md
-    latency_budget_seconds: 120
+    latency_budget_seconds: 600
     context_token_budget: 8000
     # Sonnet 4.6 emits ~4 thinking blocks (~4400 tokens) before the brief text;
     # the budget must cover thinking + 2× the design-doc brief target.
@@ -63,7 +63,7 @@ agents:
   energy_researcher:
     model: claude-sonnet-4-6
     prompt: prompts/analysis/energy_researcher.md
-    latency_budget_seconds: 120
+    latency_budget_seconds: 600
     context_token_budget: 8000
     # Sonnet 4.6 emits ~4 thinking blocks (~4400 tokens) before the brief text;
     # the budget must cover thinking + 2× the design-doc brief target.
@@ -78,7 +78,7 @@ agents:
     # Sonnet 4.6 emits ~4400 tokens of extended thinking before brief text;
     # cap covers thinking + 2× the design-doc 300–600 brief target with
     # headroom (tool result text doesn't count toward the cap).
-    output_token_budget: 6000
+    output_token_budget: 16000
     # social_sentiment deferred per ALP-111 — Qual2 storage not yet provisioned.
     tools: [news_search, prediction_markets, earnings_commentary]
     cumulative_tool_call_limit: 15
@@ -95,7 +95,7 @@ agents:
     context_token_budget: 4000
     # Same rationale as qualitative_researcher: extended thinking (~4400 tok)
     # plus the brief itself, with headroom.
-    output_token_budget: 8000
+    output_token_budget: 16000
     # social_sentiment + options_flow deferred — Qual2 + Q2 storage not yet provisioned.
     tools:
       - news_search
