@@ -102,9 +102,12 @@ agents:
     prompt: prompts/analysis/adaptive_researcher.md
     latency_budget_seconds: 600
     context_token_budget: 4000
-    # Same rationale as qualitative_researcher: extended thinking (~4400 tok)
-    # plus the brief itself, with headroom.
-    output_token_budget: 16000
+    # Extended thinking (~4400 tok) plus the JSON-Schema-mode brief itself.
+    # Post-ALP-288 the brief is JSON instead of markdown and Sonnet routinely
+    # produces 4-5 substantive investigation threads with detailed findings.
+    # First clean post-migration verifier run observed 21537 output tokens; cap
+    # set to 24000 for ~10% headroom. Re-baseline if subsequent runs trend higher.
+    output_token_budget: 24000
     # social_sentiment + options_flow deferred — Qual2 + Q2 storage not yet provisioned.
     tools:
       - news_search
