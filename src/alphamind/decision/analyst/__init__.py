@@ -1,9 +1,9 @@
 """Analyst decision-layer public surface.
 
-The story 03 (ALP-293) deliverable is the typed model only; later stories
-add parser/validator/harness/runner under this package. The model names are
-re-exported here so downstream callers can import from
-:mod:`alphamind.decision.analyst` without reaching into ``models``.
+The model names (story 03 / ALP-293) and the Layer-2/3 cross-field
+validator (story 05b / ALP-296) are re-exported so downstream callers can
+import from :mod:`alphamind.decision.analyst` without reaching into the
+submodules. Later stories add parser/harness/runner under the same package.
 """
 
 from alphamind.decision.analyst.models import (
@@ -30,8 +30,16 @@ from alphamind.decision.analyst.models import (
     TimeCondition,
     WatchlistEntry,
 )
+from alphamind.decision.analyst.validation import (
+    DEFAULT_CONVICTION_BANDS,
+    ValidationError,
+    ValidationResult,
+    ValidationWarning,
+    validate_analyst_output,
+)
 
 __all__ = [
+    "DEFAULT_CONVICTION_BANDS",
     "AnalystOutput",
     "EntryOrder",
     "EntryWindow",
@@ -53,5 +61,9 @@ __all__ = [
     "StrategyLeg",
     "Target",
     "TimeCondition",
+    "ValidationError",
+    "ValidationResult",
+    "ValidationWarning",
     "WatchlistEntry",
+    "validate_analyst_output",
 ]
