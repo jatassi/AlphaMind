@@ -85,8 +85,10 @@ COLLECTOR_SPECS: list[CollectorSpec] = [
     CollectorSpec("eia.energy", 60 * 4),
     # bls.macro fires daily at 09:00 ET
     CollectorSpec("bls.macro", 60 * 24),
-    # treasury.auctions fires daily at 17:00 ET on weekdays
-    CollectorSpec("treasury.auctions", 60 * 24, market_hours_only=True),
+    # treasury.auctions fires Mon-Fri 17:00 ET (after market close), so the
+    # Fri → Mon gap is ~72h. Cadence widened to 3 days so the 2x max_age
+    # (6 days) accommodates the legitimate weekend gap without false STALE.
+    CollectorSpec("treasury.auctions", 60 * 24 * 3, market_hours_only=True),
     # finnhub.news fires every 30 min
     CollectorSpec("finnhub.news", 30),
     # finnhub.calendar fires daily at 06:00 ET; the scheduler entry fans out
