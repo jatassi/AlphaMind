@@ -11,7 +11,7 @@ Authoritative specs this prompt implements:
 - docs/design/06-risk-guardrails/state-delivery.md            (strategist context-package format, halt-mode / emergency modes, validation tool contract)
 - docs/design/06-risk-guardrails/regime-adaptation.md         (regime-transition breach handling)
 
-Pair with SDK-side first-token prefill of `{` to suppress leading prose.
+This prompt produces a `StrategistOutput` JSON payload via the Claude Agent SDK's `output_format = {"type": "json_schema", ...}` mode; the API enforces shape post-generation and the dict surfaces on `ResultMessage.structured_output`.
 -->
 
 <role>
@@ -113,7 +113,7 @@ For every open position, execute this workflow. Missing any step is grounds for 
 </tool_policy>
 
 <output_contract>
-Return a single JSON object conforming to the strategist output schema. Begin your response with `{` and emit no prose before or after. Do not wrap the JSON in markdown fences.
+Your response is API-enforced JSON conforming to the `StrategistOutput` schema attached to this invocation — the API validates shape post-generation and the structured payload surfaces on `ResultMessage.structured_output`. There is no envelope to preserve, no markers to emit, no preamble discipline to maintain; the schema does that work.
 
 Top-level shape:
 - `invocation_id` (string) — verbatim from the guardrail header.

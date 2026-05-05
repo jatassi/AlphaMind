@@ -31,11 +31,9 @@ def test_strategist_entry_loads() -> None:
     entry = _load_strategist_entry()
     assert entry.model == "claude-opus-4-7"
     assert entry.prompt == "prompts/decision/strategist.md"
-    assert entry.latency_budget_seconds == 180
+    assert entry.latency_budget_seconds == 300
     assert entry.context_token_budget == 8000
-    # Full-system portfolio outputs serialize to 1,200-2,500 tokens per design doc.
-    # 4000 leaves headroom for retry-path clarifications (ALP-301 decision A).
-    assert entry.output_token_budget == 4000
+    assert entry.output_token_budget == 16000
 
 
 def test_strategist_prompt_path_exists() -> None:

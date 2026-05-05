@@ -1350,10 +1350,13 @@ def main(
     *,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
 ) -> int:
-    """CLI entry point. Returns 0 on PASS/WARN, 1 on FAIL.
+    """CLI entry point. Returns 0 on all-PASS/WARN, 1 if any scenario FAILed.
 
-    Runs the chosen scenario(s) sequentially. ``--save-fixtures`` writes the
-    fixture file for every scenario that returned a non-FAIL verdict.
+    Runs the chosen scenario(s) sequentially. A FAIL on one scenario does
+    NOT short-circuit the loop — every scenario runs so the operator gets
+    a full picture before deciding next steps. ``--save-fixtures`` writes
+    the fixture file for every scenario that returned a non-FAIL verdict
+    (so a partial-success run still emits fixtures for the passing ones).
 
     The optional ``sdk_query_fn`` parameter is dependency injection for
     tests: when supplied, the runner uses it instead of the real SDK.
@@ -1408,8 +1411,6 @@ def main(
             sdk_query_fn=sdk_query_fn,
         )
         verdicts[scenario] = verdict
-        if verdict is Verdict.FAIL:
-            return 1
         if result is not None:
             outputs[scenario] = result.output
 
@@ -1423,7 +1424,7 @@ def main(
 
     summary = " | ".join(f"{s}: {v.value}" for s, v in verdicts.items())
     print(f"=== Summary: {summary} ===")
-    return 0
+    return 1 if any(v is Verdict.FAIL for v in verdicts.values()) else 0
 
 
 if __name__ == "__main__":

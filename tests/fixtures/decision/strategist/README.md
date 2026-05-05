@@ -23,6 +23,10 @@ synthesizer archive. Three scenarios:
 All three files validate cleanly against
 `alphamind.decision.strategist.models.StrategistOutput.model_json_schema()`.
 
+### Current state (PR #22 land, 2026-05-05)
+
+None of the three fixture JSONs have been emitted yet. The 2026-05-05 verification produced a real PASS on the normal scenario but the run halted at `defensive_posture` (fail-fast loop, since fixed) before reaching `--save-fixtures` for any scenario. The defensive_posture and emergency scenarios are blocked on follow-up work tracked at [ALP-311](https://linear.app/alphamind-jatassi/issue/ALP-311) (harness retry must preserve original user_message) and [ALP-312](https://linear.app/alphamind-jatassi/issue/ALP-312) (prompt clarity on `remedy_flag` scope). Once those land, re-run the verifier with `--save-fixtures` to emit all three.
+
 ## Provenance
 
 Fixtures are produced by:
