@@ -23,9 +23,7 @@ import jsonschema
 
 _REPO_ROOT = Path(__file__).parents[3]
 _PROMPT_PATH = _REPO_ROOT / "prompts" / "decision" / "strategist.md"
-_SCHEMA_PATH = (
-    _REPO_ROOT / "docs" / "design" / "04-decision-layer" / "strategist-output-schema.md"
-)
+_SCHEMA_PATH = _REPO_ROOT / "docs" / "design" / "04-decision-layer" / "strategist-output-schema.md"
 
 # All nine required XML envelope sections.
 _REQUIRED_SECTIONS = [
@@ -84,9 +82,7 @@ def test_prompt_has_all_required_sections() -> None:
     """
     content = _read_prompt()
     missing = [
-        tag
-        for tag in _REQUIRED_SECTIONS
-        if f"<{tag}>" not in content or f"</{tag}>" not in content
+        tag for tag in _REQUIRED_SECTIONS if f"<{tag}>" not in content or f"</{tag}>" not in content
     ]
     assert not missing, (
         f"prompts/decision/strategist.md is missing the following required "
