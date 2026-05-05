@@ -1,0 +1,575 @@
+{
+  "aggregate_observations": {
+    "book_health_summary": {
+      "by_recommended_action": {
+        "add": 0,
+        "adjust-bracket": 0,
+        "close": 0,
+        "hold": 4,
+        "reduce": 0
+      },
+      "by_thesis_status": {
+        "at-risk": 0,
+        "invalidated": 0,
+        "on-track": 3,
+        "partially-realized": 1,
+        "stale": 0
+      },
+      "remedy_flagged_count": 0,
+      "total": 4
+    },
+    "combined_set_impact": {
+      "basis": {
+        "analyst_proposal_ids": [
+          "REC-1",
+          "REC-2",
+          "REC-3"
+        ],
+        "snapshot_timestamp": "2026-05-04T14:30:00Z",
+        "strategist_action_ids": [],
+        "strategist_holds_excluded_count": 4
+      },
+      "breaches": [
+        {
+          "contributors": [
+            {
+              "contribution": 4.0,
+              "proposal_id": "REC-1"
+            },
+            {
+              "contribution": 4.0,
+              "proposal_id": "REC-2"
+            },
+            {
+              "contribution": 4.0,
+              "proposal_id": "REC-3"
+            }
+          ],
+          "overage": 1.5,
+          "rule": "net_long_pct",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "contributors": [
+            {
+              "contribution": 4.0,
+              "proposal_id": "REC-1"
+            },
+            {
+              "contribution": 4.0,
+              "proposal_id": "REC-2"
+            }
+          ],
+          "overage": 3.0,
+          "rule": "sector_concentration_tech",
+          "unit": "% of portfolio (delta-adjusted)"
+        }
+      ],
+      "per_rule": [
+        {
+          "current": 0.0,
+          "headroom_remaining": 0.05,
+          "limit": 0.05,
+          "projected_after": 0.0,
+          "rule": "borrow_cost_budget_pct_per_day",
+          "status": "PASS",
+          "unit": "% of portfolio per day"
+        },
+        {
+          "current": 49.5,
+          "headroom_remaining": 58.5,
+          "limit": 120.0,
+          "projected_after": 61.5,
+          "rule": "gross_exposure_pct",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 50.5,
+          "headroom_remaining": 28.5,
+          "limit": 10.0,
+          "projected_after": 38.5,
+          "rule": "min_cash_reserve_pct",
+          "status": "PASS",
+          "unit": "% of portfolio"
+        },
+        {
+          "current": 49.5,
+          "headroom_remaining": -1.5,
+          "limit": 60.0,
+          "projected_after": 61.5,
+          "rule": "net_long_pct",
+          "status": "FAIL",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 42.0,
+          "limit": 30.0,
+          "projected_after": -12.0,
+          "rule": "net_short_pct",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 40.0,
+          "limit": 40.0,
+          "projected_after": 0.0,
+          "rule": "options_delta_pct",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 30.0,
+          "limit": 30.0,
+          "projected_after": 0.0,
+          "rule": "pending_order_capital_pct",
+          "status": "PASS",
+          "unit": "% of portfolio"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 0.15,
+          "limit": 0.15,
+          "projected_after": 0.0,
+          "rule": "portfolio_theta_pct_per_day",
+          "status": "PASS",
+          "unit": "% of portfolio per day"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 1.0,
+          "limit": 1.0,
+          "projected_after": 0.0,
+          "rule": "portfolio_vega_pct_per_iv_point",
+          "status": "PASS",
+          "unit": "% of portfolio per 1-pt IV move"
+        },
+        {
+          "current": 4.3,
+          "headroom_remaining": 0.7000000000000002,
+          "limit": 5.0,
+          "projected_after": 4.3,
+          "rule": "position_max_size_pct",
+          "status": "WARNING",
+          "unit": "% of portfolio"
+        },
+        {
+          "current": 4.5,
+          "headroom_remaining": 20.5,
+          "limit": 25.0,
+          "projected_after": 4.5,
+          "rule": "sector_concentration_energy",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 10.0,
+          "headroom_remaining": 15.0,
+          "limit": 25.0,
+          "projected_after": 10.0,
+          "rule": "sector_concentration_financials",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 15.0,
+          "headroom_remaining": 6.0,
+          "limit": 25.0,
+          "projected_after": 19.0,
+          "rule": "sector_concentration_semis",
+          "status": "WARNING",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 20.0,
+          "headroom_remaining": -3.0,
+          "limit": 25.0,
+          "projected_after": 28.0,
+          "rule": "sector_concentration_tech",
+          "status": "FAIL",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 3.0,
+          "limit": 3.0,
+          "projected_after": 0.0,
+          "rule": "single_short_max_pct",
+          "status": "PASS",
+          "unit": "% of portfolio"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 30.0,
+          "limit": 30.0,
+          "projected_after": 0.0,
+          "rule": "total_short_pct",
+          "status": "PASS",
+          "unit": "% of portfolio"
+        }
+      ]
+    },
+    "conviction_distribution": {
+      "by_level": {
+        "1": 0,
+        "2": 0,
+        "3": 3,
+        "4": 0,
+        "5": 0
+      },
+      "total": 3
+    }
+  },
+  "analyst_section": {
+    "mode": "normal",
+    "recommendations": [
+      {
+        "pre_processor_annotations": {
+          "conflicts": []
+        },
+        "recommendation": {
+          "conviction_level": 3,
+          "counterarguments_acknowledged": "Macro downside risk acknowledged.",
+          "entry_order": {
+            "limit_price": null,
+            "stop_price": null,
+            "type": "market"
+          },
+          "entry_window": null,
+          "entry_window_rationale": null,
+          "guardrail_validation_result": {
+            "checked_at": "2026-05-04T14:30:00Z",
+            "cumulative_impact_note": null,
+            "delta_adjusted_exposure": null,
+            "greeks": null,
+            "overall": "PASS",
+            "per_rule": []
+          },
+          "instrument": {
+            "asset_type": "equity",
+            "direction": "long",
+            "ticker": "MSFT"
+          },
+          "invalidation_legs": [
+            {
+              "condition": {
+                "deadline": "2026-05-06T14:30:00Z"
+              },
+              "is_hard": true,
+              "leg_id": "INV-1",
+              "order_parameters": {
+                "limit_price": null,
+                "order_type": "market"
+              },
+              "type": "time"
+            }
+          ],
+          "invalidation_rationale": [
+            {
+              "leg_id": "INV-1",
+              "rationale": "48-hour time stop."
+            }
+          ],
+          "position_size": {
+            "delta_adjusted_exposure": 4000.0,
+            "dollar_value": 4000.0,
+            "pct_of_portfolio": 4.0,
+            "premium_at_risk": null,
+            "quantity": 9.52
+          },
+          "position_size_rationale": "4% position size, within limits.",
+          "recommendation_id": "REC-1",
+          "sector": "tech",
+          "target": {
+            "dollar_pl_target": 400.0,
+            "pl_dollar": null,
+            "pl_percentage": null,
+            "price": 462.00000000000006,
+            "target_type": "absolute_price"
+          },
+          "target_rationale": "10% upside target.",
+          "thesis_narrative": "Long MSFT on momentum.",
+          "time_expectation_hours": 48.0,
+          "underlying": "MSFT"
+        }
+      },
+      {
+        "pre_processor_annotations": {
+          "conflicts": []
+        },
+        "recommendation": {
+          "conviction_level": 3,
+          "counterarguments_acknowledged": "Macro downside risk acknowledged.",
+          "entry_order": {
+            "limit_price": null,
+            "stop_price": null,
+            "type": "market"
+          },
+          "entry_window": null,
+          "entry_window_rationale": null,
+          "guardrail_validation_result": {
+            "checked_at": "2026-05-04T14:30:00Z",
+            "cumulative_impact_note": null,
+            "delta_adjusted_exposure": null,
+            "greeks": null,
+            "overall": "PASS",
+            "per_rule": []
+          },
+          "instrument": {
+            "asset_type": "equity",
+            "direction": "long",
+            "ticker": "GOOGL"
+          },
+          "invalidation_legs": [
+            {
+              "condition": {
+                "deadline": "2026-05-06T14:30:00Z"
+              },
+              "is_hard": true,
+              "leg_id": "INV-2",
+              "order_parameters": {
+                "limit_price": null,
+                "order_type": "market"
+              },
+              "type": "time"
+            }
+          ],
+          "invalidation_rationale": [
+            {
+              "leg_id": "INV-2",
+              "rationale": "48-hour time stop."
+            }
+          ],
+          "position_size": {
+            "delta_adjusted_exposure": 4000.0,
+            "dollar_value": 4000.0,
+            "pct_of_portfolio": 4.0,
+            "premium_at_risk": null,
+            "quantity": 22.86
+          },
+          "position_size_rationale": "4% position size, within limits.",
+          "recommendation_id": "REC-2",
+          "sector": "tech",
+          "target": {
+            "dollar_pl_target": 400.0,
+            "pl_dollar": null,
+            "pl_percentage": null,
+            "price": 192.50000000000003,
+            "target_type": "absolute_price"
+          },
+          "target_rationale": "10% upside target.",
+          "thesis_narrative": "Long GOOGL on momentum.",
+          "time_expectation_hours": 48.0,
+          "underlying": "GOOGL"
+        }
+      },
+      {
+        "pre_processor_annotations": {
+          "conflicts": [
+            {
+              "conflict_type": "entry_vs_hold",
+              "underlying": "NVDA",
+              "with_assessment_id": "SA-1",
+              "with_pending_order_assessment_id": null
+            }
+          ]
+        },
+        "recommendation": {
+          "conviction_level": 3,
+          "counterarguments_acknowledged": "Macro downside risk acknowledged.",
+          "entry_order": {
+            "limit_price": null,
+            "stop_price": null,
+            "type": "market"
+          },
+          "entry_window": null,
+          "entry_window_rationale": null,
+          "guardrail_validation_result": {
+            "checked_at": "2026-05-04T14:30:00Z",
+            "cumulative_impact_note": null,
+            "delta_adjusted_exposure": null,
+            "greeks": null,
+            "overall": "PASS",
+            "per_rule": []
+          },
+          "instrument": {
+            "asset_type": "equity",
+            "direction": "long",
+            "ticker": "NVDA"
+          },
+          "invalidation_legs": [
+            {
+              "condition": {
+                "deadline": "2026-05-06T14:30:00Z"
+              },
+              "is_hard": true,
+              "leg_id": "INV-3",
+              "order_parameters": {
+                "limit_price": null,
+                "order_type": "market"
+              },
+              "type": "time"
+            }
+          ],
+          "invalidation_rationale": [
+            {
+              "leg_id": "INV-3",
+              "rationale": "48-hour time stop."
+            }
+          ],
+          "position_size": {
+            "delta_adjusted_exposure": 4000.0,
+            "dollar_value": 4000.0,
+            "pct_of_portfolio": 4.0,
+            "premium_at_risk": null,
+            "quantity": 4.64
+          },
+          "position_size_rationale": "4% position size, within limits.",
+          "recommendation_id": "REC-3",
+          "sector": "semis",
+          "target": {
+            "dollar_pl_target": 400.0,
+            "pl_dollar": null,
+            "pl_percentage": null,
+            "price": 948.2,
+            "target_type": "absolute_price"
+          },
+          "target_rationale": "10% upside target.",
+          "thesis_narrative": "Long NVDA on momentum.",
+          "time_expectation_hours": 48.0,
+          "underlying": "NVDA"
+        }
+      }
+    ],
+    "watchlist": null
+  },
+  "invocation_id": "20260504T143000Z-verify-pre-processor-breach",
+  "strategist_section": {
+    "mode": "normal",
+    "pending_order_assessments": [],
+    "portfolio_level_observations": {
+      "aggregate_thesis_health": "All four positions on-track; thesis narratives intact.",
+      "capital_allocation_observations": "Book utilisation at ~11%; ample headroom.",
+      "defensive_posture_summary": null,
+      "regime_transition_summary": null,
+      "sector_balance_shifts": "No material sector shifts this invocation.",
+      "thesis_dependency_warnings": "No correlated breakdowns detected."
+    },
+    "position_assessments": [
+      {
+        "assessment": {
+          "action_parameters": null,
+          "action_rationale": "Hold; thesis on-track.",
+          "add_conviction_justification": null,
+          "adjustment_rationale": null,
+          "assessment_id": "SA-1",
+          "cross_position_observations": null,
+          "exposure_impact": null,
+          "guardrail_validation_result": null,
+          "position_id": "POS-NVDA",
+          "prior_status": "on-track",
+          "recommended_action": "hold",
+          "reduce_rationale": null,
+          "remedy_flag": null,
+          "remedy_rationale": null,
+          "sector": "semis",
+          "status_rationale": "AI capex momentum intact; no new information.",
+          "thesis_id": "THESIS-POS-NVDA",
+          "thesis_status": "on-track",
+          "underlying": "NVDA"
+        },
+        "pre_processor_annotations": {
+          "conflicts": [
+            {
+              "conflict_type": "entry_vs_hold",
+              "underlying": "NVDA",
+              "with_recommendation_id": "REC-3"
+            }
+          ]
+        }
+      },
+      {
+        "assessment": {
+          "action_parameters": null,
+          "action_rationale": "Hold; thesis on-track.",
+          "add_conviction_justification": null,
+          "adjustment_rationale": null,
+          "assessment_id": "SA-2",
+          "cross_position_observations": null,
+          "exposure_impact": null,
+          "guardrail_validation_result": null,
+          "position_id": "POS-JPM",
+          "prior_status": "on-track",
+          "recommended_action": "hold",
+          "reduce_rationale": null,
+          "remedy_flag": null,
+          "remedy_rationale": null,
+          "sector": "financials",
+          "status_rationale": "Financials sector rotation ongoing; position healthy.",
+          "thesis_id": "THESIS-POS-JPM",
+          "thesis_status": "on-track",
+          "underlying": "JPM"
+        },
+        "pre_processor_annotations": {
+          "conflicts": []
+        }
+      },
+      {
+        "assessment": {
+          "action_parameters": null,
+          "action_rationale": "Hold; target not yet reached.",
+          "add_conviction_justification": null,
+          "adjustment_rationale": null,
+          "assessment_id": "SA-3",
+          "cross_position_observations": null,
+          "exposure_impact": null,
+          "guardrail_validation_result": null,
+          "position_id": "POS-XOM",
+          "prior_status": "on-track",
+          "recommended_action": "hold",
+          "reduce_rationale": null,
+          "remedy_flag": null,
+          "remedy_rationale": null,
+          "sector": "energy",
+          "status_rationale": "Energy capex normalisation thesis partially realised.",
+          "thesis_id": "THESIS-POS-XOM",
+          "thesis_status": "partially-realized",
+          "underlying": "XOM"
+        },
+        "pre_processor_annotations": {
+          "conflicts": []
+        }
+      },
+      {
+        "assessment": {
+          "action_parameters": null,
+          "action_rationale": "Hold; thesis on-track.",
+          "add_conviction_justification": null,
+          "adjustment_rationale": null,
+          "assessment_id": "SA-4",
+          "cross_position_observations": null,
+          "exposure_impact": null,
+          "guardrail_validation_result": null,
+          "position_id": "POS-AAPL",
+          "prior_status": "on-track",
+          "recommended_action": "hold",
+          "reduce_rationale": null,
+          "remedy_flag": null,
+          "remedy_rationale": null,
+          "sector": "tech",
+          "status_rationale": "Services-margin expansion thesis intact.",
+          "thesis_id": "THESIS-POS-AAPL",
+          "thesis_status": "on-track",
+          "underlying": "AAPL"
+        },
+        "pre_processor_annotations": {
+          "conflicts": []
+        }
+      }
+    ]
+  },
+  "timestamp": "2026-05-04T14:30:00Z"
+}
