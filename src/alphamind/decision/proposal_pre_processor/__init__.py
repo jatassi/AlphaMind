@@ -6,6 +6,7 @@ reaching into submodules. Later stories will append their additions to this
 file.
 """
 
+from alphamind.decision.proposal_pre_processor.assembler import BundleAssemblyError
 from alphamind.decision.proposal_pre_processor.conflicts import (
     ConflictDetectionResult,
     detect_conflicts,
@@ -42,6 +43,7 @@ from alphamind.decision.proposal_pre_processor.observations import (
     compute_combined_set_impact,
     compute_conviction_distribution,
 )
+from alphamind.decision.proposal_pre_processor.runner import run_proposal_pre_processor
 from alphamind.decision.proposal_pre_processor.translator import (
     TranslatorError,
     translate_position_assessment_to_proposed_delta,
@@ -57,6 +59,7 @@ __all__ = [
     "BasisSection",
     "BookHealthSummary",
     "BreachEntry",
+    "BundleAssemblyError",
     "ByRecommendedAction",
     "ByThesisStatus",
     "CombinedSetImpact",
@@ -80,6 +83,7 @@ __all__ = [
     "compute_combined_set_impact",
     "compute_conviction_distribution",
     "detect_conflicts",
+    "run_proposal_pre_processor",
     "translate_position_assessment_to_proposed_delta",
     "translate_recommendation_to_proposed_delta",
 ]
