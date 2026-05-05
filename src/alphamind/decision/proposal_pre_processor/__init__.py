@@ -32,6 +32,10 @@ from alphamind.decision.proposal_pre_processor.models import (
     WrappedRecommendation,
     bundle_schema,
 )
+from alphamind.decision.proposal_pre_processor.observations import (
+    compute_book_health_summary,
+    compute_conviction_distribution,
+)
 
 __all__ = [
     "BUNDLE_OUTPUT_SCHEMA",
@@ -58,4 +62,6 @@ __all__ = [
     "WrappedPositionAssessment",
     "WrappedRecommendation",
     "bundle_schema",
+    "compute_book_health_summary",
+    "compute_conviction_distribution",
 ]
