@@ -18,7 +18,7 @@ on success, and the next script reads its predecessor's outputs via
 
 ## TL;DR for the agent
 
-You're going to run 10 verification scripts in 6 phases. Three rules:
+You're going to run 11 verification scripts in 7 phases. Three rules:
 
 1. **Stop on first FAIL.** Each phase depends on prior phases' state
    AND its predecessor's stage artifacts. Don't continue past a red
@@ -97,6 +97,7 @@ they read time-dependent DB state.
 | 4 | Analysis: qualitative + adaptive | qualitative_researcher, adaptive_researcher | Yes | ~45–90s |
 | 5 | Analysis: synthesizer | synthesizer | Yes | ~10–30s |
 | 6 | Decision: analyst | analyst (normal + halt scenarios) | Yes (Opus) | ~30–90s |
+| 7 | Decision: strategist | strategist (normal + defensive_posture + emergency scenarios) | Yes (Opus) | ~10–15 min |
 
 ## Phase 1 — Data layer
 
@@ -411,6 +412,61 @@ The diagnostic archive carries the prompt, the assembled input bundle
 (header + brief), the full structured-output response, and the error
 trail.
 
+## Phase 7 — Strategist (decision layer)
+
+The second decision-layer agent. The strategist consumes the same
+synthesizer-prose archive the analyst does (from phase 5 — fixture-based
+per ALP-116 parent-issue decision C, not live composition); phase 7 can
+run in parallel with phase 6. The strategist runs three scenarios per
+verify call: **normal mode** (full guardrail header, multi-position
+assessments), **defensive_posture mode** (halt header active, no
+`add` actions allowed), and **emergency invocation** (regime-transition
+breach surfaced; runs in normal mode but with the EMERGENCY INVOCATION
+line in the header).
+
+```bash
+uv run python scripts/verify_strategist.py \
+    --archive-root "$ARCHIVE_ROOT" \
+    --synthesizer-invocation-id "$INVOCATION_ID" \
+    --save-fixtures
+```
+
+Verifies, per scenario: schema-valid `StrategistOutput`, Layer-2/3
+cross-field invariants hold (no `unknown_reference`, no
+`assessment_id` collisions, no orphan `linked_position_assessment_id`,
+no `remedy_flag` ↔ `addressed_breaches` pairing mismatches), and
+defensive_posture-mode forbids `recommended_action=add`. Wall-clock ≤
+strategist's `latency_budget_seconds` × 3 scenarios. Exits 0 on PASS or
+WARN per scenario; exits 1 on FAIL on any scenario.
+
+`--synthesizer-invocation-id` points at the phase 5 invocation; the
+script reads `analysis/synthesizer/response.md` and
+`stage_artifacts/retrieval_store.json` from that archive (same files
+the analyst reads). Each strategist-side scenario writes its own
+diagnostic archive to
+`<archive-root>/invocations/<strategist-inv-id>/decision/strategist/`.
+
+`--save-fixtures` writes the parsed `StrategistOutput` JSON for all
+three scenarios to
+`tests/fixtures/decision/strategist/{normal,defensive_posture,emergency}.json`.
+These are the canonical inputs the downstream feature trees' verifiers
+(proposal pre-processor, PM) will consume — see
+`tests/fixtures/decision/strategist/README.md` for the handoff
+contract.
+
+Runbook: `scripts/RUNBOOK_strategist.md`.
+
+**On WARN:** the strategist produced structured output that parsed
+cleanly but flagged a contract violation — most commonly an
+`unknown_reference` or a defensive-posture `add`-action mismatch. The
+fixture is still written; the operator decides whether to act on the
+warning.
+
+**On FAIL:** read `scripts/RUNBOOK_strategist.md` § Failure-mode
+triage. The diagnostic archive carries the prompt, the assembled input
+bundle (header + tool reminder + portfolio state + brief), the full
+structured-output response, and the error trail.
+
 ## When complete
 
 Report a one-line summary to the operator:
@@ -423,9 +479,10 @@ End-to-end verification: <PASS|FAIL|WARN-only>
 - Phase 4 (qualitative + adaptive): PASS
 - Phase 5 (synthesizer): WARN (2 invented references)
 - Phase 6 (analyst): normal=PASS, halt=PASS
+- Phase 7 (strategist): normal=PASS, defensive_posture=PASS, emergency=PASS
 Total LLM cost: ~Xk Sonnet input + Yk Sonnet output, ~Zk Opus input + Wk Opus output
 Archives under .archive/verify-pipeline-YYYYMMDD/
-Fixtures at tests/fixtures/decision/analyst/{normal,halt}.json
+Fixtures at tests/fixtures/decision/{analyst,strategist}/*.json
 ```
 
 If WARN-only or any FAIL, attach the per-script verdict block(s) so
@@ -441,8 +498,9 @@ the operator can act.
 | verify_adaptive_researcher | Sonnet | 8K–10K | 0.7K–1K |
 | verify_synthesizer | Sonnet | 10K–12K | 1.5K–2K |
 | verify_analyst (×2 scenarios) | Opus | 12K–18K | 3K–5K |
+| verify_strategist (×3 scenarios) | Opus | 24K–36K | 30K–55K |
 | **Sonnet total** | | **~54K–70K** | **~7.6K–13.6K** |
-| **Opus total** | | **~12K–18K** | **~3K–5K** |
+| **Opus total** | | **~36K–54K** | **~33K–60K** |
 
 Roughly 10–15% of the nominal weekly Sonnet cap and a smaller slice of
 the Opus cap per `docs/design/cost-and-rate-limit-modeling.md`. Don't
@@ -463,13 +521,15 @@ if the existing thresholds become misleading.
    invariants; it does not exercise a fresh transition end-to-end
    (would require a live regime shift in the market data).
 
-2. **No ongoing strategist / PM / execution-layer verification.**
-   Anything downstream of the analyst (strategist, proposal
-   pre-processor, PM, breach behavior, execution) is outside this
-   runbook's scope — those layers are either in progress or not yet
-   built. Their verifiers will consume the analyst fixtures
-   `tests/fixtures/decision/analyst/{normal,halt}.json` once landed.
-   Check `docs/project-tracker.md` for current status.
+2. **No ongoing PM / execution-layer verification.** Anything
+   downstream of the strategist (proposal pre-processor, PM, breach
+   behavior, execution) is outside this runbook's scope — those
+   layers are either in progress or not yet built. Their verifiers
+   will consume the analyst fixtures
+   `tests/fixtures/decision/analyst/{normal,halt}.json` and the
+   strategist fixtures
+   `tests/fixtures/decision/strategist/{normal,defensive_posture,emergency}.json`
+   once landed. Check `docs/project-tracker.md` for current status.
 
 3. **No "run all" wrapper.** This runbook is the closest thing.
    Sequence is manual; if any phase changes (new script, removed
@@ -494,7 +554,10 @@ update the runbook in the same change.
 - `scripts/RUNBOOK_adaptive_researcher.md` — phase 4 failure triage.
 - `scripts/RUNBOOK_synthesizer.md` — phase 5 failure triage.
 - `scripts/RUNBOOK_analyst.md` — phase 6 failure triage.
+- `scripts/RUNBOOK_strategist.md` — phase 7 failure triage.
 - `tests/fixtures/decision/analyst/README.md` — analyst-fixture
+  provenance + downstream consumer contract.
+- `tests/fixtures/decision/strategist/README.md` — strategist-fixture
   provenance + downstream consumer contract.
 - `docs/project-tracker.md` — current build status.
 - `src/alphamind/pipeline/analysis.py` — `run_analysis_pipeline` (ALP-276),

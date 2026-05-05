@@ -30,9 +30,20 @@ agents:
   strategist:
     model: claude-opus-4-7
     prompt: prompts/decision/strategist.md
-    latency_budget_seconds: 180
+    # 180s proved too tight in live e2e; the model emits ThinkingBlocks for
+    # 60+s between actions on the strategist task (4+ positions × thesis
+    # classification + cited rationale + cross-position observations).
+    # Raised to 300s 2026-05-05 after PR #22 verify-strategist timed out at
+    # 185s with no ResultMessage.
+    latency_budget_seconds: 300
     context_token_budget: 8000
-    output_token_budget: 2000
+    # Design-doc estimate (1,200–2,500 tokens for full-system) understates real
+    # output. 4000 truncated the normal-scenario response in PR #22 verify-strategist
+    # at stop_sequence; raised to 16000 2026-05-05 for comfortable headroom across
+    # all three scenarios (normal, defensive_posture, emergency-invocation) plus
+    # retry path. Output goes nowhere external — generated tokens ARE the work
+    # product, so a generous cap is cheap relative to a re-run.
+    output_token_budget: 16000
     tools: [retrieve_brief, validate_guardrail]
 
   portfolio_manager:
