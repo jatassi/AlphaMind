@@ -18,6 +18,7 @@ is the callable form, consistent with the pattern used by downstream tools.
 
 from __future__ import annotations
 
+import copy
 import re
 from datetime import datetime
 from enum import StrEnum
@@ -442,5 +443,9 @@ BUNDLE_OUTPUT_SCHEMA: dict[str, Any] = ProposalPreProcessorBundle.model_json_sch
 
 
 def bundle_schema() -> dict[str, Any]:
-    """Return the JSON Schema (Draft 2020-12) for ProposalPreProcessorBundle."""
-    return BUNDLE_OUTPUT_SCHEMA
+    """Return a fresh copy of the JSON Schema (Draft 2020-12) for ProposalPreProcessorBundle.
+
+    Returns a deep copy so callers that mutate the result cannot affect the
+    cached :data:`BUNDLE_OUTPUT_SCHEMA` constant or other callers.
+    """
+    return copy.deepcopy(BUNDLE_OUTPUT_SCHEMA)

@@ -418,6 +418,17 @@ def test_bundle_schema_function() -> None:
     assert result == ProposalPreProcessorBundle.model_json_schema()
 
 
+def test_bundle_schema_returns_independent_copy() -> None:
+    schema = bundle_schema()
+    schema["required"].append("__caller_mutation__")
+    schema["$defs"]["__caller_added__"] = {"type": "object"}
+    fresh = bundle_schema()
+    assert "__caller_mutation__" not in fresh["required"]
+    assert "__caller_added__" not in fresh["$defs"]
+    assert "__caller_mutation__" not in MODULE_BUNDLE_OUTPUT_SCHEMA["required"]
+    assert "__caller_added__" not in MODULE_BUNDLE_OUTPUT_SCHEMA["$defs"]
+
+
 # ---------------------------------------------------------------------------
 # AC-9: WrappedPositionAssessment round-trips
 # ---------------------------------------------------------------------------

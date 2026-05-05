@@ -103,7 +103,7 @@ Per-rule projection of the combined set's effect on guardrail state, computed vi
 
 - **`basis`** identifies what's included. Strategist holds are excluded from the math (no exposure change); the count is reported for context.
 - **`per_rule`** has one entry per rule active under the current portfolio profile and regime. Rule IDs come from [`rules-and-limits.md`](../06-risk-guardrails/rules-and-limits.md). The `status` enum (`PASS | WARNING | FAIL`) and remaining fields match the validation tool's per-rule shape.
-- **`breaches`** is the slice of `per_rule` where `status ≠ PASS`, augmented with `contributors` — signed per-proposal attribution that only makes sense in batch. Negative contributions indicate proposals pulling the rule away from breach (e.g., a close on a long contributes negatively to net long exposure).
+- **`breaches`** is the slice of `per_rule` where `status` is `FAIL`, augmented with `contributors` — signed per-proposal attribution that only makes sense in batch. Negative contributions indicate proposals pulling the rule away from breach (e.g., a close on a long contributes negatively to net long exposure).
 - Capital sits in `per_rule` like any other rule (`available_capital`). The combined-set projection covers it the same way it covers sector concentration, directional exposure, gross exposure, and Greeks.
 
 ### §1.B `conviction_distribution`
