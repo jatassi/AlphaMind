@@ -1,9 +1,10 @@
 """Strategist decision-layer public surface.
 
-The model names (story 03 / ALP-303) are re-exported so downstream callers
-can import from :mod:`alphamind.decision.strategist` without reaching into
-the submodules. Later stories add parser, validator, harness, and runner
-under the same package; their public names will be appended here.
+The model names (story 03 / ALP-303) and the Layer-2/3 cross-field validator
+(story 05b / ALP-306) are re-exported so downstream callers can import from
+:mod:`alphamind.decision.strategist` without reaching into the submodules.
+Later stories add parser, harness, and runner under the same package; their
+public names will be appended here.
 """
 
 from alphamind.decision.strategist.models import (
@@ -34,6 +35,12 @@ from alphamind.decision.strategist.models import (
     ThesisComponentUpdate,
     ThesisStatus,
 )
+from alphamind.decision.strategist.validation import (
+    ValidationFailure,
+    ValidationResult,
+    ValidationWarning,
+    validate_strategist_output,
+)
 
 __all__ = [
     "ActionParameters",
@@ -62,4 +69,8 @@ __all__ = [
     "StrategistOutput",
     "ThesisComponentUpdate",
     "ThesisStatus",
+    "ValidationFailure",
+    "ValidationResult",
+    "ValidationWarning",
+    "validate_strategist_output",
 ]
