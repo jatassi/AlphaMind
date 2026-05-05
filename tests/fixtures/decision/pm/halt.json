@@ -1,0 +1,330 @@
+{
+  "completion_record": {
+    "invocation_id": "20260505T172913Z-verify-pm-halt",
+    "timestamp": "2026-05-05T17:32:00Z",
+    "envelopes_submitted": 6,
+    "verdict_summary": {
+      "approve": 3,
+      "approve_with_modification": 0,
+      "reject": 3
+    }
+  },
+  "submission_log": [
+    {
+      "envelope": {
+        "envelope_id": "ENV-SA-1",
+        "invocation_id": "20260505T172913Z-verify-pm-halt",
+        "source_provenance": "pm_strategist",
+        "source_recommendation_id": "SA-1",
+        "recommendation_type": "position_assessment",
+        "position_id": "POS-NVDA",
+        "verdict": "reject",
+        "evaluation": {
+          "status_classification_warrant": {
+            "status": "pass",
+            "note": null
+          },
+          "action_status_alignment": {
+            "status": "fail",
+            "note": null
+          },
+          "action_specific_justification": {
+            "status": "fail",
+            "note": null
+          },
+          "portfolio_coherence": {
+            "status": "fail",
+            "note": null
+          }
+        },
+        "modifications": [],
+        "concerns": [
+          {
+            "source": "criterion",
+            "summary": "test"
+          }
+        ],
+        "rationale_narrative": "Test",
+        "anti_patterns_identified": null,
+        "commands": []
+      },
+      "submission_results": []
+    },
+    {
+      "envelope": {
+        "envelope_id": "ENV-SA-1",
+        "invocation_id": "20260505T172913Z-verify-pm-halt",
+        "source_provenance": "pm_strategist",
+        "source_recommendation_id": "SA-1",
+        "recommendation_type": "position_assessment",
+        "position_id": "POS-NVDA",
+        "verdict": "reject",
+        "evaluation": {
+          "status_classification_warrant": {
+            "status": "pass",
+            "note": null
+          },
+          "action_status_alignment": {
+            "status": "fail",
+            "note": null
+          },
+          "action_specific_justification": {
+            "status": "fail",
+            "note": null
+          },
+          "portfolio_coherence": {
+            "status": "fail",
+            "note": null
+          }
+        },
+        "modifications": [],
+        "concerns": [
+          {
+            "source": "criterion",
+            "summary": "Strategist names POS-NVDA reduction priority #1 in defensive_posture_summary but per-position action is hold; coherent halt-mode action would be reduce, close, or adjust-bracket tightening the stop."
+          },
+          {
+            "source": "criterion",
+            "summary": "Action rationale defers all judgment to halt resolution; does not engage with brief's directional convergence (7.5th percentile, bearish MACD -0.714, MCHP/MRVL/ON/AVGO/TXN vs NVDA correlation divergences) into 48h Q1 earnings."
+          },
+          {
+            "source": "criterion",
+            "summary": "Position at CRITICAL proximity to per-position cap heading into earnings catalyst within macro event window; vol-event drag stacked on directional drag."
+          },
+          {
+            "source": "anti_pattern",
+            "summary": "thesis_contradiction_suppression: status_rationale labels NVDA at-risk but cites only 'defensive posture active' rather than the specific contradicting evidence."
+          },
+          {
+            "source": "anti_pattern",
+            "summary": "rationalized_continuation: hold despite reduction-priority-1 flag and bearish convergence is continuation through deferral."
+          }
+        ],
+        "rationale_narrative": "Anti-pattern: thesis_contradiction_suppression and rationalized_continuation. The strategist's portfolio_level_observations explicitly names POS-NVDA as the highest-priority reduction candidate, which is incompatible with a per-position hold action \u2014 a coherent recommendation in halt mode would be reduce, close, or adjust-bracket tightening the stop with a concrete level. The brief documents NVDA at the 7.5th intra-sector percentile, bearish MACD -0.714, and five calibrated correlation divergences (MCHP:NVDA 2.79\u03c3, MRVL:NVDA 2.58\u03c3, NVDA:ON 2.37\u03c3, AVGO:NVDA 1.79\u03c3, NVDA:TXN 1.79\u03c3) all opposite to the AI-capex-acceleration thesis direction, into a 48h Q1 earnings catalyst overlapping the [QR-1] / [SA-FIN-4] macro window. Position sits at \ud83d\udd34 CRITICAL proximity to the per-position cap. Rejecting carries the disagreement to the next strategist invocation for re-evaluation against fresh data with concrete action parameters; the PM does not override action type, so a constructive reduce or close must originate from the strategist.",
+        "anti_patterns_identified": null,
+        "commands": []
+      },
+      "submission_results": []
+    },
+    {
+      "envelope": {
+        "envelope_id": "ENV-SA-2",
+        "invocation_id": "20260505T172913Z-verify-pm-halt",
+        "source_provenance": "pm_strategist",
+        "source_recommendation_id": "SA-2",
+        "recommendation_type": "position_assessment",
+        "position_id": "POS-MSFT",
+        "verdict": "reject",
+        "evaluation": {
+          "status_classification_warrant": {
+            "status": "fail",
+            "note": null
+          },
+          "action_status_alignment": {
+            "status": "fail",
+            "note": null
+          },
+          "action_specific_justification": {
+            "status": "fail",
+            "note": null
+          },
+          "portfolio_coherence": {
+            "status": "fail",
+            "note": null
+          }
+        },
+        "modifications": [],
+        "concerns": [
+          {
+            "source": "criterion",
+            "summary": "Position no longer exists per activity log (engine close 2026-05-04T14:15:00Z); thesis status is not applicable."
+          },
+          {
+            "source": "criterion",
+            "summary": "Strategist acknowledges engine closure in action_rationale but emits hold action."
+          },
+          {
+            "source": "anti_pattern",
+            "summary": "engine_originated_closure_signal: strategist's package failed to factor in the between-invocation engine close; the assessment was generated against stale portfolio state."
+          }
+        ],
+        "rationale_narrative": "Anti-pattern: engine_originated_closure_signal. POS-MSFT was closed by the engine at 2026-05-04T14:15:00Z (reason INVALIDATED_STOPPED_CORRECTLY), as recorded in the activity log and in the guardrail header's 'recent engine-originated actions' section. The strategist's action_rationale acknowledges 'engine closure already executed' yet still emits a hold recommendation. Hold is undefined for a non-existent position; the assessment is malformed. Rejecting prevents the envelope from polluting the activity log with a phantom hold; the next strategist invocation should generate assessments against current portfolio state without the closed position.",
+        "anti_patterns_identified": null,
+        "commands": []
+      },
+      "submission_results": []
+    },
+    {
+      "envelope": {
+        "envelope_id": "ENV-SA-4",
+        "invocation_id": "20260505T172913Z-verify-pm-halt",
+        "source_provenance": "pm_strategist",
+        "source_recommendation_id": "SA-4",
+        "recommendation_type": "position_assessment",
+        "position_id": "POS-JPM",
+        "verdict": "reject",
+        "evaluation": {
+          "status_classification_warrant": {
+            "status": "fail",
+            "note": null
+          },
+          "action_status_alignment": {
+            "status": "pass",
+            "note": null
+          },
+          "action_specific_justification": {
+            "status": "fail",
+            "note": null
+          },
+          "portfolio_coherence": {
+            "status": "pass",
+            "note": null
+          }
+        },
+        "modifications": [],
+        "concerns": [
+          {
+            "source": "criterion",
+            "summary": "on-track contradicts 1/17 sector breadth, JPM gap -1.85 today, bearish MACD, inverted curve -0.52, and XLF\u2192SPY lead-lag carrying breakdown cross-market."
+          },
+          {
+            "source": "criterion",
+            "summary": "Single-word 'Hold' action_rationale fails to address the dense 48h macro event cluster with yield-curve classifier offline."
+          },
+          {
+            "source": "anti_pattern",
+            "summary": "thesis_contradiction_suppression: status_rationale rehashes entry context ('financials rotation thesis intact') without engaging directly contradicting brief signals."
+          }
+        ],
+        "rationale_narrative": "Anti-pattern: thesis_contradiction_suppression. The brief's portfolio cross-reference for JPM is unambiguous \u2014 with-trend decliner, gap -1.85, bearish MACD, in a 1/17 financials breadth session [SA-FIN-1], with the XLF\u2192SPY 1-day lead-lag [CR-13] and HYG\u2192SPY 2-day lead-lag [CR-12] extending the breakdown cross-market and into the Treasury Refunding event window. The strategist's 'financials rotation thesis intact' rehashes the entry rationale without engaging this evidence. Per existing-position guidance, status reclassification is the strategist's responsibility, not the PM's; rejecting returns the assessment to the next invocation, where the strategist re-evaluates classification and may emit reduce, adjust-bracket (tightening stop into the 48h macro event cluster), or hold with a substantively grounded rationale.",
+        "anti_patterns_identified": null,
+        "commands": []
+      },
+      "submission_results": []
+    },
+    {
+      "envelope": {
+        "envelope_id": "ENV-SA-3",
+        "invocation_id": "20260505T172913Z-verify-pm-halt",
+        "source_provenance": "pm_strategist",
+        "source_recommendation_id": "SA-3",
+        "recommendation_type": "position_assessment",
+        "position_id": "POS-GOOGL",
+        "verdict": "approve",
+        "evaluation": {
+          "status_classification_warrant": {
+            "status": "pass",
+            "note": null
+          },
+          "action_status_alignment": {
+            "status": "pass",
+            "note": null
+          },
+          "action_specific_justification": {
+            "status": "pass",
+            "note": null
+          },
+          "portfolio_coherence": {
+            "status": "pass",
+            "note": null
+          }
+        },
+        "modifications": [],
+        "concerns": [],
+        "rationale_narrative": "Approve hold. GOOGL appears in the brief only as the comparator in GOOGL:META and GOOG:META correlation divergences where META is the outlier; the search-resilience thesis is not contradicted by any signal in this invocation. Halt mode permits hold, sizing is well below cap, and no per-position or sector constraint is pressured. No commands emitted (hold = non-action).",
+        "anti_patterns_identified": null,
+        "commands": []
+      },
+      "submission_results": []
+    },
+    {
+      "envelope": {
+        "envelope_id": "ENV-SA-5",
+        "invocation_id": "20260505T172913Z-verify-pm-halt",
+        "source_provenance": "pm_strategist",
+        "source_recommendation_id": "SA-5",
+        "recommendation_type": "position_assessment",
+        "position_id": "POS-XOM",
+        "verdict": "approve",
+        "evaluation": {
+          "status_classification_warrant": {
+            "status": "pass",
+            "note": null
+          },
+          "action_status_alignment": {
+            "status": "pass",
+            "note": null
+          },
+          "action_specific_justification": {
+            "status": "pass",
+            "note": null
+          },
+          "portfolio_coherence": {
+            "status": "pass",
+            "note": null
+          }
+        },
+        "modifications": [],
+        "concerns": [
+          {
+            "source": "general",
+            "summary": "Rationale is thin: 'Hold' action_rationale does not engage with the energy-equity vs spot-crude decoupling or the EIA/API forcing functions inside the next 48h. Approving the hold but flagging the brevity for next-invocation calibration."
+          }
+        ],
+        "rationale_narrative": "Approve hold. Partially-realized status is consistent with XOM's participation in the 8/9 energy advances. The brief's energy-equity vs spot-crude decoupling contradiction [SA-ENERGY-ANOM-2, SA-ENERGY-1] is unresolved, with EIA crude print 2026-05-06 14:30Z and API pre-read 20:30Z [SA-ENERGY-5] as the nearest forcing functions \u2014 holding through the decision point is defensible. Halt mode prevents adds; PM does not author reduce or adjust-bracket commands without strategist origination on a hold envelope (and stop levels are not surfaced in portfolio state, blocking PM-side bracket authorship). No commands emitted.",
+        "anti_patterns_identified": null,
+        "commands": []
+      },
+      "submission_results": []
+    },
+    {
+      "envelope": {
+        "envelope_id": "ENV-SA-6",
+        "invocation_id": "20260505T172913Z-verify-pm-halt",
+        "source_provenance": "pm_strategist",
+        "source_recommendation_id": "SA-6",
+        "recommendation_type": "position_assessment",
+        "position_id": "POS-AAPL",
+        "verdict": "approve",
+        "evaluation": {
+          "status_classification_warrant": {
+            "status": "pass",
+            "note": null
+          },
+          "action_status_alignment": {
+            "status": "pass",
+            "note": null
+          },
+          "action_specific_justification": {
+            "status": "pass",
+            "note": null
+          },
+          "portfolio_coherence": {
+            "status": "pass",
+            "note": null
+          }
+        },
+        "modifications": [],
+        "concerns": [],
+        "rationale_narrative": "Approve hold. AAPL is not addressed in the brief's contradictions, intersections, or portfolio cross-references; the services-margin-expansion thesis is not contradicted by any signal in this invocation. Halt mode permits hold; smallest position in the held book at 1.8%; no constraint pressure. No commands emitted (hold = non-action).",
+        "anti_patterns_identified": null,
+        "commands": []
+      },
+      "submission_results": []
+    }
+  ],
+  "scenario_metadata": {
+    "name": "halt",
+    "verdict": "PASS",
+    "tokens_used": {
+      "input_tokens": 25,
+      "output_tokens": 24475,
+      "cache_read_tokens": 856683,
+      "cache_write_tokens": 44978
+    },
+    "wall_clock_seconds": 321.44975625001825,
+    "tool_calls_used": 18,
+    "retry_count": 0,
+    "stop_reason": "end_turn"
+  }
+}

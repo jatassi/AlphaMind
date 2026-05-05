@@ -50,7 +50,7 @@ Cross-cutting policies and reference specs that constrain implementation but are
 - [x] **Analyst** ([ALP-115](https://linear.app/alphamind-jatassi/issue/ALP-115)) — _done_ — [design](design/04-decision-layer/analyst.md), [output schema](design/04-decision-layer/analyst-output-schema.md)
 - [x] **Strategist** ([ALP-116](https://linear.app/alphamind-jatassi/issue/ALP-116)) — _done_ — [design](design/04-decision-layer/strategist.md), [output schema](design/04-decision-layer/strategist-output-schema.md)
 - [x] **Proposal pre-processor** ([ALP-118](https://linear.app/alphamind-jatassi/issue/ALP-118)) — _done_ — [design](design/04-decision-layer/proposal-pre-processor.md), [bundle schema](design/04-decision-layer/proposal-pre-processor-bundle-schema.md)
-- [ ] **Portfolio manager** ([ALP-117](https://linear.app/alphamind-jatassi/issue/ALP-117)) — _stories drafted_ — [design](design/04-decision-layer/portfolio-manager.md), [envelope schema](design/04-decision-layer/pm-envelope-schema.md), [submit_envelope tool schema](design/04-decision-layer/submit-envelope-tool-schema.md)
+- [x] **Portfolio manager** ([ALP-117](https://linear.app/alphamind-jatassi/issue/ALP-117)) — _done_ — [design](design/04-decision-layer/portfolio-manager.md), [envelope schema](design/04-decision-layer/pm-envelope-schema.md), [submit_envelope tool schema](design/04-decision-layer/submit-envelope-tool-schema.md)
 
 ### Execution layer
 

@@ -98,6 +98,8 @@ they read time-dependent DB state.
 | 5 | Analysis: synthesizer | synthesizer | Yes | ~10–30s |
 | 6 | Decision: analyst | analyst (normal + halt scenarios) | Yes (Opus) | ~30–90s |
 | 7 | Decision: strategist | strategist (normal + defensive_posture + emergency scenarios) | Yes (Opus) | ~10–15 min |
+| 8 | Decision: proposal pre-processor | proposal_pre_processor (4 scenarios) | No | <1s |
+| 9 | Decision: portfolio manager | pm (normal + halt + emergency + synchronous_rejection scenarios) | Yes (Opus) | ~20–30 min |
 
 ## Phase 1 — Data layer
 
@@ -493,6 +495,51 @@ consumed by the PM phase.
 
 **See:** [`RUNBOOK_proposal_pre_processor.md`](RUNBOOK_proposal_pre_processor.md)
 
+## Phase 9 — Portfolio manager
+
+**Purpose.** Verify the PM agent (ALP-117) end-to-end against the real
+Claude Agent SDK across four scenarios — `normal`, `halt`, `emergency`,
+and `synchronous_rejection`. Each scenario exercises a different slice
+of the PM's contract: clean approval flow, halt-mode risk-reduction-only
+rendering, regime-transition breach handling, and the post-rejection
+modification path triggered by an engine-stub `submit_envelope`
+rejection.
+
+**Prerequisites.** Phase 5 (synthesizer) must have completed — its
+recorded `response.md` and `retrieval_store.json` are the brief inputs.
+Phase 8 (proposal pre-processor) must have completed and emitted the
+four pre-processor fixtures
+`tests/fixtures/decision/proposal_pre_processor/{normal,halt,emergency,normal_with_breach}.json`
+— the PM verifier reads each as the corresponding scenario's input.
+
+**Run.**
+
+```bash
+uv run python scripts/verify_pm.py \
+    --archive-root "$ARCHIVE_ROOT" \
+    --synthesizer-invocation-id "$INVOCATION_ID" \
+    --save-fixtures
+```
+
+Verifies, per scenario: schema-valid `PMCompletionRecord`,
+parser-clean completion sentinel,
+`submission_log` containing zero rejections (or, for the
+`synchronous_rejection` scenario, at least one rejection). Wall-clock ≤
+PM's `latency_budget_seconds` × 4 scenarios. Exits 0 on PASS or WARN
+per scenario; exits 1 on FAIL on any.
+
+**Outputs.** Four fixture JSON files at
+`tests/fixtures/decision/pm/{normal,halt,emergency,synchronous_rejection}.json`
+— each carrying `completion_record` (parsed sentinel), `submission_log`
+(per-envelope record of the engine-stub's responses), and
+`scenario_metadata` (verdict, tokens, wall clock). These will be
+consumed by the decision-layer pipeline-composition wiring once
+[ALP-310](https://linear.app/alphamind-jatassi/issue/ALP-310) lands.
+
+**Cost.** Four Opus invocations; ~40K input + ~30K output tokens.
+
+**See:** [`RUNBOOK_pm.md`](RUNBOOK_pm.md)
+
 ## When complete
 
 Report a one-line summary to the operator:
@@ -507,9 +554,10 @@ End-to-end verification: <PASS|FAIL|WARN-only>
 - Phase 6 (analyst): normal=PASS, halt=PASS
 - Phase 7 (strategist): normal=PASS, defensive_posture=PASS, emergency=PASS
 - Phase 8 (proposal pre-processor): normal=PASS, halt=PASS, emergency=PASS, normal_with_breach=PASS
+- Phase 9 (portfolio manager): normal=PASS, halt=PASS, emergency=PASS, synchronous_rejection=PASS
 Total LLM cost: ~Xk Sonnet input + Yk Sonnet output, ~Zk Opus input + Wk Opus output
 Archives under .archive/verify-pipeline-YYYYMMDD/
-Fixtures at tests/fixtures/decision/{analyst,strategist,proposal_pre_processor}/*.json
+Fixtures at tests/fixtures/decision/{analyst,strategist,proposal_pre_processor,pm}/*.json
 ```
 
 If WARN-only or any FAIL, attach the per-script verdict block(s) so
@@ -526,8 +574,10 @@ the operator can act.
 | verify_synthesizer | Sonnet | 10K–12K | 1.5K–2K |
 | verify_analyst (×2 scenarios) | Opus | 12K–18K | 3K–5K |
 | verify_strategist (×3 scenarios) | Opus | 24K–36K | 30K–55K |
+| verify_proposal_pre_processor | (none) | 0 | 0 |
+| verify_pm (×4 scenarios) | Opus | 32K–48K | 24K–40K |
 | **Sonnet total** | | **~54K–70K** | **~7.6K–13.6K** |
-| **Opus total** | | **~36K–54K** | **~33K–60K** |
+| **Opus total** | | **~68K–102K** | **~57K–100K** |
 
 Roughly 10–15% of the nominal weekly Sonnet cap and a smaller slice of
 the Opus cap per `docs/design/cost-and-rate-limit-modeling.md`. Don't
@@ -548,14 +598,13 @@ if the existing thresholds become misleading.
    invariants; it does not exercise a fresh transition end-to-end
    (would require a live regime shift in the market data).
 
-2. **No ongoing PM / execution-layer verification.** Anything
-   downstream of the strategist (proposal pre-processor, PM, breach
-   behavior, execution) is outside this runbook's scope — those
-   layers are either in progress or not yet built. Their verifiers
-   will consume the analyst fixtures
-   `tests/fixtures/decision/analyst/{normal,halt}.json` and the
-   strategist fixtures
-   `tests/fixtures/decision/strategist/{normal,defensive_posture,emergency}.json`
+2. **No execution-layer verification.** Anything downstream of the PM
+   (real OMS submission, breach behavior, broker-side execution,
+   persistence) is outside this runbook's scope. The PM phase covers
+   only the engine-stub `submit_envelope` MCP wrapper — no live
+   broker contact. The decision-layer pipeline-composition wiring
+   (ALP-310) is not yet built; its verifier will consume the PM
+   fixtures `tests/fixtures/decision/pm/{normal,halt,emergency,synchronous_rejection}.json`
    once landed. Check `docs/project-tracker.md` for current status.
 
 3. **No "run all" wrapper.** This runbook is the closest thing.
@@ -582,6 +631,8 @@ update the runbook in the same change.
 - `scripts/RUNBOOK_synthesizer.md` — phase 5 failure triage.
 - `scripts/RUNBOOK_analyst.md` — phase 6 failure triage.
 - `scripts/RUNBOOK_strategist.md` — phase 7 failure triage.
+- `scripts/RUNBOOK_proposal_pre_processor.md` — phase 8 failure triage.
+- `scripts/RUNBOOK_pm.md` — phase 9 failure triage.
 - `tests/fixtures/decision/analyst/README.md` — analyst-fixture
   provenance + downstream consumer contract.
 - `tests/fixtures/decision/strategist/README.md` — strategist-fixture

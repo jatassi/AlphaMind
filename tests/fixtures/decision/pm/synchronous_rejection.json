@@ -1,0 +1,343 @@
+{
+  "completion_record": {
+    "invocation_id": "20260505T172913Z-verify-pm-synchronous_rejection",
+    "timestamp": "2026-05-05T17:31:42Z",
+    "envelopes_submitted": 7,
+    "verdict_summary": {
+      "approve": 1,
+      "approve_with_modification": 0,
+      "reject": 6
+    }
+  },
+  "submission_log": [
+    {
+      "envelope": {
+        "envelope_id": "ENV-SA-1",
+        "invocation_id": "20260505T172913Z-verify-pm-synchronous_rejection",
+        "source_provenance": "pm_strategist",
+        "source_recommendation_id": "SA-1",
+        "recommendation_type": "position_assessment",
+        "position_id": "POS-NVDA",
+        "verdict": "reject",
+        "evaluation": {
+          "status_classification_warrant": {
+            "status": "fail",
+            "note": null
+          },
+          "action_status_alignment": {
+            "status": "pass",
+            "note": null
+          },
+          "action_specific_justification": {
+            "status": "pass",
+            "note": null
+          },
+          "portfolio_coherence": {
+            "status": "pass",
+            "note": null
+          }
+        },
+        "modifications": [],
+        "concerns": [
+          {
+            "source": "status_classification_warrant",
+            "summary": "'on-track' with 'no new information' rationale contradicted by NVDA 7.5th percentile, -16.2% 20d, bearish MACD, and five calibrated correlation divergences [SA-TECH-2, CR]"
+          }
+        ],
+        "rationale_narrative": "thesis_contradiction_suppression. Strategist asserts 'no new information' while synthesizer documents NVDA as persistent short-window outlier across five correlation pairs and dominant cap-weight drag in 6/16 semis breadth session, with Q1 earnings catalyst arriving inside dense macro event window [QR-1, SA-FIN-4]. Status should be at-risk; hold-on-track is incompatible with primary material.",
+        "anti_patterns_identified": null,
+        "commands": []
+      },
+      "submission_results": []
+    },
+    {
+      "envelope": {
+        "envelope_id": "ENV-SA-2",
+        "invocation_id": "20260505T172913Z-verify-pm-synchronous_rejection",
+        "source_provenance": "pm_strategist",
+        "source_recommendation_id": "SA-2",
+        "recommendation_type": "position_assessment",
+        "position_id": "POS-JPM",
+        "verdict": "reject",
+        "evaluation": {
+          "status_classification_warrant": {
+            "status": "fail",
+            "note": null
+          },
+          "action_status_alignment": {
+            "status": "pass",
+            "note": null
+          },
+          "action_specific_justification": {
+            "status": "pass",
+            "note": null
+          },
+          "portfolio_coherence": {
+            "status": "pass",
+            "note": null
+          }
+        },
+        "modifications": [],
+        "concerns": [
+          {
+            "source": "status_classification_warrant",
+            "summary": "'on-track' with rationale 'Financials sector rotation ongoing; position healthy' contradicted by 1/17 sector breadth session, JPM with-trend gap -1.85, bearish MACD, inverted yield curve -0.52 [SA-FIN-1, AR-4], and dense Treasury Refunding/Fed-speak window May 6-7 with yield curve classifier offline [SA-FIN-4]"
+          }
+        ],
+        "rationale_narrative": "thesis_contradiction_suppression. Strategist describes 'sector rotation ongoing' while synthesizer documents financials breadth collapse (1/17 advances), JPM as a with-trend decliner inside that print, structural NIM headwind via inverted curve, and a 48-72h event cluster (Treasury Refunding May 6 12:30Z, Goolsbee May 6, Hammack May 7) with rate-sensitivity calibration unavailable. The XLF-to-SPY 1-day lead-lag [CR-13] propagates today's collapse cross-market. Status should be at-risk; hold-on-track misreads the tape.",
+        "anti_patterns_identified": null,
+        "commands": []
+      },
+      "submission_results": []
+    },
+    {
+      "envelope": {
+        "envelope_id": "ENV-SA-3",
+        "invocation_id": "20260505T172913Z-verify-pm-synchronous_rejection",
+        "source_provenance": "pm_strategist",
+        "source_recommendation_id": "SA-3",
+        "recommendation_type": "position_assessment",
+        "position_id": "POS-XOM",
+        "verdict": "reject",
+        "evaluation": {
+          "status_classification_warrant": {
+            "status": "fail",
+            "note": null
+          },
+          "action_status_alignment": {
+            "status": "fail",
+            "note": null
+          },
+          "action_specific_justification": {
+            "status": "pass",
+            "note": null
+          },
+          "portfolio_coherence": {
+            "status": "pass",
+            "note": null
+          }
+        },
+        "modifications": [],
+        "concerns": [
+          {
+            "source": "status_classification_warrant",
+            "summary": "Status reclassified on-track to partially-realized at +0.0% P/L with no supporting realization event in the synthesizer; classification incoherent with portfolio state."
+          },
+          {
+            "source": "action_status_alignment",
+            "summary": "Partially-realized status conventionally warrants reduce or trail-tighten; bare hold with rationale 'target not yet reached' rehashes entry context rather than addressing the partial-realization claim."
+          }
+        ],
+        "rationale_narrative": "Status_classification_warrant fails: a partially-realized label requires concrete evidence of realization (price move, catalyst struck) \u2014 POS-XOM shows zero P/L and the synthesizer describes the energy decoupling as fragile (APA/CTRA/DVN at 95th+ percentile with bearish stochastic crossovers, EIA/API window the nearest forcing function [SA-ENERGY-2, SA-ENERGY-5]). The reclassification reads as rationalized_continuation. Rejected to force the strategist to either re-affirm on-track or escalate to at-risk on next invocation, with a status rationale grounded in primary material.",
+        "anti_patterns_identified": null,
+        "commands": []
+      },
+      "submission_results": []
+    },
+    {
+      "envelope": {
+        "envelope_id": "ENV-SA-4",
+        "invocation_id": "20260505T172913Z-verify-pm-synchronous_rejection",
+        "source_provenance": "pm_strategist",
+        "source_recommendation_id": "SA-4",
+        "recommendation_type": "position_assessment",
+        "position_id": "POS-AAPL",
+        "verdict": "approve",
+        "evaluation": {
+          "status_classification_warrant": {
+            "status": "pass",
+            "note": null
+          },
+          "action_status_alignment": {
+            "status": "pass",
+            "note": null
+          },
+          "action_specific_justification": {
+            "status": "pass",
+            "note": null
+          },
+          "portfolio_coherence": {
+            "status": "pass",
+            "note": null
+          }
+        },
+        "modifications": [],
+        "concerns": [],
+        "rationale_narrative": "On-track hold approved. Synthesizer brief carries no AAPL-specific signal this cycle; services-margin expansion thesis intact and unchallenged. Position at 1.8% portfolio is well within the 5% per-position cap. No complementary risk-reduction action warranted at 24h age and zero P/L deviation.",
+        "anti_patterns_identified": null,
+        "commands": []
+      },
+      "submission_results": []
+    },
+    {
+      "envelope": {
+        "envelope_id": "ENV-REC-1",
+        "invocation_id": "20260505T172913Z-verify-pm-synchronous_rejection",
+        "source_provenance": "pm_analyst",
+        "source_recommendation_id": "REC-1",
+        "recommendation_type": "new_entry",
+        "position_id": null,
+        "verdict": "reject",
+        "evaluation": {
+          "falsifiability": {
+            "status": "fail",
+            "note": null
+          },
+          "sizing_proportionality": {
+            "status": "pass",
+            "note": null
+          },
+          "portfolio_coherence": {
+            "status": "pass",
+            "note": null
+          },
+          "timing_plausibility": {
+            "status": "pass",
+            "note": null
+          },
+          "counterargument_consideration": {
+            "status": "fail",
+            "note": null
+          }
+        },
+        "modifications": [],
+        "concerns": [
+          {
+            "source": "falsifiability",
+            "summary": "Single hard time-stop at 48h with no price-, level-, or evidence-based invalidation leg. Thesis 'Long MSFT on momentum' cannot be falsified short of expiration; momentum loss does not trigger an exit."
+          },
+          {
+            "source": "counterargument_consideration",
+            "summary": "'Macro downside risk acknowledged' is a token line \u2014 no concrete counter-scenario (e.g., ISM Services snap-back at May 5 14:00Z [QR-1], vol_expansion-driven indiscriminate risk-off) is engaged."
+          }
+        ],
+        "rationale_narrative": "Thesis lacks falsifiable structure: a momentum entry without a price-level invalidation collapses into a pure time bet, and the token counterargument acknowledgment leaves the dense macro event cluster (ISM Services + JOLTs simultaneous window, Treasury Refunding) unaddressed in a vol_expansion regime where data-surprise responses are amplified [CR-1, QR-1]. Rejection requires thesis redraft, not a parameter adjustment within this proposal \u2014 analyst should re-author at next invocation with a concrete invalidation leg and an engaged counter-scenario.",
+        "anti_patterns_identified": null,
+        "commands": []
+      },
+      "submission_results": []
+    },
+    {
+      "envelope": {
+        "envelope_id": "ENV-REC-2",
+        "invocation_id": "20260505T172913Z-verify-pm-synchronous_rejection",
+        "source_provenance": "pm_analyst",
+        "source_recommendation_id": "REC-2",
+        "recommendation_type": "new_entry",
+        "position_id": null,
+        "verdict": "reject",
+        "evaluation": {
+          "falsifiability": {
+            "status": "fail",
+            "note": null
+          },
+          "sizing_proportionality": {
+            "status": "pass",
+            "note": null
+          },
+          "portfolio_coherence": {
+            "status": "pass",
+            "note": null
+          },
+          "timing_plausibility": {
+            "status": "pass",
+            "note": null
+          },
+          "counterargument_consideration": {
+            "status": "fail",
+            "note": null
+          }
+        },
+        "modifications": [],
+        "concerns": [
+          {
+            "source": "falsifiability",
+            "summary": "Time-only invalidation at 48h with no price- or evidence-based leg; 'Long GOOGL on momentum' has no failure condition short of expiration."
+          },
+          {
+            "source": "counterargument_consideration",
+            "summary": "Token 'macro downside risk acknowledged' line; the GOOGL:META 2.30\u03c3 short-window correlation divergence [CR] and the META legal/competitive pressure cluster [SA-TECH-3] are not addressed."
+          }
+        ],
+        "rationale_narrative": "Same thin-thesis pattern as REC-1: momentum-labeled entry with a single time stop and a token counterargument. The synthesizer documents META decoupling sharply lower from GOOGL on the short-window basis [CR], which is directly relevant to a GOOGL long entry premise and goes unaddressed. Rejection rather than modification because the gap is at the thesis level \u2014 analyst redrafts at next invocation.",
+        "anti_patterns_identified": null,
+        "commands": []
+      },
+      "submission_results": []
+    },
+    {
+      "envelope": {
+        "envelope_id": "ENV-REC-3",
+        "invocation_id": "20260505T172913Z-verify-pm-synchronous_rejection",
+        "source_provenance": "pm_analyst",
+        "source_recommendation_id": "REC-3",
+        "recommendation_type": "new_entry",
+        "position_id": null,
+        "verdict": "reject",
+        "evaluation": {
+          "falsifiability": {
+            "status": "fail",
+            "note": null
+          },
+          "sizing_proportionality": {
+            "status": "fail",
+            "note": null
+          },
+          "portfolio_coherence": {
+            "status": "fail",
+            "note": null
+          },
+          "timing_plausibility": {
+            "status": "fail",
+            "note": null
+          },
+          "counterargument_consideration": {
+            "status": "fail",
+            "note": null
+          }
+        },
+        "modifications": [],
+        "concerns": [
+          {
+            "source": "sizing_proportionality",
+            "summary": "Adding $4,000 (4.0%) on top of POS-NVDA at 4.3% would push aggregate NVDA exposure to ~8.3%, breaching the 5.0% per-position cap stated in the guardrail header."
+          },
+          {
+            "source": "portfolio_coherence",
+            "summary": "Same-underlying entry_vs_hold conflict with SA-1; the strategist proposes hold while the analyst proposes add via new entry, with no coordinating rationale that resolves to a single book-level disposition."
+          },
+          {
+            "source": "timing_plausibility",
+            "summary": "Synthesizer documents NVDA at 7.5th intra-sector percentile, -16.2% 20d, -8.4% 5d, bearish MACD -0.714, and five calibrated correlation divergences flagging NVDA as the persistent semis outlier [SA-TECH-2, CR]; the entry premise (momentum) is directly contradicted by the cycle's primary material."
+          },
+          {
+            "source": "falsifiability",
+            "summary": "Time-only invalidation at 48h, no price- or evidence-based invalidation leg."
+          },
+          {
+            "source": "counterargument_consideration",
+            "summary": "Token line; the dense and adverse NVDA-specific evidence in the synthesizer is not engaged."
+          }
+        ],
+        "rationale_narrative": "thesis_contradiction_suppression compounded by sizing breach. Five-criterion failure: the entry premise is the inverse of what the synthesizer documents for NVDA this cycle, and the proposed sizing would breach position_max_size_pct at submission. Even if the thesis were re-authored, the same-underlying conflict with the held POS-NVDA needs a strategist-side action (close or reduce) before an add can be considered, and that requires the strategist to first reclassify status (currently misclassified per ENV-SA-1). Rejected outright; not curable by modification within this envelope.",
+        "anti_patterns_identified": null,
+        "commands": []
+      },
+      "submission_results": []
+    }
+  ],
+  "scenario_metadata": {
+    "name": "synchronous_rejection",
+    "verdict": "WARN",
+    "tokens_used": {
+      "input_tokens": 25,
+      "output_tokens": 23302,
+      "cache_read_tokens": 851258,
+      "cache_write_tokens": 43030
+    },
+    "wall_clock_seconds": 285.4060229170136,
+    "tool_calls_used": 18,
+    "retry_count": 0,
+    "stop_reason": "end_turn"
+  }
+}
