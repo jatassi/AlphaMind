@@ -1,0 +1,27 @@
+{
+  "completion_record": {
+    "invocation_id": "20260505T172913Z-verify-pm-normal",
+    "timestamp": "2026-05-05T17:31:42Z",
+    "envelopes_submitted": 4,
+    "verdict_summary": {
+      "approve": 1,
+      "approve_with_modification": 0,
+      "reject": 3
+    }
+  },
+  "submission_log": [],
+  "scenario_metadata": {
+    "name": "normal",
+    "verdict": "PASS",
+    "tokens_used": {
+      "input_tokens": 18,
+      "output_tokens": 13174,
+      "cache_read_tokens": 408392,
+      "cache_write_tokens": 40480
+    },
+    "wall_clock_seconds": 199.48289191594813,
+    "tool_calls_used": 10,
+    "retry_count": 0,
+    "stop_reason": "end_turn"
+  }
+}
