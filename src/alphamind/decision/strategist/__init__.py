@@ -1,12 +1,18 @@
 """Strategist decision-layer public surface.
 
-The model names (story 03 / ALP-303) and the Layer-2/3 cross-field validator
-(story 05b / ALP-306) are re-exported so downstream callers can import from
+The runner (story 07 / ALP-308) is the public entry point; the model names
+(story 03 / ALP-303) and the Layer-2/3 cross-field validator (story 05b /
+ALP-306) are re-exported so downstream callers can import from
 :mod:`alphamind.decision.strategist` without reaching into the submodules.
-Later stories add parser, harness, and runner under the same package; their
-public names will be appended here.
 """
 
+from alphamind.decision.strategist.harness import (
+    ContextOverflowFailure,
+    HarnessFailure,
+    MalformedOutputFailure,
+    SDKFailure,
+    TimeoutFailure,
+)
 from alphamind.decision.strategist.models import (
     ActionParameters,
     AddParameters,
@@ -35,6 +41,12 @@ from alphamind.decision.strategist.models import (
     ThesisComponentUpdate,
     ThesisStatus,
 )
+from alphamind.decision.strategist.runner import (
+    STRATEGIST_TOOL_NAMES,
+    StrategistResult,
+    load_strategist_agent_config,
+    run_strategist,
+)
 from alphamind.decision.strategist.validation import (
     ValidationFailure,
     ValidationResult,
@@ -43,17 +55,21 @@ from alphamind.decision.strategist.validation import (
 )
 
 __all__ = [
+    "STRATEGIST_TOOL_NAMES",
     "ActionParameters",
     "AddParameters",
     "AdjustBracketParameters",
     "BracketAdjustNewStopLevel",
     "BracketAdjustNewTargetLevel",
     "CloseParameters",
+    "ContextOverflowFailure",
     "DefensivePostureSummary",
     "EntryOrder",
     "ExposureImpact",
     "Greeks",
     "GuardrailValidationResult",
+    "HarnessFailure",
+    "MalformedOutputFailure",
     "ModificationParameters",
     "NewEventInvalidation",
     "PendingOrderAssessment",
@@ -65,12 +81,17 @@ __all__ = [
     "RegimeTransitionSummary",
     "RegimeTransitionUncuredBreach",
     "RuleProjection",
+    "SDKFailure",
     "Sector",
     "StrategistOutput",
+    "StrategistResult",
     "ThesisComponentUpdate",
     "ThesisStatus",
+    "TimeoutFailure",
     "ValidationFailure",
     "ValidationResult",
     "ValidationWarning",
+    "load_strategist_agent_config",
+    "run_strategist",
     "validate_strategist_output",
 ]
