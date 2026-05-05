@@ -18,18 +18,19 @@ on success, and the next script reads its predecessor's outputs via
 
 ## TL;DR for the agent
 
-You're going to run 9 verification scripts in 5 phases. Three rules:
+You're going to run 10 verification scripts in 6 phases. Three rules:
 
 1. **Stop on first FAIL.** Each phase depends on prior phases' state
    AND its predecessor's stage artifacts. Don't continue past a red
    signal — the next script will fail fast with a "run phase N first"
    message anyway.
-2. **Track Sonnet cost.** The five live-SDK scripts together consume
-   roughly 60–65K input + 8–12K output tokens (~10–15% of weekly cap).
-   If the operator wants to skip to a specific layer, support that —
-   but the downstream scripts will need a stage-artifacts directory
-   from a prior run, or they'll fall back to fixtures (and the run is
-   no longer end-to-end).
+2. **Track LLM cost.** The five Sonnet-driven analysis-layer scripts
+   together consume roughly 60–65K input + 8–12K output tokens (~10–15%
+   of weekly Sonnet cap); the analyst phase adds ~15K input + ~4K
+   output Opus tokens across both scenarios. If the operator wants to
+   skip to a specific layer, support that — but the downstream scripts
+   will need a stage-artifacts directory from a prior run, or they'll
+   fall back to fixtures (and the run is no longer end-to-end).
 3. **Reference the per-layer runbook for failure triage.** Each
    live-SDK layer has its own runbook with a failure-mode table. Don't
    reinvent triage — read those.
@@ -95,6 +96,7 @@ they read time-dependent DB state.
 | 3 | Analysis: domain researchers | domain_researchers, domain_researcher_failure_modes | Yes (1 of 2) | ~30–60s |
 | 4 | Analysis: qualitative + adaptive | qualitative_researcher, adaptive_researcher | Yes | ~45–90s |
 | 5 | Analysis: synthesizer | synthesizer | Yes | ~10–30s |
+| 6 | Decision: analyst | analyst (normal + halt scenarios) | Yes (Opus) | ~30–90s |
 
 ## Phase 1 — Data layer
 
@@ -357,6 +359,58 @@ the operator decides whether to act on it.
 triage. The diagnostic archive (under the `--archive-root`) has the
 prompt, user message, and full response for offline analysis.
 
+## Phase 6 — Analyst (decision layer)
+
+The first decision-layer agent. The analyst consumes the synthesizer's
+recorded prose (from phase 5's archive — fixture-based per ALP-115
+parent-issue decision C, not live composition) and emits structured
+trade recommendations or a watchlist. Two scenarios per run:
+**normal-mode** (full guardrail header, recommendations expected) and
+**halt-mode** (watchlist header, no `validate_guardrail` calls).
+
+```bash
+uv run python scripts/verify_analyst.py \
+    --archive-root "$ARCHIVE_ROOT" \
+    --synthesizer-invocation-id "$INVOCATION_ID" \
+    --save-fixtures
+```
+
+Verifies, per scenario: schema-valid `AnalystOutput`, Layer-2/3
+cross-field invariants hold (no `unknown_reference`, no leg-id
+mismatches, no off-band sizing), normal mode emits ≥1
+`validate_guardrail` tool call when recommendations are non-empty
+(zero is allowed for an explicit empty-recommendations response), halt
+mode records zero tool calls. Wall-clock ≤ analyst's
+`latency_budget_seconds`. Exits 0 on PASS or WARN per scenario; exits
+1 on FAIL on either scenario.
+
+`--synthesizer-invocation-id` points at the phase 5 invocation; the
+script reads `analysis/synthesizer/response.md` and
+`stage_artifacts/retrieval_store.json` from that archive. Each
+analyst-side scenario writes its own diagnostic archive to
+`<archive-root>/invocations/<analyst-inv-id>/decision/analyst/`.
+
+`--save-fixtures` writes the parsed `AnalystOutput` JSON for both
+scenarios to `tests/fixtures/decision/analyst/{normal,halt}.json`.
+These are the canonical inputs the downstream feature trees'
+verifiers (strategist, proposal pre-processor, PM) will consume — see
+`tests/fixtures/decision/analyst/README.md` for the handoff contract.
+
+Runbook: `scripts/RUNBOOK_analyst.md`.
+
+**On WARN:** the analyst produced structured output that parsed
+cleanly but flagged a contract violation — most commonly an
+`unknown_reference` (cited a reference ID not present in the
+synthesizer's retrieval store) or a tool-call discipline mismatch
+(zero `validate_guardrail` calls in normal mode with non-empty
+recommendations, or any tool call in halt mode). The fixture is still
+written; the operator decides whether to act on the warning.
+
+**On FAIL:** read `scripts/RUNBOOK_analyst.md` § Failure-mode triage.
+The diagnostic archive carries the prompt, the assembled input bundle
+(header + brief), the full structured-output response, and the error
+trail.
+
 ## When complete
 
 Report a one-line summary to the operator:
@@ -368,8 +422,10 @@ End-to-end verification: <PASS|FAIL|WARN-only>
 - Phase 3 (domain researchers): PASS
 - Phase 4 (qualitative + adaptive): PASS
 - Phase 5 (synthesizer): WARN (2 invented references)
-Total Sonnet cost: ~Xk input + Yk output
+- Phase 6 (analyst): normal=PASS, halt=PASS
+Total LLM cost: ~Xk Sonnet input + Yk Sonnet output, ~Zk Opus input + Wk Opus output
 Archives under .archive/verify-pipeline-YYYYMMDD/
+Fixtures at tests/fixtures/decision/analyst/{normal,halt}.json
 ```
 
 If WARN-only or any FAIL, attach the per-script verdict block(s) so
@@ -377,18 +433,20 @@ the operator can act.
 
 ## Cost summary
 
-| Script | Input tokens | Output tokens |
-|--------|--------------|---------------|
-| verify_distillation | 12K–16K | 2K–4K |
-| verify_domain_researchers | 18K–24K | 3K–6K |
-| verify_qualitative_researcher | 6K–8K | 0.4K–0.6K |
-| verify_adaptive_researcher | 8K–10K | 0.7K–1K |
-| verify_synthesizer | 10K–12K | 1.5K–2K |
-| **Total** | **~54K–70K** | **~7.6K–13.6K** |
+| Script | Model | Input tokens | Output tokens |
+|--------|-------|--------------|---------------|
+| verify_distillation | Sonnet | 12K–16K | 2K–4K |
+| verify_domain_researchers | Sonnet | 18K–24K | 3K–6K |
+| verify_qualitative_researcher | Sonnet | 6K–8K | 0.4K–0.6K |
+| verify_adaptive_researcher | Sonnet | 8K–10K | 0.7K–1K |
+| verify_synthesizer | Sonnet | 10K–12K | 1.5K–2K |
+| verify_analyst (×2 scenarios) | Opus | 12K–18K | 3K–5K |
+| **Sonnet total** | | **~54K–70K** | **~7.6K–13.6K** |
+| **Opus total** | | **~12K–18K** | **~3K–5K** |
 
-Roughly 10–15% of the nominal weekly Sonnet cap per
-`docs/design/cost-and-rate-limit-modeling.md`. Don't re-run
-gratuitously.
+Roughly 10–15% of the nominal weekly Sonnet cap and a smaller slice of
+the Opus cap per `docs/design/cost-and-rate-limit-modeling.md`. Don't
+re-run gratuitously.
 
 Post-ALP-288, output tokens for the three analysis-layer scripts
 (domain / qualitative / adaptive researchers) may run a touch higher
@@ -405,11 +463,13 @@ if the existing thresholds become misleading.
    invariants; it does not exercise a fresh transition end-to-end
    (would require a live regime shift in the market data).
 
-2. **No ongoing-execution-layer verification.** Anything downstream
-   of the synthesizer (analyst, strategist, PM, breach behavior,
-   execution) is outside this runbook's scope — those layers are
-   either in progress or not yet built. Check
-   `docs/project-tracker.md` for current status.
+2. **No ongoing strategist / PM / execution-layer verification.**
+   Anything downstream of the analyst (strategist, proposal
+   pre-processor, PM, breach behavior, execution) is outside this
+   runbook's scope — those layers are either in progress or not yet
+   built. Their verifiers will consume the analyst fixtures
+   `tests/fixtures/decision/analyst/{normal,halt}.json` once landed.
+   Check `docs/project-tracker.md` for current status.
 
 3. **No "run all" wrapper.** This runbook is the closest thing.
    Sequence is manual; if any phase changes (new script, removed
@@ -433,6 +493,9 @@ update the runbook in the same change.
 - `scripts/RUNBOOK_qualitative_researcher.md` — phase 4 failure triage.
 - `scripts/RUNBOOK_adaptive_researcher.md` — phase 4 failure triage.
 - `scripts/RUNBOOK_synthesizer.md` — phase 5 failure triage.
+- `scripts/RUNBOOK_analyst.md` — phase 6 failure triage.
+- `tests/fixtures/decision/analyst/README.md` — analyst-fixture
+  provenance + downstream consumer contract.
 - `docs/project-tracker.md` — current build status.
 - `src/alphamind/pipeline/analysis.py` — `run_analysis_pipeline` (ALP-276),
   the composition runner the runtime pipeline calls. The per-script

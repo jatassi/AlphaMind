@@ -513,6 +513,7 @@ async def test_retry_call_passes_session_id_for_resume(
 # 3. Validation-failure recovery — first response off-universe ticker, retry valid
 # ---------------------------------------------------------------------------
 
+
 # Brief whose Strengthens reference does not resolve into upstream briefs;
 # this is a Layer-3 validation failure (not a parse failure).
 def _payload_with_invented_reference() -> dict[str, Any]:
