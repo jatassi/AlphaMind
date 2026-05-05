@@ -454,8 +454,11 @@ async def test_claude_agent_options_wires_two_mcp_servers_and_json_schema(
     serialized = json.dumps(schema)
     assert '"format"' not in serialized, "schema must not contain `format` keys"
     assert '"discriminator"' not in serialized, "schema must not contain `discriminator` keys"
-    # Validation power is preserved: oneOf for the Instrument union remains.
-    assert '"oneOf"' in serialized
+    # Validation power is preserved: the Instrument discriminated union's oneOf
+    # remains, with all three variant titles reachable for the model.
+    assert serialized.count('"oneOf"') >= 1
+    for variant in ("InstrumentEquity", "InstrumentOption", "InstrumentStrategy"):
+        assert variant in serialized, f"variant {variant} missing from schema"
 
     # Hardening contract: no developer settings, no built-in tools, strict MCP,
     # output-token cap pinned via env.
@@ -463,6 +466,60 @@ async def test_claude_agent_options_wires_two_mcp_servers_and_json_schema(
     assert options.setting_sources == []
     assert "strict-mcp-config" in options.extra_args
     assert options.env.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS") == str(agent_config.output_token_budget)
+
+
+def test_strip_anthropic_incompat_keys_preserves_property_names() -> None:
+    """The strip helper is keyword-aware: a future schema with a property
+    literally named ``format`` or ``discriminator`` must survive the walk.
+
+    The stripping rule applies to JSON Schema keywords; inside ``properties``
+    and ``$defs`` containers the dict keys are user-supplied names and must
+    not be touched. A naive recursive strip would silently delete such a
+    property — this test locks in the intended behavior.
+    """
+    from alphamind.decision.analyst.harness import _strip_anthropic_incompat_keys
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "format": {"type": "string"},
+            "discriminator": {"type": "integer"},
+            "regular_field": {"type": "string", "format": "date-time"},
+        },
+        "$defs": {
+            "format": {"type": "object", "properties": {"x": {"type": "string"}}},
+            "discriminator": {"type": "object"},
+        },
+    }
+    out = _strip_anthropic_incompat_keys(schema)
+    # Property names preserved.
+    assert set(out["properties"].keys()) == {"format", "discriminator", "regular_field"}
+    # $def names preserved.
+    assert set(out["$defs"].keys()) == {"format", "discriminator"}
+    # Nested keyword inside a value schema is still stripped.
+    assert "format" not in out["properties"]["regular_field"]
+    assert out["properties"]["regular_field"]["type"] == "string"
+
+
+def test_strip_anthropic_incompat_keys_removes_keywords_at_schema_level() -> None:
+    """Outside named-child containers, ``format`` and ``discriminator`` keys
+    are JSON Schema keywords and must be removed."""
+    from alphamind.decision.analyst.harness import _strip_anthropic_incompat_keys
+
+    schema = {
+        "type": "string",
+        "format": "date-time",
+        "oneOf": [
+            {"$ref": "#/$defs/A"},
+            {"$ref": "#/$defs/B"},
+        ],
+        "discriminator": {"propertyName": "kind"},
+    }
+    out = _strip_anthropic_incompat_keys(schema)
+    assert "format" not in out
+    assert "discriminator" not in out
+    assert out["type"] == "string"
+    assert out["oneOf"] == schema["oneOf"]
 
 
 # ---------------------------------------------------------------------------

@@ -559,8 +559,12 @@ def _build_mcp_wiring(
     )
 
 
+_INCOMPAT_KEYWORDS: frozenset[str] = frozenset({"format", "discriminator"})
+_NAMED_CHILD_CONTAINERS: frozenset[str] = frozenset({"properties", "$defs"})
+
+
 def _strip_anthropic_incompat_keys(obj: Any) -> Any:
-    """Strip JSON Schema keys the Anthropic API JSON-Schema mode silently rejects.
+    """Strip JSON Schema keywords the Anthropic API JSON-Schema mode silently rejects.
 
     Empirically determined via direct SDK testing: the Anthropic API silently
     falls back to text-output mode (the model emits JSON in TextBlocks rather
@@ -569,9 +573,11 @@ def _strip_anthropic_incompat_keys(obj: Any) -> Any:
     contains either of:
 
     - ``format`` keys (notably ``"date-time"`` and ``"date"``) — Pydantic emits
-      these for ``datetime`` / ``date`` fields. The analyst's schema has four
-      such occurrences (``timestamp``, ``InvalidationLeg.condition.deadline``,
-      ``EntryWindow.deadline``, ``GuardrailValidationResult.checked_at``).
+      these for ``datetime`` / ``date`` fields. The analyst's schema has six
+      such occurrences (``AnalystOutput.timestamp``,
+      ``InvalidationLeg.condition.deadline``, ``EntryWindow.deadline``,
+      ``GuardrailValidationResult.checked_at``, ``InstrumentOption.expiration``,
+      ``StrategyLeg.expiration``).
     - ``discriminator`` keyword — Pydantic emits this for
       ``Annotated[Union[...], Discriminator(...)]``. The analyst's schema has
       one such occurrence on ``Recommendation.instrument`` (the
@@ -579,20 +585,35 @@ def _strip_anthropic_incompat_keys(obj: Any) -> Any:
 
     Stripping these does not weaken validation: the ``datetime`` Python type
     coerces ISO-8601 strings on parse; the ``oneOf`` array still enforces
-    union membership without the ``discriminator`` hint. The keys are purely
-    metadata for the API's schema-binding step.
+    union membership without the ``discriminator`` performance hint. The keys
+    are purely metadata for the API's schema-binding step.
 
-    Sibling agents that already work in JSON-Schema mode (qualitative-research,
-    adaptive-research) ship schemas that emit neither key — qualitative has no
-    ``datetime`` fields and no discriminated unions; adaptive's schema is built
-    via :func:`_tighten_conditional_schema` which strips these as a side effect.
+    Sibling agents already in JSON-Schema mode (qualitative-research,
+    adaptive-research) emit neither key — qualitative has no ``datetime``
+    fields and no discriminated unions; adaptive likewise lacks date-typed
+    fields and uses an enum-based assessment field rather than a Pydantic
+    ``Discriminator`` annotation.
+
+    Walker is keyword-aware: when descending into ``properties`` or ``$defs``
+    (whose dict keys are user-supplied names, not JSON Schema keywords), the
+    recursion preserves every key and only strips inside the value sub-schemas.
+    Outside those containers, dict keys are treated as JSON Schema keywords
+    and the incompatible ones are removed. This guards against a future
+    schema field that happens to be literally named ``format`` or
+    ``discriminator``.
     """
     if isinstance(obj, dict):
-        return {
-            k: _strip_anthropic_incompat_keys(v)
-            for k, v in obj.items()
-            if k not in {"format", "discriminator"}
-        }
+        result: dict[str, Any] = {}
+        for key, value in obj.items():
+            if key in _INCOMPAT_KEYWORDS:
+                continue
+            if key in _NAMED_CHILD_CONTAINERS and isinstance(value, dict):
+                result[key] = {
+                    name: _strip_anthropic_incompat_keys(sub) for name, sub in value.items()
+                }
+            else:
+                result[key] = _strip_anthropic_incompat_keys(value)
+        return result
     if isinstance(obj, list):
         return [_strip_anthropic_incompat_keys(x) for x in obj]
     return obj

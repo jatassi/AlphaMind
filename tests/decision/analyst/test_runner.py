@@ -54,6 +54,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     PortfolioStateSnapshot,
 )
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
+from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationToolState
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -628,3 +629,42 @@ async def test_default_agent_config_loaded_from_yaml(tmp_path: Path) -> None:
 
     options = captured_options[0]
     assert options.env.get("CLAUDE_CODE_MAX_OUTPUT_TOKENS") == str(yaml_default.output_token_budget)
+
+
+@pytest.mark.asyncio
+async def test_borrow_cost_resolver_propagates_to_validation_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """When the caller supplies a ``borrow_cost_resolver``, the runner threads
+    it into :func:`build_initial_validation_state` so the validation tool sees
+    the right borrow-cost lookups for short-side proposals.
+
+    The strategist + PM consumers will rely on this contract once their work
+    trees land — locking it here prevents a silent drop during a future
+    runner refactor.
+    """
+    from alphamind.risk_guardrails.state_delivery import build_initial_validation_state
+
+    captured_kwargs: dict[str, Any] = {}
+
+    def _capturing_builder(**kwargs: Any) -> ValidationToolState:
+        captured_kwargs.update(kwargs)
+        return build_initial_validation_state(**kwargs)
+
+    monkeypatch.setattr(
+        "alphamind.decision.analyst.runner.build_initial_validation_state",
+        _capturing_builder,
+    )
+
+    sentinel_resolver: Callable[[str], float] = lambda ticker: 0.0125  # noqa: E731
+    await run_analyst(
+        **_runner_kwargs(
+            mode="normal",
+            sdk_query_fn=_make_stub_query([_make_sdk_response(_normal_mode_payload())]),
+            archive_root=tmp_path / "archive",
+        ),
+        borrow_cost_resolver=sentinel_resolver,
+    )
+
+    assert captured_kwargs["borrow_cost_resolver"] is sentinel_resolver
