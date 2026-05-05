@@ -1,0 +1,442 @@
+{
+  "aggregate_observations": {
+    "book_health_summary": {
+      "by_recommended_action": {
+        "add": 0,
+        "adjust-bracket": 0,
+        "close": 0,
+        "hold": 6,
+        "reduce": 0
+      },
+      "by_thesis_status": {
+        "at-risk": 2,
+        "invalidated": 0,
+        "on-track": 3,
+        "partially-realized": 1,
+        "stale": 0
+      },
+      "remedy_flagged_count": 0,
+      "total": 6
+    },
+    "combined_set_impact": {
+      "basis": {
+        "analyst_proposal_ids": [],
+        "snapshot_timestamp": "2026-05-04T14:30:00Z",
+        "strategist_action_ids": [],
+        "strategist_holds_excluded_count": 6
+      },
+      "breaches": [],
+      "per_rule": [
+        {
+          "current": 0.0,
+          "headroom_remaining": 0.05,
+          "limit": 0.05,
+          "projected_after": 0.0,
+          "rule": "borrow_cost_budget_pct_per_day",
+          "status": "PASS",
+          "unit": "% of portfolio per day"
+        },
+        {
+          "current": 20.0,
+          "headroom_remaining": 100.0,
+          "limit": 120.0,
+          "projected_after": 20.0,
+          "rule": "gross_exposure_pct",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 70.0,
+          "headroom_remaining": 60.0,
+          "limit": 10.0,
+          "projected_after": 70.0,
+          "rule": "min_cash_reserve_pct",
+          "status": "PASS",
+          "unit": "% of portfolio"
+        },
+        {
+          "current": 20.0,
+          "headroom_remaining": 40.0,
+          "limit": 60.0,
+          "projected_after": 20.0,
+          "rule": "net_long_pct",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 30.0,
+          "limit": 30.0,
+          "projected_after": 0.0,
+          "rule": "net_short_pct",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 40.0,
+          "limit": 40.0,
+          "projected_after": 0.0,
+          "rule": "options_delta_pct",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 30.0,
+          "limit": 30.0,
+          "projected_after": 0.0,
+          "rule": "pending_order_capital_pct",
+          "status": "PASS",
+          "unit": "% of portfolio"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 0.15,
+          "limit": 0.15,
+          "projected_after": 0.0,
+          "rule": "portfolio_theta_pct_per_day",
+          "status": "PASS",
+          "unit": "% of portfolio per day"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 1.0,
+          "limit": 1.0,
+          "projected_after": 0.0,
+          "rule": "portfolio_vega_pct_per_iv_point",
+          "status": "PASS",
+          "unit": "% of portfolio per 1-pt IV move"
+        },
+        {
+          "current": 4.3,
+          "headroom_remaining": 0.7000000000000002,
+          "limit": 5.0,
+          "projected_after": 4.3,
+          "rule": "position_max_size_pct",
+          "status": "WARNING",
+          "unit": "% of portfolio"
+        },
+        {
+          "current": 3.0,
+          "headroom_remaining": 22.0,
+          "limit": 25.0,
+          "projected_after": 3.0,
+          "rule": "sector_concentration_energy",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 3.0,
+          "headroom_remaining": 22.0,
+          "limit": 25.0,
+          "projected_after": 3.0,
+          "rule": "sector_concentration_financials",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 6.0,
+          "headroom_remaining": 19.0,
+          "limit": 25.0,
+          "projected_after": 6.0,
+          "rule": "sector_concentration_semis",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 8.0,
+          "headroom_remaining": 17.0,
+          "limit": 25.0,
+          "projected_after": 8.0,
+          "rule": "sector_concentration_tech",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 3.0,
+          "limit": 3.0,
+          "projected_after": 0.0,
+          "rule": "single_short_max_pct",
+          "status": "PASS",
+          "unit": "% of portfolio"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 30.0,
+          "limit": 30.0,
+          "projected_after": 0.0,
+          "rule": "total_short_pct",
+          "status": "PASS",
+          "unit": "% of portfolio"
+        }
+      ]
+    },
+    "conviction_distribution": {
+      "by_level": {
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0,
+        "5": 0
+      },
+      "total": 0
+    }
+  },
+  "analyst_section": {
+    "mode": "watchlist",
+    "recommendations": null,
+    "watchlist": [
+      {
+        "estimated_conviction": 4,
+        "sector": "tech",
+        "source_references": [
+          "SA-TECH-3",
+          "CR",
+          "QR-1"
+        ],
+        "thesis_summary": "Three independent vantage points converge bearish: 5th intra-sector tech percentile on 5d relative performance with bearish MACD and ATR expansion [SA-TECH-3], New Mexico public-nuisance case plus Sierra AI-agent competitive signal [SA-TECH-3], and GOOGL:META 2.30\u03c3 / GOOG:META 2.29\u03c3 correlation divergences [CR] confirming the underperformance is name-specific not sector-level. ISM Services print 2026-05-05 14:00Z [QR-1] is a macro snap-back risk that could override the name read.",
+        "ticker": "META"
+      },
+      {
+        "estimated_conviction": 3,
+        "sector": "tech",
+        "source_references": [
+          "SA-TECH-1",
+          "SA-TECH-TC-1",
+          "SA-TECH-ANOM-1",
+          "AR-3"
+        ],
+        "thesis_summary": "Sector-wide call-sweep participation plus pair-trade call BTO z=3.722 (DDOG-ORCL correlation 0.7768) align bullish, with with-trend full gap up and bullish MACD cross corroborating on price [SA-TECH-1, SA-TECH-TC-1]. Conviction is explicitly capped by the DDOG put/call simultaneous flow contradiction [SA-TECH-ANOM-1, AR-3] \u2014 if DDOG put resolves as leading bearish rather than long-hedge, the pair structure underpinning ORCL loses its primary institutional anchor.",
+        "ticker": "ORCL"
+      },
+      {
+        "estimated_conviction": 3,
+        "sector": "financials",
+        "source_references": [
+          "SA-FIN-2",
+          "CR-3",
+          "AR-4",
+          "SA-FIN-ANOM-2"
+        ],
+        "thesis_summary": "V is the sole advance in a 1/17 financials breadth session, at the 100th intra-sector percentile on 5d and 20d windows [SA-FIN-2], while MA:TFC (1.93\u03c3), GS:MA (1.80\u03c3), and JPM:MA (1.64\u03c3) divergences from [CR-3] structurally place payments names in a separate correlation cluster from banks \u2014 consistent with transaction-volume insulation from NIM compression in an inverted-curve environment [AR-4]. Open question is whether the divergence holds under indiscriminate vol_expansion risk-off; zero-volume options flow [SA-FIN-ANOM-2] removes institutional sponsorship as a tiebreaker this cycle.",
+        "ticker": "V"
+      },
+      {
+        "estimated_conviction": 3,
+        "sector": "energy",
+        "source_references": [
+          "SA-ENERGY-3",
+          "SA-ENERGY-ANOM-2",
+          "SA-ENERGY-1",
+          "SA-ENERGY-5"
+        ],
+        "thesis_summary": "SLB is -3.14% vs sector on 5d (22nd percentile), the only energy name with a with-trend down gap today, ADX 35.08 (highest in-sector defined downtrend) [SA-ENERGY-3]. Core Laboratories Q1 met but declined YoY, a contemporaneous services-cycle corroboration. If the energy-equity vs spot-crude decoupling [SA-ENERGY-ANOM-2, SA-ENERGY-1] resolves toward crude weakness on Iranian supply-relief expectations, E&P capex guidance is the transmission channel into SLB earnings \u2014 a medium-term read not yet in spot. EIA print 2026-05-06 14:30Z and tonight's API pre-read 20:30Z [SA-ENERGY-5] are the nearest forcing functions.",
+        "ticker": "SLB"
+      },
+      {
+        "estimated_conviction": 2,
+        "sector": "semis",
+        "source_references": [
+          "SA-TECH-2",
+          "AR-2",
+          "CR",
+          "SA-TECH-1"
+        ],
+        "thesis_summary": "Monitor-only anomaly: +90.75% 20-day absolute return at the 97.5th intra-sector percentile against a Q3 EPS consensus of $0.0832 [SA-TECH-2, AR-2]. INTC:MRVL 2.40\u03c3 correlation divergence [CR] confirms break from the semis cluster; INTC absent from the sector-wide call sweep and pair-trade flow [SA-TECH-1] removes options corroboration. [AR-2] found no catalyst (CHIPS Act, foundry customer, M&A all unavailable); short-interest granularity is null, borrow trend stable. Two unresolvable competing reads \u2014 undisclosed structural catalyst pre-announcement, or momentum/short-cover overextension vulnerable to reversal. Direction-undetermined; magnitude of move warrants tracking either way.",
+        "ticker": "INTC"
+      },
+      {
+        "estimated_conviction": 2,
+        "sector": "financials",
+        "source_references": [
+          "SA-FIN-3",
+          "SA-FIN-ANOM-2"
+        ],
+        "thesis_summary": "Earnings binary within 24 hours [SA-FIN-3] with wide outcome distribution: second analyst downgrade citing valuation pressure and an active Japan regulatory probe sit against intact bullish MACD, bullish stochastic, and 94th intra-sector relative positioning. Zero options flow across financials [SA-FIN-ANOM-2] eliminates any market-implied directional bias going in. Preserved as a post-print re-examination flag; pre-print directional commitment is not supported by current signal density.",
+        "ticker": "PRU"
+      }
+    ]
+  },
+  "invocation_id": "20260504T235223Z-verify-analyst-halt",
+  "strategist_section": {
+    "mode": "defensive_posture",
+    "pending_order_assessments": [],
+    "portfolio_level_observations": {
+      "aggregate_thesis_health": "Positions in protective mode; daily drawdown at halt threshold.",
+      "capital_allocation_observations": "Capital preservation prioritised; no add actions.",
+      "defensive_posture_summary": {
+        "capital_preservation_notes": "Maintain stops; no new entries until halt clears.",
+        "reduction_priority": [
+          {
+            "position_id": "POS-NVDA",
+            "priority_rationale": "Highest risk-adjusted weight in a correlated sector cluster."
+          }
+        ]
+      },
+      "regime_transition_summary": null,
+      "sector_balance_shifts": "No new exposures; concentration unchanged.",
+      "thesis_dependency_warnings": "Engine-originated MSFT closure noted; correlated risk reduced."
+    },
+    "position_assessments": [
+      {
+        "assessment": {
+          "action_parameters": null,
+          "action_rationale": "Hold pending halt resolution.",
+          "add_conviction_justification": null,
+          "adjustment_rationale": null,
+          "assessment_id": "SA-1",
+          "cross_position_observations": null,
+          "exposure_impact": null,
+          "guardrail_validation_result": null,
+          "position_id": "POS-NVDA",
+          "prior_status": "on-track",
+          "recommended_action": "hold",
+          "reduce_rationale": null,
+          "remedy_flag": null,
+          "remedy_rationale": null,
+          "sector": "semis",
+          "status_rationale": "Position at-risk; defensive posture active.",
+          "thesis_id": "THESIS-POS-NVDA",
+          "thesis_status": "at-risk",
+          "underlying": "NVDA"
+        },
+        "pre_processor_annotations": {
+          "conflicts": []
+        }
+      },
+      {
+        "assessment": {
+          "action_parameters": null,
+          "action_rationale": "Hold; engine closure already executed.",
+          "add_conviction_justification": null,
+          "adjustment_rationale": null,
+          "assessment_id": "SA-2",
+          "cross_position_observations": null,
+          "exposure_impact": null,
+          "guardrail_validation_result": null,
+          "position_id": "POS-MSFT",
+          "prior_status": "on-track",
+          "recommended_action": "hold",
+          "reduce_rationale": null,
+          "remedy_flag": null,
+          "remedy_rationale": null,
+          "sector": "tech",
+          "status_rationale": "Cloud upside thesis at-risk in drawdown environment.",
+          "thesis_id": "THESIS-POS-MSFT",
+          "thesis_status": "at-risk",
+          "underlying": "MSFT"
+        },
+        "pre_processor_annotations": {
+          "conflicts": []
+        }
+      },
+      {
+        "assessment": {
+          "action_parameters": null,
+          "action_rationale": "Hold.",
+          "add_conviction_justification": null,
+          "adjustment_rationale": null,
+          "assessment_id": "SA-3",
+          "cross_position_observations": null,
+          "exposure_impact": null,
+          "guardrail_validation_result": null,
+          "position_id": "POS-GOOGL",
+          "prior_status": "on-track",
+          "recommended_action": "hold",
+          "reduce_rationale": null,
+          "remedy_flag": null,
+          "remedy_rationale": null,
+          "sector": "tech",
+          "status_rationale": "Search resilience intact.",
+          "thesis_id": "THESIS-POS-GOOGL",
+          "thesis_status": "on-track",
+          "underlying": "GOOGL"
+        },
+        "pre_processor_annotations": {
+          "conflicts": []
+        }
+      },
+      {
+        "assessment": {
+          "action_parameters": null,
+          "action_rationale": "Hold.",
+          "add_conviction_justification": null,
+          "adjustment_rationale": null,
+          "assessment_id": "SA-4",
+          "cross_position_observations": null,
+          "exposure_impact": null,
+          "guardrail_validation_result": null,
+          "position_id": "POS-JPM",
+          "prior_status": "on-track",
+          "recommended_action": "hold",
+          "reduce_rationale": null,
+          "remedy_flag": null,
+          "remedy_rationale": null,
+          "sector": "financials",
+          "status_rationale": "Financials rotation thesis intact.",
+          "thesis_id": "THESIS-POS-JPM",
+          "thesis_status": "on-track",
+          "underlying": "JPM"
+        },
+        "pre_processor_annotations": {
+          "conflicts": []
+        }
+      },
+      {
+        "assessment": {
+          "action_parameters": null,
+          "action_rationale": "Hold.",
+          "add_conviction_justification": null,
+          "adjustment_rationale": null,
+          "assessment_id": "SA-5",
+          "cross_position_observations": null,
+          "exposure_impact": null,
+          "guardrail_validation_result": null,
+          "position_id": "POS-XOM",
+          "prior_status": "on-track",
+          "recommended_action": "hold",
+          "reduce_rationale": null,
+          "remedy_flag": null,
+          "remedy_rationale": null,
+          "sector": "energy",
+          "status_rationale": "Energy capex thesis partially realised.",
+          "thesis_id": "THESIS-POS-XOM",
+          "thesis_status": "partially-realized",
+          "underlying": "XOM"
+        },
+        "pre_processor_annotations": {
+          "conflicts": []
+        }
+      },
+      {
+        "assessment": {
+          "action_parameters": null,
+          "action_rationale": "Hold.",
+          "add_conviction_justification": null,
+          "adjustment_rationale": null,
+          "assessment_id": "SA-6",
+          "cross_position_observations": null,
+          "exposure_impact": null,
+          "guardrail_validation_result": null,
+          "position_id": "POS-AAPL",
+          "prior_status": "on-track",
+          "recommended_action": "hold",
+          "reduce_rationale": null,
+          "remedy_flag": null,
+          "remedy_rationale": null,
+          "sector": "tech",
+          "status_rationale": "Services-margin expansion intact.",
+          "thesis_id": "THESIS-POS-AAPL",
+          "thesis_status": "on-track",
+          "underlying": "AAPL"
+        },
+        "pre_processor_annotations": {
+          "conflicts": []
+        }
+      }
+    ]
+  },
+  "timestamp": "2026-05-04T14:30:00Z"
+}

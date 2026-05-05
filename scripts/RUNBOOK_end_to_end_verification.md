@@ -467,6 +467,32 @@ triage. The diagnostic archive carries the prompt, the assembled input
 bundle (header + tool reminder + portfolio state + brief), the full
 structured-output response, and the error trail.
 
+## Phase 8 — Proposal pre-processor
+
+**Purpose.** Verify the deterministic pre-processor that bundles analyst +
+strategist outputs for the PM, including combined-set impact projection,
+conviction histogram, book-health summary, and same-underlying conflict
+detection.
+
+**Prerequisites.** Phase 6 (analyst) must have completed — its fixtures at
+`tests/fixtures/decision/analyst/{normal,halt}.json` are the primary inputs
+to this phase. Phase 7 (strategist) fixtures are not required as inputs;
+strategist outputs are constructed in-code.
+
+**Run.**
+
+```bash
+uv run python scripts/verify_proposal_pre_processor.py
+```
+
+**Outputs.** Four bundle JSON files at
+`tests/fixtures/decision/proposal_pre_processor/{normal,halt,emergency,normal_with_breach}.json`,
+consumed by the PM phase.
+
+**Cost.** Zero. No SDK calls. Sub-second total runtime.
+
+**See:** [`RUNBOOK_proposal_pre_processor.md`](RUNBOOK_proposal_pre_processor.md)
+
 ## When complete
 
 Report a one-line summary to the operator:
@@ -480,9 +506,10 @@ End-to-end verification: <PASS|FAIL|WARN-only>
 - Phase 5 (synthesizer): WARN (2 invented references)
 - Phase 6 (analyst): normal=PASS, halt=PASS
 - Phase 7 (strategist): normal=PASS, defensive_posture=PASS, emergency=PASS
+- Phase 8 (proposal pre-processor): normal=PASS, halt=PASS, emergency=PASS, normal_with_breach=PASS
 Total LLM cost: ~Xk Sonnet input + Yk Sonnet output, ~Zk Opus input + Wk Opus output
 Archives under .archive/verify-pipeline-YYYYMMDD/
-Fixtures at tests/fixtures/decision/{analyst,strategist}/*.json
+Fixtures at tests/fixtures/decision/{analyst,strategist,proposal_pre_processor}/*.json
 ```
 
 If WARN-only or any FAIL, attach the per-script verdict block(s) so

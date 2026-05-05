@@ -1,0 +1,322 @@
+{
+  "aggregate_observations": {
+    "book_health_summary": {
+      "by_recommended_action": {
+        "add": 0,
+        "adjust-bracket": 0,
+        "close": 0,
+        "hold": 4,
+        "reduce": 0
+      },
+      "by_thesis_status": {
+        "at-risk": 0,
+        "invalidated": 0,
+        "on-track": 4,
+        "partially-realized": 0,
+        "stale": 0
+      },
+      "remedy_flagged_count": 1,
+      "total": 4
+    },
+    "combined_set_impact": {
+      "basis": {
+        "analyst_proposal_ids": [],
+        "snapshot_timestamp": "2026-05-04T14:30:00Z",
+        "strategist_action_ids": [],
+        "strategist_holds_excluded_count": 4
+      },
+      "breaches": [],
+      "per_rule": [
+        {
+          "current": 0.0,
+          "headroom_remaining": 0.05,
+          "limit": 0.05,
+          "projected_after": 0.0,
+          "rule": "borrow_cost_budget_pct_per_day",
+          "status": "PASS",
+          "unit": "% of portfolio per day"
+        },
+        {
+          "current": 20.0,
+          "headroom_remaining": 100.0,
+          "limit": 120.0,
+          "projected_after": 20.0,
+          "rule": "gross_exposure_pct",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 70.0,
+          "headroom_remaining": 60.0,
+          "limit": 10.0,
+          "projected_after": 70.0,
+          "rule": "min_cash_reserve_pct",
+          "status": "PASS",
+          "unit": "% of portfolio"
+        },
+        {
+          "current": 20.0,
+          "headroom_remaining": 40.0,
+          "limit": 60.0,
+          "projected_after": 20.0,
+          "rule": "net_long_pct",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 30.0,
+          "limit": 30.0,
+          "projected_after": 0.0,
+          "rule": "net_short_pct",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 40.0,
+          "limit": 40.0,
+          "projected_after": 0.0,
+          "rule": "options_delta_pct",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 30.0,
+          "limit": 30.0,
+          "projected_after": 0.0,
+          "rule": "pending_order_capital_pct",
+          "status": "PASS",
+          "unit": "% of portfolio"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 0.15,
+          "limit": 0.15,
+          "projected_after": 0.0,
+          "rule": "portfolio_theta_pct_per_day",
+          "status": "PASS",
+          "unit": "% of portfolio per day"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 1.0,
+          "limit": 1.0,
+          "projected_after": 0.0,
+          "rule": "portfolio_vega_pct_per_iv_point",
+          "status": "PASS",
+          "unit": "% of portfolio per 1-pt IV move"
+        },
+        {
+          "current": 4.3,
+          "headroom_remaining": 0.7000000000000002,
+          "limit": 5.0,
+          "projected_after": 4.3,
+          "rule": "position_max_size_pct",
+          "status": "WARNING",
+          "unit": "% of portfolio"
+        },
+        {
+          "current": 3.0,
+          "headroom_remaining": 22.0,
+          "limit": 25.0,
+          "projected_after": 3.0,
+          "rule": "sector_concentration_energy",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 3.0,
+          "headroom_remaining": 22.0,
+          "limit": 25.0,
+          "projected_after": 3.0,
+          "rule": "sector_concentration_financials",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 6.0,
+          "headroom_remaining": 19.0,
+          "limit": 25.0,
+          "projected_after": 6.0,
+          "rule": "sector_concentration_semis",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 8.0,
+          "headroom_remaining": 17.0,
+          "limit": 25.0,
+          "projected_after": 8.0,
+          "rule": "sector_concentration_tech",
+          "status": "PASS",
+          "unit": "% of portfolio (delta-adjusted)"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 3.0,
+          "limit": 3.0,
+          "projected_after": 0.0,
+          "rule": "single_short_max_pct",
+          "status": "PASS",
+          "unit": "% of portfolio"
+        },
+        {
+          "current": 0.0,
+          "headroom_remaining": 30.0,
+          "limit": 30.0,
+          "projected_after": 0.0,
+          "rule": "total_short_pct",
+          "status": "PASS",
+          "unit": "% of portfolio"
+        }
+      ]
+    },
+    "conviction_distribution": {
+      "by_level": {
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0,
+        "5": 0
+      },
+      "total": 0
+    }
+  },
+  "analyst_section": {
+    "mode": "normal",
+    "recommendations": [],
+    "watchlist": null
+  },
+  "invocation_id": "20260504T235223Z-verify-analyst-normal",
+  "strategist_section": {
+    "mode": "normal",
+    "pending_order_assessments": [],
+    "portfolio_level_observations": {
+      "aggregate_thesis_health": "Normal mode; NVDA position sized over new regime limit.",
+      "capital_allocation_observations": "Reduction required on NVDA to comply with new limit.",
+      "defensive_posture_summary": null,
+      "regime_transition_summary": {
+        "addressed_breaches": [
+          {
+            "breach_id": "breach-pos-nvda-size",
+            "remedy_assessment_ids": [
+              "SA-1"
+            ]
+          }
+        ],
+        "uncured_breaches": []
+      },
+      "sector_balance_shifts": "Regime tightened position-size limit from 5% to 3.5%.",
+      "thesis_dependency_warnings": "NVDA overage 1.0 pp; remedy action issued."
+    },
+    "position_assessments": [
+      {
+        "assessment": {
+          "action_parameters": null,
+          "action_rationale": "Hold pending operator review of regime-transition breach.",
+          "add_conviction_justification": null,
+          "adjustment_rationale": null,
+          "assessment_id": "SA-1",
+          "cross_position_observations": null,
+          "exposure_impact": null,
+          "guardrail_validation_result": null,
+          "position_id": "POS-NVDA",
+          "prior_status": "on-track",
+          "recommended_action": "hold",
+          "reduce_rationale": null,
+          "remedy_flag": "regime_transition_breach:position_max_size_pct",
+          "remedy_rationale": "New regime tightened position_max_size_pct to 3.5%; current position at 4.5%; overage 1.0 pp. Operator must decide whether to reduce or accept the overage.",
+          "sector": "semis",
+          "status_rationale": "AI capex intact; position sized over new regime limit (4.5% vs 3.5%).",
+          "thesis_id": "THESIS-POS-NVDA",
+          "thesis_status": "on-track",
+          "underlying": "NVDA"
+        },
+        "pre_processor_annotations": {
+          "conflicts": []
+        }
+      },
+      {
+        "assessment": {
+          "action_parameters": null,
+          "action_rationale": "Hold.",
+          "add_conviction_justification": null,
+          "adjustment_rationale": null,
+          "assessment_id": "SA-2",
+          "cross_position_observations": null,
+          "exposure_impact": null,
+          "guardrail_validation_result": null,
+          "position_id": "POS-JPM",
+          "prior_status": "on-track",
+          "recommended_action": "hold",
+          "reduce_rationale": null,
+          "remedy_flag": null,
+          "remedy_rationale": null,
+          "sector": "financials",
+          "status_rationale": "Financials rotation thesis intact.",
+          "thesis_id": "THESIS-POS-JPM",
+          "thesis_status": "on-track",
+          "underlying": "JPM"
+        },
+        "pre_processor_annotations": {
+          "conflicts": []
+        }
+      },
+      {
+        "assessment": {
+          "action_parameters": null,
+          "action_rationale": "Hold.",
+          "add_conviction_justification": null,
+          "adjustment_rationale": null,
+          "assessment_id": "SA-3",
+          "cross_position_observations": null,
+          "exposure_impact": null,
+          "guardrail_validation_result": null,
+          "position_id": "POS-XOM",
+          "prior_status": "on-track",
+          "recommended_action": "hold",
+          "reduce_rationale": null,
+          "remedy_flag": null,
+          "remedy_rationale": null,
+          "sector": "energy",
+          "status_rationale": "Energy capex normalisation on-track.",
+          "thesis_id": "THESIS-POS-XOM",
+          "thesis_status": "on-track",
+          "underlying": "XOM"
+        },
+        "pre_processor_annotations": {
+          "conflicts": []
+        }
+      },
+      {
+        "assessment": {
+          "action_parameters": null,
+          "action_rationale": "Hold.",
+          "add_conviction_justification": null,
+          "adjustment_rationale": null,
+          "assessment_id": "SA-4",
+          "cross_position_observations": null,
+          "exposure_impact": null,
+          "guardrail_validation_result": null,
+          "position_id": "POS-AAPL",
+          "prior_status": "on-track",
+          "recommended_action": "hold",
+          "reduce_rationale": null,
+          "remedy_flag": null,
+          "remedy_rationale": null,
+          "sector": "tech",
+          "status_rationale": "Services-margin expansion intact.",
+          "thesis_id": "THESIS-POS-AAPL",
+          "thesis_status": "on-track",
+          "underlying": "AAPL"
+        },
+        "pre_processor_annotations": {
+          "conflicts": []
+        }
+      }
+    ]
+  },
+  "timestamp": "2026-05-04T14:30:00Z"
+}
