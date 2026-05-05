@@ -36,6 +36,11 @@ from alphamind.decision.proposal_pre_processor.observations import (
     compute_book_health_summary,
     compute_conviction_distribution,
 )
+from alphamind.decision.proposal_pre_processor.translator import (
+    TranslatorError,
+    translate_position_assessment_to_proposed_delta,
+    translate_recommendation_to_proposed_delta,
+)
 
 __all__ = [
     "BUNDLE_OUTPUT_SCHEMA",
@@ -58,10 +63,13 @@ __all__ = [
     "StrategistSection",
     "StrategistSideAnnotations",
     "StrategistSideConflict",
+    "TranslatorError",
     "WrappedPendingOrderAssessment",
     "WrappedPositionAssessment",
     "WrappedRecommendation",
     "bundle_schema",
     "compute_book_health_summary",
     "compute_conviction_distribution",
+    "translate_position_assessment_to_proposed_delta",
+    "translate_recommendation_to_proposed_delta",
 ]
