@@ -568,6 +568,10 @@ async def test_parse_failure_then_retry_success(
     assert "parse contract" in retry_prompt.lower()
     assert "analyst-output-schema.md" in retry_prompt
     assert "AnalystOutput schema" in retry_prompt
+    # ALP-311: original user_message must be preserved in the retry SDK call so
+    # the model has portfolio/synthesizer context to repair against, not just
+    # the system prompt + diagnostic.
+    assert "Produce analyst output." in retry_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +645,8 @@ async def test_validation_failure_then_retry_success(
     # The validator emits a Rule line for validation failures.
     assert "Rule:" in retry_prompt
     assert "analyst-output-schema.md" in retry_prompt
+    # ALP-311: original user_message preserved in the retry SDK call.
+    assert "Produce analyst output." in retry_prompt
 
 
 # ---------------------------------------------------------------------------

@@ -578,6 +578,10 @@ async def test_parse_failure_then_retry_success(
     assert "parse contract" in retry_prompt.lower()
     assert "strategist-output-schema.md" in retry_prompt
     assert "StrategistOutput schema" in retry_prompt
+    # ALP-311: original user_message must be preserved in the retry SDK call so
+    # the model has portfolio/synthesizer context to repair against, not just
+    # the system prompt + diagnostic.
+    assert "Produce strategist output." in retry_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -625,6 +629,8 @@ async def test_validation_failure_then_retry_success(
     assert "structural contract" in retry_prompt.lower()
     assert "Rule:" in retry_prompt
     assert "strategist-output-schema.md" in retry_prompt
+    # ALP-311: original user_message preserved in the retry SDK call.
+    assert "Produce strategist output." in retry_prompt
 
 
 # ---------------------------------------------------------------------------

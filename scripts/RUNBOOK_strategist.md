@@ -51,8 +51,8 @@ structured-output JSON. Re-running gratuitously eats the Opus cap.
 ## Run the verification
 
 ```bash
-# Real-SDK end-to-end verification (consumes Opus cap; ~10-15 min worst case
-# at the 300s/scenario latency budget).
+# Real-SDK end-to-end verification (consumes Opus cap; ~15-25 min worst case
+# at the 480s/scenario latency budget).
 uv run python scripts/verify_strategist.py \
     --archive-root .archive/verify-pipeline-$(date +%Y%m%d) \
     --synthesizer-invocation-id 20260504T143000Z-verify-pipeline \
@@ -105,11 +105,11 @@ validation_failures: 0 ((none))
 
 Exit code: `0` on PASS or WARN (per scenario), `1` on FAIL on any.
 
-## Known scenario status (as of PR #22 land, 2026-05-05)
+## Known scenario status (as of 2026-05-05 post-ALP-311/312)
 
-- **`normal`**: PASS end-to-end against real SDK (4 position assessments, 1 pending order, 17,277 output tokens, validation overall PASS). Fixture `tests/fixtures/decision/strategist/normal.json` is current.
-- **`defensive_posture`**: known FAIL on attempt 1 (`remedy_flag_pairing` validator rule — model conflates drawdown halt with regime-transition breach) compounded by attempt-2 regurgitation of the prompt example (harness retry drops the original user_message). Tracked at [ALP-311](https://linear.app/alphamind-jatassi/issue/ALP-311) (harness retry contract) and [ALP-312](https://linear.app/alphamind-jatassi/issue/ALP-312) (prompt clarity on `remedy_flag` scope). Fixture intentionally absent until those land.
-- **`emergency`**: not yet exercised end-to-end (the 2026-05-05 verification halted at `defensive_posture` before the fix to remove fail-fast in `--scenario all` mode). Fixture intentionally absent. Recommend running `--scenario emergency` after ALP-311/312 land to confirm.
+- **`normal`**: PASS end-to-end against real SDK (4 position assessments, 1 pending order, ~13–17K output tokens, validation overall PASS, single attempt). Fixture `tests/fixtures/decision/strategist/normal.json` is current.
+- **`defensive_posture`**: PASS end-to-end against real SDK (6 position assessments, ~38K output tokens, validation overall PASS). Often completes in 2 attempts: the model occasionally emits a `close` action with `close_rationale_type=conviction_reduced` paired with `quantity="all"` (partial-close only), which the parser rejects; the retry path repairs it. `--save-fixtures` writes `defensive_posture.json` once the run hits PASS.
+- **`emergency`**: not yet exercised end-to-end. Recommend running `--scenario emergency` to refresh the fixture.
 
 ## Verdict rubric
 
@@ -182,11 +182,14 @@ nested-list contexts):
   the exception message names the remediation; re-run
   `claude setup-token` and confirm the token is exported.
 
-- **`TimeoutFailure` on any scenario.** Likely cause — the SDK is slow
-  or `latency_budget_seconds` was tightened below realistic. Triage —
-  `docs/design/cost-and-rate-limit-modeling.md` § Latency budgets;
-  the strategist's budget should accommodate multi-position
-  assessment plus tool-call rounds.
+- **`TimeoutFailure` on any scenario.** Likely cause — the model's
+  pre-emit extended-thinking phase exceeded `latency_budget_seconds`.
+  The defensive_posture 6-position bundle pushed past 300s with zero
+  output tokens after the ALP-312 prompt clarification on `remedy_flag`
+  scope; budget was raised to 480s 2026-05-05. Triage — re-run once;
+  if persistent, raise `latency_budget_seconds` in `agents.yaml` and
+  cross-reference `docs/design/cost-and-rate-limit-modeling.md`
+  § Latency budgets.
 
 ## Fixture refresh cadence
 

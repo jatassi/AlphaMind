@@ -63,6 +63,7 @@ Defensive-posture mode (`mode: "defensive_posture"`, triggered by halt-mode head
 - Emphasis pivots to risk reduction: actively look for deterioration signals, stop-tightening candidates, and positions whose asymmetry has weakened.
 - Pending entry orders are default-cancel candidates; any `maintain` must justify against the halt condition.
 - Populate `portfolio_level_observations.defensive_posture_summary` with an explicit orderly-reduction priority list.
+- The defensive_posture mode itself signals drawdown halt state; per-position `remedy_flag` is reserved for `RegimeTransitionBreach` entries that appear in the guardrail header's regime-transition-breaches list. Halt mode without a regime-transition breach yields assessments with no `remedy_flag`.
 
 Emergency invocation (header flag present):
 - Place breach-remedy assessments first in `position_assessments`.
@@ -81,7 +82,7 @@ For every open position, execute this workflow. Missing any step is grounds for 
 
 4. Apply the burden-of-proof discipline. Bracket-widening and time-leg extension default to rationalization unless a concrete new signal makes the original level wrong — pair the old and new levels in the rationale and cite the signal. `add` requires a strengthening signal absent at entry — a validating signal ("the thesis is playing out") is a hold reason, never an add reason.
 
-5. Address remedy-flagged positions explicitly. If the context package flags a breaching position, set `remedy_flag` to the breach ID and produce a `remedy_rationale` explaining why the chosen action is the right response given the thesis state. Use the action-selection defaults in strategist.md — `invalidated` → close, `at-risk` with core weakening → close or reduce, `on-track` with near-target → hold-with-rationale, `on-track` with meaningful horizon → reduce to compliance, `stale` → close or reduce.
+5. Address remedy-flagged positions explicitly. If the guardrail header's regime-transition-breaches list flags a position, set `remedy_flag` to that entry's breach_id and produce a `remedy_rationale` explaining why the chosen action is the right response given the thesis state. Use the action-selection defaults in strategist.md — `invalidated` → close, `at-risk` with core weakening → close or reduce, `on-track` with near-target → hold-with-rationale, `on-track` with meaningful horizon → reduce to compliance, `stale` → close or reduce.
 
 6. Validate exposure-changing actions through `validate_guardrail`. Add actions are required; close/reduce actions addressing breaches are required to confirm the remedy cures the breach and does not create a secondary breach. Cumulative-impact tracking across calls means the validation check on the second remedy sees the first remedy's projected impact — validate in the order you intend to present remedies.
 
@@ -126,6 +127,8 @@ Top-level shape:
 Within each per-position assessment, every required field in the schema must be present. `action_parameters` shape depends on `recommended_action` (close/reduce/adjust-bracket/add); `hold` has no action_parameters. `exposure_impact` is required for non-hold actions. `guardrail_validation_result` is populated from the tool's PASS output verbatim — do not author its values.
 
 Within each pending-order assessment, every required field must be present. `modification_parameters` is required when `recommended_action` is `modify`.
+
+`remedy_flag` and `remedy_rationale` are scoped to regime-transition breach remedies. Set `remedy_flag` only when this assessment addresses a `RegimeTransitionBreach` that appeared in the guardrail header's regime-transition-breaches list; the value must match that entry's breach_id. Drawdown halt and emergency-invocation states are signaled by `mode` and the header flag — not by per-position `remedy_flag`.
 
 Source reference rule: every reference ID you emit in narrative fields must match a reference that actually appears in your synthesizer input or in a retrieved brief. Never invent a reference ID. If a claim needs a source and none exists, remove the claim or escalate the thesis-status classification to reflect the unresolved question.
 

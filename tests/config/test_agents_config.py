@@ -31,7 +31,7 @@ def test_strategist_entry_loads() -> None:
     entry = _load_strategist_entry()
     assert entry.model == "claude-opus-4-7"
     assert entry.prompt == "prompts/decision/strategist.md"
-    assert entry.latency_budget_seconds == 300
+    assert entry.latency_budget_seconds == 480
     assert entry.context_token_budget == 8000
     assert entry.output_token_budget == 16000
 

@@ -356,6 +356,19 @@ def _build_retry_message_for_validation_failure(result: ValidationResult) -> str
     return _build_retry_message(framing, error_detail)
 
 
+_RETRY_PROMPT_DELIMITER = "\n\n--- Retry diagnostic ---\n\n"
+
+
+def _compose_retry_prompt(original_user_message: str, retry_diagnostic: str) -> str:
+    """Prepend the original user_message to the retry diagnostic.
+
+    Without the user_message in the retry SDK call, the model loses portfolio /
+    synthesizer / guardrail context and falls back to regurgitating the system
+    prompt's example block (observed in ALP-311 strategist post-mortem).
+    """
+    return original_user_message + _RETRY_PROMPT_DELIMITER + retry_diagnostic
+
+
 # ---------------------------------------------------------------------------
 # Diagnostic state
 # ---------------------------------------------------------------------------
@@ -695,7 +708,8 @@ async def _run_retry_attempt(
     """
     diag.attempts = 2
 
-    payload2, text2, stop_reason2, tokens2, tool_calls2 = await invoke(retry_message)
+    retry_prompt = _compose_retry_prompt(diag.user_message, retry_message)
+    payload2, text2, stop_reason2, tokens2, tool_calls2 = await invoke(retry_prompt)
     raw_response_retry = _render_raw_response(payload2, text2)
     diag.response_retry = raw_response_retry
     diag.tokens_used = _add_tokens(tokens1, tokens2)

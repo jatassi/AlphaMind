@@ -222,3 +222,34 @@ def test_prompt_omits_text_mode_output_directives() -> None:
         f"mode: {found}.  Remove them and rely on the schema for shape "
         f"enforcement (mirror analyst's <output_contract> framing)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 6: remedy_flag is explicitly scoped to regime-transition breaches
+# ---------------------------------------------------------------------------
+
+
+def test_remedy_flag_regime_transition_scoped_in_output_contract() -> None:
+    """The <output_contract> must scope `remedy_flag` to regime-transition breaches.
+
+    Regression guard for ALP-312: a 2026-05-05 live-SDK strategist run on the
+    defensive_posture scenario emitted `remedy_flag: "DRAWDOWN-DAILY-BLOCKED"`
+    on every position because the prompt did not draw a sharp boundary
+    between `remedy_flag` (per-position regime-transition remedy) and
+    `mode: "defensive_posture"` (portfolio-level halt state). The
+    output_contract section must contain explicit guidance pairing
+    `remedy_flag` with the regime-transition scope so the model cannot
+    re-conflate the two.
+    """
+    content = _read_prompt()
+    output_contract = _extract_section(content, "output_contract")
+    assert output_contract is not None, (
+        "prompts/decision/strategist.md is missing an <output_contract> section."
+    )
+    pattern = re.compile(r"remedy_flag[\s\S]{0,300}?regime[- ]transition", re.IGNORECASE)
+    assert pattern.search(output_contract) is not None, (
+        "The <output_contract> section does not pair `remedy_flag` with "
+        "regime-transition scope. Add a sentence explaining that remedy_flag "
+        "applies only to RegimeTransitionBreach entries from the guardrail "
+        "header — drawdown halt and emergency states are signaled elsewhere."
+    )
