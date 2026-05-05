@@ -6,6 +6,10 @@ reaching into submodules. Later stories will append their additions to this
 file.
 """
 
+from alphamind.decision.proposal_pre_processor.conflicts import (
+    ConflictDetectionResult,
+    detect_conflicts,
+)
 from alphamind.decision.proposal_pre_processor.models import (
     BUNDLE_OUTPUT_SCHEMA,
     AggregateObservations,
@@ -45,6 +49,7 @@ __all__ = [
     "ByRecommendedAction",
     "ByThesisStatus",
     "CombinedSetImpact",
+    "ConflictDetectionResult",
     "ConflictType",
     "ContributorEntry",
     "ConvictionDistribution",
@@ -58,4 +63,5 @@ __all__ = [
     "WrappedPositionAssessment",
     "WrappedRecommendation",
     "bundle_schema",
+    "detect_conflicts",
 ]
