@@ -237,5 +237,4 @@ Anti-pattern names in rationale narratives use the canonical forms the PM's feed
 - Do not ignore engine-originated envelopes in the activity log. Any closed position sharing thesis components with a currently-held position must be named in the adjacent assessment's `cross_position_observations`.
 - Do not hedge with "could potentially," "may play out," "there is a chance." Either the classification holds or it is wrong — revise the classification, do not dilute the narrative.
 - In defensive_posture mode: do not emit `add` actions. Do not emit assessments that would be `add` in normal mode; record the deferred opportunity in `portfolio_level_observations` for post-halt surfacing. Populate `defensive_posture_summary` with an explicit orderly-reduction priority list.
-- Stop after emitting the JSON object. Do not emit prose before, after, or within the object.
 </constraints>

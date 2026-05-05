@@ -51,7 +51,8 @@ structured-output JSON. Re-running gratuitously eats the Opus cap.
 ## Run the verification
 
 ```bash
-# Real-SDK end-to-end verification (consumes Opus cap; ~3-5 min).
+# Real-SDK end-to-end verification (consumes Opus cap; ~10-15 min worst case
+# at the 300s/scenario latency budget).
 uv run python scripts/verify_strategist.py \
     --archive-root .archive/verify-pipeline-$(date +%Y%m%d) \
     --synthesizer-invocation-id 20260504T143000Z-verify-pipeline \
@@ -159,10 +160,10 @@ nested-list contexts):
 
 - **`ContextOverflowFailure` on the defensive_posture scenario.** Likely
   cause — the 6-position bundle plus `defensive_posture_summary`
-  overran the 4000-token output budget set by story 01. Triage —
-  surface to the operator per parent-issue surfacing condition; further
-  raising `output_token_budget` in `agents.yaml` is the recommended
-  next step.
+  overran the `output_token_budget` (currently 16000 after the 2026-05-05
+  bump from 4000). Triage — surface to the operator per parent-issue
+  surfacing condition; further raising `output_token_budget` in
+  `agents.yaml` is the recommended next step.
 
 - **Reference resolution FAIL on any scenario.** Likely cause — the LLM
   invented a `[XX-N]` reference not present in the retrieval store.

@@ -97,7 +97,7 @@ they read time-dependent DB state.
 | 4 | Analysis: qualitative + adaptive | qualitative_researcher, adaptive_researcher | Yes | ~45–90s |
 | 5 | Analysis: synthesizer | synthesizer | Yes | ~10–30s |
 | 6 | Decision: analyst | analyst (normal + halt scenarios) | Yes (Opus) | ~30–90s |
-| 7 | Decision: strategist | strategist (normal + defensive_posture + emergency scenarios) | Yes (Opus) | ~3–5 min |
+| 7 | Decision: strategist | strategist (normal + defensive_posture + emergency scenarios) | Yes (Opus) | ~10–15 min |
 
 ## Phase 1 — Data layer
 
@@ -498,9 +498,9 @@ the operator can act.
 | verify_adaptive_researcher | Sonnet | 8K–10K | 0.7K–1K |
 | verify_synthesizer | Sonnet | 10K–12K | 1.5K–2K |
 | verify_analyst (×2 scenarios) | Opus | 12K–18K | 3K–5K |
-| verify_strategist (×3 scenarios) | Opus | 24K–36K | 9K–15K |
+| verify_strategist (×3 scenarios) | Opus | 24K–36K | 30K–55K |
 | **Sonnet total** | | **~54K–70K** | **~7.6K–13.6K** |
-| **Opus total** | | **~36K–54K** | **~12K–20K** |
+| **Opus total** | | **~36K–54K** | **~33K–60K** |
 
 Roughly 10–15% of the nominal weekly Sonnet cap and a smaller slice of
 the Opus cap per `docs/design/cost-and-rate-limit-modeling.md`. Don't

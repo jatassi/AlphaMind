@@ -180,3 +180,45 @@ def test_tool_names_in_tool_policy() -> None:
             f"agents.yaml lists this tool for the strategist; the policy must "
             f"document when and how to call it."
         )
+
+
+# ---------------------------------------------------------------------------
+# Test 5: Prompt is free of text-mode output discipline phrases
+# ---------------------------------------------------------------------------
+
+# These directives instruct the model to emit text starting with `{` and
+# suppress preamble — appropriate for text-mode SDK output, but incompatible
+# with `output_format={"type": "json_schema", ...}` mode where structured
+# output arrives via a `StructuredOutput` tool call. When both directives
+# are present, the model loops in extended thinking trying to reconcile the
+# contradiction until the latency watchdog fires.
+# Hit twice (analyst, strategist) before being fixed in PR #22; this guard
+# keeps the strategist prompt aligned with the harness's JSON-Schema mode.
+_TEXT_MODE_PHRASES = [
+    "Begin your response with",
+    "begin your response with",
+    "Do not wrap the JSON in markdown fences",
+    "do not wrap the JSON in markdown fences",
+    "first-token prefill",
+    "Do not emit prose before, after, or within",
+    "do not emit prose before, after, or within",
+]
+
+
+def test_prompt_omits_text_mode_output_directives() -> None:
+    """The strategist prompt must NOT contain text-mode output discipline.
+
+    Regression guard: a future edit that re-introduces "begin response with
+    `{`" / "no markdown fences" / "first-token prefill" framing would
+    silently re-create the prompt-vs-output_format contradiction the
+    e70cdcc commit fixed. The harness uses JSON-Schema output mode; the
+    schema does the shape work, no text-mode discipline is needed.
+    """
+    content = _read_prompt()
+    found = [phrase for phrase in _TEXT_MODE_PHRASES if phrase in content]
+    assert not found, (
+        f"prompts/decision/strategist.md contains text-mode output-discipline "
+        f"phrases that contradict the harness's `output_format=json_schema` "
+        f"mode: {found}.  Remove them and rely on the schema for shape "
+        f"enforcement (mirror analyst's <output_contract> framing)."
+    )

@@ -575,3 +575,112 @@ def test_retrieval_store_reader_round_trips(tmp_path: Path) -> None:
     )
 
     assert isinstance(store, RetrievalStore)
+
+
+def _stub_sdk_query_with_one_failing_scenario(
+    payloads: dict[str, dict[str, Any]],
+    *,
+    failing_scenario: str,
+) -> Any:
+    """Like ``_stub_sdk_query_by_scenario`` but emits ``is_error=True``
+    for the named scenario so the harness raises ``SDKFailure``.
+
+    Used to exercise the ``--scenario all`` continue-past-failure contract
+    introduced post-PR-#22 inline-fix sweep.
+    """
+    from claude_agent_sdk import AssistantMessage, ResultMessage
+
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 200,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+    }
+
+    async def _stub(**kwargs: Any) -> AsyncIterator[Any]:
+        prompt = kwargs.get("prompt") or ""
+        # Match longest first, same heuristic as the sibling stub.
+        scenario = next(
+            (s for s in sorted(payloads, key=len, reverse=True) if f"-{s}" in prompt),
+            next(iter(payloads)),
+        )
+        is_error = scenario == failing_scenario
+        yield AssistantMessage(
+            content=[], model="claude-opus-4-7", stop_reason="end_turn", usage=usage
+        )
+        yield ResultMessage(
+            subtype="result",
+            duration_ms=1000,
+            duration_api_ms=900,
+            is_error=is_error,
+            num_turns=1,
+            session_id=f"sess-{scenario}",
+            stop_reason="end_turn",
+            usage=usage,
+            structured_output=None if is_error else payloads[scenario],
+            result=("API Error: stub-injected failure" if is_error else None),
+        )
+
+    return _stub
+
+
+def test_cli_continues_past_failing_scenario_in_all_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--scenario all`` runs every scenario regardless of FAILs.
+
+    Regression guard for the post-PR-#22 inline-fix that removed fail-fast
+    in ``main``'s scenario loop. The contract: a FAIL on scenario N does
+    not short-circuit; scenarios N+1 .. K still run; the run exits 1 if
+    any scenario FAILed, and ``--save-fixtures`` writes fixtures for the
+    PASSing scenarios only.
+    """
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "stub-token")
+    invocation_id = "20260504T120000Z-verify-synthesizer"
+    diag_dir = tmp_path / "archive" / "invocations" / invocation_id / "analysis" / "synthesizer"
+    diag_dir.mkdir(parents=True)
+    (diag_dir / "response.md").write_text("Synthesis prose.\n", encoding="utf-8")
+    stage_dir = tmp_path / "archive" / "invocations" / invocation_id / "stage_artifacts"
+    stage_dir.mkdir(parents=True)
+    (stage_dir / "retrieval_store.json").write_text(
+        '{"entries": {}, "freshness_by_source": {}}', encoding="utf-8"
+    )
+
+    payloads = {
+        "normal": _build_strategist_payload(mode="normal", invocation_id="inv-normal"),
+        "defensive_posture": _build_strategist_payload(
+            mode="defensive_posture", invocation_id="inv-defensive"
+        ),
+        "emergency": _build_strategist_payload(mode="normal", invocation_id="inv-emergency"),
+    }
+
+    fixtures_dir = tmp_path / "fixtures"
+    exit_code = main(
+        argv=[
+            "--archive-root",
+            str(tmp_path / "archive"),
+            "--synthesizer-invocation-id",
+            invocation_id,
+            "--save-fixtures",
+            "--fixtures-dir",
+            str(fixtures_dir),
+        ],
+        sdk_query_fn=_stub_sdk_query_with_one_failing_scenario(
+            payloads, failing_scenario="defensive_posture"
+        ),
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr().out
+    # All three scenarios surfaced in output — proving the loop continued
+    # past the FAIL rather than short-circuiting.
+    assert "scenario: normal" in captured
+    assert "scenario: defensive_posture" in captured
+    assert "scenario: emergency" in captured
+    # Fixtures: normal and emergency PASSed → JSON files emitted; defensive_posture
+    # FAILed → no JSON file.
+    assert (fixtures_dir / "normal.json").exists()
+    assert (fixtures_dir / "emergency.json").exists()
+    assert not (fixtures_dir / "defensive_posture.json").exists()
