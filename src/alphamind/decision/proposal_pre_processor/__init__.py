@@ -37,7 +37,9 @@ from alphamind.decision.proposal_pre_processor.models import (
     bundle_schema,
 )
 from alphamind.decision.proposal_pre_processor.observations import (
+    LibraryFeatureDisabledError,
     compute_book_health_summary,
+    compute_combined_set_impact,
     compute_conviction_distribution,
 )
 from alphamind.decision.proposal_pre_processor.translator import (
@@ -63,6 +65,7 @@ __all__ = [
     "ContributorEntry",
     "ConvictionDistribution",
     "ConvictionHistogram",
+    "LibraryFeatureDisabledError",
     "PerRuleEntry",
     "ProposalPreProcessorBundle",
     "StrategistSection",
@@ -74,6 +77,7 @@ __all__ = [
     "WrappedRecommendation",
     "bundle_schema",
     "compute_book_health_summary",
+    "compute_combined_set_impact",
     "compute_conviction_distribution",
     "detect_conflicts",
     "translate_position_assessment_to_proposed_delta",

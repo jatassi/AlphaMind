@@ -1,27 +1,64 @@
-"""Aggregate histogram functions for the proposal pre-processor — ALP-315.
+"""Aggregate observations for the proposal pre-processor — ALP-315 / ALP-317.
 
-Pure functions that compute the conviction distribution and book health summary
-from analyst recommendations and strategist position assessments respectively.
+Pure functions that compute the conviction distribution, book health summary,
+and combined-set guardrail impact from analyst recommendations and strategist
+position assessments. The combined-set impact is the only place the
+pre-processor invokes the guardrail-evaluation library; the per-rule shape is
+the library's canonical output, augmented with signed per-proposal
+contributions for FAIL rules.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 
 from alphamind.decision.analyst.models import Recommendation
 from alphamind.decision.proposal_pre_processor.models import (
+    BasisSection,
     BookHealthSummary,
+    BreachEntry,
     ByRecommendedAction,
     ByThesisStatus,
+    CombinedSetImpact,
+    ContributorEntry,
     ConvictionDistribution,
     ConvictionHistogram,
+    PerRuleEntry,
+)
+from alphamind.decision.proposal_pre_processor.translator import (
+    translate_position_assessment_to_proposed_delta,
+    translate_recommendation_to_proposed_delta,
 )
 from alphamind.decision.strategist.models import PositionAssessment
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    DeltaAdjustedExposure,
+    LibraryConfig,
+    MarketInputs,
+    PortfolioStateSnapshot,
+    ProposedDelta,
+    RuleProjection,
+    RuleSpec,
+    Status,
+    build_active_specs,
+    evaluate_proposals,
+)
 
 __all__ = [
+    "LibraryFeatureDisabledError",
     "compute_book_health_summary",
+    "compute_combined_set_impact",
     "compute_conviction_distribution",
 ]
+
+
+class LibraryFeatureDisabledError(Exception):
+    """Raised when the library returns feature-disabled rejections.
+
+    The pre-processor's contract assumes the upstream agent's validation tool
+    has already rejected feature-disabled proposals; their presence here is a
+    fixture/contract bug worth surfacing rather than papering over.
+    """
 
 
 def compute_conviction_distribution(
@@ -103,4 +140,132 @@ def compute_book_health_summary(
         ),
         remedy_flagged_count=remedy_flagged_count,
         total=len(position_assessments),
+    )
+
+
+def compute_combined_set_impact(
+    *,
+    recommendations: Sequence[Recommendation],
+    non_hold_position_assessments: Sequence[PositionAssessment],
+    snapshot: PortfolioStateSnapshot,
+    library_config: LibraryConfig,
+    market: MarketInputs,
+    snapshot_timestamp: datetime,
+    strategist_holds_excluded_count: int,
+) -> CombinedSetImpact:
+    """Compute §1.A combined_set_impact for the pre-processor bundle.
+
+    Translates each analyst recommendation and each non-hold strategist
+    position assessment to a ``ProposedDelta``, runs ``evaluate_proposals``
+    once, maps each ``RuleProjection`` to ``PerRuleEntry``, and for each
+    FAIL rule attributes signed per-proposal contributions by re-walking
+    the matching ``RuleSpec.contribute`` closure.
+
+    The caller is responsible for filtering hold-action assessments before
+    calling — ``strategist_holds_excluded_count`` is reported as basis
+    metadata only.
+    """
+    # Analyst recs first, then strategist non-hold actions — preserves caller
+    # order so basis IDs and contributor IDs line up with the input sequences.
+    proposals = (
+        *(
+            translate_recommendation_to_proposed_delta(r, snapshot=snapshot)
+            for r in recommendations
+        ),
+        *(
+            translate_position_assessment_to_proposed_delta(a, snapshot=snapshot)
+            for a in non_hold_position_assessments
+        ),
+    )
+    library_output = evaluate_proposals(
+        state=snapshot,
+        proposals=proposals,
+        config=library_config,
+        market=market,
+    )
+    if library_output.feature_disabled:
+        ids = ", ".join(rej.proposal_id for rej in library_output.feature_disabled)
+        raise LibraryFeatureDisabledError(
+            f"upstream did not filter feature-disabled proposals: {ids}"
+        )
+
+    # Every proposal is in delta_adjusted at this point — the feature-disabled
+    # check above raised if the gate filtered any out.
+    proposals_with_dae = tuple((p, library_output.delta_adjusted[p.id]) for p in proposals)
+    spec_lookup = _build_spec_lookup(library_config)
+
+    per_rule_entries = tuple(_to_per_rule_entry(p) for p in library_output.per_rule)
+    breach_entries = tuple(
+        _build_breach_entry(projection, spec_lookup, proposals_with_dae, snapshot, library_config)
+        for projection in library_output.per_rule
+        if projection.status is Status.FAIL
+    )
+
+    basis = BasisSection(
+        analyst_proposal_ids=tuple(r.recommendation_id for r in recommendations),
+        strategist_action_ids=tuple(a.assessment_id for a in non_hold_position_assessments),
+        strategist_holds_excluded_count=strategist_holds_excluded_count,
+        snapshot_timestamp=snapshot_timestamp,
+    )
+    return CombinedSetImpact(basis=basis, per_rule=per_rule_entries, breaches=breach_entries)
+
+
+# ---------------------------------------------------------------------------
+# Combined-set helpers (private)
+# ---------------------------------------------------------------------------
+
+
+def _to_per_rule_entry(projection: RuleProjection) -> PerRuleEntry:
+    """Map a library ``RuleProjection`` to the schema's ``PerRuleEntry``.
+
+    Drops the projection's ``inverse`` flag — the schema absorbs floor-vs-cap
+    semantics into the sign of ``headroom_remaining``.
+    """
+    return PerRuleEntry(
+        rule=projection.rule,
+        status=projection.status.value,
+        current=projection.current,
+        limit=projection.limit,
+        projected_after=projection.projected_after,
+        headroom_remaining=projection.headroom_remaining,
+        unit=projection.unit,
+    )
+
+
+def _build_spec_lookup(config: LibraryConfig) -> dict[str, RuleSpec]:
+    """Index active rule specs by ``rule_id`` for breach attribution."""
+    return {spec.rule_id: spec for spec in build_active_specs(config)}
+
+
+def _build_breach_entry(
+    projection: RuleProjection,
+    spec_lookup: dict[str, RuleSpec],
+    proposals_with_dae: Sequence[tuple[ProposedDelta, DeltaAdjustedExposure]],
+    snapshot: PortfolioStateSnapshot,
+    config: LibraryConfig,
+) -> BreachEntry:
+    """Compute signed contributors for one FAIL projection.
+
+    Looks up the matching ``RuleSpec`` and re-walks ``spec.contribute`` for
+    every proposal/dae pair. Zero contributions are dropped. ``overage`` is
+    positive for both standard caps and inverse floors.
+    """
+    spec = spec_lookup[projection.rule]
+    contributors = tuple(
+        ContributorEntry(proposal_id=proposal.id, contribution=contribution)
+        for proposal, dae in proposals_with_dae
+        for contribution in (spec.contribute(proposal, dae, snapshot, config),)
+        if contribution != 0.0
+    )
+
+    overage = (
+        projection.limit - projection.projected_after
+        if spec.inverse
+        else projection.projected_after - projection.limit
+    )
+    return BreachEntry(
+        rule=projection.rule,
+        overage=overage,
+        unit=projection.unit,
+        contributors=contributors,
     )
