@@ -20,10 +20,14 @@ REPO_ROOT = Path(__file__).parent.parent.parent
 AGENTS_YAML = REPO_ROOT / "config" / "agents.yaml"
 
 
-def _load_analyst_entry() -> BaseAgentConfig:
+def _load_agent_entry(name: AgentName) -> BaseAgentConfig:
     raw = cast(dict[str, Any], yaml.safe_load(AGENTS_YAML.read_text()))
     config = AgentsConfig.model_validate(raw)
-    return config.agents[AgentName.analyst]
+    return config.agents[name]
+
+
+def _load_analyst_entry() -> BaseAgentConfig:
+    return _load_agent_entry(AgentName.analyst)
 
 
 def test_analyst_entry_loads() -> None:
@@ -64,3 +68,51 @@ def test_analyst_tools_contract() -> None:
     """
     entry = _load_analyst_entry()
     assert entry.tools == ["retrieve_brief", "validate_guardrail"]
+
+
+# ---------------------------------------------------------------------------
+# Portfolio manager entry
+# ---------------------------------------------------------------------------
+
+
+def _load_pm_entry() -> BaseAgentConfig:
+    return _load_agent_entry(AgentName.portfolio_manager)
+
+
+class TestAgentsYamlPortfolioManagerEntry:
+    """Verify `config/agents.yaml`'s `portfolio_manager` entry matches the
+    design contract (ALP-321): model, prompt, raised budgets, four-tool set."""
+
+    def test_pm_entry_loads(self) -> None:
+        """`BaseAgentConfig` validates the portfolio_manager entry and all
+        field values match the design contract with raised budgets."""
+        entry = _load_pm_entry()
+        assert entry.model == "claude-opus-4-7"
+        assert entry.prompt == "prompts/decision/pm.md"
+        assert entry.latency_budget_seconds == 600
+        assert entry.context_token_budget == 16000
+        assert entry.output_token_budget == 16000
+
+    def test_pm_prompt_path_exists(self) -> None:
+        """The `prompt:` field resolves to a readable file under the repo root."""
+        entry = _load_pm_entry()
+        prompt_path = REPO_ROOT / entry.prompt
+        assert prompt_path.is_file()
+        assert prompt_path.read_text().strip()
+
+    def test_pm_tools_contract(self) -> None:
+        """`tools` matches the four-tool contract from the PM design doc.
+
+        The portfolio manager uses exactly four tools:
+        - `retrieve_brief`: source brief retrieval.
+        - `validate_guardrail`: pre-submission guardrail validation.
+        - `get_thesis_components`: fetches thesis breakdown per instrument.
+        - `submit_envelope`: submits the final order envelope.
+        """
+        entry = _load_pm_entry()
+        assert set(entry.tools) == {
+            "retrieve_brief",
+            "validate_guardrail",
+            "get_thesis_components",
+            "submit_envelope",
+        }

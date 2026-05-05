@@ -49,12 +49,31 @@ agents:
     output_token_budget: 16000
     tools: [retrieve_brief, validate_guardrail]
 
+  # portfolio_manager budgets raised 2026-05-05 (ALP-321, operator directive).
+  # Rationale:
+  #   latency_budget_seconds 240 → 600: the four-MCP-server tool loop
+  #     (retrieve_brief + validate_guardrail + get_thesis_components +
+  #     submit_envelope) each carry network round-trips; under the
+  #     synchronous-rejection retry path a second full tool-loop pass is
+  #     required, doubling observed wall time versus the analyst/strategist
+  #     two-tool loop. 600s matches the analysis-layer latency cap and leaves
+  #     headroom for the retry path without an abort.
+  #   context_token_budget 12000 → 16000: PM ingests the full analyst
+  #     recommendation set plus thesis components per instrument; at peak
+  #     (3 analysts × 3 recommendations) the context assembly reaches the
+  #     12 000-token ceiling before the model begins reasoning. 16 000 covers
+  #     the observed peak and mirrors cost-and-rate-limit-modeling.md
+  #     § Per-invocation token aggregate.
+  #   output_token_budget 3000 → 16000: the envelope payload (per-instrument
+  #     sizing + allocation + narrative) serialises far beyond 3 000 tokens
+  #     in the normal three-instrument scenario; generous cap is cheap
+  #     relative to a re-run and mirrors the strategist precedent (ALP-301).
   portfolio_manager:
     model: claude-opus-4-7
     prompt: prompts/decision/pm.md
-    latency_budget_seconds: 240
-    context_token_budget: 12000
-    output_token_budget: 3000
+    latency_budget_seconds: 600
+    context_token_budget: 16000
+    output_token_budget: 16000
     tools: [retrieve_brief, validate_guardrail, get_thesis_components, submit_envelope]
 
   # --- Analysis layer (Sonnet) ----------------------------------------------
