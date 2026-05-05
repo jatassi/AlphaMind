@@ -32,6 +32,11 @@ from alphamind.decision.proposal_pre_processor.models import (
     WrappedRecommendation,
     bundle_schema,
 )
+from alphamind.decision.proposal_pre_processor.translator import (
+    TranslatorError,
+    translate_position_assessment_to_proposed_delta,
+    translate_recommendation_to_proposed_delta,
+)
 
 __all__ = [
     "BUNDLE_OUTPUT_SCHEMA",
@@ -54,8 +59,11 @@ __all__ = [
     "StrategistSection",
     "StrategistSideAnnotations",
     "StrategistSideConflict",
+    "TranslatorError",
     "WrappedPendingOrderAssessment",
     "WrappedPositionAssessment",
     "WrappedRecommendation",
     "bundle_schema",
+    "translate_position_assessment_to_proposed_delta",
+    "translate_recommendation_to_proposed_delta",
 ]
