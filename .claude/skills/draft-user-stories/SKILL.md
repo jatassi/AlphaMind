@@ -253,6 +253,7 @@ After all sub-issues are created, do a final pass:
 
 - Verify every `blockedBy` edge from your dependency graph is wired (re-run `get_issue(id, includeRelations=true)` on a few stories and spot-check).
 - Update `docs/project-tracker.md`: change the feature's status from `_requirements pending_` to `_stories drafted_`. (This is a single-line edit; do it inline.)
+- **Commit and push the tracker change.** Stage only `docs/project-tracker.md`, commit with `chore(project-tracker): mark <feature> stories drafted` (mirror the in-tree style — see prior `chore(project-tracker): ...` commits), and push to the default remote. This is the canonical last step on successful drafting: it advertises the new state to anyone watching the repo and avoids leaving the tracker out-of-sync with Linear. Skip only when drafting did NOT complete cleanly — e.g., a surfacing condition fired mid-flight, the Linear cap blocked some sub-issues, or any in-flight ambiguity is unresolved. In those cases, leave the tracker change uncommitted, surface the blocker, and let the operator decide whether to commit-as-is or wait.
 
 ### User Story sub-issue template
 
@@ -370,7 +371,7 @@ Report back to the operator in this shape (concise; one short paragraph):
 - The dependency-graph shape in one line ("01 → 02 → 03 → 4-way parallel 04* → 3-way parallel 05* → 06 → 07").
 - Cross-feature `blockedBy` count and which sibling work trees they touch.
 - Any unresolved gaps surfaced during drafting (missing upstream stories, ambiguous design-doc sections, etc.) — these become the operator's follow-ups.
-- The single-line `docs/project-tracker.md` status update.
+- The single-line `docs/project-tracker.md` status update, and the commit hash from the push (or "left uncommitted because <reason>" if you skipped that step).
 
 Then stop. The operator drives next steps from there (typically: dispatch via `/orchestrate`).
 
