@@ -85,8 +85,6 @@ CLI flags:
   to the in-tree `tests/fixtures/decision/pm/`.
 - `--scenario {normal,halt,emergency,synchronous_rejection,all}` — run
   only the named scenario. Default: `all`.
-- `--invocation-id-prefix INV` — override the timestamp-based prefix the
-  PM uses to label the per-scenario invocation IDs.
 
 ## Expected output
 

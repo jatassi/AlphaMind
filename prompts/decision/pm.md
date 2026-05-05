@@ -123,7 +123,7 @@ Do not emit envelopes in the structured output; envelopes flow through `submit_e
 Envelope shape (passed to `submit_envelope`, not part of your final structured output):
 
 Each envelope:
-- `envelope_id` (string) — unique within the invocation, format `ENV-N`.
+- `envelope_id` (string) — unique within the invocation. Format depends on `source_provenance`: `ENV-REC-N` for `pm_analyst`; `ENV-SA-N` (when `recommendation_type == "position_assessment"`) or `ENV-SA-ORD-N` (when `recommendation_type == "pending_order_assessment"`) for `pm_strategist`. The trailing integer `N` matches the `source_recommendation_id`'s integer.
 - `invocation_id` (string) — same as the guardrail header's invocation_id.
 - `source_provenance` (`"pm_analyst"` | `"pm_strategist"`).
 - `source_recommendation_id` (string) — the analyst's `REC-N` or strategist's `SA-N`.
@@ -159,13 +159,13 @@ When you modify an exposure-changing parameter, the validated `delta_adjusted_ex
   <context>Analyst proposed REC-1 (conviction 4, NVDA long pre-earnings) and REC-2 (conviction 5, AMD long on a thin signal set with one flagged contradiction). Strategist assessed POS-JPM-001 (stale, recommends hold with generic "await catalyst" rationale). Pre-processor flagged no same-underlying conflicts and normal conviction distribution except for the REC-2 conviction-5 flag.</context>
 
   <tool_call_flow>
-  The PM produces and submits three envelopes via submit_envelope in order (strategist assessment first, then analyst proposals by priority). ENV-1 (POS-JPM-001, reject — sunk_cost_persistence) and ENV-2 (REC-2, reject — conviction_inflation) each carry empty commands arrays; submit_envelope returns submission_results: [] for both. ENV-3 (REC-1, approve_with_modification) carries one OPEN command; submit_envelope returns submission_results: [{status: "accepted", ...}]. After all three envelopes are submitted and resolved, the PM emits the PMCompletionRecord sentinel below.
+  The PM produces and submits three envelopes via submit_envelope in order (strategist assessment first, then analyst proposals by priority). ENV-SA-1 (POS-JPM-001, reject — sunk_cost_persistence) and ENV-REC-2 (REC-2, reject — conviction_inflation) each carry empty commands arrays; submit_envelope returns submission_results: [] for both. ENV-REC-1 (REC-1, approve_with_modification) carries one OPEN command; submit_envelope returns submission_results: [{status: "accepted", ...}]. After all three envelopes are submitted and resolved, the PM emits the PMCompletionRecord sentinel below.
   </tool_call_flow>
 
   <tool_call>
-  Example submit_envelope call — ENV-3 (approve_with_modification, one OPEN command):
+  Example submit_envelope call — ENV-REC-1 (approve_with_modification, one OPEN command):
   submit_envelope({
-    "envelope_id": "ENV-3",
+    "envelope_id": "ENV-REC-1",
     "invocation_id": "inv-2026-04-23T14-30Z",
     "source_provenance": "pm_analyst",
     "source_recommendation_id": "REC-1",

@@ -39,14 +39,14 @@ def test_parser_handles_missing_invocation_id() -> None:
 def test_parser_raises_on_none_payload() -> None:
     with pytest.raises(ParseError) as exc_info:
         parse_pm_completion_record(None, invocation_id="inv-001")
-    assert exc_info.value.field_path == "envelope"
+    assert exc_info.value.field_path == "completion_record"
     assert "not populated" in exc_info.value.message
 
 
 def test_parser_raises_on_non_dict_payload() -> None:
     with pytest.raises(ParseError) as exc_info:
         parse_pm_completion_record("not a dict", invocation_id="inv-001")
-    assert exc_info.value.field_path == "envelope"
+    assert exc_info.value.field_path == "completion_record"
     assert "expected dict payload" in exc_info.value.message
     assert "str" in exc_info.value.message
 

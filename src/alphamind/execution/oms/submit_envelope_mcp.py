@@ -337,7 +337,7 @@ async def _handle_submit_envelope(
         envelope = _validate_envelope_payload(args)
     except ValidationError as exc:
         return _build_envelope_level_rejection(
-            envelope_id=str(args.get("envelope_id", "ENV-REC-0")),
+            envelope_id=str(args.get("envelope_id", "ENV-REC-INVALID")),
             invocation_id=state.invocation_id,
             suggested_modification=_format_first_error(exc),
             log_state=state,

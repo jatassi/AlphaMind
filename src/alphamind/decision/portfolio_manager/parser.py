@@ -56,12 +56,12 @@ def parse_pm_completion_record(payload: Any, *, invocation_id: str) -> PMComplet
     """
     if payload is None:
         raise ParseError(
-            field_path="envelope",
+            field_path="completion_record",
             message="ResultMessage.structured_output was not populated",
         )
     if not isinstance(payload, dict):
         raise ParseError(
-            field_path="envelope",
+            field_path="completion_record",
             message=f"expected dict payload, got {type(payload).__name__}",
         )
 
