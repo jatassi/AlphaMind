@@ -59,13 +59,29 @@ Parity-checking 10–30 sub-issue bodies against local files is purely mechanica
 ### Phase 2 — Verify parity
 
 Dispatch a Sonnet subagent with the explicit mapping and instructions to:
-- Fetch each Linear issue's full body via `get_issue` (the `list_issues` response is truncated)
+- Fetch each Linear issue's body via `get_issue`
 - Read each local file
 - Compare for substantive parity (Goal, Scope, Acceptance criteria, Verification)
 - Ignore frontmatter, heading-level, link rewriting, `<issue id>` injections, `## Depends on` sections present locally but not in Linear
 - Return a markdown table: `| ALP-ID | File | Status | Notes |` with status = MATCH / DRIFT / OTHER, and a summary `X/N MATCH, Y DRIFT, Z OTHER. Safe to delete: <yes/no/conditional>`
 
 Title the dispatch with `[Sonnet]` per the project's subagent-title convention.
+
+#### MCP `get_issue` truncates at ~5KB
+
+The MCP server truncates `description` on `get_issue` responses at roughly 5KB with a `...(truncated)` marker, despite the CLAUDE.md note implying it returns the full body. There's no flag to bypass and no MCP resource exposing the raw body. For long stories (typically anything with extensive Scope or Acceptance-criteria sections), the subagent can verify the visible prefix but cannot see the cut-off portions.
+
+Instruct the subagent to flag truncation explicitly in its Notes column ("Linear truncated mid-§N — visible content matches"). When the subagent returns MATCH on a truncated body, that's a partial verdict — visible content matched, the rest is unknown. The main thread must close the gap before treating the parent as safe to delete.
+
+#### Git-log + `updatedAt` spot check (when subagent flagged truncation)
+
+When the subagent reports MATCH on bodies it flags as truncated by the API, run this spot check from the main thread before saving the parent body:
+
+1. **Local-side freeze check** — `git log --all --follow --pretty=format:'%h %ai %s' -- docs/_archive/implementation/<layer>/<feature>/<one-of-the-stories>.md` (and the broader `git log --all --pretty=format:'%h %ai %s' --diff-filter=AM -- 'docs/implementation/<layer>/<feature>/*' 'docs/_archive/implementation/<layer>/<feature>/*' | head -30` to cover the pre-archive path). Note the latest content-edit timestamp (the archive-move commit doesn't count — it's a `git mv`).
+2. **Linear-side freeze check** — note the `updatedAt` from the original `list_issues` response for each truncated story. Status-bump updates (e.g. marking Done) count, but no body edits typically follow.
+3. **Inversion** — if the local content was finalized BEFORE the Linear bodies were created, Linear inherited from frozen-local at creation; neither has changed since; the truncated portions cannot have drifted. If Linear was created BEFORE the local file's last edit, the local file may have moved past Linear after divergence — investigate.
+
+Surface the result to the operator: "8 stories had API-truncated bodies; visible content matched + git log shows local frozen since 2026-04-29 12:27 + Linear `updatedAt` ≤ 2026-05-01 19:20 → no drift possible; safe to proceed." If the freeze check fails (recent edits to either side), pause and surface to the operator — the residual risk is no longer bounded and the operator should decide whether to defer or spot-check via the Linear web UI.
 
 ### Phase 3 — Resolve drift
 
