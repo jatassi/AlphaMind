@@ -20,6 +20,7 @@ from alphamind.decision.proposal_pre_processor.assembler import (
     build_strategist_section,
     verify_halt_state_consistency,
     verify_invocation_id_consistency,
+    verify_strategist_position_ids_resolve,
 )
 from alphamind.decision.proposal_pre_processor.conflicts import (
     ConflictDetectionResult,
@@ -75,6 +76,7 @@ def run_proposal_pre_processor(
     """
     verify_halt_state_consistency(analyst_output, strategist_output)
     verify_invocation_id_consistency(analyst_output, strategist_output)
+    verify_strategist_position_ids_resolve(strategist_output, snapshot)
 
     # Watchlist mode produces no recommendations; the empty tuple flows through
     # so basis IDs and the conviction histogram come out correctly empty.

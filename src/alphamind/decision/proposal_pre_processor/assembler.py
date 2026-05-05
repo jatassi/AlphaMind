@@ -34,6 +34,7 @@ __all__ = [
     "build_strategist_section",
     "verify_halt_state_consistency",
     "verify_invocation_id_consistency",
+    "verify_strategist_position_ids_resolve",
 ]
 
 
@@ -71,6 +72,34 @@ def verify_invocation_id_consistency(
         raise BundleAssemblyError(
             f"invocation_id mismatch: analyst={analyst_output.invocation_id!r}, "
             f"strategist={strategist_output.invocation_id!r}"
+        )
+
+
+def verify_strategist_position_ids_resolve(
+    strategist_output: StrategistOutput, snapshot: PortfolioStateSnapshot
+) -> None:
+    """Raise ``BundleAssemblyError`` if any position_assessment references an unknown position.
+
+    Surfaces structural-input bugs uniformly with the halt-state and invocation_id
+    checks. Without this, a hold-action assessment with an unknown ``position_id``
+    raises a bare ``KeyError`` from the held-direction resolver, and a non-hold
+    assessment raises ``TranslatorError`` from the translator.
+
+    Narrowed to ``position_assessments``; ``pending_order_assessments`` may
+    legitimately reference not-yet-existing positions (the strategist's exact
+    convention for ``pending.position_id`` on entry-limit orders for new
+    positions is under-specified).
+    """
+    missing = sorted(
+        {
+            assessment.position_id
+            for assessment in strategist_output.position_assessments
+            if assessment.position_id not in snapshot.existing_positions
+        }
+    )
+    if missing:
+        raise BundleAssemblyError(
+            f"strategist output references position_ids absent from snapshot: {missing}"
         )
 
 

@@ -520,6 +520,25 @@ def test_disagreeing_invocation_ids_raise() -> None:
 
 
 # ===========================================================================
+# AC: Unknown position_id in position_assessments raises BundleAssemblyError
+# ===========================================================================
+
+
+def test_unknown_position_id_in_position_assessments_raises() -> None:
+    """A position_assessment with a position_id absent from the snapshot raises."""
+    sa = _hold_assessment(sa_id="SA-1", position_id="POS-MISSING", underlying="AAPL")
+    snap = _snapshot()  # empty existing_positions
+    with pytest.raises(
+        BundleAssemblyError,
+        match=r"strategist output references position_ids absent from snapshot: \['POS-MISSING'\]",
+    ):
+        _run(
+            strategist_output=_strategist_output(position_assessments=(sa,)),
+            snapshot=snap,
+        )
+
+
+# ===========================================================================
 # AC: §2 position_assessments order matches strategist order
 # ===========================================================================
 
@@ -564,7 +583,14 @@ def test_pending_order_assessment_order_preserved() -> None:
         pending_id="SA-ORD-3", linked_assessment_id="SA-1", recommended_action="cancel"
     )
 
-    existing = {"POS-1": _existing_long_equity(position_id="POS-1", underlying="AAPL")}
+    # _entry_pending_order synthesizes position_ids POS-1/2/3 from pending_ids;
+    # cover all three even though the runner pre-check only audits position_assessments,
+    # so the fixture is internally consistent.
+    existing = {
+        "POS-1": _existing_long_equity(position_id="POS-1", underlying="AAPL"),
+        "POS-2": _existing_long_equity(position_id="POS-2", underlying="AAPL"),
+        "POS-3": _existing_long_equity(position_id="POS-3", underlying="AAPL"),
+    }
     snap = _snapshot(existing_positions=existing)
 
     bundle = _run(

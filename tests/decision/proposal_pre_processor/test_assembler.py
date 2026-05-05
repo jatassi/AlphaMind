@@ -33,6 +33,7 @@ from alphamind.decision.proposal_pre_processor.assembler import (
     build_strategist_section,
     verify_halt_state_consistency,
     verify_invocation_id_consistency,
+    verify_strategist_position_ids_resolve,
 )
 from alphamind.decision.proposal_pre_processor.conflicts import (
     ConflictDetectionResult,
@@ -295,6 +296,42 @@ def test_invocation_id_mismatch_raises() -> None:
         verify_invocation_id_consistency(
             analyst_output=_analyst_output_normal(invocation_id="inv-A"),
             strategist_output=_strategist_output(invocation_id="inv-B"),
+        )
+
+
+# ===========================================================================
+# verify_strategist_position_ids_resolve
+# ===========================================================================
+
+
+def test_position_ids_all_resolve_passes() -> None:
+    sa1 = _close_assessment(sa_id="SA-1", position_id="POS-1", underlying="NVDA")
+    sa2 = _close_assessment(sa_id="SA-2", position_id="POS-2", underlying="AAPL")
+    snap = _snapshot_with_positions(
+        {
+            "POS-1": _existing(position_id="POS-1", underlying="NVDA", direction=Direction.LONG),
+            "POS-2": _existing(position_id="POS-2", underlying="AAPL", direction=Direction.LONG),
+        }
+    )
+    verify_strategist_position_ids_resolve(
+        strategist_output=_strategist_output(position_assessments=(sa1, sa2)),
+        snapshot=snap,
+    )
+
+
+def test_position_id_missing_from_snapshot_raises() -> None:
+    sa1 = _close_assessment(sa_id="SA-1", position_id="POS-1", underlying="NVDA")
+    sa2 = _close_assessment(sa_id="SA-2", position_id="POS-MISSING", underlying="AAPL")
+    snap = _snapshot_with_positions(
+        {"POS-1": _existing(position_id="POS-1", underlying="NVDA", direction=Direction.LONG)}
+    )
+    with pytest.raises(
+        BundleAssemblyError,
+        match=r"strategist output references position_ids absent from snapshot: \['POS-MISSING'\]",
+    ):
+        verify_strategist_position_ids_resolve(
+            strategist_output=_strategist_output(position_assessments=(sa1, sa2)),
+            snapshot=snap,
         )
 
 

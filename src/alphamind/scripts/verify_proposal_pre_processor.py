@@ -596,15 +596,52 @@ def build_fixture_market_inputs() -> MarketInputs:
     )
 
 
-def build_fixture_portfolio_state_snapshot() -> PortfolioStateSnapshot:
-    """Portfolio snapshot with low net_long utilisation (~11% of 60% limit).
+def _make_existing_long_equity(
+    *,
+    ticker: str,
+    notional_usd: float,
+) -> ExistingPosition:
+    """Build a LONG EQUITY ExistingPosition for a ticker in the test universe."""
+    sector = _TICKER_TO_SECTOR[ticker]
+    price = _CURRENT_PRICES[ticker]
+    return ExistingPosition(
+        position_id=f"POS-{ticker}",
+        underlying=ticker,
+        sector=sector,
+        direction=Direction.LONG,
+        asset_type=AssetType.EQUITY,
+        notional_usd=notional_usd,
+        delta_adjusted_exposure_usd=notional_usd,
+        current_greeks=None,
+        daily_borrow_cost_usd=None,
+        reserves_capital_usd=0.0,
+        quantity=notional_usd / price,
+    )
 
-    Mirrors the verify_strategist normal-scenario snapshot so combined-set
-    checks on hold-only strategist outputs produce no breaches.
+
+def build_fixture_portfolio_state_snapshot() -> PortfolioStateSnapshot:
+    """Portfolio snapshot with low net_long utilisation (~20% of 60% limit).
+
+    Shared by the normal, halt, and emergency scenarios. ``existing_positions``
+    covers every ``position_id`` referenced by those scenarios' strategist
+    outputs (NVDA, MSFT, GOOGL, AAPL on tech/semis; JPM on financials; XOM on
+    energy) so the runner-level position_id pre-check resolves cleanly even
+    in scenarios whose hold-only assessments do not exercise the held-direction
+    resolver in practice.
 
     ``position_max_size_pct`` is set to 4.3 (the NVDA weight in the normal
     strategist view) — below the 5.0 limit — so the rule does not pre-breach.
+    Per-position ``notional_usd`` values sum to ~$20k matching the ``net_long_pct``
+    20.0 macro-field; per-sector sums match ``sector_exposure_pct``.
     """
+    existing = {
+        "POS-NVDA": _make_existing_long_equity(ticker="NVDA", notional_usd=6_000.0),
+        "POS-MSFT": _make_existing_long_equity(ticker="MSFT", notional_usd=3_000.0),
+        "POS-GOOGL": _make_existing_long_equity(ticker="GOOGL", notional_usd=2_000.0),
+        "POS-AAPL": _make_existing_long_equity(ticker="AAPL", notional_usd=3_000.0),
+        "POS-JPM": _make_existing_long_equity(ticker="JPM", notional_usd=3_000.0),
+        "POS-XOM": _make_existing_long_equity(ticker="XOM", notional_usd=3_000.0),
+    }
     return PortfolioStateSnapshot(
         portfolio_value_usd=_PORTFOLIO_VALUE,
         cash_usd=70_000.0,
@@ -622,7 +659,7 @@ def build_fixture_portfolio_state_snapshot() -> PortfolioStateSnapshot:
         single_short_max_pct=0.0,
         daily_borrow_cost_pct=0.0,
         position_max_size_pct=4.3,
-        existing_positions=MappingProxyType({}),
+        existing_positions=MappingProxyType(existing),
     )
 
 
