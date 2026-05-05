@@ -1,0 +1,1040 @@
+"""Tests for PMEnvelope + PMCompletionRecord + minimal OMS command models — ALP-323.
+
+Mirrors the strategist-side test pattern (tests/decision/strategist/test_models.py).
+Covers each acceptance criterion of ALP-323 with at least one positive and one
+negative test:
+
+* Envelope-shape construction per source_provenance / verdict.
+* Verdict-conditional invariants on commands/modifications/concerns.
+* Modification-record invariants (adjustment_category ↔ phase + triggering_rule).
+* envelope_id ↔ source_provenance pattern.
+* PMCompletionRecord verdict-summary sum invariant.
+* Schema parity against ``pm-envelope-schema.md``.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, get_args
+
+import pytest
+from pydantic import TypeAdapter, ValidationError
+
+from alphamind.decision.portfolio_manager.models import (
+    AddCommand,
+    AdjustCommand,
+    AntiPattern,
+    CancelCommand,
+    CloseCommand,
+    ConcernRecord,
+    CriterionAssessment,
+    ModificationRecord,
+    OMSCommand,
+    OMSInstrument,
+    OMSPositionSize,
+    OpenCommand,
+    PMAnalystEnvelope,
+    PMCompletionRecord,
+    PMEnvelope,
+    PMStrategistEnvelope,
+    PositionActionEvaluation,
+    ThesisQualityEvaluation,
+    VerdictSummary,
+    completion_record_schema,
+    envelope_schema,
+)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+_NOW = datetime(2026, 5, 5, 12, 0, 0, tzinfo=UTC)
+
+
+def _pass(note: str | None = None) -> CriterionAssessment:
+    return CriterionAssessment(status="pass", note=note)
+
+
+def _thesis_eval_all_pass() -> ThesisQualityEvaluation:
+    return ThesisQualityEvaluation(
+        falsifiability=_pass(),
+        sizing_proportionality=_pass(),
+        portfolio_coherence=_pass(),
+        timing_plausibility=_pass(),
+        counterargument_consideration=_pass(),
+    )
+
+
+def _position_eval_all_pass() -> PositionActionEvaluation:
+    return PositionActionEvaluation(
+        status_classification_warrant=_pass(),
+        action_status_alignment=_pass(),
+        action_specific_justification=_pass(),
+        portfolio_coherence=_pass(),
+    )
+
+
+def _close_command_basic() -> CloseCommand:
+    return CloseCommand(
+        command_type="close",
+        position_id="POS-NVDA-001",
+        close_rationale_type="thesis_invalidated",
+    )
+
+
+def _open_command_basic() -> OpenCommand:
+    return OpenCommand(
+        command_type="open",
+        instrument=OMSInstrument(asset_type="equity", direction="long", underlying="NVDA"),
+        position_size=OMSPositionSize(sector="semis"),
+    )
+
+
+def _make_analyst_envelope(**overrides: Any) -> PMAnalystEnvelope:
+    defaults: dict[str, Any] = {
+        "envelope_id": "ENV-REC-1",
+        "invocation_id": "inv-2026-05-05",
+        "source_provenance": "pm_analyst",
+        "source_recommendation_id": "REC-1",
+        "recommendation_type": "new_entry",
+        "verdict": "approve",
+        "evaluation": _thesis_eval_all_pass(),
+        "modifications": (),
+        "concerns": (),
+        "rationale_narrative": "Analyst proposal aligns with the book; no concerns.",
+        "anti_patterns_identified": None,
+        "commands": (_open_command_basic(),),
+    }
+    return PMAnalystEnvelope(**(defaults | overrides))
+
+
+def _make_strategist_envelope(**overrides: Any) -> PMStrategistEnvelope:
+    defaults: dict[str, Any] = {
+        "envelope_id": "ENV-SA-1",
+        "invocation_id": "inv-2026-05-05",
+        "source_provenance": "pm_strategist",
+        "source_recommendation_id": "SA-1",
+        "recommendation_type": "position_assessment",
+        "position_id": "POS-NVDA-001",
+        "verdict": "approve",
+        "evaluation": _position_eval_all_pass(),
+        "modifications": (),
+        "concerns": (),
+        "rationale_narrative": "Strategist position assessment is well-grounded.",
+        "anti_patterns_identified": None,
+        "commands": (_close_command_basic(),),
+    }
+    return PMStrategistEnvelope(**(defaults | overrides))
+
+
+def _load_design_doc_schema() -> dict[str, Any]:
+    """Parse the JSON schema block from ``pm-envelope-schema.md``."""
+    doc_path = (
+        Path(__file__).parents[3]
+        / "docs"
+        / "design"
+        / "04-decision-layer"
+        / "pm-envelope-schema.md"
+    )
+    text = doc_path.read_text()
+    match = re.search(r"```json\s*\n(.*?)```", text, re.DOTALL)
+    assert match, "Could not find JSON code block in pm-envelope-schema.md"
+    return dict(json.loads(match.group(1)))
+
+
+# ---------------------------------------------------------------------------
+# 1. Tracer: PMAnalystEnvelope basic construction (approve)
+# ---------------------------------------------------------------------------
+
+
+class TestEnvelopeConstruction:
+    def test_pm_analyst_envelope_approve_constructs(self) -> None:
+        envelope = _make_analyst_envelope()
+        assert envelope.envelope_id == "ENV-REC-1"
+        assert envelope.source_provenance == "pm_analyst"
+        assert envelope.verdict == "approve"
+        assert envelope.recommendation_type == "new_entry"
+        assert len(envelope.commands) == 1
+
+    def test_pm_strategist_envelope_approve_constructs(self) -> None:
+        envelope = _make_strategist_envelope()
+        assert envelope.envelope_id == "ENV-SA-1"
+        assert envelope.source_provenance == "pm_strategist"
+        assert envelope.position_id == "POS-NVDA-001"
+        assert envelope.recommendation_type == "position_assessment"
+
+
+# ---------------------------------------------------------------------------
+# 2. Verdict-conditional invariants
+# ---------------------------------------------------------------------------
+
+
+class TestVerdictInvariants:
+    def test_approve_with_zero_modifications_accepted(self) -> None:
+        envelope = _make_analyst_envelope(verdict="approve", modifications=())
+        assert envelope.verdict == "approve"
+
+    def test_approve_with_modifications_rejected(self) -> None:
+        with pytest.raises(ValidationError, match=r"(?i)approve.*modifications"):
+            _make_analyst_envelope(
+                verdict="approve",
+                modifications=(
+                    ModificationRecord(
+                        phase="pre_submission",
+                        field_changed="position_size.quantity",
+                        original_value=10,
+                        approved_value=8,
+                        adjustment_category="risk_reduction",
+                        rationale="Trim sizing.",
+                    ),
+                ),
+            )
+
+    def test_approve_with_modification_constructs(self) -> None:
+        envelope = _make_analyst_envelope(
+            verdict="approve_with_modification",
+            modifications=(
+                ModificationRecord(
+                    phase="pre_submission",
+                    field_changed="position_size.quantity",
+                    original_value=10,
+                    approved_value=8,
+                    adjustment_category="risk_reduction",
+                    rationale="Trim sizing per coherence concern.",
+                ),
+            ),
+            commands=(_open_command_basic(),),
+        )
+        assert len(envelope.modifications) == 1
+        assert len(envelope.commands) == 1
+
+    def test_approve_with_modification_requires_modifications(self) -> None:
+        with pytest.raises(ValidationError, match=r"(?i)modification"):
+            _make_analyst_envelope(
+                verdict="approve_with_modification",
+                modifications=(),
+                commands=(_open_command_basic(),),
+            )
+
+    def test_approve_with_modification_requires_commands(self) -> None:
+        with pytest.raises(ValidationError, match=r"(?i)command"):
+            _make_analyst_envelope(
+                verdict="approve_with_modification",
+                modifications=(
+                    ModificationRecord(
+                        phase="pre_submission",
+                        field_changed="position_size.quantity",
+                        original_value=10,
+                        approved_value=8,
+                        adjustment_category="risk_reduction",
+                        rationale="Trim sizing.",
+                    ),
+                ),
+                commands=(),
+            )
+
+    def test_reject_constructs(self) -> None:
+        envelope = _make_analyst_envelope(
+            verdict="reject",
+            modifications=(),
+            commands=(),
+            concerns=(ConcernRecord(source="falsifiability", summary="Thesis untestable."),),
+        )
+        assert envelope.verdict == "reject"
+        assert envelope.commands == ()
+
+    def test_reject_with_commands_rejected(self) -> None:
+        with pytest.raises(ValidationError, match=r"(?i)reject.*command"):
+            _make_analyst_envelope(
+                verdict="reject",
+                modifications=(),
+                commands=(_open_command_basic(),),
+                concerns=(ConcernRecord(source="other", summary="Some concern."),),
+            )
+
+    def test_reject_with_modifications_rejected(self) -> None:
+        with pytest.raises(ValidationError, match=r"(?i)reject.*modification"):
+            _make_analyst_envelope(
+                verdict="reject",
+                modifications=(
+                    ModificationRecord(
+                        phase="pre_submission",
+                        field_changed="position_size.quantity",
+                        original_value=10,
+                        approved_value=8,
+                        adjustment_category="risk_reduction",
+                        rationale="Trim.",
+                    ),
+                ),
+                commands=(),
+                concerns=(ConcernRecord(source="other", summary="x"),),
+            )
+
+    def test_reject_without_concerns_rejected(self) -> None:
+        with pytest.raises(ValidationError, match=r"(?i)reject.*concern"):
+            _make_analyst_envelope(verdict="reject", modifications=(), commands=(), concerns=())
+
+
+# ---------------------------------------------------------------------------
+# 3. Modification-record invariants (adjustment_category ↔ phase)
+# ---------------------------------------------------------------------------
+
+
+class TestModificationInvariants:
+    def test_pre_submission_with_risk_reduction_accepted(self) -> None:
+        rec = ModificationRecord(
+            phase="pre_submission",
+            field_changed="position_size.quantity",
+            original_value=10,
+            approved_value=8,
+            adjustment_category="risk_reduction",
+            rationale="Trim sizing.",
+        )
+        assert rec.phase == "pre_submission"
+        assert rec.adjustment_category == "risk_reduction"
+
+    def test_post_rejection_with_guardrail_response_accepted(self) -> None:
+        rec = ModificationRecord(
+            phase="post_rejection",
+            field_changed="position_size.quantity",
+            original_value=8,
+            approved_value=5,
+            adjustment_category="guardrail_rejection_response",
+            rationale="Cure sector_concentration breach.",
+            triggering_rule="sector_concentration",
+        )
+        assert rec.triggering_rule == "sector_concentration"
+
+    def test_pre_submission_with_guardrail_response_rejected(self) -> None:
+        with pytest.raises(ValidationError, match=r"(?i)post_rejection"):
+            ModificationRecord(
+                phase="pre_submission",
+                field_changed="position_size.quantity",
+                original_value=8,
+                approved_value=5,
+                adjustment_category="guardrail_rejection_response",
+                rationale="Cure breach.",
+                triggering_rule="sector_concentration",
+            )
+
+    def test_post_rejection_with_risk_reduction_rejected(self) -> None:
+        with pytest.raises(ValidationError, match=r"(?i)pre_submission"):
+            ModificationRecord(
+                phase="post_rejection",
+                field_changed="position_size.quantity",
+                original_value=10,
+                approved_value=8,
+                adjustment_category="risk_reduction",
+                rationale="Trim.",
+            )
+
+    def test_guardrail_response_without_triggering_rule_rejected(self) -> None:
+        with pytest.raises(ValidationError, match=r"(?i)triggering_rule"):
+            ModificationRecord(
+                phase="post_rejection",
+                field_changed="position_size.quantity",
+                original_value=8,
+                approved_value=5,
+                adjustment_category="guardrail_rejection_response",
+                rationale="Cure breach.",
+            )
+
+
+# ---------------------------------------------------------------------------
+# 4. envelope_id ↔ source_provenance pattern
+# ---------------------------------------------------------------------------
+
+
+class TestEnvelopeIdSourceProvenance:
+    def test_env_rec_with_pm_analyst_constructs(self) -> None:
+        envelope = _make_analyst_envelope(envelope_id="ENV-REC-1", source_recommendation_id="REC-1")
+        assert envelope.envelope_id == "ENV-REC-1"
+
+    def test_env_sa_with_pm_strategist_position_assessment_constructs(self) -> None:
+        envelope = _make_strategist_envelope(
+            envelope_id="ENV-SA-3",
+            source_recommendation_id="SA-3",
+            recommendation_type="position_assessment",
+        )
+        assert envelope.envelope_id == "ENV-SA-3"
+        assert envelope.recommendation_type == "position_assessment"
+
+    def test_env_sa_ord_with_pm_strategist_pending_order_assessment_constructs(self) -> None:
+        envelope = _make_strategist_envelope(
+            envelope_id="ENV-SA-ORD-7",
+            source_recommendation_id="SA-ORD-7",
+            recommendation_type="pending_order_assessment",
+        )
+        assert envelope.envelope_id == "ENV-SA-ORD-7"
+        assert envelope.recommendation_type == "pending_order_assessment"
+
+    def test_env_rec_with_pm_strategist_rejected(self) -> None:
+        """An ENV-REC-* envelope cannot have source_provenance=pm_strategist."""
+        with pytest.raises(ValidationError):
+            PMStrategistEnvelope(
+                envelope_id="ENV-REC-1",
+                invocation_id="inv-2026-05-05",
+                source_provenance="pm_strategist",
+                source_recommendation_id="SA-1",
+                recommendation_type="position_assessment",
+                position_id="POS-1",
+                verdict="approve",
+                evaluation=_position_eval_all_pass(),
+                modifications=(),
+                concerns=(),
+                rationale_narrative="x",
+                anti_patterns_identified=None,
+                commands=(_close_command_basic(),),
+            )
+
+    def test_env_sa_with_pm_analyst_rejected(self) -> None:
+        """An ENV-SA-* envelope cannot have source_provenance=pm_analyst."""
+        with pytest.raises(ValidationError):
+            PMAnalystEnvelope(
+                envelope_id="ENV-SA-1",
+                invocation_id="inv-2026-05-05",
+                source_provenance="pm_analyst",
+                source_recommendation_id="REC-1",
+                recommendation_type="new_entry",
+                verdict="approve",
+                evaluation=_thesis_eval_all_pass(),
+                modifications=(),
+                concerns=(),
+                rationale_narrative="x",
+                anti_patterns_identified=None,
+                commands=(_open_command_basic(),),
+            )
+
+    def test_pm_analyst_envelope_with_position_id_rejected(self) -> None:
+        """pm_analyst envelopes forbid a populated position_id (schema's `false`)."""
+        with pytest.raises(ValidationError):
+            _make_analyst_envelope(position_id="POS-1")
+
+
+# ---------------------------------------------------------------------------
+# 5. Discriminated-union routing
+# ---------------------------------------------------------------------------
+
+
+class TestDiscriminatedUnion:
+    def test_pm_analyst_payload_routes_to_analyst_envelope(self) -> None:
+        adapter: TypeAdapter[PMEnvelope] = TypeAdapter(PMEnvelope)
+        payload: dict[str, Any] = {
+            "envelope_id": "ENV-REC-1",
+            "invocation_id": "inv-2026-05-05",
+            "source_provenance": "pm_analyst",
+            "source_recommendation_id": "REC-1",
+            "recommendation_type": "new_entry",
+            "verdict": "approve",
+            "evaluation": {
+                "falsifiability": {"status": "pass"},
+                "sizing_proportionality": {"status": "pass"},
+                "portfolio_coherence": {"status": "pass"},
+                "timing_plausibility": {"status": "pass"},
+                "counterargument_consideration": {"status": "pass"},
+            },
+            "modifications": [],
+            "concerns": [],
+            "rationale_narrative": "Aligned.",
+            "commands": [
+                {
+                    "command_type": "open",
+                    "instrument": {
+                        "asset_type": "equity",
+                        "direction": "long",
+                        "underlying": "NVDA",
+                    },
+                    "position_size": {"sector": "semis"},
+                }
+            ],
+        }
+        envelope = adapter.validate_python(payload)
+        assert isinstance(envelope, PMAnalystEnvelope)
+
+    def test_pm_strategist_payload_routes_to_strategist_envelope(self) -> None:
+        adapter: TypeAdapter[PMEnvelope] = TypeAdapter(PMEnvelope)
+        payload: dict[str, Any] = {
+            "envelope_id": "ENV-SA-1",
+            "invocation_id": "inv-2026-05-05",
+            "source_provenance": "pm_strategist",
+            "source_recommendation_id": "SA-1",
+            "recommendation_type": "position_assessment",
+            "position_id": "POS-NVDA-001",
+            "verdict": "approve",
+            "evaluation": {
+                "status_classification_warrant": {"status": "pass"},
+                "action_status_alignment": {"status": "pass"},
+                "action_specific_justification": {"status": "pass"},
+                "portfolio_coherence": {"status": "pass"},
+            },
+            "modifications": [],
+            "concerns": [],
+            "rationale_narrative": "Sound.",
+            "commands": [
+                {
+                    "command_type": "close",
+                    "position_id": "POS-NVDA-001",
+                    "close_rationale_type": "thesis_invalidated",
+                }
+            ],
+        }
+        envelope = adapter.validate_python(payload)
+        assert isinstance(envelope, PMStrategistEnvelope)
+
+
+# ---------------------------------------------------------------------------
+# 6. PMCompletionRecord (sentinel) verdict-summary sum invariant
+# ---------------------------------------------------------------------------
+
+
+class TestPMCompletionRecord:
+    def test_minimal_record_constructs(self) -> None:
+        record = PMCompletionRecord(
+            invocation_id="inv-2026-05-05",
+            timestamp=_NOW,
+            envelopes_submitted=3,
+            verdict_summary=VerdictSummary(approve=2, approve_with_modification=1, reject=0),
+        )
+        assert record.envelopes_submitted == 3
+
+    def test_zero_envelopes_constructs(self) -> None:
+        record = PMCompletionRecord(
+            invocation_id="inv-1",
+            timestamp=_NOW,
+            envelopes_submitted=0,
+            verdict_summary=VerdictSummary(approve=0, approve_with_modification=0, reject=0),
+        )
+        assert record.envelopes_submitted == 0
+
+    def test_sum_mismatch_rejected(self) -> None:
+        with pytest.raises(ValidationError, match=r"(?i)sum"):
+            PMCompletionRecord(
+                invocation_id="inv-1",
+                timestamp=_NOW,
+                envelopes_submitted=3,
+                verdict_summary=VerdictSummary(approve=1, approve_with_modification=1, reject=0),
+            )
+
+    def test_negative_count_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            VerdictSummary(approve=-1, approve_with_modification=0, reject=0)
+
+
+# ---------------------------------------------------------------------------
+# 7. CloseCommand risk-management subtype invariant
+# ---------------------------------------------------------------------------
+
+
+class TestCloseCommandInvariants:
+    def test_risk_management_without_subtype_rejected(self) -> None:
+        with pytest.raises(ValidationError, match=r"(?i)risk_management_subtype"):
+            CloseCommand(
+                command_type="close",
+                position_id="POS-1",
+                close_rationale_type="risk_management",
+            )
+
+    def test_risk_management_with_pm_directed_subtype_accepted(self) -> None:
+        cmd = CloseCommand(
+            command_type="close",
+            position_id="POS-1",
+            close_rationale_type="risk_management",
+            risk_management_subtype="pm_directed",
+        )
+        assert cmd.risk_management_subtype == "pm_directed"
+
+    def test_thesis_invalidated_no_subtype_required(self) -> None:
+        cmd = CloseCommand(
+            command_type="close",
+            position_id="POS-1",
+            close_rationale_type="thesis_invalidated",
+        )
+        assert cmd.risk_management_subtype is None
+
+
+# ---------------------------------------------------------------------------
+# 8. OMSCommand discriminated union routing on command_type
+# ---------------------------------------------------------------------------
+
+
+class TestOMSCommandDiscriminator:
+    def test_open_routes_to_open_command(self) -> None:
+        adapter: TypeAdapter[OMSCommand] = TypeAdapter(OMSCommand)
+        cmd = adapter.validate_python(
+            {
+                "command_type": "open",
+                "instrument": {"asset_type": "equity", "direction": "long", "underlying": "NVDA"},
+                "position_size": {"sector": "semis"},
+            }
+        )
+        assert isinstance(cmd, OpenCommand)
+
+    def test_close_routes_to_close_command(self) -> None:
+        adapter: TypeAdapter[OMSCommand] = TypeAdapter(OMSCommand)
+        cmd = adapter.validate_python(
+            {
+                "command_type": "close",
+                "position_id": "POS-1",
+                "close_rationale_type": "target_reached",
+            }
+        )
+        assert isinstance(cmd, CloseCommand)
+
+    def test_adjust_routes_to_adjust_command(self) -> None:
+        adapter: TypeAdapter[OMSCommand] = TypeAdapter(OMSCommand)
+        cmd = adapter.validate_python({"command_type": "adjust", "position_id": "POS-1"})
+        assert isinstance(cmd, AdjustCommand)
+
+    def test_cancel_routes_to_cancel_command(self) -> None:
+        adapter: TypeAdapter[OMSCommand] = TypeAdapter(OMSCommand)
+        cmd = adapter.validate_python({"command_type": "cancel", "order_id": "ORD-1"})
+        assert isinstance(cmd, CancelCommand)
+
+    def test_add_routes_to_add_command(self) -> None:
+        adapter: TypeAdapter[OMSCommand] = TypeAdapter(OMSCommand)
+        cmd = adapter.validate_python(
+            {
+                "command_type": "add",
+                "position_id": "POS-1",
+                "instrument": {"asset_type": "equity", "direction": "long", "underlying": "NVDA"},
+                "position_size": {"sector": "semis"},
+            }
+        )
+        assert isinstance(cmd, AddCommand)
+
+    def test_sector_taxonomy_4way_enforced(self) -> None:
+        """OMSPositionSize.sector uses the risk-side 4-way (not 3-way)."""
+        for valid in ("tech", "semis", "financials", "energy"):
+            ps = OMSPositionSize(sector=valid)
+            assert ps.sector == valid
+        # 3-way analysis-side sector ("tech_semis") is rejected.
+        with pytest.raises(ValidationError):
+            OMSPositionSize(sector="tech_semis")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# 9. AntiPattern enum + canonical strings
+# ---------------------------------------------------------------------------
+
+
+class TestAntiPattern:
+    def test_canonical_anti_patterns_accepted(self) -> None:
+        canonical = (
+            "conviction_inflation",
+            "sunk_cost_persistence",
+            "rationalized_continuation",
+            "thesis_contradiction_suppression",
+            "engine_originated_closure_signal",
+        )
+        envelope = _make_analyst_envelope(anti_patterns_identified=canonical)
+        assert envelope.anti_patterns_identified == canonical
+
+    def test_unknown_anti_pattern_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            _make_analyst_envelope(anti_patterns_identified=("not_a_canonical_string",))
+
+    def test_anti_pattern_literal_accepts_canonical_set(self) -> None:
+        # AntiPattern is a Literal alias — verify the canonical strings.
+        assert set(get_args(AntiPattern)) == {
+            "conviction_inflation",
+            "sunk_cost_persistence",
+            "rationalized_continuation",
+            "thesis_contradiction_suppression",
+            "engine_originated_closure_signal",
+        }
+
+
+# ---------------------------------------------------------------------------
+# 10. Schema-parity tests against pm-envelope-schema.md
+# ---------------------------------------------------------------------------
+
+
+def _collect_pydantic_defs(schema: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Collect all $defs from a Pydantic-generated schema."""
+    result: dict[str, dict[str, Any]] = {}
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if "$defs" in node:
+                result.update(node["$defs"])
+            for v in node.values():
+                _walk(v)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item)
+
+    _walk(schema)
+    return result
+
+
+class TestPMEnvelopeSchemaParity:
+    """Parity between :func:`envelope_schema` and pm-envelope-schema.md.
+
+    The design doc encodes the discriminated union via top-level ``oneOf`` +
+    per-provenance branches with conditional ``if/then`` invariants; Pydantic
+    encodes it via ``discriminator`` + ``oneOf``. Byte-for-byte equality is
+    not achievable; parity checks (required-field sets, enum values, regex
+    patterns, criterion-key sets) catch every contract drift the design
+    schema is the authoritative home for.
+    """
+
+    def test_top_level_required_matches(self) -> None:
+        """Top-level required matches the design doc's top-level required."""
+        design = _load_design_doc_schema()
+        schema = envelope_schema()
+        # Pydantic discriminated unions don't carry a top-level ``required`` —
+        # required is enforced per-branch. Walk both branches and assert each
+        # branch's required is a superset of the design's top-level required.
+        design_top_required = set(design["required"])
+        defs = _collect_pydantic_defs(schema)
+        for branch in ("PMAnalystEnvelope", "PMStrategistEnvelope"):
+            branch_required = set(defs[branch]["required"])
+            assert design_top_required.issubset(branch_required), (
+                f"{branch} required missing fields from design top-level required: "
+                f"{design_top_required - branch_required}"
+            )
+
+    def test_pm_analyst_branch_required(self) -> None:
+        """The pm_analyst branch carries every design-doc required field."""
+        design = _load_design_doc_schema()
+        schema = envelope_schema()
+        defs = _collect_pydantic_defs(schema)
+        design_branch_required = set(design["$defs"]["pm_analyst_envelope"]["required"])
+        pyd_required = set(defs["PMAnalystEnvelope"]["required"])
+        assert design_branch_required.issubset(pyd_required), (
+            f"PMAnalystEnvelope missing required fields {design_branch_required - pyd_required}"
+        )
+
+    def test_pm_strategist_branch_required(self) -> None:
+        """The pm_strategist branch carries every design-doc required field."""
+        design = _load_design_doc_schema()
+        schema = envelope_schema()
+        defs = _collect_pydantic_defs(schema)
+        design_branch_required = set(design["$defs"]["pm_strategist_envelope"]["required"])
+        pyd_required = set(defs["PMStrategistEnvelope"]["required"])
+        assert design_branch_required.issubset(pyd_required), (
+            f"PMStrategistEnvelope missing required {design_branch_required - pyd_required}"
+        )
+
+    def test_envelope_id_pattern_matches(self) -> None:
+        """envelope_id pattern at the top level matches the design doc."""
+        design = _load_design_doc_schema()
+        design_pattern = design["properties"]["envelope_id"]["pattern"]
+        # PMAnalyst/Strategist branches each tighten the pattern; either branch's
+        # pattern is a strict subset of the design's top-level pattern.
+        # We check the union: ENV-(REC|SA|SA-ORD)-[0-9]+
+        assert design_pattern == r"^ENV-(REC|SA|SA-ORD)-[0-9]+$"
+
+        schema = envelope_schema()
+        defs = _collect_pydantic_defs(schema)
+        pm_analyst_pattern = defs["PMAnalystEnvelope"]["properties"]["envelope_id"]["pattern"]
+        pm_strategist_pattern = defs["PMStrategistEnvelope"]["properties"]["envelope_id"]["pattern"]
+        assert pm_analyst_pattern == r"^ENV-REC-[0-9]+$"
+        assert pm_strategist_pattern == r"^ENV-(SA|SA-ORD)-[0-9]+$"
+
+    def test_source_recommendation_id_pattern_matches(self) -> None:
+        schema = envelope_schema()
+        defs = _collect_pydantic_defs(schema)
+        pm_analyst_pat = defs["PMAnalystEnvelope"]["properties"]["source_recommendation_id"][
+            "pattern"
+        ]
+        pm_strategist_pat = defs["PMStrategistEnvelope"]["properties"]["source_recommendation_id"][
+            "pattern"
+        ]
+        assert pm_analyst_pat == r"^REC-[0-9]+$"
+        assert pm_strategist_pat == r"^SA(-ORD)?-[0-9]+$"
+
+    def test_verdict_enum_matches(self) -> None:
+        design = _load_design_doc_schema()
+        design_enum = set(design["properties"]["verdict"]["enum"])
+        schema = envelope_schema()
+        defs = _collect_pydantic_defs(schema)
+        pyd_enum = set(defs["PMAnalystEnvelope"]["properties"]["verdict"]["enum"])
+        assert design_enum == pyd_enum
+        assert design_enum == {"approve", "approve_with_modification", "reject"}
+
+    def test_source_provenance_enum_matches(self) -> None:
+        design = _load_design_doc_schema()
+        design_enum = set(design["properties"]["source_provenance"]["enum"])
+        assert design_enum == {"pm_analyst", "pm_strategist"}
+
+    def test_recommendation_type_enum_matches(self) -> None:
+        design = _load_design_doc_schema()
+        design_enum = set(design["properties"]["recommendation_type"]["enum"])
+        assert design_enum == {"new_entry", "position_assessment", "pending_order_assessment"}
+
+    def test_thesis_quality_evaluation_keys_match(self) -> None:
+        design = _load_design_doc_schema()
+        design_required = set(design["$defs"]["thesis_quality_evaluation"]["required"])
+        schema = envelope_schema()
+        defs = _collect_pydantic_defs(schema)
+        pyd_required = set(defs["ThesisQualityEvaluation"]["required"])
+        assert design_required == pyd_required
+        assert design_required == {
+            "falsifiability",
+            "sizing_proportionality",
+            "portfolio_coherence",
+            "timing_plausibility",
+            "counterargument_consideration",
+        }
+
+    def test_position_action_evaluation_keys_match(self) -> None:
+        design = _load_design_doc_schema()
+        design_required = set(design["$defs"]["position_action_evaluation"]["required"])
+        schema = envelope_schema()
+        defs = _collect_pydantic_defs(schema)
+        pyd_required = set(defs["PositionActionEvaluation"]["required"])
+        assert design_required == pyd_required
+        assert design_required == {
+            "status_classification_warrant",
+            "action_status_alignment",
+            "action_specific_justification",
+            "portfolio_coherence",
+        }
+
+    def test_criterion_status_enum_matches(self) -> None:
+        design = _load_design_doc_schema()
+        design_enum = set(design["$defs"]["criterion_assessment"]["properties"]["status"]["enum"])
+        schema = envelope_schema()
+        defs = _collect_pydantic_defs(schema)
+        pyd_enum = set(defs["CriterionAssessment"]["properties"]["status"]["enum"])
+        assert design_enum == pyd_enum
+        assert design_enum == {"pass", "fail"}
+
+    def test_modification_phase_enum_matches(self) -> None:
+        design = _load_design_doc_schema()
+        design_enum = set(design["$defs"]["modification_record"]["properties"]["phase"]["enum"])
+        schema = envelope_schema()
+        defs = _collect_pydantic_defs(schema)
+        pyd_enum = set(defs["ModificationRecord"]["properties"]["phase"]["enum"])
+        assert design_enum == pyd_enum
+
+    def test_modification_adjustment_category_enum_matches(self) -> None:
+        design = _load_design_doc_schema()
+        design_enum = set(
+            design["$defs"]["modification_record"]["properties"]["adjustment_category"]["enum"]
+        )
+        schema = envelope_schema()
+        defs = _collect_pydantic_defs(schema)
+        pyd_enum = set(defs["ModificationRecord"]["properties"]["adjustment_category"]["enum"])
+        assert design_enum == pyd_enum
+        assert design_enum == {
+            "risk_reduction",
+            "conviction_disagreement",
+            "capital_constraint",
+            "portfolio_balance",
+            "guardrail_rejection_response",
+        }
+
+    def test_modification_required_fields_match(self) -> None:
+        design = _load_design_doc_schema()
+        design_required = set(design["$defs"]["modification_record"]["required"])
+        schema = envelope_schema()
+        defs = _collect_pydantic_defs(schema)
+        pyd_required = set(defs["ModificationRecord"]["required"])
+        assert design_required == pyd_required
+
+    def test_concern_record_required_matches(self) -> None:
+        design = _load_design_doc_schema()
+        design_required = set(design["$defs"]["concern_record"]["required"])
+        schema = envelope_schema()
+        defs = _collect_pydantic_defs(schema)
+        pyd_required = set(defs["ConcernRecord"]["required"])
+        assert design_required == pyd_required
+
+    def test_anti_pattern_enum_matches(self) -> None:
+        design = _load_design_doc_schema()
+        design_enum = set(design["properties"]["anti_patterns_identified"]["items"]["enum"])
+        # Pydantic emits the AntiPattern Literal as enum values somewhere in the
+        # branch's anti_patterns_identified shape. Walk and find the enum.
+        schema = envelope_schema()
+        defs = _collect_pydantic_defs(schema)
+        # The field is on each branch.
+        branch_prop = defs["PMAnalystEnvelope"]["properties"]["anti_patterns_identified"]
+
+        # The schema may render as anyOf with a list-with-enum branch, depending
+        # on Pydantic's handling of tuple[AntiPattern, ...] | None.
+        def _find_enum(node: Any) -> set[str] | None:
+            if isinstance(node, dict):
+                if "enum" in node and isinstance(node["enum"], list):
+                    return set(node["enum"])
+                for v in node.values():
+                    found = _find_enum(v)
+                    if found is not None:
+                        return found
+            elif isinstance(node, list):
+                for item in node:
+                    found = _find_enum(item)
+                    if found is not None:
+                        return found
+            return None
+
+        pyd_enum = _find_enum(branch_prop)
+        assert pyd_enum == design_enum
+        assert design_enum == {
+            "conviction_inflation",
+            "sunk_cost_persistence",
+            "rationalized_continuation",
+            "thesis_contradiction_suppression",
+            "engine_originated_closure_signal",
+        }
+
+
+# ---------------------------------------------------------------------------
+# 11. Schema accessors return well-formed schemas
+# ---------------------------------------------------------------------------
+
+
+class TestSchemaAccessors:
+    def test_envelope_schema_returns_dict(self) -> None:
+        schema = envelope_schema()
+        assert isinstance(schema, dict)
+
+    def test_envelope_schema_carries_discriminator(self) -> None:
+        schema = envelope_schema()
+        # The discriminated union exposes either a discriminator field or oneOf.
+        assert "oneOf" in schema or "discriminator" in schema
+
+    def test_completion_record_schema_returns_dict(self) -> None:
+        schema = completion_record_schema()
+        assert isinstance(schema, dict)
+        assert schema.get("type") == "object"
+        required = set(schema.get("required", []))
+        assert {
+            "invocation_id",
+            "timestamp",
+            "envelopes_submitted",
+            "verdict_summary",
+        }.issubset(required)
+
+
+# ---------------------------------------------------------------------------
+# 12. Type-reuse hard rule — Sector imported from analyst, not redefined
+# ---------------------------------------------------------------------------
+
+
+class TestTypeReuse:
+    def test_sector_imported_from_analyst(self) -> None:
+        from alphamind.decision.analyst.models import Sector as AnalystSector
+        from alphamind.decision.portfolio_manager.oms_command_models import (
+            OMSPositionSize,
+        )
+
+        # OMSPositionSize.sector field references the same Sector Literal alias
+        # as the analyst module. Pydantic does not preserve the original alias,
+        # but the underlying ``Literal`` arg-tuple is identical.
+        # Construct a position size using each canonical sector — verify the
+        # set is identical to ``Sector``'s args.
+        analyst_args = set(get_args(AnalystSector))
+        for s in analyst_args:
+            ps = OMSPositionSize(sector=s)
+            assert ps.sector == s
+
+
+# ---------------------------------------------------------------------------
+# 13. OMS command models module docstring references ALP-120 (transitional)
+# ---------------------------------------------------------------------------
+
+
+class TestTransitionalDocstring:
+    def test_oms_command_models_module_docstring_mentions_alp120(self) -> None:
+        import alphamind.decision.portfolio_manager.oms_command_models as oms_mod
+
+        doc = oms_mod.__doc__ or ""
+        assert "ALP-120" in doc, "oms_command_models module docstring must reference ALP-120"
+        assert "transitional" in doc.lower(), (
+            "oms_command_models module docstring must label this file transitional"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 14. Frozen-ness of envelope models
+# ---------------------------------------------------------------------------
+
+
+class TestFrozen:
+    def test_envelope_is_frozen(self) -> None:
+        envelope = _make_analyst_envelope()
+        with pytest.raises(ValidationError):
+            envelope.envelope_id = "ENV-REC-99"
+
+    def test_completion_record_is_frozen(self) -> None:
+        record = PMCompletionRecord(
+            invocation_id="inv-1",
+            timestamp=_NOW,
+            envelopes_submitted=0,
+            verdict_summary=VerdictSummary(approve=0, approve_with_modification=0, reject=0),
+        )
+        with pytest.raises(ValidationError):
+            record.invocation_id = "inv-2"
+
+
+# ---------------------------------------------------------------------------
+# 15. Public surface re-exports through __init__.py
+# ---------------------------------------------------------------------------
+
+
+class TestPublicSurface:
+    def test_models_module_all_contains_every_name(self) -> None:
+        import alphamind.decision.portfolio_manager.models as m
+
+        expected = {
+            "PMEnvelope",
+            "PMAnalystEnvelope",
+            "PMStrategistEnvelope",
+            "PMCompletionRecord",
+            "VerdictSummary",
+            "ThesisQualityEvaluation",
+            "PositionActionEvaluation",
+            "CriterionAssessment",
+            "ModificationRecord",
+            "ConcernRecord",
+            "AntiPattern",
+            "Verdict",
+            "SourceProvenance",
+            "RecommendationType",
+            "AdjustmentCategory",
+            "OMSCommand",
+            "OpenCommand",
+            "CloseCommand",
+            "AdjustCommand",
+            "CancelCommand",
+            "AddCommand",
+            "envelope_schema",
+            "completion_record_schema",
+        }
+        assert expected.issubset(set(m.__all__))
+
+    def test_package_init_re_exports_models(self) -> None:
+        import alphamind.decision.portfolio_manager as pkg
+
+        for name in (
+            "PMEnvelope",
+            "PMAnalystEnvelope",
+            "PMStrategistEnvelope",
+            "PMCompletionRecord",
+            "VerdictSummary",
+            "ThesisQualityEvaluation",
+            "PositionActionEvaluation",
+            "CriterionAssessment",
+            "ModificationRecord",
+            "ConcernRecord",
+            "AntiPattern",
+            "Verdict",
+            "SourceProvenance",
+            "RecommendationType",
+            "AdjustmentCategory",
+            "OMSCommand",
+            "OpenCommand",
+            "CloseCommand",
+            "AdjustCommand",
+            "CancelCommand",
+            "AddCommand",
+            "envelope_schema",
+            "completion_record_schema",
+        ):
+            assert hasattr(pkg, name), f"{name} not re-exported from package __init__"
