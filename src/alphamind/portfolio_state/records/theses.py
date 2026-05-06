@@ -78,6 +78,7 @@ class ThesisComponent(BaseModel):
     thesis_id: str
     component_type: ThesisComponentType
     linked_bracket_leg_type: BracketLegType | None
+    linked_bracket_leg_id: str | None = None
     instrument_reference: str
     narrative: str
     key_assumptions: tuple[KeyAssumption, ...]
