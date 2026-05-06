@@ -92,6 +92,7 @@ class StrategyLeg(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     leg_id: str
+    direction: Direction | None = None
     options: OptionsPositionDetails
 
 
