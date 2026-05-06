@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import StrEnum
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+_FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
 
 
 class Direction(StrEnum):
@@ -110,7 +113,25 @@ class StrategyPositionDetails(BaseModel):
 
 
 class PositionRecord(BaseModel):
-    """Consumer-facing record for a single position across all instrument types."""
+    """Consumer-facing record for a single position across all instrument types.
+
+    Sign conventions
+    ----------------
+    ``position_weight_pct``
+        Signed: positive for long positions, negative for short positions. Can
+        exceed 100% absolute value when the position is leveraged. Computed as
+        ``current_market_value_usd / total_portfolio_value * 100``; the sign
+        follows the market value sign. Any finite float is accepted.
+
+    ``notional_exposure_usd``
+        Magnitude only — always >= 0. Represents the gross notional of the
+        position regardless of direction.
+
+    ``delta_adjusted_exposure_usd``
+        Signed: positive for net-long delta, negative for net-short delta.
+        For short equities this is negative; for options it is signed by the
+        option delta. Any finite float is accepted.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -134,10 +155,10 @@ class PositionRecord(BaseModel):
     current_market_value_usd: float
     unrealized_pnl_usd: float
     unrealized_pnl_pct: float
-    position_weight_pct: float
+    position_weight_pct: _FiniteFloat
     position_age_hours: float
     notional_exposure_usd: float
-    delta_adjusted_exposure_usd: float
+    delta_adjusted_exposure_usd: _FiniteFloat
     distance_to_target_usd: float | None
     distance_to_stop_usd: float | None
     risk_reward_at_current: float | None
@@ -227,9 +248,6 @@ class PositionRecord(BaseModel):
             raise ValueError(msg)
 
     def _check_range_constraints(self) -> None:
-        if not (0.0 <= self.position_weight_pct <= 100.0):
-            msg = f"position_weight_pct must be in [0, 100]; got {self.position_weight_pct}"
-            raise ValueError(msg)
         if self.position_age_hours < 0.0:
             msg = f"position_age_hours must be >= 0; got {self.position_age_hours}"
             raise ValueError(msg)

@@ -482,15 +482,18 @@ class TestDirectionShortFields:
 
 
 class TestRangeConstraints:
-    def test_position_weight_pct_above_100_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            _make_position(position_weight_pct=101.0)
-        assert "position_weight_pct" in str(exc_info.value)
+    # position_weight_pct: finite-only, any sign (shorts negative, leveraged >100%)
+    def test_position_weight_pct_short_negative_passes(self) -> None:
+        p = _make_position(position_weight_pct=-3.5)
+        assert p.position_weight_pct == -3.5
 
-    def test_position_weight_pct_below_0_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            _make_position(position_weight_pct=-1.0)
-        assert "position_weight_pct" in str(exc_info.value)
+    def test_position_weight_pct_leveraged_above_100_passes(self) -> None:
+        p = _make_position(position_weight_pct=145.0)
+        assert p.position_weight_pct == 145.0
+
+    def test_position_weight_pct_inf_fails(self) -> None:
+        with pytest.raises(ValidationError):
+            _make_position(position_weight_pct=float("inf"))
 
     def test_position_weight_pct_at_bounds_passes(self) -> None:
         p0 = _make_position(position_weight_pct=0.0)
@@ -509,12 +512,21 @@ class TestRangeConstraints:
 
     def test_notional_exposure_usd_negative_fails(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
-            _make_position(notional_exposure_usd=-1.0)
+            _make_position(notional_exposure_usd=-100.0)
         assert "notional_exposure_usd" in str(exc_info.value)
 
     def test_notional_exposure_usd_zero_passes(self) -> None:
         p = _make_position(notional_exposure_usd=0.0)
         assert p.notional_exposure_usd == 0.0
+
+    # delta_adjusted_exposure_usd: signed (any finite float)
+    def test_delta_adjusted_exposure_usd_negative_passes(self) -> None:
+        p = _make_position(delta_adjusted_exposure_usd=-50000.0)
+        assert p.delta_adjusted_exposure_usd == -50000.0
+
+    def test_delta_adjusted_exposure_usd_inf_fails(self) -> None:
+        with pytest.raises(ValidationError):
+            _make_position(delta_adjusted_exposure_usd=float("inf"))
 
 
 # ---------------------------------------------------------------------------
