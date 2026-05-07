@@ -6,7 +6,7 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
 
@@ -39,7 +39,24 @@ class LocateStatus(StrEnum):
 
 
 class OptionGreeks(BaseModel):
-    """Greeks for an options position."""
+    """Greeks for an options position.
+
+    Sign conventions (per Black-Scholes textbook):
+
+    * delta: positive for long calls (0 to 1), negative for long puts (-1 to 0).
+      For short positions, the parent OptionsPositionDetails sign-flips externally
+      via the position-level direction; this record stores the *long-equivalent*
+      delta of the contract itself.
+    * gamma: always positive (curvature of delta wrt underlying).
+    * theta: NEGATIVE for long options (decay reduces option value over time);
+      consumers needing the position-level theta must sign-flip for short positions.
+    * vega: always positive (sensitivity to IV; higher IV always raises long
+      option prices).
+
+    See ``docs/design/05-execution-layer/architecture.md`` § 4d for the refresh
+    cadence (15-min scheduled + 2%-move-based) and the IV-fetch failure policy
+    that governs the freshness metadata fields below.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -47,6 +64,27 @@ class OptionGreeks(BaseModel):
     gamma: float
     theta: float
     vega: float
+
+    # Freshness metadata (added per architecture.md § 4d)
+    as_of_timestamp: datetime | None = None
+    iv_used: float | None = None
+    refresh_failed: bool = False
+
+    @field_validator("as_of_timestamp")
+    @classmethod
+    def _require_tz_aware(cls, v: datetime | None) -> datetime | None:
+        if v is not None and (v.tzinfo is None or v.utcoffset() is None):
+            msg = "as_of_timestamp must be tz-aware UTC when not None"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("iv_used")
+    @classmethod
+    def _require_positive_iv(cls, v: float | None) -> float | None:
+        if v is not None and v <= 0:
+            msg = f"iv_used must be > 0 when not None; got {v}"
+            raise ValueError(msg)
+        return v
 
 
 class PositionFill(BaseModel):

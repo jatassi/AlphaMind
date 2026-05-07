@@ -93,6 +93,90 @@ class TestOptionGreeks:
         with pytest.raises(ValidationError):
             OptionGreeks.model_validate({"delta": 0.5})
 
+    def test_freshness_defaults_all_none_or_false(self) -> None:
+        """(a) All freshness fields default to None/False; legacy construction succeeds."""
+        g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3)
+        assert g.as_of_timestamp is None
+        assert g.iv_used is None
+        assert g.refresh_failed is False
+
+    def test_populated_freshness_fields_succeed(self) -> None:
+        """(b) Populated freshness fields with valid values succeed."""
+        ts = datetime.now(tz=UTC)
+        g = OptionGreeks(
+            delta=0.5,
+            gamma=0.1,
+            theta=-0.02,
+            vega=0.3,
+            as_of_timestamp=ts,
+            iv_used=0.25,
+            refresh_failed=True,
+        )
+        assert g.as_of_timestamp == ts
+        assert g.iv_used == 0.25
+        assert g.refresh_failed is True
+
+    def test_naive_datetime_rejected(self) -> None:
+        """(c) Naive datetime (no tzinfo) raises ValidationError."""
+        with pytest.raises(ValidationError):
+            OptionGreeks(
+                delta=0.5,
+                gamma=0.1,
+                theta=-0.02,
+                vega=0.3,
+                as_of_timestamp=datetime.now(),  # noqa: DTZ005
+            )
+
+    def test_tz_aware_datetime_accepted(self) -> None:
+        """(c) tz-aware datetime is accepted."""
+        ts = datetime.now(tz=UTC)
+        g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, as_of_timestamp=ts)
+        assert g.as_of_timestamp == ts
+
+    def test_zero_iv_used_rejected(self) -> None:
+        """(d) iv_used=0.0 raises ValidationError."""
+        with pytest.raises(ValidationError):
+            OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, iv_used=0.0)
+
+    def test_negative_iv_used_rejected(self) -> None:
+        """(d) iv_used=-0.1 raises ValidationError."""
+        with pytest.raises(ValidationError):
+            OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, iv_used=-0.1)
+
+    def test_positive_iv_used_accepted(self) -> None:
+        """(d) iv_used=0.45 succeeds."""
+        g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, iv_used=0.45)
+        assert g.iv_used == 0.45
+
+    def test_refresh_failed_true_with_freshness_populated(self) -> None:
+        """(e) refresh_failed=True when freshness fields are populated."""
+        ts = datetime.now(tz=UTC)
+        g = OptionGreeks(
+            delta=0.5,
+            gamma=0.1,
+            theta=-0.02,
+            vega=0.3,
+            as_of_timestamp=ts,
+            iv_used=0.30,
+            refresh_failed=True,
+        )
+        assert g.refresh_failed is True
+
+    def test_frozen_after_freshness_field_set(self) -> None:
+        """(f) Frozen model — can't mutate as_of_timestamp after construction."""
+        ts = datetime.now(tz=UTC)
+        g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, as_of_timestamp=ts)
+        with pytest.raises(ValidationError):
+            g.as_of_timestamp = datetime.now(tz=UTC)
+
+    def test_docstring_sign_convention_paragraphs(self) -> None:
+        """Class docstring includes the four sign-convention paragraphs."""
+        doc = OptionGreeks.__doc__ or ""
+        assert "delta" in doc
+        assert "gamma" in doc
+        assert "theta" in doc
+        assert "vega" in doc
+
 
 class TestPositionFill:
     def _now_utc(self) -> datetime:
