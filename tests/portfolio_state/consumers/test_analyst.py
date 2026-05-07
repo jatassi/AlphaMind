@@ -322,6 +322,7 @@ def _make_abandoned_entry(
         envelope_id="env-abn-001",
         command_id="cmd-abn-001",
         originating_agent=originating_agent,
+        command_type="OPEN",
         failure_reason="Guardrail blocked",
         retry_attempt_count=0,
     )

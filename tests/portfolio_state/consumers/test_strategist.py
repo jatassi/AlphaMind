@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 import pytest
 from pydantic import ValidationError
@@ -310,11 +311,13 @@ def _make_abandoned_entry(
     entry_id: str = "ENTRY-ABN-001",
     originating_agent: str = "analyst",
     command_id: str = "cmd-abn-001",
+    command_type: Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"] = "ADD",
 ) -> ActivityLogEntry:
     detail = CommandAbandonedDetail(
         envelope_id="env-abn-001",
         command_id=command_id,
         originating_agent=originating_agent,
+        command_type=command_type,
         failure_reason="Guardrail blocked",
         retry_attempt_count=0,
     )
@@ -773,6 +776,19 @@ class TestProjectStrategistViewHappyPath:
         action = view.abandoned_actions[0]
         assert isinstance(action, StrategistAbandonedAction)
         assert action.failure_reason == "Guardrail blocked"
+
+    @pytest.mark.parametrize("command_type", ["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"])
+    def test_abandoned_action_command_type_threaded_from_detail(
+        self,
+        command_type: Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"],
+    ) -> None:
+        """command_type must come from the source CommandAbandonedDetail, not be hard-coded."""
+        abn = _make_abandoned_entry("ENTRY-ABN-STR", "strategist", command_type=command_type)
+        changelog = _make_changelog_entry("ENTRY-CL-001", "POS-001")
+        snapshot = _make_snapshot(intra_invocation_changelog=(changelog, abn))
+        view = project_strategist_view(snapshot)
+        assert len(view.abandoned_actions) == 1
+        assert view.abandoned_actions[0].command_type == command_type
 
 
 # ---------------------------------------------------------------------------

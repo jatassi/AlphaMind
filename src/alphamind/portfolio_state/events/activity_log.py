@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -571,6 +571,7 @@ class CommandAbandonedDetail(BaseModel):
     envelope_id: str
     command_id: str
     originating_agent: str
+    command_type: Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"]
     failure_reason: str
     retry_attempt_count: int
 

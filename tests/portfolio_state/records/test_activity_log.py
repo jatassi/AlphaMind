@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import get_args
+from typing import Literal, get_args
 
 import pytest
 from pydantic import ValidationError
@@ -586,8 +586,37 @@ class TestDetailClassHappyPaths:
             originating_agent="pm_analyst",
             failure_reason="BROKER_TIMEOUT",
             retry_attempt_count=3,
+            command_type="ADD",
         )
         assert d.retry_attempt_count == 3
+
+    def test_command_abandoned_detail_requires_command_type(self) -> None:
+        """Omitting command_type must raise ValidationError — it is a required field."""
+        with pytest.raises(ValidationError):
+            CommandAbandonedDetail(  # type: ignore[call-arg]
+                envelope_id="env-001",
+                command_id="cmd-001",
+                originating_agent="pm_analyst",
+                failure_reason="BROKER_TIMEOUT",
+                retry_attempt_count=3,
+            )
+
+    @pytest.mark.parametrize("command_type", ["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"])
+    def test_command_abandoned_detail_command_type_roundtrip(
+        self,
+        command_type: Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"],
+    ) -> None:
+        """All five command_type values must survive model_dump_json/model_validate_json."""
+        d = CommandAbandonedDetail(
+            envelope_id="env-001",
+            command_id="cmd-001",
+            originating_agent="pm_analyst",
+            failure_reason="BROKER_TIMEOUT",
+            retry_attempt_count=0,
+            command_type=command_type,
+        )
+        roundtripped = CommandAbandonedDetail.model_validate_json(d.model_dump_json())
+        assert roundtripped.command_type == command_type
 
     def test_corporate_action_applied_detail(self) -> None:
         d = CorporateActionAppliedDetail(
@@ -1057,6 +1086,7 @@ class TestActivityLogEntryHappyPath:
             envelope_id="env-001",
             command_id="cmd-001",
             originating_agent="pm_analyst",
+            command_type="OPEN",
             failure_reason="BROKER_TIMEOUT",
             retry_attempt_count=3,
         )

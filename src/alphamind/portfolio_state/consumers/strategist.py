@@ -57,7 +57,7 @@ class StrategistAbandonedAction(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     envelope_id: str
-    command_type: Literal["ADD", "ADJUST", "CLOSE", "CANCEL"]
+    command_type: Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"]
     position_id: str | None
     order_id: str | None
     abandoned_at: datetime
@@ -127,9 +127,7 @@ def _project_abandoned_actions(
         result.append(
             StrategistAbandonedAction(
                 envelope_id=detail.envelope_id,
-                # CommandAbandonedDetail does not carry command_type; default to "ADD"
-                # until the detail schema is extended in a follow-up story.
-                command_type="ADD",
+                command_type=detail.command_type,
                 position_id=entry.position_id,
                 order_id=entry.order_id,
                 abandoned_at=entry.timestamp,
