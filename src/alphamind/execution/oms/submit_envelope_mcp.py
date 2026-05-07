@@ -69,12 +69,14 @@ _ENVELOPE_ADAPTER: TypeAdapter[PMEnvelope] = TypeAdapter(PMEnvelope)
 
 __all__ = [
     "Acknowledgment",
+    "FailedSubmissionEntry",
     "RejectionPayload",
     "SubmissionLogEntry",
     "SubmissionResult",
     "SubmitEnvelopeState",
     "build_initial_submit_envelope_state",
     "build_submit_envelope_mcp_server",
+    "get_failed_submission_log",
     "get_submission_log",
 ]
 
@@ -178,20 +180,38 @@ class SubmissionLogEntry:
 
 
 @dataclass
+class FailedSubmissionEntry:
+    """One ``submit_envelope`` call that failed Layer-1 (Pydantic) parsing.
+
+    ``submission_log`` only records calls that produced a parsed
+    :class:`PMEnvelope`; this parallel log preserves the raw payload, the
+    Pydantic error text, and the synthetic ``command_id`` for every Layer-1
+    rejection so post-hoc forensics can reconstruct attempts that never
+    reached command processing.
+    """
+
+    raw_args: dict[str, Any]
+    validation_error_repr: str
+    command_id: str
+
+
+@dataclass
 class SubmitEnvelopeState:
     """Mutable per-invocation cumulative state for the submit_envelope tool.
 
     The cell is mutated in place by the MCP closure: ``validation_state``
     advances on every accepted command via ``with_accepted_proposal(delta)``;
-    ``submission_log`` appends one entry per call; ``command_id_counter`` is
-    not currently incremented (the synthetic ID format derives ordinal from
-    the envelope's command index and ``attempt_seq`` from
-    ``post_rejection`` modification count, both of which are deterministic
-    from the envelope alone).
+    ``submission_log`` appends one entry per call that parsed to a
+    :class:`PMEnvelope`; ``failed_submission_log`` appends one entry per
+    Layer-1 (Pydantic) parse failure; ``command_id_counter`` is not currently
+    incremented (the synthetic ID format derives ordinal from the envelope's
+    command index and ``attempt_seq`` from ``post_rejection`` modification
+    count, both of which are deterministic from the envelope alone).
     """
 
     validation_state: ValidationToolState
     submission_log: tuple[SubmissionLogEntry, ...] = ()
+    failed_submission_log: tuple[FailedSubmissionEntry, ...] = ()
     command_id_counter: int = 0
     invocation_id: str = ""
 
@@ -216,6 +236,7 @@ def build_initial_submit_envelope_state(
     return SubmitEnvelopeState(
         validation_state=starting_validation_state,
         submission_log=(),
+        failed_submission_log=(),
         command_id_counter=0,
         invocation_id=invocation_id,
     )
@@ -224,6 +245,13 @@ def build_initial_submit_envelope_state(
 def get_submission_log(state: SubmitEnvelopeState) -> tuple[SubmissionLogEntry, ...]:
     """Return the cumulative submission log for *state*."""
     return state.submission_log
+
+
+def get_failed_submission_log(
+    state: SubmitEnvelopeState,
+) -> tuple[FailedSubmissionEntry, ...]:
+    """Return the cumulative Layer-1 parse-failure log for *state*."""
+    return state.failed_submission_log
 
 
 # ---------------------------------------------------------------------------
@@ -336,8 +364,23 @@ async def _handle_submit_envelope(
     try:
         envelope = _validate_envelope_payload(args)
     except ValidationError as exc:
+        envelope_id = str(args.get("envelope_id", "ENV-REC-INVALID"))
+        synthetic_command_id = _format_command_id(
+            invocation_id=state.invocation_id,
+            envelope_id=envelope_id,
+            command_ordinal=0,
+            attempt_seq=0,
+        )
+        state.failed_submission_log = (
+            *state.failed_submission_log,
+            FailedSubmissionEntry(
+                raw_args=dict(args),
+                validation_error_repr=str(exc),
+                command_id=synthetic_command_id,
+            ),
+        )
         return _build_envelope_level_rejection(
-            envelope_id=str(args.get("envelope_id", "ENV-REC-INVALID")),
+            envelope_id=envelope_id,
             invocation_id=state.invocation_id,
             suggested_modification=_format_first_error(exc),
             log_state=state,

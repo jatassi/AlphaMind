@@ -446,10 +446,13 @@ class _DiagState:
 
         Path: ``<archive_root>/invocations/<invocation_id>/decision/portfolio_manager/``
         — mirrors the strategist pattern with the agent segment switched to
-        ``portfolio_manager``. The PM-only ``submission_log.json`` is written
-        alongside the standard six files; it captures the engine-stub's
-        ``state.submission_log`` after the SDK loop completes so the verify
-        script (story 09) can inspect every envelope the PM submitted.
+        ``portfolio_manager``. The PM-only ``submission_log.json`` and
+        ``failed_submission_log.json`` are written alongside the standard six
+        files; they capture the engine-stub's ``state.submission_log`` (calls
+        whose payload parsed to a :class:`PMEnvelope`) and
+        ``state.failed_submission_log`` (Layer-1 Pydantic parse failures)
+        respectively after the SDK loop completes so the verify script
+        (story 09) can inspect every envelope the PM attempted.
         """
         if self.archive_root is None:
             return
@@ -485,6 +488,18 @@ class _DiagState:
         ]
         (diag_dir / "submission_log.json").write_text(
             json.dumps(submission_log, indent=2), encoding="utf-8"
+        )
+
+        failed_submission_log = [
+            {
+                "command_id": entry.command_id,
+                "validation_error_repr": entry.validation_error_repr,
+                "raw_args": entry.raw_args,
+            }
+            for entry in self.submit_envelope_state.failed_submission_log
+        ]
+        (diag_dir / "failed_submission_log.json").write_text(
+            json.dumps(failed_submission_log, indent=2), encoding="utf-8"
         )
 
 

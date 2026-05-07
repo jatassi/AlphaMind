@@ -972,3 +972,74 @@ async def test_synthetic_command_id_format() -> None:
 
     pattern = re.compile(r"^inv-[A-Za-z0-9_\-:]+\.ENV-(REC|SA|SA-ORD)-[0-9]+\.[0-9]+\.[0-9]+$")
     assert pattern.match(cmd_id), f"command_id {cmd_id!r} does not match expected format"
+
+
+# ---------------------------------------------------------------------------
+# 11. Layer-1 (Pydantic) parse failure captured in failed_submission_log
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_layer_1_parse_failure_captured_in_failed_submission_log() -> None:
+    """A payload that fails Pydantic discriminated-union parsing (Layer-1) is
+    rejected at the envelope level AND captured in
+    ``state.failed_submission_log`` — raw args, the formatted Pydantic error,
+    and the synthetic command_id are all preserved for forensics. The parsed
+    ``submission_log`` remains empty since no PMEnvelope was produced."""
+    from alphamind.execution.oms.submit_envelope_mcp import get_failed_submission_log
+
+    state, server, _ = _build_state_and_server()
+
+    # Missing the source_provenance discriminator — the discriminated-union
+    # adapter cannot route the payload to either PMAnalystEnvelope or
+    # PMStrategistEnvelope, so Layer-1 parsing raises ValidationError before
+    # any semantic validation runs.
+    bogus_args: dict[str, Any] = {
+        "envelope_id": "ENV-REC-99",
+        "garbage": "value",
+    }
+
+    text, is_error = await _invoke_mcp_tool(server, "submit_envelope", bogus_args)
+    assert not is_error, text
+
+    payload = json.loads(text)
+    assert payload["envelope_id"] == "ENV-REC-99"
+    assert len(payload["submission_results"]) == 1
+    result = payload["submission_results"][0]
+    assert result["status"] == "rejected"
+    assert result["rejection_payload"]["rules_breached"][0]["rule"] == "schema_invariant"
+
+    failed_log = get_failed_submission_log(state)
+    assert len(failed_log) == 1
+    entry = failed_log[0]
+    assert entry.raw_args == bogus_args
+    assert "source_provenance" in entry.validation_error_repr
+    pattern = re.compile(r"^inv-[A-Za-z0-9_\-:]+\.ENV-REC-99\.0\.0$")
+    assert pattern.match(entry.command_id), (
+        f"command_id {entry.command_id!r} does not match expected Layer-1 format"
+    )
+    # Parsed submission_log untouched — Layer-1 failures don't reach there.
+    assert len(state.submission_log) == 0
+    # State cell unchanged.
+    assert len(state.validation_state.accumulated_deltas) == 0
+
+
+@pytest.mark.asyncio
+async def test_layer_1_failure_uses_fallback_envelope_id_when_missing() -> None:
+    """When the raw payload omits ``envelope_id`` entirely, the rejection and
+    the failed_submission_log both fall back to ``ENV-REC-INVALID`` so the
+    synthetic command_id is still well-formed for downstream tooling."""
+    from alphamind.execution.oms.submit_envelope_mcp import get_failed_submission_log
+
+    state, server, _ = _build_state_and_server()
+
+    bogus_args: dict[str, Any] = {"garbage": "value"}
+
+    text, _ = await _invoke_mcp_tool(server, "submit_envelope", bogus_args)
+    payload = json.loads(text)
+    assert payload["envelope_id"] == "ENV-REC-INVALID"
+
+    failed_log = get_failed_submission_log(state)
+    assert len(failed_log) == 1
+    assert failed_log[0].raw_args == bogus_args
+    assert failed_log[0].command_id.endswith(".ENV-REC-INVALID.0.0")

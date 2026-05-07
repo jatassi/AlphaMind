@@ -6,22 +6,26 @@ a transitional engine-stub; see :mod:`alphamind.execution.oms.submit_envelope_mc
 
 from alphamind.execution.oms.submit_envelope_mcp import (
     Acknowledgment,
+    FailedSubmissionEntry,
     RejectionPayload,
     SubmissionLogEntry,
     SubmissionResult,
     SubmitEnvelopeState,
     build_initial_submit_envelope_state,
     build_submit_envelope_mcp_server,
+    get_failed_submission_log,
     get_submission_log,
 )
 
 __all__ = [
     "Acknowledgment",
+    "FailedSubmissionEntry",
     "RejectionPayload",
     "SubmissionLogEntry",
     "SubmissionResult",
     "SubmitEnvelopeState",
     "build_initial_submit_envelope_state",
     "build_submit_envelope_mcp_server",
+    "get_failed_submission_log",
     "get_submission_log",
 ]

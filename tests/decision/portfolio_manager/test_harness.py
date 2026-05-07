@@ -55,6 +55,7 @@ from alphamind.decision.proposal_pre_processor.models import (
 )
 from alphamind.execution.oms.submit_envelope_mcp import (
     Acknowledgment,
+    FailedSubmissionEntry,
     SubmissionLogEntry,
     SubmissionResult,
     SubmitEnvelopeState,
@@ -850,6 +851,7 @@ async def test_diagnostic_archive_written(
     assert (diag_dir / "errors.json").exists()
     assert (diag_dir / "metadata.json").exists()
     assert (diag_dir / "submission_log.json").exists()
+    assert (diag_dir / "failed_submission_log.json").exists()
     # No retry → no retry response file.
     assert not (diag_dir / "response_retry.md").exists()
 
@@ -857,10 +859,12 @@ async def test_diagnostic_archive_written(
     errors = json.loads((diag_dir / "errors.json").read_text())
     assert errors == []
 
-    # Submission log empty on the happy path (the stub did not invoke
+    # Submission logs empty on the happy path (the stub did not invoke
     # submit_envelope from inside the SDK loop).
     log = json.loads((diag_dir / "submission_log.json").read_text())
     assert log == []
+    failed_log = json.loads((diag_dir / "failed_submission_log.json").read_text())
+    assert failed_log == []
 
     meta = json.loads((diag_dir / "metadata.json").read_text())
     assert meta["invocation_id"] == "inv-diag-001"
@@ -1204,6 +1208,65 @@ async def test_submission_log_threads_from_engine_stub_state_cell(
     assert len(log_dump) == 1
     assert log_dump[0]["envelope"]["envelope_id"] == "ENV-REC-1"
     assert log_dump[0]["submission_results"][0]["status"] == "accepted"
+
+
+# ---------------------------------------------------------------------------
+# 10b. failed_submission_log.json captures Layer-1 parse failures from the
+#      engine-stub state cell.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_failed_submission_log_archived_from_state_cell(
+    agent_config: BaseAgentConfig,
+    archive_root: Path,
+    validation_state: ValidationToolState,
+    submit_envelope_state: SubmitEnvelopeState,
+    retrieval_store: RetrievalStore,
+    thesis_component_reader: PortfolioManagerThesisComponentReader,
+    pre_processor_bundle: ProposalPreProcessorBundle,
+    pm_view: PortfolioManagerView,
+    active_sectors: frozenset[str],
+    library_config: LibraryConfig,
+    library_market: MarketInputs,
+) -> None:
+    """The harness writes ``state.failed_submission_log`` to
+    ``failed_submission_log.json`` post-loop so Layer-1 parse failures are
+    preserved in the archive even though they never produced a parsed
+    envelope (ALP-353)."""
+    fake_failure = FailedSubmissionEntry(
+        raw_args={"envelope_id": "ENV-REC-99", "garbage": "value"},
+        validation_error_repr="1 validation error for PMEnvelope\nsource_provenance: missing",
+        command_id="inv-fail-001.ENV-REC-99.0.0",
+    )
+    submit_envelope_state.failed_submission_log = (fake_failure,)
+
+    stub = _make_stub_query([_make_sdk_response(_MINIMAL_PAYLOAD)])
+    await invoke_pm(
+        **_invoke_kwargs(
+            agent_config=agent_config,
+            user_message="Produce PM output.",
+            invocation_id="inv-fail-001",
+            validation_state=validation_state,
+            submit_envelope_state=submit_envelope_state,
+            retrieval_store=retrieval_store,
+            thesis_component_reader=thesis_component_reader,
+            pre_processor_bundle=pre_processor_bundle,
+            pm_view=pm_view,
+            active_sectors=active_sectors,
+            library_config=library_config,
+            library_market=library_market,
+            archive_root=archive_root,
+            sdk_query_fn=stub,
+        )
+    )
+
+    diag_dir = archive_root / "invocations" / "inv-fail-001" / "decision" / "portfolio_manager"
+    failed_dump = json.loads((diag_dir / "failed_submission_log.json").read_text())
+    assert len(failed_dump) == 1
+    assert failed_dump[0]["command_id"] == "inv-fail-001.ENV-REC-99.0.0"
+    assert failed_dump[0]["raw_args"] == {"envelope_id": "ENV-REC-99", "garbage": "value"}
+    assert "source_provenance" in failed_dump[0]["validation_error_repr"]
 
 
 # ---------------------------------------------------------------------------
