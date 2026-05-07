@@ -120,8 +120,12 @@ class TestOptionGreeks:
         """(c) Naive datetime (no tzinfo) raises ValidationError."""
         with pytest.raises(ValidationError):
             OptionGreeks(
-                delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, as_of_timestamp=datetime.now()
-            )  # noqa: DTZ005
+                delta=0.5,
+                gamma=0.1,
+                theta=-0.02,
+                vega=0.3,
+                as_of_timestamp=datetime.now(),  # noqa: DTZ005
+            )
 
     def test_tz_aware_datetime_accepted(self) -> None:
         """(c) tz-aware datetime is accepted."""
