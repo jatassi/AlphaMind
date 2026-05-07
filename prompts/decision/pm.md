@@ -120,29 +120,33 @@ Top-level shape:
 
 Do not emit envelopes in the structured output; envelopes flow through `submit_envelope` calls. Do not emit prose before or after the structured-output JSON; the harness reads only the structured payload.
 
-Envelope shape (passed to `submit_envelope`, not part of your final structured output):
+Envelope shape (passed to `submit_envelope`, not part of your final structured output). Verbatim mirror of `pm-envelope-schema.md`:
 
 Each envelope:
 - `envelope_id` (string) — unique within the invocation. Format depends on `source_provenance`: `ENV-REC-N` for `pm_analyst`; `ENV-SA-N` (when `recommendation_type == "position_assessment"`) or `ENV-SA-ORD-N` (when `recommendation_type == "pending_order_assessment"`) for `pm_strategist`. The trailing integer `N` matches the `source_recommendation_id`'s integer.
 - `invocation_id` (string) — same as the guardrail header's invocation_id.
 - `source_provenance` (`"pm_analyst"` | `"pm_strategist"`).
-- `source_recommendation_id` (string) — the analyst's `REC-N` or strategist's `SA-N`.
-- `recommendation_type` (`"new_entry"` | `"position_assessment"`).
-- `position_id` (string) — required when `recommendation_type` is `"position_assessment"`.
-- `evaluation` (object):
-  - `verdict` (`"approve"` | `"approve_with_modification"` | `"reject"`).
-  - `criteria` (object) — keys per source_provenance:
-    - `pm_analyst`: `falsifiability`, `sizing_proportionality`, `portfolio_coherence`, `timing_plausibility`, `counterargument_consideration`. Each value `"pass"` | `"fail"`.
-    - `pm_strategist`: `status_classification_warrant`, `action_status_alignment`, `action_specific_justification`, `portfolio_coherence`. Each value `"pass"` | `"fail"`.
-  - `concerns` (array of strings) — one entry per failed criterion naming the criterion, plus any additional concerns not captured by a criterion. May be empty.
-  - `rationale_narrative` (string) — prose explaining the verdict. Name anti-patterns where applicable (`conviction_inflation`, `sunk_cost_persistence`, `rationalized_continuation`, `thesis_contradiction_suppression`, `engine_originated_closure_signal`). Name cross-criterion interactions where applicable.
-- `modifications` (array) — zero or more records:
-  - `field_changed` (string)
-  - `original_value` (any)
-  - `approved_value` (any)
-  - `adjustment_category` (`"risk_reduction"` | `"conviction_disagreement"` | `"capital_constraint"` | `"portfolio_balance"` | `"guardrail_rejection_response"`)
-  - `rationale` (string)
-- `commands` (array) — zero or more OMS commands per the schemas in `oms-commands.md`. Empty for rejections, pure holds, and rejected-at-submission commands that were not reissued.
+- `source_recommendation_id` (string) — the analyst's `REC-N`, the strategist's `SA-N` (position assessment), or `SA-ORD-N` (pending-order assessment).
+- `recommendation_type` (`"new_entry"` | `"position_assessment"` | `"pending_order_assessment"`).
+- `position_id` (string) — required on every `pm_strategist` envelope (both `position_assessment` and `pending_order_assessment`); absent on `pm_analyst`.
+- `verdict` (`"approve"` | `"approve_with_modification"` | `"reject"`). **Top-level field** — not nested inside `evaluation`.
+- `evaluation` (object) — per-criterion `CriterionAssessment` records keyed by criterion name. Each value is an object with `status` (`"pass"` | `"fail"`) and an optional `note` (short string; full reasoning lives in `rationale_narrative`). Required keys per `source_provenance`:
+  - `pm_analyst`: `falsifiability`, `sizing_proportionality`, `portfolio_coherence`, `timing_plausibility`, `counterargument_consideration`.
+  - `pm_strategist`: `status_classification_warrant`, `action_status_alignment`, `action_specific_justification`, `portfolio_coherence`.
+- `modifications` (array) — zero or more records. Empty for `approve` and `reject`; at least one record for `approve_with_modification`. Each record:
+  - `phase` (`"pre_submission"` | `"post_rejection"`) — `pre_submission` for PM-authored modifications; `post_rejection` for modifications appended after a synchronous guardrail rejection on `submit_envelope`.
+  - `field_changed` (string) — the command field whose value was modified (e.g., `"position_size.pct_of_portfolio"`, `"invalidation_legs[0].condition.trigger_price"`).
+  - `original_value` (any) — value as proposed by the analyst or strategist.
+  - `approved_value` (any) — value the PM approved.
+  - `adjustment_category` (`"risk_reduction"` | `"conviction_disagreement"` | `"capital_constraint"` | `"portfolio_balance"` | `"guardrail_rejection_response"`). `guardrail_rejection_response` requires `phase == "post_rejection"` and a populated `triggering_rule`; every other category requires `phase == "pre_submission"`.
+  - `rationale` (string).
+  - `triggering_rule` (string) — required when `adjustment_category` is `"guardrail_rejection_response"` (the breached guardrail rule name); omitted otherwise.
+- `concerns` (array of records) — at least one entry on a `reject` envelope; may be empty otherwise. Each record:
+  - `source` (string) — either a failed criterion key (matching an `evaluation` key) or `"other"` for concerns not tied to a specific criterion.
+  - `summary` (string) — short description of the concern. Full reasoning lives in `rationale_narrative`.
+- `rationale_narrative` (string) — prose explaining the verdict. Explain cross-criterion interactions where applicable.
+- `anti_patterns_identified` (array of strings, optional) — canonical anti-pattern names the feedback loop aggregates on. Pick from `conviction_inflation`, `sunk_cost_persistence`, `rationalized_continuation`, `thesis_contradiction_suppression`, `engine_originated_closure_signal`. Omit when no pattern applies.
+- `commands` (array) — zero or more OMS commands per the schemas in `oms-commands.md`. Empty for rejections, hold envelopes that need no command, and rejected-at-submission commands that were not reissued; at least one command on an `approve_with_modification` envelope.
 
 Command-authoring rules (for commands inside envelopes passed to `submit_envelope`):
 - For `OPEN` derived from an analyst proposal: copy instrument, entry order, position size (quantity + dollar_value + pct_of_portfolio + premium_at_risk where applicable), target, invalidation legs, and thesis components from the analyst output. Do not author greeks — the guardrail layer computes them at validation time.
@@ -163,29 +167,27 @@ When you modify an exposure-changing parameter, the validated `delta_adjusted_ex
   </tool_call_flow>
 
   <tool_call>
-  Example submit_envelope call — ENV-REC-1 (approve_with_modification, one OPEN command):
+  Example submit_envelope call — ENV-REC-1 (approve_with_modification, one OPEN command). The OPEN command shows the minimal shape the Layer-1 validator inspects (`command_type`, `instrument`, `position_size`); the full broker-grade fields (`entry_order`, `target`, `invalidation_legs`, `thesis`) are populated per `oms-commands.md` and are omitted here for brevity.
   submit_envelope({
     "envelope_id": "ENV-REC-1",
     "invocation_id": "inv-2026-04-23T14-30Z",
     "source_provenance": "pm_analyst",
     "source_recommendation_id": "REC-1",
     "recommendation_type": "new_entry",
+    "verdict": "approve_with_modification",
     "evaluation": {
-      "verdict": "approve_with_modification",
-      "criteria": {
-        "falsifiability": "pass",
-        "sizing_proportionality": "pass",
-        "portfolio_coherence": "pass",
-        "timing_plausibility": "pass",
-        "counterargument_consideration": "pass"
+      "falsifiability": { "status": "pass" },
+      "sizing_proportionality": { "status": "pass" },
+      "portfolio_coherence": {
+        "status": "fail",
+        "note": "Two held positions already aligned to hyperscaler capex; conviction-4 upper-band sizing stacks catalyst risk."
       },
-      "concerns": [
-        "sizing_band_override: conviction 4 supports upper-band sizing, but semis sector already carries two hyperscaler-capex-aligned positions — incremental catalyst stacking warrants scaling toward the band floor"
-      ],
-      "rationale_narrative": "Well-formed thesis. Sized to conviction-4 band floor (2.1%) rather than the proposed 3.37% to dampen catalyst-stacking risk against existing semis exposure. Full thesis retained; only sizing adjusted. Validated post-modification at 2.1% — sector headroom post-approval 11.2%."
+      "timing_plausibility": { "status": "pass" },
+      "counterargument_consideration": { "status": "pass" }
     },
     "modifications": [
       {
+        "phase": "pre_submission",
         "field_changed": "position_size.pct_of_portfolio",
         "original_value": 3.37,
         "approved_value": 2.10,
@@ -193,8 +195,23 @@ When you modify an exposure-changing parameter, the validated `delta_adjusted_ex
         "rationale": "Two held positions already aligned to hyperscaler capex; scaling to band floor reduces catalyst concentration without rejecting the thesis."
       }
     ],
+    "concerns": [
+      {
+        "source": "portfolio_coherence",
+        "summary": "Conviction 4 supports upper-band sizing, but semis sector already carries two hyperscaler-capex-aligned positions — incremental catalyst stacking warrants scaling toward the band floor."
+      }
+    ],
+    "rationale_narrative": "Well-formed thesis with one cross-position coherence failure. Sized to conviction-4 band floor (2.1%) rather than the proposed 3.37% to dampen catalyst-stacking risk against existing semis exposure. Full thesis retained; only sizing adjusted. Validated post-modification at 2.1% — sector headroom post-approval 11.2%.",
     "commands": [
-      { "command": "OPEN", "...": "per oms-commands.md OPEN schema with the modified size and original thesis/bracket/entry fields" }
+      {
+        "command_type": "open",
+        "instrument": {
+          "asset_type": "equity",
+          "direction": "long",
+          "underlying": "NVDA"
+        },
+        "position_size": { "sector": "semis" }
+      }
     ]
   })
   </tool_call>
@@ -215,7 +232,7 @@ When you modify an exposure-changing parameter, the validated `delta_adjusted_ex
 </example_output>
 
 <constraints>
-- Every received proposal gets an envelope. Silence is not a valid response — a proposal you decline to act on is a `reject` envelope with criteria populated and a concrete rationale.
+- Every received proposal gets an envelope. Silence is not a valid response — a proposal you decline to act on is a `reject` envelope with `evaluation` populated, at least one `concerns` entry, and a concrete `rationale_narrative`.
 - Do not rewrite an analyst thesis. If a criterion requires thesis-level change (failed falsifiability, failed counterargument consideration), reject. The analyst redrafts at the next invocation.
 - Do not re-classify a strategist's thesis status. If you disagree with the classification, reject the recommendation. The strategist re-evaluates at the next invocation.
 - Do not replace the strategist's recommended action type. Hold→close, reduce→close, close→add are action replacements, not parameter modifications — reject instead. The one narrow exception is within-action parameter change (a strategist `close` with partial quantity modified to `close` with full quantity when the thesis is classified `invalidated`) — this stays within the `close` action.
