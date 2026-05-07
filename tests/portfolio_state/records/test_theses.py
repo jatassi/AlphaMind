@@ -133,9 +133,6 @@ def _make_component(
         instrument_reference="AAPL",
         narrative="Price above 200-day MA with increasing volume.",
         key_assumptions=(KeyAssumption(text="momentum holds", outcome=None),),
-        supporting_signals=(
-            SupportingSignal(name="options volume", status=SupportingSignalStatus.PRESENT),
-        ),
         generation_timestamp=NOW,
         resolution_outcome=resolution_outcome,
         resolution_notes=resolution_notes,
@@ -158,7 +155,6 @@ def _make_full_components(
             instrument_reference="AAPL",
             narrative="Target at 200.",
             key_assumptions=(),
-            supporting_signals=(),
             generation_timestamp=NOW,
             resolution_outcome=outcome,
             resolution_notes=notes,
@@ -171,7 +167,6 @@ def _make_full_components(
             instrument_reference="AAPL",
             narrative="Stop at 150.",
             key_assumptions=(),
-            supporting_signals=(),
             generation_timestamp=NOW,
             resolution_outcome=outcome,
             resolution_notes=notes,
@@ -191,8 +186,6 @@ def _make_thesis_record(**overrides: object) -> ThesisRecord:
         "summary": "Long AAPL on momentum breakout.",
         "components": _make_full_components(),
         "status": ThesisRecordStatus.ACTIVE,
-        "health_status": None,
-        "prior_health_status": None,
         "generation_timestamp": NOW,
         "time_expectation_hours": 24.0,
         "age_hours": 2.0,
@@ -238,7 +231,6 @@ def test_thesis_component_requires_component_id() -> None:
                 "instrument_reference": "AAPL",
                 "narrative": "x",
                 "key_assumptions": [],
-                "supporting_signals": [],
                 "generation_timestamp": NOW.isoformat(),
                 "resolution_outcome": None,
                 "resolution_notes": None,
@@ -250,7 +242,6 @@ def test_thesis_record_valid_active() -> None:
     rec = _make_thesis_record()
     assert rec.thesis_id == "thesis-1"
     assert rec.status == ThesisRecordStatus.ACTIVE
-    assert rec.health_status is None
     assert rec.resolution_timestamp is None
 
 
@@ -587,3 +578,23 @@ def test_position_size_rationale_whitespace_only_rejected() -> None:
     """(d) A whitespace-only string is rejected by the field validator."""
     with pytest.raises(ValidationError):
         _make_thesis_record(position_size_rationale="   ")
+
+
+# ---------------------------------------------------------------------------
+# ALP-351 — supporting_signals / health_status lifecycle refactor
+# ---------------------------------------------------------------------------
+
+
+def test_supporting_signals_removed_from_thesis_component() -> None:
+    """ThesisComponent must no longer carry supporting_signals — moved to ThesisHealthSnapshot."""
+    assert "supporting_signals" not in ThesisComponent.model_fields
+
+
+def test_health_status_removed_from_thesis_record() -> None:
+    """ThesisRecord must no longer carry health_status — moved to ThesisHealthSnapshot."""
+    assert "health_status" not in ThesisRecord.model_fields
+
+
+def test_prior_health_status_removed_from_thesis_record() -> None:
+    """ThesisRecord must no longer carry prior_health_status — moved to ThesisHealthSnapshot."""
+    assert "prior_health_status" not in ThesisRecord.model_fields

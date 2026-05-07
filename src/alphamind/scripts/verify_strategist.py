@@ -103,6 +103,7 @@ from alphamind.portfolio_state.snapshot import (
     PortfolioPnL,
     SectorExposureEntry,
 )
+from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
     ContractType,
@@ -332,8 +333,6 @@ def _make_thesis_record(
     *,
     position_id: str,
     summary: str,
-    health_status: ThesisStatus,
-    prior_health_status: ThesisStatus | None = None,
 ) -> ThesisRecord:
     """Build an ACTIVE thesis with the three required component types."""
     components = (
@@ -345,7 +344,6 @@ def _make_thesis_record(
             instrument_reference=position_id,
             narrative="Entry on confirmed sector momentum and constructive macro tape.",
             key_assumptions=(KeyAssumption(text="Sector momentum persists.", outcome=None),),
-            supporting_signals=(),
             generation_timestamp=_AS_OF - timedelta(hours=20),
             resolution_outcome=None,
             resolution_notes=None,
@@ -358,7 +356,6 @@ def _make_thesis_record(
             instrument_reference=position_id,
             narrative="Target set at next resistance band; clear technical context.",
             key_assumptions=(KeyAssumption(text="Resistance band holds.", outcome=None),),
-            supporting_signals=(),
             generation_timestamp=_AS_OF - timedelta(hours=20),
             resolution_outcome=None,
             resolution_notes=None,
@@ -371,7 +368,6 @@ def _make_thesis_record(
             instrument_reference=position_id,
             narrative="Invalidation below the swing low erodes the entry premise.",
             key_assumptions=(KeyAssumption(text="Swing low intact.", outcome=None),),
-            supporting_signals=(),
             generation_timestamp=_AS_OF - timedelta(hours=20),
             resolution_outcome=None,
             resolution_notes=None,
@@ -383,8 +379,6 @@ def _make_thesis_record(
         summary=summary,
         components=components,
         status=ThesisRecordStatus.ACTIVE,
-        health_status=health_status,
-        prior_health_status=prior_health_status,
         generation_timestamp=_AS_OF - timedelta(hours=20),
         time_expectation_hours=48.0,
         age_hours=20.0,
@@ -476,8 +470,14 @@ def _make_position_view(  # noqa: PLR0913 — fans out to several sub-builders
     prior_health_status: ThesisStatus | None = None,
     weight_pct: float = 5.0,
     pending_order: bool = False,
-) -> StrategistPositionView:
-    """Compose a per-position strategist view."""
+) -> tuple[StrategistPositionView, ThesisHealthSnapshot]:
+    """Compose a per-position strategist view paired with its prior health snapshot.
+
+    The returned snapshot represents the prior invocation's classification —
+    the strategist input bundle renders ``snapshot.health_status`` as the
+    ``Prior status`` line. The verify fixtures hand-roll one snapshot per
+    seeded position so the strategist sees history on the first run.
+    """
     position = _make_equity_position(
         position_id=position_id,
         ticker=ticker,
@@ -489,20 +489,27 @@ def _make_position_view(  # noqa: PLR0913 — fans out to several sub-builders
     thesis = _make_thesis_record(
         position_id=position_id,
         summary=summary,
-        health_status=health_status,
-        prior_health_status=prior_health_status,
     )
     bracket = _make_bracket(position_id=position_id)
     pending: tuple[OrderRecord, ...] = ()
     if pending_order:
         pending = (_make_pending_order(position_id=position_id, ticker=ticker),)
-    return StrategistPositionView(
+    view = StrategistPositionView(
         position=position,
         thesis=thesis,
         bracket=bracket,
         pending_orders=pending,
         modification_trail=(),
     )
+    prior_snapshot = ThesisHealthSnapshot(
+        thesis_id=thesis.thesis_id,
+        invocation_id=f"prior-inv-{position_id}",
+        snapshot_timestamp=_AS_OF - timedelta(hours=1),
+        health_status=health_status,
+        prior_health_status=prior_health_status,
+        component_health=(),
+    )
+    return view, prior_snapshot
 
 
 # ---------------------------------------------------------------------------
@@ -635,9 +642,9 @@ def _make_directional() -> DirectionalExposure:
 # ---------------------------------------------------------------------------
 
 
-def build_fixture_normal_view() -> StrategistView:
+def build_fixture_normal_view() -> tuple[StrategistView, tuple[ThesisHealthSnapshot, ...]]:
     """Normal scenario — 4 positions across 3 sectors, full thesis, 1 pending order."""
-    positions = (
+    paired = (
         _make_position_view(
             position_id="POS-NVDA",
             ticker="NVDA",
@@ -684,10 +691,12 @@ def build_fixture_normal_view() -> StrategistView:
             weight_pct=1.75,
         ),
     )
+    positions = tuple(view for view, _snap in paired)
+    snapshots = tuple(snap for _view, snap in paired)
     sector_exposure = _make_sector_exposure(
         {"semis": 4.3, "financials": 3.0, "energy": 2.2, "tech": 1.75}
     )
-    return StrategistView(
+    view = StrategistView(
         positions=positions,
         recent_thesis_resolutions=(),
         portfolio_pnl=_make_pnl(),
@@ -701,16 +710,19 @@ def build_fixture_normal_view() -> StrategistView:
         abandoned_openings=(),
         abandoned_actions=(),
     )
+    return view, snapshots
 
 
-def build_fixture_defensive_posture_view() -> StrategistView:
+def build_fixture_defensive_posture_view() -> tuple[
+    StrategistView, tuple[ThesisHealthSnapshot, ...]
+]:
     """Defensive-posture scenario — 6 positions; daily drawdown at the halt threshold.
 
     Activity log includes a recent engine-originated CLOSE on a sector-correlated
     position so the strategist's ``engine_originated_closure_signal`` discipline
     is exercised.
     """
-    positions = (
+    paired = (
         _make_position_view(
             position_id="POS-NVDA",
             ticker="NVDA",
@@ -778,6 +790,8 @@ def build_fixture_defensive_posture_view() -> StrategistView:
             weight_pct=1.75,
         ),
     )
+    positions = tuple(view for view, _snap in paired)
+    snapshots = tuple(snap for _view, snap in paired)
     sector_exposure = _make_sector_exposure(
         {"semis": 4.3, "tech": 7.25, "financials": 3.0, "energy": 2.2}
     )
@@ -802,7 +816,7 @@ def build_fixture_defensive_posture_view() -> StrategistView:
             thesis_resolution_category="INVALIDATED_STOPPED_CORRECTLY",
         ),
     )
-    return StrategistView(
+    view = StrategistView(
         positions=positions,
         recent_thesis_resolutions=(),
         portfolio_pnl=_make_pnl(),
@@ -816,16 +830,17 @@ def build_fixture_defensive_posture_view() -> StrategistView:
         abandoned_openings=(),
         abandoned_actions=(),
     )
+    return view, snapshots
 
 
-def build_fixture_emergency_view() -> StrategistView:
+def build_fixture_emergency_view() -> tuple[StrategistView, tuple[ThesisHealthSnapshot, ...]]:
     """Emergency-invocation scenario — 4 positions, no halt; one position has
     a regime-transition breach (sized 4.5%, new regime limit 3.5%, overage 1.0%).
 
     The breach is exposed via :func:`build_fixture_regime_transition_breach`
     and threaded into ``run_strategist`` as ``regime_transition_breaches``.
     """
-    positions = (
+    paired = (
         _make_position_view(
             position_id="POS-NVDA",
             ticker="NVDA",
@@ -872,10 +887,12 @@ def build_fixture_emergency_view() -> StrategistView:
             weight_pct=1.75,
         ),
     )
+    positions = tuple(view for view, _snap in paired)
+    snapshots = tuple(snap for _view, snap in paired)
     sector_exposure = _make_sector_exposure(
         {"semis": 4.5, "financials": 3.0, "energy": 2.2, "tech": 1.75}
     )
-    return StrategistView(
+    view = StrategistView(
         positions=positions,
         recent_thesis_resolutions=(),
         portfolio_pnl=_make_pnl(),
@@ -889,6 +906,7 @@ def build_fixture_emergency_view() -> StrategistView:
         abandoned_openings=(),
         abandoned_actions=(),
     )
+    return view, snapshots
 
 
 def build_fixture_regime_transition_breach() -> RegimeTransitionBreach:
@@ -1171,7 +1189,9 @@ def _scenario_mode(scenario: str) -> _ScenarioMode:
     return "normal"
 
 
-def _scenario_view(scenario: str) -> StrategistView:
+def _scenario_view(
+    scenario: str,
+) -> tuple[StrategistView, tuple[ThesisHealthSnapshot, ...]]:
     """Dispatch to the right fixture builder for the scenario."""
     if scenario == "normal":
         return build_fixture_normal_view()
@@ -1203,12 +1223,13 @@ async def _invoke_scenario(
     """Compose runner kwargs and call :func:`run_strategist` for *scenario*."""
     mode = _scenario_mode(scenario)
     halt_state = build_fixture_halt_state() if mode == "defensive_posture" else None
+    strategist_view, prior_health_snapshots = _scenario_view(scenario)
     return await run_strategist(
         invocation_id=invocation_id,
         timestamp=timestamp,
         mode=mode,
         halt_state=halt_state,
-        strategist_view=_scenario_view(scenario),
+        strategist_view=strategist_view,
         synthesizer_brief_text=synthesizer_text,
         retrieval_store=retrieval_store,
         options_enabled=library_config.feature_flags.options_enabled,
@@ -1225,6 +1246,7 @@ async def _invoke_scenario(
         starting_snapshot=build_fixture_portfolio_state_snapshot(),
         archive_root=archive_root,
         regime_transition_breaches=_scenario_breaches(scenario),
+        prior_health_snapshots=prior_health_snapshots,
         sdk_query_fn=sdk_query_fn,
     )
 

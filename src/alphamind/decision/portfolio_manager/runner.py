@@ -64,6 +64,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     StrategyPositionDetails,
 )
+from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
     FeatureFlagsView,
@@ -254,6 +255,7 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     agent_config: BaseAgentConfig | None = None,
     borrow_cost_resolver: Callable[[str], float] | None = None,
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
 ) -> PMResult:
     """Invoke the portfolio manager and return a :class:`PMResult`.
 
@@ -334,6 +336,7 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
         active_regime_overrides=active_regime_overrides,
         correlation_state=correlation_state,
         dependency_risk_flag=dependency_risk_flag,
+        prior_health_snapshots=prior_health_snapshots,
     )
     logger.info(
         "portfolio_manager input bundle assembled (mode=%s, chars=%d)",
@@ -408,6 +411,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
     active_regime_overrides: tuple[RegimeOverride, ...],
     correlation_state: CorrelationState | None,
     dependency_risk_flag: DependencyRiskFlag | None,
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...],
 ) -> str:
     """Dispatch to the mode-specific input-bundle assembler.
 
@@ -436,6 +440,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
             active_regime_overrides=active_regime_overrides,
             correlation_state=correlation_state,
             dependency_risk_flag=dependency_risk_flag,
+            prior_health_snapshots=prior_health_snapshots,
         )
 
     # mode == "halt" — the runner-side guard above guarantees halt_state and
@@ -465,4 +470,5 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
         active_regime_overrides=active_regime_overrides,
         correlation_state=correlation_state,
         dependency_risk_flag=dependency_risk_flag,
+        prior_health_snapshots=prior_health_snapshots,
     )

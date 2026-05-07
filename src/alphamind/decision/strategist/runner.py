@@ -51,6 +51,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     StrategyPositionDetails,
 )
+from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
     FeatureFlagsView,
@@ -217,6 +218,7 @@ async def run_strategist(  # noqa: PLR0913 — signature dictated by ALP-308 spe
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     borrow_cost_resolver: Callable[[str], float] | None = None,
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
 ) -> StrategistResult:
     """Invoke the strategist and return a :class:`StrategistResult`.
 
@@ -274,6 +276,7 @@ async def run_strategist(  # noqa: PLR0913 — signature dictated by ALP-308 spe
         synthesizer_brief_text=synthesizer_brief_text,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,
+        prior_health_snapshots=prior_health_snapshots,
     )
     logger.info("strategist input bundle assembled (mode=%s, chars=%d)", mode, len(user_message))
 
@@ -331,6 +334,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
     synthesizer_brief_text: str,
     sector_label_display: dict[str, str] | None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...],
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...],
 ) -> str:
     """Dispatch to the mode-specific input-bundle assembler.
 
@@ -356,6 +360,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
             tool_names=STRATEGIST_TOOL_NAMES,
             sector_label_display=sector_label_display,
             regime_transition_breaches=regime_transition_breaches,
+            prior_health_snapshots=prior_health_snapshots,
         )
 
     # mode == "defensive_posture" — the runner-side guard above guarantees
@@ -378,4 +383,5 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
         tool_names=STRATEGIST_TOOL_NAMES,
         sector_label_display=sector_label_display,
         regime_transition_breaches=regime_transition_breaches,
+        prior_health_snapshots=prior_health_snapshots,
     )

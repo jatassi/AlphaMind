@@ -58,13 +58,10 @@ from alphamind.portfolio_state.records.positions import (
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
-    SupportingSignal,
-    SupportingSignalStatus,
     ThesisComponent,
     ThesisComponentType,
     ThesisRecord,
     ThesisRecordStatus,
-    ThesisStatus,
 )
 from alphamind.portfolio_state.records.thesis_quality import (
     AlphaBetaDecomposition,
@@ -215,9 +212,6 @@ def _make_thesis(
             instrument_reference="AAPL",
             narrative="Narrative text.",
             key_assumptions=(KeyAssumption(text="Assumption", outcome=None),),
-            supporting_signals=(
-                SupportingSignal(name="volume", status=SupportingSignalStatus.PRESENT),
-            ),
             generation_timestamp=_T0,
             resolution_outcome=None,
             resolution_notes=None,
@@ -234,8 +228,6 @@ def _make_thesis(
                 _comp(ThesisComponentType.INVALIDATION_RATIONALE, "comp-3"),
             ),
             "status": ThesisRecordStatus.ACTIVE,
-            "health_status": ThesisStatus.ON_TRACK,
-            "prior_health_status": None,
             "generation_timestamp": _T0,
             "time_expectation_hours": 24.0,
             "age_hours": 4.0,
