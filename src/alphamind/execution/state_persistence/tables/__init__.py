@@ -12,6 +12,7 @@ from alphamind.execution.state_persistence.tables.brackets import BracketRow
 from alphamind.execution.state_persistence.tables.cash_ledger import CashLedgerRow
 from alphamind.execution.state_persistence.tables.drawdown_state import DrawdownStateRow
 from alphamind.execution.state_persistence.tables.invocations import InvocationRow
+from alphamind.execution.state_persistence.tables.orders import OrderRow
 from alphamind.execution.state_persistence.tables.positions import PositionRow
 from alphamind.execution.state_persistence.tables.process_lifetimes import ProcessLifetimeRow
 from alphamind.execution.state_persistence.tables.theses import ThesisRow
@@ -24,6 +25,7 @@ __all__ = [
     "CashLedgerRow",
     "DrawdownStateRow",
     "InvocationRow",
+    "OrderRow",
     "PositionRow",
     "ProcessLifetimeRow",
     "ThesisComponentRow",
