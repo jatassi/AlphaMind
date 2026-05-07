@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from alphamind.portfolio_state.records.orders import BracketLegType
 
@@ -97,6 +97,12 @@ class ThesisRecord(BaseModel):
     thesis_id: str
     position_id: str
     summary: str
+    key_catalyst: str
+    # The analyst's prose rationale for *why this size at this conviction*.
+    # Read by the PM's sizing-proportionality evaluation criterion.
+    # Persisted from the analyst's proposal at OPEN time; not modified by
+    # ADJUST or ADD (those have their own per-action rationale fields).
+    position_size_rationale: str | None = None
     components: tuple[ThesisComponent, ...]
     status: ThesisRecordStatus
     health_status: ThesisStatus | None
@@ -109,7 +115,14 @@ class ThesisRecord(BaseModel):
     resolution_category: ThesisResolutionCategory | None
     resolution_pnl_usd: float | None
     entry_fill_gap_usd: float | None
-    key_catalyst: str
+
+    @field_validator("position_size_rationale")
+    @classmethod
+    def _require_non_empty_when_populated(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            msg = "position_size_rationale must be non-empty when not None"
+            raise ValueError(msg)
+        return v
 
     @model_validator(mode="after")
     def _validate_all(self) -> ThesisRecord:
