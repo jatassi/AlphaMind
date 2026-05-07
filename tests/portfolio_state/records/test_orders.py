@@ -729,3 +729,42 @@ class TestBracketRecordFrozen:
         bracket = _make_bracket()
         with pytest.raises((AttributeError, ValidationError)):
             bracket.bracket_id = "changed"
+
+
+# ---------------------------------------------------------------------------
+# entry_window_deadline field (ALP-341)
+# ---------------------------------------------------------------------------
+
+
+class TestBracketRecordEntryWindowDeadline:
+    def test_none_default(self) -> None:
+        bracket = _make_bracket()
+        assert bracket.entry_window_deadline is None
+
+    def test_tz_aware_datetime_accepted(self) -> None:
+        deadline = datetime(2026, 5, 6, 18, 0, tzinfo=UTC)
+        bracket = _make_bracket(entry_window_deadline=deadline)
+        assert bracket.entry_window_deadline == deadline
+
+    def test_naive_datetime_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            _make_bracket(entry_window_deadline=datetime(2026, 5, 6, 18, 0))  # noqa: DTZ001
+
+    def test_pending_entry_with_deadline_succeeds(self) -> None:
+        deadline = datetime(2026, 5, 6, 18, 0, tzinfo=UTC)
+        bracket = _make_bracket(
+            status=BracketStatus.PENDING_ENTRY,
+            entry_window_deadline=deadline,
+        )
+        assert bracket.status == BracketStatus.PENDING_ENTRY
+        assert bracket.entry_window_deadline == deadline
+
+    def test_active_status_with_deadline_informational(self) -> None:
+        deadline = datetime(2026, 5, 6, 18, 0, tzinfo=UTC)
+        bracket = _make_bracket(
+            status=BracketStatus.ACTIVE,
+            protective_legs=(_make_mechanical_leg(status=BracketLegStatus.ACTIVE),),
+            entry_window_deadline=deadline,
+        )
+        assert bracket.status == BracketStatus.ACTIVE
+        assert bracket.entry_window_deadline == deadline

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from alphamind.portfolio_state.records.positions import InstrumentType, OptionContractType
 
@@ -323,7 +323,21 @@ class BracketLeg(BaseModel):
 
 
 class BracketRecord(BaseModel):
-    """Consumer-facing per-bracket record."""
+    """Consumer-facing per-bracket record.
+
+    Lifecycle semantics for ``entry_window_deadline``:
+
+    * When ``entry_window_deadline is not None`` AND ``status == PENDING_ENTRY``: the
+      entry order should auto-cancel if ``now() > entry_window_deadline`` and the entry
+      hasn't filled. Enforcement is the OMS's responsibility (ALP-120), not the record's.
+    * When ``status in {ACTIVE, COMPLETED, DISSOLVED}``: the field is informational only —
+      the entry has already filled (ACTIVE) or the bracket has resolved
+      (COMPLETED/DISSOLVED).
+
+    Producers that do not know the entry window may leave the field ``None`` even on
+    ``PENDING_ENTRY`` (graceful degradation; the analyst proposing the bracket is
+    responsible for setting it).
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -334,6 +348,15 @@ class BracketRecord(BaseModel):
     protective_legs: tuple[BracketLeg, ...]
     modification_history: tuple[BracketLegModification, ...]
     corporate_action_cancellation_reason: str | None
+    entry_window_deadline: datetime | None = None
+
+    @field_validator("entry_window_deadline")
+    @classmethod
+    def _require_tz_aware(cls, v: datetime | None) -> datetime | None:
+        if v is not None and (v.tzinfo is None or v.utcoffset() is None):
+            msg = "entry_window_deadline must be tz-aware UTC when not None"
+            raise ValueError(msg)
+        return v
 
     @model_validator(mode="after")
     def _validate_all(self) -> BracketRecord:
