@@ -10,7 +10,11 @@ from alphamind.execution.state_persistence.tables.activity_log import ActivityLo
 from alphamind.execution.state_persistence.tables.bracket_legs import BracketLegRow
 from alphamind.execution.state_persistence.tables.brackets import BracketRow
 from alphamind.execution.state_persistence.tables.cash_ledger import CashLedgerRow
+from alphamind.execution.state_persistence.tables.corporate_action_integration_ledger import (
+    CorporateActionIntegrationLedgerRow,
+)
 from alphamind.execution.state_persistence.tables.drawdown_state import DrawdownStateRow
+from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
 from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.execution.state_persistence.tables.orders import OrderRow
 from alphamind.execution.state_persistence.tables.positions import PositionRow
@@ -23,7 +27,9 @@ __all__ = [
     "BracketLegRow",
     "BracketRow",
     "CashLedgerRow",
+    "CorporateActionIntegrationLedgerRow",
     "DrawdownStateRow",
+    "FillRecordRow",
     "InvocationRow",
     "OrderRow",
     "PositionRow",
