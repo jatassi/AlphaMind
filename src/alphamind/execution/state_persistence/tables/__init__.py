@@ -8,6 +8,7 @@ them without having to remember each module name.
 
 from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
 from alphamind.execution.state_persistence.tables.invocations import InvocationRow
+from alphamind.execution.state_persistence.tables.positions import PositionRow
 from alphamind.execution.state_persistence.tables.process_lifetimes import ProcessLifetimeRow
 
-__all__ = ["ActivityLogRow", "InvocationRow", "ProcessLifetimeRow"]
+__all__ = ["ActivityLogRow", "InvocationRow", "PositionRow", "ProcessLifetimeRow"]
