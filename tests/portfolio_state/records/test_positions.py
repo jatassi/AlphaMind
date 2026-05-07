@@ -9,6 +9,7 @@ from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
     InstrumentType,
+    LiveExecutionEstimate,
     LocateStatus,
     OptionContractType,
     OptionGreeks,
@@ -208,6 +209,47 @@ class TestPositionFill:
     def test_required_fields_enforced(self) -> None:
         with pytest.raises(ValidationError):
             PositionFill.model_validate({"fill_price": 100.0})
+
+    def test_live_execution_estimate_defaults_to_none(self) -> None:
+        """(a) live_execution_estimate defaults to None (live-mode case)."""
+        fill = PositionFill(
+            fill_timestamp=self._now_utc(),
+            fill_price=100.0,
+            fill_quantity=10.0,
+            slippage=0.01,
+            fees=1.50,
+        )
+        assert fill.live_execution_estimate is None
+
+    def test_live_execution_estimate_populated_succeeds(self) -> None:
+        """(b) Populating live_execution_estimate (paper-mode case) succeeds."""
+        est = _make_live_estimate()
+        fill = PositionFill(
+            fill_timestamp=self._now_utc(),
+            fill_price=150.0,
+            fill_quantity=10.0,
+            slippage=0.01,
+            fees=0.50,
+            live_execution_estimate=est,
+        )
+        assert fill.live_execution_estimate is est
+
+    def test_negative_fees_rejected(self) -> None:
+        """(c) Negative fees raises ValidationError (newly enforced constraint)."""
+        with pytest.raises(ValidationError):
+            PositionFill(
+                fill_timestamp=self._now_utc(),
+                fill_price=100.0,
+                fill_quantity=10.0,
+                slippage=0.01,
+                fees=-1.0,
+            )
+
+    def test_docstring_includes_slippage_sign_convention(self) -> None:
+        """PositionFill docstring includes slippage and fees sign-convention paragraphs."""
+        doc = PositionFill.__doc__ or ""
+        assert "slippage" in doc
+        assert "fees" in doc
 
 
 class TestEquityPositionDetails:
@@ -645,3 +687,96 @@ class TestSpinOffInvariant:
         )
         assert p.origin == "SPIN"
         assert p.parent_position_id == "POS-AAPL-000"
+
+
+# ---------------------------------------------------------------------------
+# LiveExecutionEstimate tests
+# ---------------------------------------------------------------------------
+
+
+def _make_live_estimate(**overrides: object) -> LiveExecutionEstimate:
+    kwargs: dict[str, object] = {
+        "estimated_spread_usd": 0.05,
+        "estimated_impact_usd": 0.02,
+        "estimated_regulatory_fees_usd": 0.01,
+        "live_adjusted_fill_price": 149.92,
+    }
+    kwargs.update(overrides)
+    return LiveExecutionEstimate.model_validate(kwargs)
+
+
+class TestLiveExecutionEstimate:
+    def test_happy_path(self) -> None:
+        """(a) Valid construction succeeds with all four fields."""
+        est = _make_live_estimate()
+        assert est.estimated_spread_usd == 0.05
+        assert est.estimated_impact_usd == 0.02
+        assert est.estimated_regulatory_fees_usd == 0.01
+        assert est.live_adjusted_fill_price == 149.92
+
+    def test_negative_spread_rejected(self) -> None:
+        """(b) Negative estimated_spread_usd raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(estimated_spread_usd=-0.1)
+
+    def test_negative_impact_rejected(self) -> None:
+        """(b) Negative estimated_impact_usd raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(estimated_impact_usd=-0.01)
+
+    def test_negative_regulatory_fees_rejected(self) -> None:
+        """(b) Negative estimated_regulatory_fees_usd raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(estimated_regulatory_fees_usd=-0.005)
+
+    def test_nan_spread_rejected(self) -> None:
+        """(c) nan in estimated_spread_usd raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(estimated_spread_usd=float("nan"))
+
+    def test_inf_impact_rejected(self) -> None:
+        """(c) inf in estimated_impact_usd raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(estimated_impact_usd=float("inf"))
+
+    def test_nan_regulatory_fees_rejected(self) -> None:
+        """(c) nan in estimated_regulatory_fees_usd raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(estimated_regulatory_fees_usd=float("nan"))
+
+    def test_inf_live_adjusted_fill_price_rejected(self) -> None:
+        """(c) inf in live_adjusted_fill_price raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(live_adjusted_fill_price=float("inf"))
+
+    def test_nan_live_adjusted_fill_price_rejected(self) -> None:
+        """(c) nan in live_adjusted_fill_price raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(live_adjusted_fill_price=float("nan"))
+
+    def test_frozen(self) -> None:
+        """(d) Model is frozen — mutation raises ValidationError."""
+        est = _make_live_estimate()
+        with pytest.raises(ValidationError):
+            est.estimated_spread_usd = 1.0
+
+    def test_zero_cost_fields_accepted(self) -> None:
+        """Cost fields accept exactly zero (ge=0.0 boundary)."""
+        est = _make_live_estimate(
+            estimated_spread_usd=0.0,
+            estimated_impact_usd=0.0,
+            estimated_regulatory_fees_usd=0.0,
+        )
+        assert est.estimated_spread_usd == 0.0
+
+    def test_negative_live_adjusted_fill_price_accepted(self) -> None:
+        """live_adjusted_fill_price has no lower bound constraint."""
+        est = _make_live_estimate(live_adjusted_fill_price=-5.0)
+        assert est.live_adjusted_fill_price == -5.0
+
+    def test_docstring_includes_sign_convention(self) -> None:
+        """LiveExecutionEstimate docstring documents cost/sign convention."""
+        doc = LiveExecutionEstimate.__doc__ or ""
+        assert "positive" in doc
+        assert "estimated_spread_usd" in doc
+        assert "live_adjusted_fill_price" in doc
