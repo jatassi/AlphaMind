@@ -554,3 +554,36 @@ def test_recent_thesis_resolution_requires_thesis_id() -> None:
                 "signal_post_mortem": None,
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# position_size_rationale field (ALP-343)
+# ---------------------------------------------------------------------------
+
+
+def test_position_size_rationale_defaults_to_none() -> None:
+    """(a) Constructing ThesisRecord without position_size_rationale yields None."""
+    rec = _make_thesis_record()
+    assert rec.position_size_rationale is None
+
+
+def test_position_size_rationale_non_empty_string_accepted() -> None:
+    """(b) A non-empty rationale string is accepted."""
+    rec = _make_thesis_record(
+        position_size_rationale="Conviction 4 with tight invalidation supports top-of-band size."
+    )
+    assert rec.position_size_rationale == (
+        "Conviction 4 with tight invalidation supports top-of-band size."
+    )
+
+
+def test_position_size_rationale_empty_string_rejected() -> None:
+    """(c) An empty string is rejected by the field validator."""
+    with pytest.raises(ValidationError):
+        _make_thesis_record(position_size_rationale="")
+
+
+def test_position_size_rationale_whitespace_only_rejected() -> None:
+    """(d) A whitespace-only string is rejected by the field validator."""
+    with pytest.raises(ValidationError):
+        _make_thesis_record(position_size_rationale="   ")
