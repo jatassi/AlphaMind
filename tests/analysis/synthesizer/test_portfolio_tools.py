@@ -155,7 +155,7 @@ async def test_theses_handler_returns_text() -> None:
                 ticker="NVDA",
                 summary=summary,
                 key_catalyst="Earnings on 2026-05-22",
-                time_expectation_hours="48-72",
+                time_expectation_hours=48.0,
             ),
         ),
     )

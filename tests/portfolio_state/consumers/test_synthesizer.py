@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -283,9 +283,9 @@ def _make_thesis(
             "health_status": ThesisStatus.ON_TRACK,
             "prior_health_status": None,
             "generation_timestamp": _T0,
-            "time_expectation_hours": "4-24h",
+            "time_expectation_hours": 24.0,
             "age_hours": 4.0,
-            "expected_resolution_at": _T2,
+            "expected_resolution_at": _T0 + timedelta(hours=24),
             "resolution_timestamp": None,
             "resolution_category": None,
             "resolution_pnl_usd": None,
@@ -643,7 +643,7 @@ class TestSynthesizerValueObjects:
             ticker="AAPL",
             summary="Long on momentum.",
             key_catalyst="earnings beat",
-            time_expectation_hours="4-24h",
+            time_expectation_hours=24.0,
         )
         with pytest.raises(ValidationError):
             summary.ticker = "MSFT"
@@ -711,7 +711,7 @@ class TestProjectSynthesizerViewHappyPath:
         assert t.ticker == "AAPL"
         assert t.summary == "Long AAPL on momentum."
         assert t.key_catalyst == "earnings beat"
-        assert t.time_expectation_hours == "4-24h"
+        assert t.time_expectation_hours == 24.0
 
     def test_exposure_net_directional(self) -> None:
         snapshot = _make_snapshot()

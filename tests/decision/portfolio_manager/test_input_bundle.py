@@ -406,7 +406,7 @@ def _make_thesis(
             "health_status": ThesisStatus.ON_TRACK,
             "prior_health_status": prior_status,
             "generation_timestamp": _ENTRY_TIMESTAMP,
-            "time_expectation_hours": "24-72h",
+            "time_expectation_hours": 48.0,
             "age_hours": 36.4,
             "expected_resolution_at": datetime(2026, 5, 5, 14, 0, 0, tzinfo=UTC),
             "resolution_timestamp": None,
