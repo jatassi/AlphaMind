@@ -35,6 +35,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     PositionStatus,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 
 # ---------------------------------------------------------------------------
 # Position builder
@@ -53,8 +54,8 @@ def make_position_record(
     unrealized_pnl_usd: float = 0.0,
     asset_type: Literal["equity"] = "equity",
     fill_timestamp: datetime = _DEFAULT_FILL_TS,
-) -> PositionRecord:
-    """Construct an equity ``PositionRecord`` for scenario-test use.
+) -> PositionView:
+    """Construct an equity ``PositionView`` for scenario-test use.
 
     ``size_pct`` is the position weight as a percentage of portfolio value;
     ``size_usd`` is the current notional / market value. The builder fills in
@@ -79,7 +80,7 @@ def make_position_record(
     delta_signed = -size_usd if is_short else size_usd
     cost_basis = max(size_usd - unrealized_pnl_usd, 1e-9)
     unrealized_pnl_pct = (unrealized_pnl_usd / cost_basis) * 100.0
-    return PositionRecord(
+    record = PositionRecord(
         position_id=position_id,
         thesis_id=None,
         bracket_id=None,
@@ -97,6 +98,12 @@ def make_position_record(
             ),
         ),
         realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
         current_market_value_usd=size_usd,
         unrealized_pnl_usd=unrealized_pnl_usd,
         unrealized_pnl_pct=unrealized_pnl_pct,
@@ -107,9 +114,6 @@ def make_position_record(
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
     )
 
 

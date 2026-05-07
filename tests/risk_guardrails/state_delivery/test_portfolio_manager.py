@@ -43,6 +43,7 @@ from alphamind.portfolio_state.snapshot import (
     PortfolioPnL,
     SectorExposureEntry,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery import (
     CorrelationState,
@@ -197,7 +198,7 @@ def _make_position(
     sector: str = "tech",
     weight_pct: float = 4.2,
     unrealized_pnl_pct: float = 5.0,
-) -> PositionRecord:
+) -> PositionView:
     is_short = direction == Direction.SHORT
     equity = EquityPositionDetails(
         ticker=ticker,
@@ -214,7 +215,7 @@ def _make_position(
         slippage=0.05,
         fees=1.0,
     )
-    return PositionRecord(
+    record = PositionRecord(
         position_id=position_id,
         thesis_id=None,
         bracket_id=None,
@@ -224,6 +225,12 @@ def _make_position(
         details=equity,
         execution_history=(fill,),
         realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
         current_market_value_usd=weight_pct * 5_000.0,
         unrealized_pnl_usd=unrealized_pnl_pct * 100.0,
         unrealized_pnl_pct=unrealized_pnl_pct,
@@ -234,17 +241,14 @@ def _make_position(
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
     )
 
 
-def _wrap_position(position: PositionRecord) -> StrategistPositionView:
+def _wrap_position(view: PositionView) -> StrategistPositionView:
     # Use a relaxed-validation StrategistPositionView via construct to avoid pulling
     # in thesis/bracket fixtures we do not need at the renderer layer.
     return StrategistPositionView(
-        position=position,
+        position=view,
         thesis=None,
         bracket=None,
         pending_orders=(),
@@ -254,7 +258,7 @@ def _wrap_position(position: PositionRecord) -> StrategistPositionView:
 
 def _make_pm_view(
     *,
-    positions: tuple[PositionRecord, ...] = (),
+    positions: tuple[PositionView, ...] = (),
     risk_budget: RiskBudgetConsumption | None = None,
     active: ActiveRiskParameterSet | None = None,
     drawdown: DrawdownState | None = None,

@@ -31,7 +31,6 @@ from alphamind.portfolio_state.consumers.strategist import project_strategist_vi
 from alphamind.portfolio_state.consumers.synthesizer import project_synthesizer_view
 from alphamind.portfolio_state.freshness import AssembledSnapshot
 from alphamind.portfolio_state.pricing import PriceQuote, StubCurrentPriceProvider
-from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.repository import (
     RepositoryConsistencyError,
@@ -40,6 +39,7 @@ from alphamind.portfolio_state.repository import (
     StubPortfolioStateRepository,
 )
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
+from alphamind.portfolio_state.views.positions import PositionView
 from tests.portfolio_state._fixtures import (
     _INV_ID,
     _make_base_fixture,
@@ -277,7 +277,7 @@ class TestSectionCAssemblerCorrectness:
         self._assembled = _assemble(build_multi_position_snapshot_inputs())
         self._snapshot = self._assembled.snapshot
 
-    def _pos_by_id(self, position_id: str) -> PositionRecord:
+    def _pos_by_id(self, position_id: str) -> PositionView:
         p = self._snapshot.position_by_id(position_id)
         assert p is not None, f"position {position_id} not found"
         return p

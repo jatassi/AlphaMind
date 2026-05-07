@@ -74,6 +74,7 @@ from alphamind.portfolio_state.snapshot import (
     DirectionalExposure,
     PortfolioPnL,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 
@@ -283,7 +284,7 @@ def _make_position_record(
     age_hours: float = 36.4,
     share_count: float = 200.0,
     avg_cost: float = 800.0,
-) -> PositionRecord:
+) -> PositionView:
     market_value = weight_pct * _TOTAL_PORTFOLIO_VALUE_USD / 100.0
     equity = EquityPositionDetails(
         ticker=ticker,
@@ -297,7 +298,7 @@ def _make_position_record(
         slippage=0.01,
         fees=1.0,
     )
-    return PositionRecord.model_validate(
+    record = PositionRecord.model_validate(
         {
             "position_id": position_id,
             "thesis_id": None,
@@ -308,20 +309,23 @@ def _make_position_record(
             "details": equity,
             "execution_history": (fill,),
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": market_value,
-            "unrealized_pnl_usd": unrealized_pnl_usd,
-            "unrealized_pnl_pct": unrealized_pnl_pct,
-            "position_weight_pct": weight_pct,
-            "position_age_hours": age_hours,
-            "notional_exposure_usd": market_value,
-            "delta_adjusted_exposure_usd": market_value,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
         }
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=market_value,
+        unrealized_pnl_usd=unrealized_pnl_usd,
+        unrealized_pnl_pct=unrealized_pnl_pct,
+        position_weight_pct=weight_pct,
+        position_age_hours=age_hours,
+        notional_exposure_usd=market_value,
+        delta_adjusted_exposure_usd=market_value,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
     )
 
 

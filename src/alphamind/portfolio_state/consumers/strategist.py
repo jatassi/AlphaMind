@@ -23,7 +23,6 @@ from alphamind.portfolio_state.records.capital import (
     RiskBudgetConsumption,
 )
 from alphamind.portfolio_state.records.orders import BracketRecord, OrderRecord
-from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.portfolio_state.records.theses import RecentThesisResolution, ThesisRecord
 from alphamind.portfolio_state.snapshot import (
     DirectionalExposure,
@@ -31,6 +30,7 @@ from alphamind.portfolio_state.snapshot import (
     PortfolioStateSnapshot,
     SectorExposureEntry,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 
 # ---------------------------------------------------------------------------
 # Value objects
@@ -44,7 +44,7 @@ class StrategistPositionView(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    position: PositionRecord
+    position: PositionView
     thesis: ThesisRecord | None
     bracket: BracketRecord | None
     pending_orders: tuple[OrderRecord, ...]

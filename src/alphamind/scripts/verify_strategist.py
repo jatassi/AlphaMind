@@ -103,6 +103,7 @@ from alphamind.portfolio_state.snapshot import (
     PortfolioPnL,
     SectorExposureEntry,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -289,8 +290,8 @@ def _make_equity_position(
     avg_cost: float,
     age_hours: float = 24.0,
     weight_pct: float = 5.0,
-) -> PositionRecord:
-    """Build an OPEN equity position with one prior fill."""
+) -> PositionView:
+    """Build an OPEN equity PositionView with one prior fill."""
     fill = PositionFill(
         fill_timestamp=_AS_OF - timedelta(hours=age_hours),
         fill_price=avg_cost,
@@ -299,7 +300,7 @@ def _make_equity_position(
         fees=1.0,
     )
     notional = share_count * _current_price_lookup(ticker)
-    return PositionRecord(
+    record = PositionRecord(
         position_id=position_id,
         thesis_id=f"THESIS-{position_id}",
         bracket_id=f"BRK-{position_id}",
@@ -313,6 +314,12 @@ def _make_equity_position(
         ),
         execution_history=(fill,),
         realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
         current_market_value_usd=notional,
         unrealized_pnl_usd=0.0,
         unrealized_pnl_pct=0.0,
@@ -323,9 +330,6 @@ def _make_equity_position(
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
     )
 
 

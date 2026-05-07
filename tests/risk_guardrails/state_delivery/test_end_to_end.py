@@ -74,6 +74,7 @@ from alphamind.portfolio_state.records.positions import (
 )
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.snapshot import DirectionalExposure, PortfolioPnL
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import (
     EmergencyContext,
     EmergencyTrigger,
@@ -538,7 +539,7 @@ def _build_equity_position(
     direction: Direction,
     weight_pct: float,
     unrealized_pnl_pct: float,
-) -> PositionRecord:
+) -> PositionView:
     is_short = direction == Direction.SHORT
     market_value = weight_pct * _TOTAL_PORTFOLIO_VALUE_USD / 100.0
     if is_short:
@@ -558,7 +559,7 @@ def _build_equity_position(
         slippage=0.01,
         fees=1.0,
     )
-    return PositionRecord(
+    record = PositionRecord(
         position_id=position_id,
         thesis_id=None,
         bracket_id=None,
@@ -568,6 +569,12 @@ def _build_equity_position(
         details=equity,
         execution_history=(fill,),
         realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
         current_market_value_usd=market_value,
         unrealized_pnl_usd=unrealized_pnl_pct * 10.0,
         unrealized_pnl_pct=unrealized_pnl_pct,
@@ -578,9 +585,6 @@ def _build_equity_position(
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
     )
 
 
@@ -590,7 +594,7 @@ def _build_option_position(
     ticker: str,
     weight_pct: float,
     unrealized_pnl_pct: float,
-) -> PositionRecord:
+) -> PositionView:
     market_value = weight_pct * _TOTAL_PORTFOLIO_VALUE_USD / 100.0
     options = OptionsPositionDetails(
         underlying_ticker=ticker,
@@ -609,7 +613,7 @@ def _build_option_position(
         slippage=0.01,
         fees=1.0,
     )
-    return PositionRecord(
+    record = PositionRecord(
         position_id=position_id,
         thesis_id=None,
         bracket_id=None,
@@ -619,6 +623,12 @@ def _build_option_position(
         details=options,
         execution_history=(fill,),
         realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
         current_market_value_usd=market_value,
         unrealized_pnl_usd=unrealized_pnl_pct * 2.0,
         unrealized_pnl_pct=unrealized_pnl_pct,
@@ -629,14 +639,11 @@ def _build_option_position(
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
     )
 
 
-def _build_all_positions() -> tuple[PositionRecord, ...]:
-    records: list[PositionRecord] = []
+def _build_all_positions() -> tuple[PositionView, ...]:
+    records: list[PositionView] = []
     for position_id, ticker, direction, _sector, weight_pct, pnl_pct, instrument in _POSITION_SPEC:
         if instrument == InstrumentType.EQUITY:
             records.append(
@@ -679,9 +686,9 @@ def _build_sector_resolver() -> SectorResolver:
     return _resolver
 
 
-def _wrap_position(record: PositionRecord) -> StrategistPositionView:
+def _wrap_position(view: PositionView) -> StrategistPositionView:
     return StrategistPositionView(
-        position=record,
+        position=view,
         thesis=None,
         bracket=None,
         pending_orders=(),

@@ -31,8 +31,8 @@ from alphamind.config.models.guardrails import BreachResponse
 from alphamind.portfolio_state.records.positions import (
     Direction,
     InstrumentType,
-    PositionRecord,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior.config import BreachBehaviorConfig
 from alphamind.risk_guardrails.breach_behavior.emergency_triggers import MarginCallEvent
 from alphamind.risk_guardrails.breach_behavior.engine_envelope import compose_engine_envelope
@@ -146,18 +146,18 @@ class FollowUpBreachSelectorProtocol(Protocol):
         *,
         rule_id: str,
         rule_projection: RuleProjectionProtocol,
-        post_liquidation_positions: tuple[PositionRecord, ...],
+        post_liquidation_positions: tuple[PositionView, ...],
         liquidity: tuple[PositionLiquidity, ...],
         portfolio_value_usd: float,
     ) -> tuple[PositionSelectionResult, ProposedClose]: ...
 
 
 # ---------------------------------------------------------------------------
-# Helpers — translate PositionRecord/PositionSelectionResult into ProposedClose
+# Helpers — translate PositionView/PositionSelectionResult into ProposedClose
 # ---------------------------------------------------------------------------
 
 
-def _asset_type_of(position: PositionRecord) -> _AssetType:
+def _asset_type_of(position: PositionView) -> _AssetType:
     if position.instrument_type == InstrumentType.EQUITY:
         return "equity"
     if position.instrument_type == InstrumentType.OPTIONS:
@@ -165,14 +165,14 @@ def _asset_type_of(position: PositionRecord) -> _AssetType:
     return "strategy"
 
 
-def _direction_of(position: PositionRecord) -> _DirectionLabel:
+def _direction_of(position: PositionView) -> _DirectionLabel:
     return "long" if position.direction == Direction.LONG else "short"
 
 
 def _proposed_close_from_selection(
     *,
     selection: PositionSelectionResult,
-    position: PositionRecord,
+    position: PositionView,
     portfolio_value_usd: float,
 ) -> ProposedClose:
     """Translate a position-selection result + record into a ProposedClose."""
@@ -204,7 +204,7 @@ def _proposed_close_from_selection(
 
 
 def _full_close_proposed_close(
-    position: PositionRecord, *, portfolio_value_usd: float
+    position: PositionView, *, portfolio_value_usd: float
 ) -> ProposedClose:
     """Build a full-close ProposedClose for the alternate-position search."""
     pre_pct = position.position_weight_pct
@@ -253,7 +253,7 @@ def _margin_call_breach_details(
 
 def _validate_inputs(
     *,
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     liquidity: tuple[PositionLiquidity, ...],
 ) -> None:
     if not open_positions:
@@ -323,7 +323,7 @@ def _newly_failed_immediate_rules(
 def orchestrate_margin_call_cascade(  # noqa: PLR0913 — orchestrator surface mandated by story 07
     *,
     margin_call_event: MarginCallEvent,
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     liquidity: tuple[PositionLiquidity, ...],
     risk_reward_metric: tuple[PositionRiskReward, ...],
     current_state: PortfolioStateSnapshotProtocol,
@@ -435,9 +435,9 @@ def orchestrate_margin_call_cascade(  # noqa: PLR0913 — orchestrator surface m
 
 
 def _apply_close_to_positions(
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     selection: PositionSelectionResult,
-) -> tuple[PositionRecord, ...]:
+) -> tuple[PositionView, ...]:
     """Hypothetical post-close position set; full-close removes, partial-trim retains.
 
     Margin calls always full-close, so the post-liquidation set excludes the
@@ -455,7 +455,7 @@ def _extend_with_follow_ups(  # noqa: PLR0913 — internal helper threading casc
     initial_selection: PositionSelectionResult,
     initial_close: ProposedClose,
     initial_excluded_rule: str,
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     liquidity: tuple[PositionLiquidity, ...],
     current_state: PortfolioStateSnapshotProtocol,
     library_config: LibraryConfigProtocol,
@@ -570,7 +570,7 @@ def orchestrate_breach_cascade(  # noqa: PLR0913 — orchestrator surface mandat
     primary_breach_details: BreachDetails,
     proposed_close: ProposedClose,
     primary_position_selection: PositionSelectionResult,
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     liquidity: tuple[PositionLiquidity, ...],
     current_state: PortfolioStateSnapshotProtocol,
     library_config: LibraryConfigProtocol,
@@ -672,7 +672,7 @@ def _resolve_primary_or_alternate(  # noqa: PLR0913 — orchestrator-internal sw
     primary_position_selection: PositionSelectionResult,
     primary_proposed_close: ProposedClose,
     initial_secondary: SecondaryBreachCheckResult,
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     liquidity: tuple[PositionLiquidity, ...],
     current_state: PortfolioStateSnapshotProtocol,
     library_config: LibraryConfigProtocol,
@@ -740,9 +740,9 @@ def _resolve_primary_or_alternate(  # noqa: PLR0913 — orchestrator-internal sw
 def _candidate_set(
     *,
     primary_position_id: str,
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     primary_rule_breach_type: _CandidateBreachType,
-) -> tuple[PositionRecord, ...]:
+) -> tuple[PositionView, ...]:
     """Restrict the alternate-search candidate set by breach type.
 
     ``"sector"`` — same-sector positions only (caller responsibility: tag
@@ -766,7 +766,7 @@ def search_for_alternate_position(  # noqa: PLR0913 — search surface mandated 
     *,
     primary_rule: str,
     primary_position_selection: PositionSelectionResult,
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     liquidity: tuple[PositionLiquidity, ...],
     current_state: PortfolioStateSnapshotProtocol,
     library_config: LibraryConfigProtocol,

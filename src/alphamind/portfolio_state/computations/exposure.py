@@ -7,6 +7,7 @@ from collections.abc import Callable
 
 from alphamind.portfolio_state.records.positions import Direction, PositionRecord
 from alphamind.portfolio_state.snapshot import DirectionalExposure, SectorExposureEntry
+from alphamind.portfolio_state.views.positions import PositionView
 
 # ---------------------------------------------------------------------------
 # Public type alias
@@ -28,7 +29,7 @@ def _validate_total(total_portfolio_value_usd: float) -> None:
         raise ValueError(msg)
 
 
-def _check_enriched(positions: tuple[PositionRecord, ...]) -> None:
+def _check_enriched(positions: tuple[PositionView, ...]) -> None:
     for pos in positions:
         if pos.delta_adjusted_exposure_usd is None:
             msg = (
@@ -48,7 +49,7 @@ def _pct(value: float, total: float) -> float:
 
 
 def compute_sector_exposure(
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     resolver: SectorResolver,
     total_portfolio_value_usd: float,
 ) -> tuple[SectorExposureEntry, ...]:
@@ -65,7 +66,7 @@ def compute_sector_exposure(
     short_by_sector: dict[str, float] = defaultdict(float)
 
     for pos in open_positions:
-        sector = resolver(pos) or _UNCLASSIFIED
+        sector = resolver(pos.record) or _UNCLASSIFIED
         dae: float = pos.delta_adjusted_exposure_usd
         if pos.direction == Direction.LONG:
             long_by_sector[sector] += dae
@@ -94,7 +95,7 @@ def compute_sector_exposure(
 
 
 def compute_directional_exposure(
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     total_portfolio_value_usd: float,
 ) -> DirectionalExposure:
     """Compute portfolio-level directional and gross exposure.

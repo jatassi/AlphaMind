@@ -90,7 +90,7 @@ def _project_held_positions(
     result = []
     for pos in snapshot.open_positions:
         ticker = _ticker_from_position(pos)
-        sector = sector_resolver(pos) or "UNCLASSIFIED"
+        sector = sector_resolver(pos.record) or "UNCLASSIFIED"
         result.append(
             AnalystHeldPosition(
                 position_id=pos.position_id,

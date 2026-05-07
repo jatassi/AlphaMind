@@ -24,6 +24,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     PositionStatus,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import (
     BreachBehaviorConfig,
     CascadeContext,
@@ -200,9 +201,9 @@ def _short_position(
     ticker: str,
     weight_pct: float,
     market_value_usd: float,
-) -> PositionRecord:
+) -> PositionView:
     fill_ts = datetime(2026, 4, 28, 14, 0, tzinfo=UTC)
-    return PositionRecord(
+    record = PositionRecord(
         position_id=position_id,
         thesis_id=None,
         bracket_id=None,
@@ -227,6 +228,12 @@ def _short_position(
             ),
         ),
         realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
         current_market_value_usd=market_value_usd,
         unrealized_pnl_usd=-market_value_usd * 0.1,
         unrealized_pnl_pct=-10.0,
@@ -237,9 +244,6 @@ def _short_position(
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
     )
 
 
@@ -249,9 +253,9 @@ def _long_position(
     ticker: str,
     weight_pct: float,
     market_value_usd: float,
-) -> PositionRecord:
+) -> PositionView:
     fill_ts = datetime(2026, 4, 28, 14, 0, tzinfo=UTC)
-    return PositionRecord(
+    record = PositionRecord(
         position_id=position_id,
         thesis_id=None,
         bracket_id=None,
@@ -273,6 +277,12 @@ def _long_position(
             ),
         ),
         realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
         current_market_value_usd=market_value_usd,
         unrealized_pnl_usd=market_value_usd * 0.05,
         unrealized_pnl_pct=5.0,
@@ -283,9 +293,6 @@ def _long_position(
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
     )
 
 
@@ -323,7 +330,7 @@ def default_context(default_config: BreachBehaviorConfig) -> CascadeContext:
 
 
 @pytest.fixture
-def a7_positions() -> tuple[PositionRecord, ...]:
+def a7_positions() -> tuple[PositionView, ...]:
     """A7 fixture: 3 short positions COIN 8% / SQ 7% / HOOD 7% on $98K portfolio."""
     return (
         _short_position(
@@ -397,7 +404,7 @@ def test_generate_cascade_id_rejects_trigger_id_below_one() -> None:
 
 def test_orchestrate_margin_call_cascade_a7_single_envelope_clean(
     default_context: CascadeContext,
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_liquidity: tuple[PositionLiquidity, ...],
     a7_risk_reward: tuple[PositionRiskReward, ...],
 ) -> None:
@@ -462,7 +469,7 @@ def test_orchestrate_margin_call_cascade_a7_single_envelope_clean(
 
 def test_orchestrate_margin_call_cascade_secondary_breach_is_deferred(
     default_context: CascadeContext,
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_liquidity: tuple[PositionLiquidity, ...],
     a7_risk_reward: tuple[PositionRiskReward, ...],
 ) -> None:
@@ -507,7 +514,7 @@ def test_orchestrate_margin_call_cascade_secondary_breach_is_deferred(
 
 
 def _proposed_close_for_position(
-    position: PositionRecord, *, portfolio_value_usd: float
+    position: PositionView, *, portfolio_value_usd: float
 ) -> ProposedClose:
     pre_pct = position.position_weight_pct
     pre_usd = pre_pct / 100.0 * portfolio_value_usd
@@ -536,7 +543,7 @@ def _full_close_selection_on(position_id: str) -> PositionSelectionResult:
 
 def test_orchestrate_breach_cascade_no_secondary_emits_single_envelope(
     default_context: CascadeContext,
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_liquidity: tuple[PositionLiquidity, ...],
 ) -> None:
     """Sector-concentration breach where the primary close has no secondary breach."""
@@ -588,7 +595,7 @@ def test_orchestrate_breach_cascade_no_secondary_emits_single_envelope(
 
 def test_orchestrate_breach_cascade_alternate_found_emits_swap(
     default_context: CascadeContext,
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_liquidity: tuple[PositionLiquidity, ...],
 ) -> None:
     """Closing position A causes secondary; closing position B clears → alternate wins."""
@@ -658,7 +665,7 @@ def test_orchestrate_breach_cascade_alternate_found_emits_swap(
 
 def test_orchestrate_breach_cascade_no_alternate_emits_original_with_deferred(
     default_context: CascadeContext,
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_liquidity: tuple[PositionLiquidity, ...],
 ) -> None:
     """No candidate clears; emit original close with DEFERRED_TO_PM."""
@@ -729,7 +736,7 @@ def test_orchestrate_breach_cascade_no_alternate_emits_original_with_deferred(
 
 def test_search_for_alternate_position_returns_first_clean_candidate(
     default_config: BreachBehaviorConfig,
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_liquidity: tuple[PositionLiquidity, ...],
 ) -> None:
     """First-tried candidate fails; second-tried clears → returns the second."""
@@ -774,7 +781,7 @@ def test_search_for_alternate_position_returns_first_clean_candidate(
 
 def test_search_for_alternate_position_returns_none_when_no_candidate_clears(
     default_config: BreachBehaviorConfig,
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_liquidity: tuple[PositionLiquidity, ...],
 ) -> None:
     """Every candidate causes secondary breach → returns None."""
@@ -802,7 +809,7 @@ def test_search_for_alternate_position_returns_none_when_no_candidate_clears(
 
 
 def test_search_for_alternate_position_bound_by_cascade_max_steps(
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_liquidity: tuple[PositionLiquidity, ...],
 ) -> None:
     """Search visits at most cascade_max_steps candidates; later candidates skipped."""
@@ -905,7 +912,7 @@ def _follow_up_full_close_selector(
     *,
     rule_id: str,
     rule_projection: Any,
-    post_liquidation_positions: tuple[PositionRecord, ...],
+    post_liquidation_positions: tuple[PositionView, ...],
     liquidity: tuple[PositionLiquidity, ...],
     portfolio_value_usd: float,
 ) -> tuple[PositionSelectionResult, ProposedClose]:
@@ -937,7 +944,7 @@ def _follow_up_full_close_selector(
 
 def test_orchestrate_margin_call_cascade_chain_shares_cascade_id_distinct_triggers(
     default_context: CascadeContext,
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_liquidity: tuple[PositionLiquidity, ...],
     a7_risk_reward: tuple[PositionRiskReward, ...],
 ) -> None:
@@ -1013,7 +1020,7 @@ def test_orchestrate_margin_call_cascade_chain_shares_cascade_id_distinct_trigge
 
 def test_orchestrate_margin_call_cascade_step_limit_exceeded(
     default_config: BreachBehaviorConfig,
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_liquidity: tuple[PositionLiquidity, ...],
     a7_risk_reward: tuple[PositionRiskReward, ...],
 ) -> None:
@@ -1100,7 +1107,7 @@ def test_orchestrate_margin_call_cascade_step_limit_exceeded(
 
 def test_orchestrate_margin_call_cascade_threads_emitted_closes_through_post_state_projection(
     default_context: CascadeContext,
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_liquidity: tuple[PositionLiquidity, ...],
     a7_risk_reward: tuple[PositionRiskReward, ...],
 ) -> None:
@@ -1275,7 +1282,7 @@ def test_orchestrate_margin_call_cascade_threads_emitted_closes_through_post_sta
 
 def test_orchestrate_margin_call_cascade_rejects_one_of_classification_pair(
     default_context: CascadeContext,
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_liquidity: tuple[PositionLiquidity, ...],
     a7_risk_reward: tuple[PositionRiskReward, ...],
 ) -> None:
@@ -1307,7 +1314,7 @@ def test_orchestrate_margin_call_cascade_rejects_one_of_classification_pair(
 
 def test_orchestrate_breach_cascade_rejects_one_of_classification_pair(
     default_context: CascadeContext,
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_liquidity: tuple[PositionLiquidity, ...],
 ) -> None:
     """M3: same rule for the non-margin orchestrator."""
@@ -1406,7 +1413,7 @@ def test_orchestrate_breach_cascade_rejects_empty_positions(
 
 def test_orchestrate_margin_call_cascade_rejects_incomplete_liquidity(
     default_context: CascadeContext,
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_risk_reward: tuple[PositionRiskReward, ...],
 ) -> None:
     """Liquidity covers only 2 of 3 positions → ValueError."""
@@ -1439,7 +1446,7 @@ def test_orchestrate_margin_call_cascade_rejects_incomplete_liquidity(
 
 def test_orchestrate_margin_call_cascade_is_deterministic(
     default_context: CascadeContext,
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_liquidity: tuple[PositionLiquidity, ...],
     a7_risk_reward: tuple[PositionRiskReward, ...],
 ) -> None:
@@ -1473,7 +1480,7 @@ def test_orchestrate_margin_call_cascade_is_deterministic(
 
 def test_returned_envelopes_are_frozen(
     default_context: CascadeContext,
-    a7_positions: tuple[PositionRecord, ...],
+    a7_positions: tuple[PositionView, ...],
     a7_liquidity: tuple[PositionLiquidity, ...],
     a7_risk_reward: tuple[PositionRiskReward, ...],
 ) -> None:

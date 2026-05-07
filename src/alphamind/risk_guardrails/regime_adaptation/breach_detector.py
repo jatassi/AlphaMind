@@ -16,7 +16,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Literal
 
-from alphamind.portfolio_state.records.positions import Direction, PositionRecord
+from alphamind.portfolio_state.records.positions import Direction
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.regime_adaptation.types import (
     RegimeTransitionBreach,
     RegimeTransitionState,
@@ -71,7 +72,7 @@ per breaching rule with ``position_id=None``."""
 
 def detect_regime_transition_breaches(
     *,
-    held_positions: tuple[PositionRecord, ...],
+    held_positions: tuple[PositionView, ...],
     risk_budget: RiskBudgetConsumption,
     new_effective_limits: Mapping[str, float],
     transition_state: RegimeTransitionState,
@@ -141,10 +142,10 @@ def _classify_rule_id(rule_id: str) -> Literal["per_position", "aggregate"] | No
 def _scan_per_position_rule(
     *,
     rule_id: str,
-    held_positions: tuple[PositionRecord, ...],
+    held_positions: tuple[PositionView, ...],
     new_effective_limits: Mapping[str, float],
     rule_metadata: Mapping[str, RuleMetadata],
-    position_filter: Callable[[PositionRecord], bool],
+    position_filter: Callable[[PositionView], bool],
 ) -> list[RegimeTransitionBreach]:
     new_limit = _require(new_effective_limits, rule_id, source="new_effective_limits")
     metadata = _require(rule_metadata, rule_id, source="rule_metadata")

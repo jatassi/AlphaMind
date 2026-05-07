@@ -97,6 +97,7 @@ from alphamind.portfolio_state.repository import (
     PortfolioStateRepository,
 )
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
+from alphamind.portfolio_state.views.positions import PositionView
 
 log = logging.getLogger(__name__)
 
@@ -168,13 +169,13 @@ def _enrich_positions_with_price_classification(
     ids_fresh: set[str],
     ids_stale: set[str],
     ids_unknown: set[str],
-) -> tuple[list[PositionRecord], datetime | None]:
+) -> tuple[list[PositionView], datetime | None]:
     """Enrich positions (first pass) and accumulate price-fetch outcome classification.
 
     Mutates *ids_fresh*, *ids_stale*, *ids_unknown* in place.
     Returns (enriched_list, oldest_price_as_of).
     """
-    enriched: list[PositionRecord] = []
+    enriched: list[PositionView] = []
     oldest: datetime | None = None
     for pos in positions:
         category, as_of = _classify_position_price_fetch(pos, price_map)
@@ -353,8 +354,12 @@ def _enrich_position_first_pass(
     price_map: dict[str, PriceQuote],
     brackets_by_bracket_id: dict[str, BracketRecord],
     now: datetime,
-) -> PositionRecord:
+) -> PositionView:
     """Compute all per-position enrichment fields except position_weight_pct.
+
+    Constructs a :class:`PositionView` wrapping the persistent record. The
+    ``position_weight_pct`` field is set to 0.0 here as a placeholder; the
+    second-pass enrichment (after total portfolio value is known) updates it.
 
     Missing-price / stale-price handling: when the pricing ticker is absent
     from *price_map*, or the returned quote has ``is_stale=True``, all
@@ -388,18 +393,18 @@ def _enrich_position_first_pass(
             distance_to_target_usd, distance_to_stop_usd
         )
 
-    return position.model_copy(
-        update={
-            "current_market_value_usd": pf.current_market_value_usd,
-            "unrealized_pnl_usd": unrealized_pnl_usd,
-            "unrealized_pnl_pct": unrealized_pnl_pct,
-            "position_age_hours": position_age_hours,
-            "notional_exposure_usd": pf.notional_exposure_usd,
-            "delta_adjusted_exposure_usd": pf.delta_adjusted_exposure_usd,
-            "distance_to_target_usd": distance_to_target_usd,
-            "distance_to_stop_usd": distance_to_stop_usd,
-            "risk_reward_at_current": risk_reward_at_current,
-        }
+    return PositionView(
+        record=position,
+        current_market_value_usd=pf.current_market_value_usd,
+        unrealized_pnl_usd=unrealized_pnl_usd,
+        unrealized_pnl_pct=unrealized_pnl_pct,
+        position_weight_pct=0.0,  # second pass overwrites once total portfolio value is known
+        position_age_hours=position_age_hours,
+        notional_exposure_usd=pf.notional_exposure_usd,
+        delta_adjusted_exposure_usd=pf.delta_adjusted_exposure_usd,
+        distance_to_target_usd=distance_to_target_usd,
+        distance_to_stop_usd=distance_to_stop_usd,
+        risk_reward_at_current=risk_reward_at_current,
     )
 
 
@@ -541,32 +546,32 @@ async def assemble_snapshot(
     # ------------------------------------------------------------------
     # Step 8 — Enrich positions with weight (second pass) + sort
     # ------------------------------------------------------------------
-    final_open: list[PositionRecord] = sorted(
+    final_open: list[PositionView] = sorted(
         (
-            pos.model_copy(
+            view.model_copy(
                 update={
                     "position_weight_pct": compute_position_weight_pct(
-                        pos.current_market_value_usd, total_portfolio_value
+                        view.current_market_value_usd, total_portfolio_value
                     )
                 }
             )
-            for pos in enriched_open
+            for view in enriched_open
         ),
-        key=lambda p: p.position_id,
+        key=lambda v: v.position_id,
     )
 
-    final_pending: list[PositionRecord] = sorted(
+    final_pending: list[PositionView] = sorted(
         (
-            pos.model_copy(
+            view.model_copy(
                 update={
                     "position_weight_pct": compute_position_weight_pct(
-                        pos.current_market_value_usd, total_portfolio_value
+                        view.current_market_value_usd, total_portfolio_value
                     )
                 }
             )
-            for pos in enriched_pending
+            for view in enriched_pending
         ),
-        key=lambda p: p.position_id,
+        key=lambda v: v.position_id,
     )
 
     # ------------------------------------------------------------------

@@ -55,6 +55,7 @@ from alphamind.portfolio_state.snapshot import (
     DirectionalExposure,
     PortfolioPnL,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
@@ -342,7 +343,7 @@ def _render_position_record(
     return "\n".join(rows)
 
 
-def _resolve_position_ticker(pos: PositionRecord) -> str:
+def _resolve_position_ticker(pos: PositionRecord | PositionView) -> str:
     details = pos.details
     if isinstance(details, EquityPositionDetails):
         return details.ticker
@@ -354,13 +355,13 @@ def _resolve_position_ticker(pos: PositionRecord) -> str:
     raise ValueError(msg)
 
 
-def _render_underlying_line(pos: PositionRecord, ticker: str) -> str:
+def _render_underlying_line(pos: PositionView, ticker: str) -> str:
     direction = _DIRECTION_DISPLAY[pos.direction]
     instrument = _INSTRUMENT_TYPE_DISPLAY[pos.instrument_type]
     return f"  Underlying:    {ticker} (instrument: {instrument}, direction: {direction})"
 
 
-def _render_size_line(pos: PositionRecord) -> str:
+def _render_size_line(pos: PositionView) -> str:
     market_value = format_dollar(pos.current_market_value_usd)
     weight = format_pct(pos.position_weight_pct)
     details = pos.details
@@ -373,13 +374,13 @@ def _render_size_line(pos: PositionRecord) -> str:
     return f"  Size:          {size_label}  {market_value}  ({weight}% of portfolio)"
 
 
-def _render_pnl_line(pos: PositionRecord) -> str:
+def _render_pnl_line(pos: PositionView) -> str:
     pnl_abs = _format_signed_dollar(pos.unrealized_pnl_usd)
     pnl_pct = _format_signed_pct(pos.unrealized_pnl_pct)
     return f"  P/L:           {pnl_abs} since open ({pnl_pct})"
 
 
-def _render_age_line(pos: PositionRecord) -> str:
+def _render_age_line(pos: PositionView) -> str:
     age = f"{pos.position_age_hours:.1f}"
     placed = (
         pos.entry_timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -390,7 +391,7 @@ def _render_age_line(pos: PositionRecord) -> str:
 
 
 def _render_distance_and_rr_line(
-    pos: PositionRecord,
+    pos: PositionView,
     bracket: BracketRecord | None,
     current_price: float,
 ) -> str:

@@ -19,9 +19,9 @@ from alphamind.portfolio_state.records.capital import (
 from alphamind.portfolio_state.records.positions import (
     InstrumentType,
     OptionsPositionDetails,
-    PositionRecord,
     StrategyPositionDetails,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 
 # ---------------------------------------------------------------------------
@@ -399,7 +399,7 @@ def _max_loss_for(active: ActiveRiskParameterSet, rule_id: str) -> float | None:
 
 
 def _max_loss_for_position(
-    pos: PositionRecord,
+    pos: PositionView,
     max_loss_equity: float | None,
     max_loss_options: float | None,
 ) -> float | None:
@@ -506,7 +506,7 @@ def render_sector_breakdown_block(
     grouped: dict[str, list[StrategistPositionView]] = {sector: [] for sector in active_sectors}
     unclassified: list[StrategistPositionView] = []
     for view in positions:
-        sector_key = sector_resolver(view.position)
+        sector_key = sector_resolver(view.position.record)
         if sector_key is None:
             unclassified.append(view)
         elif sector_key in grouped:
