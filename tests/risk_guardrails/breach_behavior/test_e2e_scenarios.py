@@ -22,10 +22,12 @@ import pytest
 from pydantic import ValidationError
 
 from alphamind.config.models.guardrails import ProgressiveTier
-from alphamind.portfolio_state.records.capital import RegimeTransitionState
+from alphamind.portfolio_state.records.capital import (
+    ActiveRiskParameterSet,
+    RegimeTransitionState,
+)
 from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.risk_guardrails.breach_behavior import (
-    ActiveRiskParameterSet,
     BreachBehaviorConfig,
     BreachDetails,
     CascadeContext,

@@ -13,12 +13,20 @@ Design reference: ``docs/design/06-risk-guardrails/breach-behavior.md`` §
 
 from __future__ import annotations
 
-from alphamind.risk_guardrails.breach_behavior.types import (
-    ActiveRiskParameterSet,
-    DrawdownState,
-    DrawdownTier,
-    HaltState,
-)
+from typing import TYPE_CHECKING
+
+from alphamind.risk_guardrails.breach_behavior.types import DrawdownTier, HaltState
+
+if TYPE_CHECKING:
+    # ``ActiveRiskParameterSet``/``DrawdownState`` live in
+    # ``portfolio_state.records.capital``, which re-exports the four
+    # risk-guardrail enums from this package. Eager import would cycle.
+    # Annotation-only usage is sound under ``from __future__ import
+    # annotations``.
+    from alphamind.portfolio_state.records.capital import (
+        ActiveRiskParameterSet,
+        DrawdownState,
+    )
 
 _DAILY_DRAWDOWN_RULE_ID = "daily_drawdown_pct"
 

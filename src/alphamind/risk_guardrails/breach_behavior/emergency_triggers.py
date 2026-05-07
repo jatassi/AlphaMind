@@ -17,6 +17,7 @@ defaults.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -25,9 +26,15 @@ from alphamind.risk_guardrails.breach_behavior.types import (
     EmergencyContext,
     EmergencyTrigger,
     RegimeLabel,
-    RiskBudgetConsumption,
     RiskZone,
 )
+
+if TYPE_CHECKING:
+    # ``RiskBudgetConsumption`` lives in ``portfolio_state.records.capital``,
+    # which re-exports the four risk-guardrail enums from this package.
+    # Eager import would cycle. Annotation-only usage is sound under
+    # ``from __future__ import annotations``.
+    from alphamind.portfolio_state.records.capital import RiskBudgetConsumption
 
 
 def _require_tz_aware(v: datetime, *, field_name: str) -> datetime:

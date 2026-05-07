@@ -22,7 +22,6 @@ from alphamind.config.models.overlays import Overlay
 from alphamind.config.models.regimes import Regime
 from alphamind.persistence.models import Base, RegimeAdaptationStateRow
 from alphamind.persistence.session import make_engine, make_session_factory
-from alphamind.portfolio_state.records.capital import RegimeTransitionState
 from alphamind.risk_guardrails.regime_adaptation import (
     RegimeAdaptationState,
     insert_state,
@@ -32,6 +31,7 @@ from alphamind.risk_guardrails.regime_adaptation.persistence import (
     row_to_state,
     state_to_row,
 )
+from alphamind.risk_guardrails.regime_adaptation.types import RegimeTransitionState
 
 # ---------------------------------------------------------------------------
 # Fixtures

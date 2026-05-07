@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from alphamind.portfolio_state.records.capital import ActiveRiskParameterSet, CashLedger
+if TYPE_CHECKING:
+    # ``capital.py`` re-exports the four risk-guardrail enums from their new
+    # canonical homes under ``risk_guardrails/``; eager import here would
+    # cycle when capital is loaded by way of the regime-adaptation package.
+    # Both records appear only in annotations, so the deferred form is sound.
+    from alphamind.portfolio_state.records.capital import ActiveRiskParameterSet, CashLedger
 
 
 def compute_cash_pct_of_portfolio(

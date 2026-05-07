@@ -3,6 +3,12 @@
 Public surface: configuration knobs, canonical typed value objects, and (in
 later stories) the primitives that compose them. Re-exports below give every
 downstream consumer a single import path.
+
+Module load order (``types`` first) is load-bearing: ``types.py`` is the
+canonical home for ``DrawdownTier``, which ``portfolio_state.records.capital``
+re-exports. Loading any function-module first would put us mid-load on
+``breach_behavior`` while capital tries to resolve ``DrawdownTier`` and trigger
+an ``ImportError``.
 """
 
 from alphamind.risk_guardrails.breach_behavior.cascade import (
@@ -62,12 +68,10 @@ from alphamind.risk_guardrails.breach_behavior.secondary_breach import (
     check_secondary_breach,
 )
 from alphamind.risk_guardrails.breach_behavior.types import (
-    ActiveRiskParameterSet,
     BreachDetails,
     BreachResponse,
     CloseRationaleType,
     Direction,
-    DrawdownState,
     DrawdownTier,
     EmergencyContext,
     EmergencyTrigger,
@@ -86,8 +90,6 @@ from alphamind.risk_guardrails.breach_behavior.types import (
     RegimeLabel,
     RegimeTransitionState,
     RejectionRuleEntry,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
     RiskManagementSubtype,
     RiskZone,
     SecondaryBreachCheckResult,
@@ -96,7 +98,6 @@ from alphamind.risk_guardrails.breach_behavior.types import (
 from alphamind.risk_guardrails.breach_behavior.zones import classify_zone
 
 __all__ = [
-    "ActiveRiskParameterSet",
     "BreachBehaviorConfig",
     "BreachDetails",
     "BreachResponse",
@@ -105,7 +106,6 @@ __all__ = [
     "CloseRationaleType",
     "Direction",
     "DrawdownSample",
-    "DrawdownState",
     "DrawdownTier",
     "EmergencyContext",
     "EmergencyTrigger",
@@ -135,8 +135,6 @@ __all__ = [
     "RegimeLabel",
     "RegimeTransitionState",
     "RejectionRuleEntry",
-    "RiskBudgetConsumption",
-    "RiskBudgetEntry",
     "RiskManagementSubtype",
     "RiskZone",
     "RuleProjectionProtocol",

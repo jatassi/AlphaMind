@@ -5,9 +5,11 @@ from __future__ import annotations
 import pytest
 
 from alphamind.config.models.guardrails import ProgressiveTier
-from alphamind.portfolio_state.records.capital import ActiveRiskParameterEntry
-from alphamind.risk_guardrails.breach_behavior import (
+from alphamind.portfolio_state.records.capital import (
+    ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
+)
+from alphamind.risk_guardrails.breach_behavior import (
     DrawdownTier,
     RegimeLabel,
     RegimeTransitionState,

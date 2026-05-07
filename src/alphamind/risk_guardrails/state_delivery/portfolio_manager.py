@@ -16,11 +16,9 @@ from alphamind.portfolio_state.records.activity_log import (
     PositionClosedDetail,
     PositionReducedDetail,
 )
-from alphamind.portfolio_state.records.capital import (
-    DrawdownTier,
-    RiskZone,
-)
 from alphamind.portfolio_state.records.positions import PositionRecord
+from alphamind.risk_guardrails.breach_behavior.types import DrawdownTier
+from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 from alphamind.risk_guardrails.state_delivery.primitives import (

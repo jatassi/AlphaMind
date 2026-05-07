@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from alphamind.portfolio_state.records.capital import RegimeLabel
 from alphamind.portfolio_state.records.thesis_quality import (
     AlphaBetaDecomposition,
     AttributionDimension,
@@ -16,6 +15,7 @@ from alphamind.portfolio_state.records.thesis_quality import (
     InvalidationTimingClass,
     InvalidationTimingStat,
     PerformanceAttributionEntry,
+    RegimeLabel,
     ResolutionWindowCounts,
     SignalHitRate,
     SignalToThesisConversion,

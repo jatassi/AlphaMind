@@ -6,11 +6,11 @@ from types import MappingProxyType
 
 import pytest
 
-from alphamind.portfolio_state.records.capital import RegimeTransitionState
 from alphamind.risk_guardrails.regime_adaptation.interpolation import (
     interpolate_loosening_multipliers,
     resolve_active_multipliers,
 )
+from alphamind.risk_guardrails.regime_adaptation.types import RegimeTransitionState
 
 
 def test_interpolation_at_remaining_three_is_one_third() -> None:

@@ -18,19 +18,27 @@ typed-record ``__post_init__`` enforces.
 from __future__ import annotations
 
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from alphamind.config.models.overlays import Overlay
 from alphamind.config.models.regimes import Regime
-from alphamind.distillation.baselines import _refresh_transaction
-from alphamind.persistence.models import RegimeAdaptationStateRow
-from alphamind.portfolio_state.records.capital import RegimeTransitionState
 from alphamind.risk_guardrails.regime_adaptation.types import (
     RegimeAdaptationState,
+    RegimeTransitionState,
     overlays_to_strings,
 )
+
+if TYPE_CHECKING:
+    # ``RegimeAdaptationStateRow`` lives in ``persistence.models``, which
+    # imports ``RegimeTransitionState`` (re-exported from
+    # ``portfolio_state.records.capital``). Eager loading here would re-enter
+    # ``persistence.models`` mid-load through that chain. The annotation-only
+    # appearance is safe under ``from __future__ import annotations``;
+    # construction sites import lazily.
+    from alphamind.persistence.models import RegimeAdaptationStateRow
 
 
 def state_to_row(
@@ -45,6 +53,9 @@ def state_to_row(
     bijective with the typed record because ``row_to_state`` re-sorts on
     read; equality comparisons across persistence cycles are stable.
     """
+    # Lazy import — see TYPE_CHECKING block at top of module for the cycle rationale.
+    from alphamind.persistence.models import RegimeAdaptationStateRow
+
     overlays_csv = ",".join(overlays_to_strings(state.active_overlays))
     prior_regime = state.prior_regime.value if state.prior_regime is not None else None
     transition_origin_regime = (
@@ -115,6 +126,9 @@ def select_most_recent_state(session: Session) -> RegimeAdaptationState | None:
     the orchestrator distinguishes "first ever invocation" from a
     populated state.
     """
+    # Lazy import — see TYPE_CHECKING block at top of module for the cycle rationale.
+    from alphamind.persistence.models import RegimeAdaptationStateRow
+
     row = session.execute(
         select(RegimeAdaptationStateRow).order_by(RegimeAdaptationStateRow.as_of.desc()).limit(1)
     ).scalar_one_or_none()
@@ -136,6 +150,11 @@ def insert_state(
     ``IntegrityError`` if a row with the same ``as_of`` already exists —
     the orchestrator must not double-write within an invocation.
     """
+    # Lazy import — ``distillation.baselines`` transitively pulls
+    # ``persistence.models``, which back-references this package via
+    # ``RegimeTransitionState``. Module-load deferral keeps the chain acyclic.
+    from alphamind.distillation.baselines import _refresh_transaction
+
     row = state_to_row(state, ingested_at=ingested_at)
     with _refresh_transaction(session):
         session.add(row)

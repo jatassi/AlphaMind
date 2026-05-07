@@ -14,17 +14,23 @@ Reading: the story file at
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from alphamind.portfolio_state.records.capital import (
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-)
 from alphamind.portfolio_state.records.positions import Direction, PositionRecord
 from alphamind.risk_guardrails.regime_adaptation.types import (
     RegimeTransitionBreach,
+    RegimeTransitionState,
     RuleMetadata,
 )
+
+if TYPE_CHECKING:
+    # ``RiskBudgetConsumption`` lives in ``portfolio_state.records.capital``,
+    # which re-exports the four risk-guardrail enums from
+    # ``risk_guardrails.regime_adaptation.types`` (and siblings). Importing it
+    # at runtime would cycle through capital → regime_adaptation package init
+    # → this module. The annotation-only usage is safe under
+    # ``from __future__ import annotations``.
+    from alphamind.portfolio_state.records.capital import RiskBudgetConsumption
 
 # ---------------------------------------------------------------------------
 # Deferred-classification rule set (per breach-behavior.md § Per-rule breach

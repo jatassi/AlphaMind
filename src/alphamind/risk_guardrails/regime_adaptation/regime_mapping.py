@@ -14,22 +14,19 @@ Reading:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from alphamind.config.models.distillation import RegimeClassification
 from alphamind.config.models.regimes import Regime
-from alphamind.distillation.regime import RegimeLabel as DistillationRegimeLabel
-from alphamind.distillation.regime import VixBand, classify_vix_band
 from alphamind.risk_guardrails.regime_adaptation.types import VixBoundaryThresholds
 
-# The four VIX bands map onto the four guardrail regimes one-for-one. The
-# distillation layer's ``classify_vix_band`` is the single source of truth for
-# the boundary semantics (``<=`` at the upper end of each band); this table
-# translates its output into the guardrail vocabulary.
-_VIX_BAND_TO_REGIME: dict[VixBand, Regime] = {
-    VixBand.LOW_VOL: Regime.low_vol,
-    VixBand.NORMAL: Regime.normal,
-    VixBand.ELEVATED: Regime.elevated,
-    VixBand.CRISIS: Regime.crisis,
-}
+if TYPE_CHECKING:
+    # Eager import would trigger ``distillation.baselines``, which holds a
+    # latent cycle with ``persistence.models`` (which now re-exports
+    # ``RegimeTransitionState`` from this package). ``DistillationRegimeLabel``
+    # and ``VixBand`` are deferred to call-time inside the function below.
+    from alphamind.distillation.regime import RegimeLabel as DistillationRegimeLabel
+    from alphamind.distillation.regime import VixBand
 
 
 def map_distillation_to_guardrail_regime(
@@ -52,6 +49,21 @@ def map_distillation_to_guardrail_regime(
     Raises ``ValueError`` when ``vix_level`` is negative — surfaces upstream
     data corruption rather than silently classifying it as ``low_vol``.
     """
+    # Lazy imports — see TYPE_CHECKING block at top of module for the cycle rationale.
+    from alphamind.distillation.regime import RegimeLabel as DistillationRegimeLabel
+    from alphamind.distillation.regime import VixBand, classify_vix_band
+
+    # The four VIX bands map onto the four guardrail regimes one-for-one. The
+    # distillation layer's ``classify_vix_band`` is the single source of truth for
+    # the boundary semantics (``<=`` at the upper end of each band); this table
+    # translates its output into the guardrail vocabulary.
+    vix_band_to_regime: dict[VixBand, Regime] = {
+        VixBand.LOW_VOL: Regime.low_vol,
+        VixBand.NORMAL: Regime.normal,
+        VixBand.ELEVATED: Regime.elevated,
+        VixBand.CRISIS: Regime.crisis,
+    }
+
     if vix_level < 0:
         msg = f"vix_level must be non-negative; got vix_level={vix_level}"
         raise ValueError(msg)
@@ -65,7 +77,7 @@ def map_distillation_to_guardrail_regime(
         normal_vix_max=vix_thresholds.normal_vix_max,
         elevated_vix_max=vix_thresholds.elevated_vix_max,
     )
-    return _VIX_BAND_TO_REGIME[band]
+    return vix_band_to_regime[band]
 
 
 def from_regime_classification(rc: RegimeClassification) -> VixBoundaryThresholds:
