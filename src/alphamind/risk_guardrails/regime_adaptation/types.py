@@ -63,7 +63,7 @@ from alphamind.config.models.overlays import EventType, Overlay  # noqa: E402
 from alphamind.config.models.regimes import Regime  # noqa: E402
 from alphamind.config.resolver import LoadedConfig  # noqa: E402
 from alphamind.distillation.calibration import CalibrationState  # noqa: E402
-from alphamind.portfolio_state.records.positions import PositionRecord  # noqa: E402
+from alphamind.portfolio_state.views.positions import PositionView  # noqa: E402
 
 if TYPE_CHECKING:
     # ``DistillationRegimeLabel`` (from ``distillation.regime``) is used only
@@ -499,7 +499,7 @@ class RegimeAdaptationInputs:
     distillation_vix_level: float
     distillation_regime_skip_emergency: bool
     vix_thresholds: VixBoundaryThresholds
-    held_positions: tuple[PositionRecord, ...]
+    held_positions: tuple[PositionView, ...]
     risk_budget: RiskBudgetConsumption
     prior_parameter_set: ActiveRiskParameterSet | None
     event_calendar: EventCalendar

@@ -1,4 +1,11 @@
-"""Consumer-facing typed records for position inventory (story 03a)."""
+"""Persistent typed records for position inventory (story 03a + 05a).
+
+Story 05a split the original ``PositionRecord`` into a slim persistent core
+(this file) and a delivery-time ``PositionView`` (see ``views/positions.py``).
+Computed enrichments (market value, unrealized P/L, exposure, etc.) live on
+``PositionView``; ``PositionRecord`` carries only state that survives across
+invocations.
+"""
 
 from __future__ import annotations
 
@@ -200,24 +207,12 @@ PositionDetailsPayload = Annotated[
 
 
 class PositionRecord(BaseModel):
-    """Consumer-facing record for a single position across all instrument types.
+    """Persistent record for a single position across all instrument types.
 
-    Sign conventions
-    ----------------
-    ``position_weight_pct``
-        Signed: positive for long positions, negative for short positions. Can
-        exceed 100% absolute value when the position is leveraged. Computed as
-        ``current_market_value_usd / total_portfolio_value * 100``; the sign
-        follows the market value sign. Any finite float is accepted.
-
-    ``notional_exposure_usd``
-        Magnitude only — always >= 0. Represents the gross notional of the
-        position regardless of direction.
-
-    ``delta_adjusted_exposure_usd``
-        Signed: positive for net-long delta, negative for net-short delta.
-        For short equities this is negative; for options it is signed by the
-        option delta. Any finite float is accepted.
+    This record carries only state that survives across invocations. Computed
+    enrichments (market value, unrealized P/L, exposure, etc.) live on
+    ``PositionView`` and are produced by the snapshot assembler at delivery
+    time.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -233,18 +228,6 @@ class PositionRecord(BaseModel):
     execution_history: tuple[PositionFill, ...]
     realized_pnl_to_date_usd: float | None
 
-    # Shape declared here; population is the assembler's job (story 06)
-    current_market_value_usd: float
-    unrealized_pnl_usd: float
-    unrealized_pnl_pct: float
-    position_weight_pct: _FiniteFloat
-    position_age_hours: float
-    notional_exposure_usd: float
-    delta_adjusted_exposure_usd: _FiniteFloat
-    distance_to_target_usd: float | None
-    distance_to_stop_usd: float | None
-    risk_reward_at_current: float | None
-
     corporate_action_adjustment_needed: bool
     parent_position_id: str | None
     origin: str | None
@@ -258,29 +241,19 @@ class PositionRecord(BaseModel):
     def _validate_all(self) -> PositionRecord:
         self._check_status_rules()
         self._check_equity_direction_fields()
-        self._check_range_constraints()
         self._check_spinoff_invariant()
         return self
 
     def _check_status_rules(self) -> None:
-        if self.status == PositionStatus.PENDING:
-            if self.execution_history:
-                msg = "execution_history must be empty when status is PENDING"
-                raise ValueError(msg)
-        elif self.status == PositionStatus.OPEN:
-            if not self.execution_history:
-                msg = "execution_history must be non-empty when status is OPEN"
-                raise ValueError(msg)
-        elif self.status == PositionStatus.CLOSED:
-            if self.realized_pnl_to_date_usd is None:
-                msg = "realized_pnl_to_date_usd must be non-None when status is CLOSED"
-                raise ValueError(msg)
-            if self.current_market_value_usd != 0.0:
-                msg = "current_market_value_usd must be zero when status is CLOSED"
-                raise ValueError(msg)
-            if self.unrealized_pnl_usd != 0.0:
-                msg = "unrealized_pnl_usd must be zero when status is CLOSED"
-                raise ValueError(msg)
+        if self.status == PositionStatus.PENDING and self.execution_history:
+            msg = "execution_history must be empty when status is PENDING"
+            raise ValueError(msg)
+        if self.status == PositionStatus.OPEN and not self.execution_history:
+            msg = "execution_history must be non-empty when status is OPEN"
+            raise ValueError(msg)
+        if self.status == PositionStatus.CLOSED and self.realized_pnl_to_date_usd is None:
+            msg = "realized_pnl_to_date_usd must be non-None when status is CLOSED"
+            raise ValueError(msg)
 
     def _check_equity_direction_fields(self) -> None:
         if not isinstance(self.details, EquityPositionDetails):
@@ -301,14 +274,6 @@ class PositionRecord(BaseModel):
                 "borrow_rate_pct, locate_status, and margin_held_usd must all be None "
                 "when direction is LONG"
             )
-            raise ValueError(msg)
-
-    def _check_range_constraints(self) -> None:
-        if self.position_age_hours < 0.0:
-            msg = f"position_age_hours must be >= 0; got {self.position_age_hours}"
-            raise ValueError(msg)
-        if self.notional_exposure_usd < 0.0:
-            msg = f"notional_exposure_usd must be >= 0; got {self.notional_exposure_usd}"
             raise ValueError(msg)
 
     def _check_spinoff_invariant(self) -> None:

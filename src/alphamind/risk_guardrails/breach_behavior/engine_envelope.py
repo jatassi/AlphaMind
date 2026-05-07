@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from alphamind.portfolio_state.records.positions import PositionRecord
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior.types import (
     _ENVELOPE_ID_PATTERN,
     BreachDetails,
@@ -77,7 +77,7 @@ def compose_engine_envelope(  # noqa: PLR0913 — signature dictated by story 06
     rule_breached: str,
     breach_details: BreachDetails,
     position_selection: PositionSelectionResult,
-    positions_by_id: dict[str, PositionRecord],
+    positions_by_id: dict[str, PositionView],
     portfolio_value_usd: float,
     cascade_id: str | None = None,
     secondary_breach_check: SecondaryBreachCheckResult | None = None,

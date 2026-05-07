@@ -407,7 +407,7 @@ _OPTIONS_DETAILS = _make_options_details()
 
 
 def _make_position(**overrides: object) -> PositionRecord:
-    """Build a valid open long equity PositionRecord."""
+    """Build a valid open long equity PositionRecord (post-05a — persistent fields only)."""
     kwargs: dict[str, object] = {
         "position_id": "POS-AAPL-001",
         "thesis_id": "THESIS-001",
@@ -418,16 +418,6 @@ def _make_position(**overrides: object) -> PositionRecord:
         "details": _LONG_EQUITY,
         "execution_history": (_FILL,),
         "realized_pnl_to_date_usd": None,
-        "current_market_value_usd": 15000.0,
-        "unrealized_pnl_usd": 500.0,
-        "unrealized_pnl_pct": 3.4,
-        "position_weight_pct": 10.0,
-        "position_age_hours": 24.0,
-        "notional_exposure_usd": 15000.0,
-        "delta_adjusted_exposure_usd": 15000.0,
-        "distance_to_target_usd": None,
-        "distance_to_stop_usd": None,
-        "risk_reward_at_current": None,
         "corporate_action_adjustment_needed": False,
         "parent_position_id": None,
         "origin": None,
@@ -534,12 +524,10 @@ class TestOpenStatusRules:
 
 
 class TestClosedStatusRules:
-    def test_closed_with_pnl_and_zero_market_value_passes(self) -> None:
+    def test_closed_with_realized_pnl_passes(self) -> None:
         p = _make_position(
             status=PositionStatus.CLOSED,
             realized_pnl_to_date_usd=500.0,
-            current_market_value_usd=0.0,
-            unrealized_pnl_usd=0.0,
         )
         assert p.status == PositionStatus.CLOSED
 
@@ -548,30 +536,8 @@ class TestClosedStatusRules:
             _make_position(
                 status=PositionStatus.CLOSED,
                 realized_pnl_to_date_usd=None,
-                current_market_value_usd=0.0,
-                unrealized_pnl_usd=0.0,
             )
         assert "realized_pnl_to_date_usd" in str(exc_info.value)
-
-    def test_closed_with_nonzero_market_value_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            _make_position(
-                status=PositionStatus.CLOSED,
-                realized_pnl_to_date_usd=500.0,
-                current_market_value_usd=100.0,
-                unrealized_pnl_usd=0.0,
-            )
-        assert "current_market_value_usd" in str(exc_info.value)
-
-    def test_closed_with_nonzero_unrealized_pnl_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            _make_position(
-                status=PositionStatus.CLOSED,
-                realized_pnl_to_date_usd=500.0,
-                current_market_value_usd=0.0,
-                unrealized_pnl_usd=50.0,
-            )
-        assert "unrealized_pnl_usd" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -612,54 +578,6 @@ class TestDirectionShortFields:
 # ---------------------------------------------------------------------------
 # Range constraint tests
 # ---------------------------------------------------------------------------
-
-
-class TestRangeConstraints:
-    # position_weight_pct: finite-only, any sign (shorts negative, leveraged >100%)
-    def test_position_weight_pct_short_negative_passes(self) -> None:
-        p = _make_position(position_weight_pct=-3.5)
-        assert p.position_weight_pct == -3.5
-
-    def test_position_weight_pct_leveraged_above_100_passes(self) -> None:
-        p = _make_position(position_weight_pct=145.0)
-        assert p.position_weight_pct == 145.0
-
-    def test_position_weight_pct_inf_fails(self) -> None:
-        with pytest.raises(ValidationError):
-            _make_position(position_weight_pct=float("inf"))
-
-    def test_position_weight_pct_at_bounds_passes(self) -> None:
-        p0 = _make_position(position_weight_pct=0.0)
-        p100 = _make_position(position_weight_pct=100.0)
-        assert p0.position_weight_pct == 0.0
-        assert p100.position_weight_pct == 100.0
-
-    def test_position_age_hours_negative_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            _make_position(position_age_hours=-1.0)
-        assert "position_age_hours" in str(exc_info.value)
-
-    def test_position_age_hours_zero_passes(self) -> None:
-        p = _make_position(position_age_hours=0.0)
-        assert p.position_age_hours == 0.0
-
-    def test_notional_exposure_usd_negative_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            _make_position(notional_exposure_usd=-100.0)
-        assert "notional_exposure_usd" in str(exc_info.value)
-
-    def test_notional_exposure_usd_zero_passes(self) -> None:
-        p = _make_position(notional_exposure_usd=0.0)
-        assert p.notional_exposure_usd == 0.0
-
-    # delta_adjusted_exposure_usd: signed (any finite float)
-    def test_delta_adjusted_exposure_usd_negative_passes(self) -> None:
-        p = _make_position(delta_adjusted_exposure_usd=-50000.0)
-        assert p.delta_adjusted_exposure_usd == -50000.0
-
-    def test_delta_adjusted_exposure_usd_inf_fails(self) -> None:
-        with pytest.raises(ValidationError):
-            _make_position(delta_adjusted_exposure_usd=float("inf"))
 
 
 # ---------------------------------------------------------------------------

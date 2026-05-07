@@ -9,9 +9,9 @@ from __future__ import annotations
 from typing import Literal
 
 from alphamind.portfolio_state.records.capital import CashLedger
-from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.portfolio_state.repository import PortfolioPnLInputs
 from alphamind.portfolio_state.snapshot import PortfolioPnL
+from alphamind.portfolio_state.views.positions import PositionView
 
 _REQUIRED_ROLLING_KEYS: tuple[Literal["1d", "3d", "5d", "20d"], ...] = (
     "1d",
@@ -22,7 +22,7 @@ _REQUIRED_ROLLING_KEYS: tuple[Literal["1d", "3d", "5d", "20d"], ...] = (
 
 
 def compute_portfolio_pnl(
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     inputs: PortfolioPnLInputs,
     total_portfolio_value_usd: float,
 ) -> PortfolioPnL:
@@ -69,7 +69,7 @@ def compute_portfolio_pnl(
 
 
 def compute_drawdown_by_source_pct(
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     current_drawdown_pct: float,
 ) -> dict[str, float]:
     """Return per-position contributions to the current drawdown percentage.
@@ -112,8 +112,8 @@ def compute_drawdown_by_source_pct(
 
 
 def compute_total_portfolio_value_usd(
-    open_positions: tuple[PositionRecord, ...],
-    pending_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
+    pending_positions: tuple[PositionView, ...],
     cash_ledger: CashLedger,
 ) -> float:
     """Return total portfolio value as cash plus the magnitude of all position market values.

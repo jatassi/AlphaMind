@@ -15,6 +15,7 @@ from alphamind.portfolio_state.records.positions import (
     StrategyPositionDetails,
 )
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
+from alphamind.portfolio_state.views.positions import PositionView
 
 # ---------------------------------------------------------------------------
 # Value objects
@@ -86,7 +87,7 @@ class SynthesizerPortfolioStateReader(Protocol):
 # ---------------------------------------------------------------------------
 
 
-def _ticker_from_position(pos: PositionRecord) -> str:
+def _ticker_from_position(pos: PositionRecord | PositionView) -> str:
     details = pos.details
     if isinstance(details, EquityPositionDetails):
         return details.ticker
@@ -105,7 +106,7 @@ def _project_positions(
     result = []
     for pos in all_positions:
         ticker = _ticker_from_position(pos)
-        sector = sector_resolver(pos) or "UNCLASSIFIED"
+        sector = sector_resolver(pos.record) or "UNCLASSIFIED"
         result.append(
             SynthesizerPositionSummary(
                 ticker=ticker,

@@ -39,7 +39,7 @@ from alphamind.portfolio_state.records.capital import (
     RegimeTransitionState,
     RiskBudgetConsumption,
 )
-from alphamind.portfolio_state.records.positions import PositionRecord
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.regime_adaptation import (
     CompositeAlertState,
     EventCalendar,
@@ -224,7 +224,7 @@ def _empty_risk_budget() -> RiskBudgetConsumption:
 def _build_inputs(
     *,
     step: _Step,
-    held_positions: tuple[PositionRecord, ...],
+    held_positions: tuple[PositionView, ...],
     loaded_config: LoadedConfig,
     rule_metadata: Mapping[str, RuleMetadata],
 ) -> RegimeAdaptationInputs:
@@ -247,7 +247,7 @@ def _drive_one_step(
     *,
     step: _Step,
     now_utc: datetime,
-    held_positions: tuple[PositionRecord, ...],
+    held_positions: tuple[PositionView, ...],
     loaded_config: LoadedConfig,
     rule_metadata: Mapping[str, RuleMetadata],
     session: Session,
@@ -297,7 +297,7 @@ def test_regime_lifecycle_drives_every_transition_and_audit_correctly(
     full read-compute-persist seam — not just the orchestrator's pure
     composition.
     """
-    held_positions: tuple[PositionRecord, ...] = ()
+    held_positions: tuple[PositionView, ...] = ()
     for index, step in enumerate(_TIMELINE):
         now_utc = _T0 + index * _PER_INVOCATION_DELTA
         output = _drive_one_step(
@@ -408,7 +408,7 @@ def test_crisis_tightening_emits_position_max_size_breach(
     in_memory_session: Session,
     loaded_config_micro_normal: LoadedConfig,
     rule_metadata_from_shipped_registry: Mapping[str, RuleMetadata],
-    held_position_at_5pct: PositionRecord,
+    held_position_at_5pct: PositionView,
 ) -> None:
     """A held 5% position breaches ``position_max_size_pct`` on the crisis step.
 
@@ -418,7 +418,7 @@ def test_crisis_tightening_emits_position_max_size_breach(
     confirms the orchestrator wires the breach detector against the
     *new* (post-tightening) effective limits, not the prior limits.
     """
-    held_positions: tuple[PositionRecord, ...] = ()
+    held_positions: tuple[PositionView, ...] = ()
     crisis_breach_seen = False
     for index, step in enumerate(_TIMELINE):
         # Activate the held position as of invocation 5 (the crisis step);

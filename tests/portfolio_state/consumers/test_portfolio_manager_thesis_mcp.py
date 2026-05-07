@@ -60,6 +60,7 @@ from alphamind.portfolio_state.snapshot import (
     PortfolioPnL,
     PortfolioStateSnapshot,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 
 # ---------------------------------------------------------------------------
 # Shared timestamps / IDs
@@ -112,13 +113,13 @@ def _make_fill() -> PositionFill:
     )
 
 
-def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> PositionRecord:
+def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> PositionView:
     equity = EquityPositionDetails(
         ticker=ticker,
         share_count=100.0,
         average_cost_basis_per_share=150.0,
     )
-    return PositionRecord.model_validate(
+    record = PositionRecord.model_validate(
         {
             "position_id": pos_id,
             "thesis_id": None,
@@ -129,20 +130,23 @@ def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> Positi
             "details": equity,
             "execution_history": (_make_fill(),),
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": 15500.0,
-            "unrealized_pnl_usd": 500.0,
-            "unrealized_pnl_pct": 3.33,
-            "position_weight_pct": 10.0,
-            "position_age_hours": 4.0,
-            "notional_exposure_usd": 15000.0,
-            "delta_adjusted_exposure_usd": 15000.0,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
         }
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=15500.0,
+        unrealized_pnl_usd=500.0,
+        unrealized_pnl_pct=3.33,
+        position_weight_pct=10.0,
+        position_age_hours=4.0,
+        notional_exposure_usd=15000.0,
+        delta_adjusted_exposure_usd=15000.0,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
     )
 
 

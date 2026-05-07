@@ -49,6 +49,7 @@ from alphamind.portfolio_state.records.theses import (
     ThesisComponentType,
     ThesisRecord,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
@@ -315,14 +316,14 @@ def _render_per_position_record(
     return "\n".join(rows)
 
 
-def _render_underlying_line(pos: PositionRecord) -> str:
+def _render_underlying_line(pos: PositionView) -> str:
     ticker = _resolve_position_ticker(pos)
     direction = _DIRECTION_DISPLAY[pos.direction]
     instrument = _INSTRUMENT_TYPE_DISPLAY[pos.instrument_type]
     return f"  Underlying:    {ticker} (instrument: {instrument}, direction: {direction})"
 
 
-def _resolve_position_ticker(pos: PositionRecord) -> str:
+def _resolve_position_ticker(pos: PositionRecord | PositionView) -> str:
     details = pos.details
     if isinstance(details, EquityPositionDetails):
         return details.ticker
@@ -334,7 +335,7 @@ def _resolve_position_ticker(pos: PositionRecord) -> str:
     raise ValueError(msg)
 
 
-def _render_size_line(pos: PositionRecord) -> str:
+def _render_size_line(pos: PositionView) -> str:
     market_value = format_dollar(pos.current_market_value_usd)
     weight = format_pct(pos.position_weight_pct)
     details = pos.details
@@ -347,17 +348,17 @@ def _render_size_line(pos: PositionRecord) -> str:
     return f"  Size:          {size_label}  {market_value}  ({weight}% of portfolio)"
 
 
-def _render_pnl_line(pos: PositionRecord) -> str:
+def _render_pnl_line(pos: PositionView) -> str:
     pnl_abs = _format_signed_dollar(pos.unrealized_pnl_usd)
     pnl_pct = _format_signed_pct(pos.unrealized_pnl_pct)
     return f"  P/L:           {pnl_abs} since open ({pnl_pct})"
 
 
-def _render_age_line(pos: PositionRecord) -> str:
+def _render_age_line(pos: PositionView) -> str:
     return f"  Age:           {_format_position_age(pos.position_age_hours)} hours"
 
 
-def _render_distance_line(pos: PositionRecord, bracket: BracketRecord | None) -> str:
+def _render_distance_line(pos: PositionView, bracket: BracketRecord | None) -> str:
     target_str = _format_distance_pct(pos.distance_to_target_usd, pos.current_market_value_usd)
     stop_str = _format_distance_pct(pos.distance_to_stop_usd, pos.current_market_value_usd)
     bracket_legs: list[str] = []

@@ -23,6 +23,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
 )
 from alphamind.portfolio_state.snapshot import DirectionalExposure, SectorExposureEntry
+from alphamind.portfolio_state.views.positions import PositionView
 
 
 def _resolve_tech(_: PositionRecord) -> str | None:
@@ -52,8 +53,8 @@ def _make_long_equity(
     ticker: str,
     delta_adjusted_exposure_usd: float,
     notional: float = 10_000.0,
-) -> PositionRecord:
-    return PositionRecord.model_validate(
+) -> PositionView:
+    record = PositionRecord.model_validate(
         {
             "position_id": position_id,
             "thesis_id": None,
@@ -68,20 +69,23 @@ def _make_long_equity(
             ),
             "execution_history": (_FILL,),
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": notional,
-            "unrealized_pnl_usd": 0.0,
-            "unrealized_pnl_pct": 0.0,
-            "position_weight_pct": 10.0,
-            "position_age_hours": 24.0,
-            "notional_exposure_usd": notional,
-            "delta_adjusted_exposure_usd": delta_adjusted_exposure_usd,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
         }
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=notional,
+        unrealized_pnl_usd=0.0,
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=10.0,
+        position_age_hours=24.0,
+        notional_exposure_usd=notional,
+        delta_adjusted_exposure_usd=delta_adjusted_exposure_usd,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
     )
 
 
@@ -90,8 +94,8 @@ def _make_short_equity(
     ticker: str,
     delta_adjusted_exposure_usd: float,
     notional: float = 5_000.0,
-) -> PositionRecord:
-    return PositionRecord.model_validate(
+) -> PositionView:
+    record = PositionRecord.model_validate(
         {
             "position_id": position_id,
             "thesis_id": None,
@@ -109,20 +113,23 @@ def _make_short_equity(
             ),
             "execution_history": (_FILL,),
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": notional,
-            "unrealized_pnl_usd": 0.0,
-            "unrealized_pnl_pct": 0.0,
-            "position_weight_pct": 5.0,
-            "position_age_hours": 24.0,
-            "notional_exposure_usd": notional,
-            "delta_adjusted_exposure_usd": delta_adjusted_exposure_usd,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
         }
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=notional,
+        unrealized_pnl_usd=0.0,
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=5.0,
+        position_age_hours=24.0,
+        notional_exposure_usd=notional,
+        delta_adjusted_exposure_usd=delta_adjusted_exposure_usd,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
     )
 
 
@@ -131,7 +138,7 @@ def _make_long_option(
     ticker: str,
     delta_adjusted_exposure_usd: float,
     delta: float = -0.4,
-) -> PositionRecord:
+) -> PositionView:
     """Build a long put (negative delta) for testing sign-based bucket assignment."""
     greeks = OptionGreeks(delta=delta, gamma=0.05, theta=-0.01, vega=0.3)
     options_details = OptionsPositionDetails(
@@ -144,7 +151,7 @@ def _make_long_option(
         premium_paid_per_contract=5.0,
         greeks=greeks,
     )
-    return PositionRecord.model_validate(
+    record = PositionRecord.model_validate(
         {
             "position_id": position_id,
             "thesis_id": None,
@@ -155,20 +162,23 @@ def _make_long_option(
             "details": options_details,
             "execution_history": (_FILL,),
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": 1_000.0,
-            "unrealized_pnl_usd": 0.0,
-            "unrealized_pnl_pct": 0.0,
-            "position_weight_pct": 2.0,
-            "position_age_hours": 10.0,
-            "notional_exposure_usd": 8_000.0,
-            "delta_adjusted_exposure_usd": delta_adjusted_exposure_usd,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
         }
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=1_000.0,
+        unrealized_pnl_usd=0.0,
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=2.0,
+        position_age_hours=10.0,
+        notional_exposure_usd=8_000.0,
+        delta_adjusted_exposure_usd=delta_adjusted_exposure_usd,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
     )
 
 
@@ -185,7 +195,7 @@ class TestSectorResolverTypeAlias:
 
         resolver: SectorResolver = my_resolver
         pos = _make_long_equity("POS-001", "NVDA", 10_000.0)
-        assert resolver(pos) == "tech"
+        assert resolver(pos.record) == "tech"
 
 
 # ---------------------------------------------------------------------------

@@ -69,6 +69,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord,
     PositionStatus,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.regime_adaptation import (
     CompositeAlertState,
     EventCalendar,
@@ -215,12 +216,12 @@ def _empty_risk_budget() -> RiskBudgetConsumption:
     return RiskBudgetConsumption(entries=())
 
 
-def _zero_positions() -> tuple[PositionRecord, ...]:
+def _zero_positions() -> tuple[PositionView, ...]:
     return ()
 
 
-def _equity_position(*, position_id: str, position_weight_pct: float) -> PositionRecord:
-    return PositionRecord(
+def _equity_position(*, position_id: str, position_weight_pct: float) -> PositionView:
+    record = PositionRecord(
         position_id=position_id,
         thesis_id=None,
         bracket_id=None,
@@ -245,6 +246,12 @@ def _equity_position(*, position_id: str, position_weight_pct: float) -> Positio
             ),
         ),
         realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
         current_market_value_usd=1000.0,
         unrealized_pnl_usd=0.0,
         unrealized_pnl_pct=0.0,
@@ -255,9 +262,6 @@ def _equity_position(*, position_id: str, position_weight_pct: float) -> Positio
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
     )
 
 
@@ -269,7 +273,7 @@ def _build_inputs(
     ),
     distillation_vix_level: float = 10.0,
     distillation_regime_skip_emergency: bool = False,
-    held_positions: tuple[PositionRecord, ...] | None = None,
+    held_positions: tuple[PositionView, ...] | None = None,
     risk_budget: RiskBudgetConsumption | None = None,
     prior_parameter_set: ActiveRiskParameterSet | None = None,
     event_calendar: EventCalendar | None = None,
