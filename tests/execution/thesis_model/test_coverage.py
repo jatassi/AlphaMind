@@ -13,6 +13,9 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    EventTrigger,
+    PriceTrigger,
+    TimeTrigger,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -32,6 +35,16 @@ NOW = datetime(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
 # ---------------------------------------------------------------------------
 
 
+def _trigger_for(leg_type: BracketLegType) -> PriceTrigger | TimeTrigger | EventTrigger:
+    if leg_type == BracketLegType.TAKE_PROFIT:
+        return PriceTrigger(underlying_ticker="AAPL", threshold_usd=200.0, direction="GTE")
+    if leg_type == BracketLegType.PRICE_STOP:
+        return PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE")
+    if leg_type == BracketLegType.TIME_EXPIRATION:
+        return TimeTrigger(deadline=NOW + timedelta(hours=24))
+    return EventTrigger(description="thesis invalidated")
+
+
 def _make_leg(
     leg_id: str,
     leg_type: BracketLegType,
@@ -43,7 +56,7 @@ def _make_leg(
         leg_id=leg_id,
         leg_type=leg_type,
         order_id=order_id,
-        trigger_condition="trigger",
+        trigger=_trigger_for(leg_type),
         enforcement=enforcement,
         status=status,
         pl_based=False,

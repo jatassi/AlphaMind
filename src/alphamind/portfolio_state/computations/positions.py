@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from alphamind.portfolio_state.pricing import PriceQuote
-from alphamind.portfolio_state.records.orders import BracketLegType, BracketRecord
+from alphamind.portfolio_state.records.orders import BracketLegType, BracketRecord, PriceTrigger
 from alphamind.portfolio_state.records.positions import (
     Direction,
     InstrumentType,
@@ -155,17 +155,6 @@ def compute_unrealized_pnl_pct(unrealized_pnl_usd: float, cost_basis_usd: float)
 # ---------------------------------------------------------------------------
 
 
-def _parse_price_trigger(trigger_condition: str) -> float | None:
-    """Parse a trigger_condition string as a price level.
-
-    Returns the float value when the string is numeric, None otherwise.
-    """
-    try:
-        return float(trigger_condition)
-    except ValueError:
-        return None
-
-
 def compute_distance_to_target_usd(
     current_price_usd: float,
     bracket: BracketRecord,
@@ -177,15 +166,14 @@ def compute_distance_to_target_usd(
     - LONG:  target_price - current_price_usd  (positive = upside remaining)
     - SHORT: current_price_usd - target_price  (positive = downside remaining)
 
-    Returns None when:
-    - No TAKE_PROFIT leg is present in the bracket.
-    - The leg's trigger_condition is non-numeric (event- or time-based).
+    Returns None when no TAKE_PROFIT leg is present in the bracket. The
+    BracketLeg validator guarantees that a TAKE_PROFIT leg always carries a
+    ``PriceTrigger`` payload, so no string parsing is required.
     """
     for leg in bracket.protective_legs:
         if leg.leg_type == BracketLegType.TAKE_PROFIT:
-            target_price = _parse_price_trigger(leg.trigger_condition)
-            if target_price is None:
-                return None
+            assert isinstance(leg.trigger, PriceTrigger)
+            target_price = leg.trigger.threshold_usd
             if direction == Direction.LONG:
                 return target_price - current_price_usd
             return current_price_usd - target_price
@@ -203,15 +191,13 @@ def compute_distance_to_stop_usd(
     - LONG:  current_price_usd - stop_price  (positive = cushion above the stop)
     - SHORT: stop_price - current_price_usd  (positive = cushion below the stop)
 
-    Returns None when:
-    - No PRICE_STOP leg is present.
-    - The leg's trigger_condition is non-numeric.
+    Returns None when no PRICE_STOP leg is present. The BracketLeg validator
+    guarantees that a PRICE_STOP leg always carries a ``PriceTrigger`` payload.
     """
     for leg in bracket.protective_legs:
         if leg.leg_type == BracketLegType.PRICE_STOP:
-            stop_price = _parse_price_trigger(leg.trigger_condition)
-            if stop_price is None:
-                return None
+            assert isinstance(leg.trigger, PriceTrigger)
+            stop_price = leg.trigger.threshold_usd
             if direction == Direction.LONG:
                 return current_price_usd - stop_price
             return stop_price - current_price_usd

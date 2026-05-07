@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import StrEnum
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from alphamind.portfolio_state.records.positions import InstrumentType, OptionContractType
 
@@ -336,6 +337,71 @@ class BracketLegModification(BaseModel):
     rationale: str
 
 
+class PriceTrigger(BaseModel):
+    """Trigger for TAKE_PROFIT and PRICE_STOP legs.
+
+    Evaluates against the underlying equity's real-time price stream
+    (per orders-and-brackets.md § Options price-based stops). For equity
+    positions, ``underlying_ticker`` is the equity itself; for options
+    positions, it is the option's underlying equity.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    trigger_type: Literal["price"] = "price"
+    underlying_ticker: str = Field(min_length=1)
+    threshold_usd: Annotated[float, Field(gt=0, allow_inf_nan=False)]
+    direction: Literal["GTE", "LTE"]
+
+
+class TimeTrigger(BaseModel):
+    """Trigger for TIME_EXPIRATION legs.
+
+    Fires when wall-clock time crosses the deadline.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    trigger_type: Literal["time"] = "time"
+    deadline: datetime
+
+    @field_validator("deadline")
+    @classmethod
+    def _require_tz_aware(cls, v: datetime) -> datetime:
+        if v.tzinfo is None or v.utcoffset() is None:
+            msg = "deadline must be tz-aware UTC"
+            raise ValueError(msg)
+        return v
+
+
+class EventTrigger(BaseModel):
+    """Trigger for EVENT_INVALIDATION legs.
+
+    Qualitative condition the analysis pipeline evaluates. The engine
+    cannot enforce mechanically; the PM acts on the flag.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    trigger_type: Literal["event"] = "event"
+    description: str = Field(min_length=1)
+    condition_evaluator_id: str | None = None
+
+
+TriggerPayload = Annotated[
+    PriceTrigger | TimeTrigger | EventTrigger,
+    Field(discriminator="trigger_type"),
+]
+
+
+_LEG_TYPE_TO_TRIGGER_TYPE: dict[BracketLegType, str] = {
+    BracketLegType.TAKE_PROFIT: "price",
+    BracketLegType.PRICE_STOP: "price",
+    BracketLegType.TIME_EXPIRATION: "time",
+    BracketLegType.EVENT_INVALIDATION: "event",
+}
+
+
 class BracketLeg(BaseModel):
     """One leg definition within a bracket's protective set."""
 
@@ -344,7 +410,7 @@ class BracketLeg(BaseModel):
     leg_id: str
     leg_type: BracketLegType
     order_id: str | None
-    trigger_condition: str
+    trigger: TriggerPayload
     enforcement: BracketLegEnforcement
     status: BracketLegStatus
     pl_based: bool
@@ -353,6 +419,17 @@ class BracketLeg(BaseModel):
     def _validate_event_invalidation(self) -> BracketLeg:
         if self.leg_type == BracketLegType.EVENT_INVALIDATION and self.order_id is not None:
             msg = "EVENT_INVALIDATION leg must have order_id as None"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_trigger_matches_leg_type(self) -> BracketLeg:
+        expected = _LEG_TYPE_TO_TRIGGER_TYPE[self.leg_type]
+        if self.trigger.trigger_type != expected:
+            msg = (
+                f"leg_type={self.leg_type!r} requires trigger_type={expected!r}; "
+                f"got trigger_type={self.trigger.trigger_type!r}"
+            )
             raise ValueError(msg)
         return self
 

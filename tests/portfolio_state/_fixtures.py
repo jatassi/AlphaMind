@@ -49,6 +49,7 @@ from alphamind.portfolio_state.records.orders import (
     OrderStatus,
     OrderType,
     PriceParameters,
+    PriceTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -293,7 +294,7 @@ def _make_bracket(bracket_id: str, position_id: str) -> BracketRecord:
         leg_id=f"{bracket_id}-stop",
         leg_type=BracketLegType.PRICE_STOP,
         order_id=f"ord-stop-{bracket_id}",
-        trigger_condition="400.0",
+        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=400.0, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
         pl_based=False,
@@ -302,7 +303,7 @@ def _make_bracket(bracket_id: str, position_id: str) -> BracketRecord:
         leg_id=f"{bracket_id}-target",
         leg_type=BracketLegType.TAKE_PROFIT,
         order_id=f"ord-target-{bracket_id}",
-        trigger_condition="600.0",
+        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=600.0, direction="GTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
         pl_based=False,

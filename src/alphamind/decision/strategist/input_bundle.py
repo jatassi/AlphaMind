@@ -32,7 +32,10 @@ from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegType,
     BracketRecord,
+    EventTrigger,
     OrderRecord,
+    PriceTrigger,
+    TimeTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -380,30 +383,20 @@ def _bracket_leg_price(
     bracket: BracketRecord | None,
     leg_type: BracketLegType,
 ) -> float | None:
+    """Return the threshold price for the matching leg, or None when absent.
+
+    The BracketLeg validator guarantees ``leg.trigger`` is a ``PriceTrigger``
+    whenever ``leg_type`` is ``TAKE_PROFIT`` or ``PRICE_STOP``.
+    """
     if bracket is None:
         return None
     for leg in bracket.protective_legs:
         if leg.leg_type != leg_type:
             continue
-        return _trigger_price_from_condition(leg.trigger_condition)
+        if isinstance(leg.trigger, PriceTrigger):
+            return leg.trigger.threshold_usd
+        return None
     return None
-
-
-def _trigger_price_from_condition(condition: str) -> float | None:
-    """Extract the numeric price from a trigger condition string.
-
-    Trigger conditions are short comparison strings — ``"price >= 189.00"``,
-    ``"price <= 167.00"``. Pull the trailing numeric token; fall back to
-    ``None`` when no parseable number is present.
-    """
-    tokens = condition.split()
-    if not tokens:
-        return None
-    last = tokens[-1].strip().rstrip(".")
-    try:
-        return float(last)
-    except ValueError:
-        return None
 
 
 def _signed_distance_pct(current_price: float, target: float | None) -> str | None:
@@ -440,15 +433,20 @@ def _render_bracket_block(bracket: BracketRecord | None) -> str:
     stop_leg = _find_leg(bracket, BracketLegType.PRICE_STOP)
     time_leg = _find_leg(bracket, BracketLegType.TIME_EXPIRATION)
     event_leg = _find_leg(bracket, BracketLegType.EVENT_INVALIDATION)
-    if target_leg is not None:
-        lines.append(f"    target: {target_leg.trigger_condition}")
-    if stop_leg is not None:
-        lines.append(f"    stop: {stop_leg.trigger_condition}")
-    if time_leg is not None:
-        lines.append(f"    time deadline: {time_leg.trigger_condition}")
-    if event_leg is not None:
-        lines.append(f'    event invalidation: "{event_leg.trigger_condition}"')
+    if target_leg is not None and isinstance(target_leg.trigger, PriceTrigger):
+        lines.append(f"    target: {_format_price_trigger(target_leg.trigger)}")
+    if stop_leg is not None and isinstance(stop_leg.trigger, PriceTrigger):
+        lines.append(f"    stop: {_format_price_trigger(stop_leg.trigger)}")
+    if time_leg is not None and isinstance(time_leg.trigger, TimeTrigger):
+        lines.append(f"    time deadline: {time_leg.trigger.deadline.isoformat()}")
+    if event_leg is not None and isinstance(event_leg.trigger, EventTrigger):
+        lines.append(f'    event invalidation: "{event_leg.trigger.description}"')
     return "\n".join(lines)
+
+
+def _format_price_trigger(trigger: PriceTrigger) -> str:
+    """Render a PriceTrigger as ``<ticker> <GTE/LTE> $<threshold>``."""
+    return f"{trigger.underlying_ticker} {trigger.direction} ${trigger.threshold_usd}"
 
 
 def _find_leg(bracket: BracketRecord, leg_type: BracketLegType) -> BracketLeg | None:
