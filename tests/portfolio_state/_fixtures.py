@@ -417,7 +417,7 @@ def _make_thesis(
             "health_status": None,
             "prior_health_status": None,
             "generation_timestamp": now,
-            "time_expectation_hours": "24-48 hours",
+            "time_expectation_hours": 48.0,
             "age_hours": 0.5,
             "expected_resolution_at": now + timedelta(hours=48),
             "resolution_timestamp": None,

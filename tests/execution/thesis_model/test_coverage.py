@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -105,9 +105,9 @@ def _make_thesis(
         health_status=None,
         prior_health_status=None,
         generation_timestamp=NOW,
-        time_expectation_hours="24-48h",
+        time_expectation_hours=24.0,
         age_hours=1.0,
-        expected_resolution_at=NOW,
+        expected_resolution_at=NOW + timedelta(hours=24),
         resolution_timestamp=None,
         resolution_category=None,
         resolution_pnl_usd=None,
@@ -343,9 +343,9 @@ def test_coverage_fail_missing_entry_rationale() -> None:
         health_status=None,
         prior_health_status=None,
         generation_timestamp=NOW,
-        time_expectation_hours="24h",
+        time_expectation_hours=24.0,
         age_hours=0.0,
-        expected_resolution_at=NOW,
+        expected_resolution_at=NOW + timedelta(hours=24),
         resolution_timestamp=None,
         resolution_category=None,
         resolution_pnl_usd=None,

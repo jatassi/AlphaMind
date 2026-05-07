@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -180,7 +180,11 @@ def _make_full_components(
 
 
 def _make_thesis_record(**overrides: object) -> ThesisRecord:
-    """Build a valid ACTIVE ThesisRecord with optional overrides."""
+    """Build a valid ACTIVE ThesisRecord with optional overrides.
+
+    Default time_expectation_hours=24.0 with expected_resolution_at=NOW+24h
+    so the cross-field consistency validator passes without needing overrides.
+    """
     base: dict[str, object] = {
         "thesis_id": "thesis-1",
         "position_id": "pos-1",
@@ -190,9 +194,9 @@ def _make_thesis_record(**overrides: object) -> ThesisRecord:
         "health_status": None,
         "prior_health_status": None,
         "generation_timestamp": NOW,
-        "time_expectation_hours": "4-24h",
+        "time_expectation_hours": 24.0,
         "age_hours": 2.0,
-        "expected_resolution_at": NOW,
+        "expected_resolution_at": NOW + timedelta(hours=24),
         "resolution_timestamp": None,
         "resolution_category": None,
         "resolution_pnl_usd": None,
@@ -412,14 +416,100 @@ def test_summary_empty_rejected() -> None:
         _make_thesis_record(summary="")
 
 
-def test_time_expectation_non_empty_passes() -> None:
-    rec = _make_thesis_record(time_expectation_hours="24-72h")
-    assert rec.time_expectation_hours == "24-72h"
+# ---------------------------------------------------------------------------
+# time_expectation_hours field type and constraints (ALP-337)
+# ---------------------------------------------------------------------------
 
 
-def test_time_expectation_empty_rejected() -> None:
+def test_time_expectation_field_type() -> None:
+    """time_expectation_hours must be typed as float with gt=0 constraint."""
+    import alphamind.portfolio_state.records.theses as theses_mod
+
+    field_info = theses_mod.ThesisRecord.model_fields["time_expectation_hours"]
+    assert field_info.annotation is float, (
+        f"Expected float annotation, got: {field_info.annotation}"
+    )
+    assert any(getattr(m, "gt", None) == 0 for m in (field_info.metadata or [])), (
+        f"Expected gt=0 constraint in metadata, got: {field_info.metadata}"
+    )
+
+
+def test_time_expectation_valid_float_passes() -> None:
+    """Valid positive float is accepted."""
+    rec = _make_thesis_record(time_expectation_hours=24.0)
+    assert rec.time_expectation_hours == 24.0
+
+
+def test_time_expectation_zero_rejected() -> None:
+    """time_expectation_hours=0 must raise ValidationError (gt=0 constraint)."""
     with pytest.raises(ValidationError):
-        _make_thesis_record(time_expectation_hours="")
+        _make_thesis_record(time_expectation_hours=0, expected_resolution_at=NOW)
+
+
+def test_time_expectation_negative_rejected() -> None:
+    """time_expectation_hours=-5.0 must raise ValidationError."""
+    with pytest.raises(ValidationError):
+        _make_thesis_record(time_expectation_hours=-5.0, expected_resolution_at=NOW)
+
+
+def test_time_expectation_fractional_passes() -> None:
+    """Fractional float (24.5h) is a valid non-integer value."""
+    expected_at = NOW + timedelta(hours=24.5)
+    rec = _make_thesis_record(time_expectation_hours=24.5, expected_resolution_at=expected_at)
+    assert rec.time_expectation_hours == 24.5
+
+
+def test_time_expectation_consistency_validator_passes() -> None:
+    """Canonical acceptance-criteria case: 48h from 2026-05-01T12:00:00Z → 2026-05-03T12:00:00Z."""
+    gen_ts = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
+    expected_at = datetime(2026, 5, 3, 12, 0, 0, tzinfo=UTC)  # exactly 48h later
+    rec = _make_thesis_record(
+        generation_timestamp=gen_ts,
+        time_expectation_hours=48.0,
+        expected_resolution_at=expected_at,
+    )
+    assert rec.time_expectation_hours == 48.0
+
+
+def test_time_expectation_consistency_validator_fails_and_names_delta() -> None:
+    """Consistency validator raises ValueError naming the actual delta when > 60s."""
+    gen_ts = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
+    # 24h off — expected_resolution_at is 24h earlier than generation + 48h
+    bad_resolution = datetime(2026, 5, 2, 12, 0, 0, tzinfo=UTC)
+    with pytest.raises(ValidationError) as exc_info:
+        _make_thesis_record(
+            generation_timestamp=gen_ts,
+            time_expectation_hours=48.0,
+            expected_resolution_at=bad_resolution,
+        )
+    error_str = str(exc_info.value)
+    # Error message must name the delta in seconds
+    assert "86400" in error_str or "delta" in error_str.lower()
+
+
+def test_time_expectation_consistency_within_60s_tolerance_passes() -> None:
+    """Up to 60 seconds of drift is within the allowed tolerance."""
+    gen_ts = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
+    # 59 seconds short of exact
+    expected_at = gen_ts + timedelta(hours=48) - timedelta(seconds=59)
+    rec = _make_thesis_record(
+        generation_timestamp=gen_ts,
+        time_expectation_hours=48.0,
+        expected_resolution_at=expected_at,
+    )
+    assert rec.time_expectation_hours == 48.0
+
+
+def test_time_expectation_exactly_61s_off_fails() -> None:
+    """61 seconds beyond tolerance must be rejected."""
+    gen_ts = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
+    expected_at = gen_ts + timedelta(hours=48) + timedelta(seconds=61)
+    with pytest.raises(ValidationError):
+        _make_thesis_record(
+            generation_timestamp=gen_ts,
+            time_expectation_hours=48.0,
+            expected_resolution_at=expected_at,
+        )
 
 
 def test_recent_thesis_resolution_valid() -> None:

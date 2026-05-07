@@ -387,7 +387,7 @@ def _make_thesis_record(
         health_status=health_status,
         prior_health_status=prior_health_status,
         generation_timestamp=_AS_OF - timedelta(hours=20),
-        time_expectation_hours="48",
+        time_expectation_hours=48.0,
         age_hours=20.0,
         expected_resolution_at=_AS_OF + timedelta(hours=28),
         resolution_timestamp=None,

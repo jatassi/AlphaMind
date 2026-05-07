@@ -36,7 +36,7 @@ class SynthesizerThesisSummary(BaseModel):
     ticker: str
     summary: str
     key_catalyst: str
-    time_expectation_hours: str
+    time_expectation_hours: float
 
 
 class SynthesizerExposureSnapshot(BaseModel):
