@@ -35,12 +35,35 @@ class OrderDirection(StrEnum):
     SELL_TO_CLOSE = "SELL_TO_CLOSE"
 
 
+class OrderClass(StrEnum):
+    """Contingent-order class per orders-and-brackets.md § Tier 2.
+
+    SIMPLE — atomic single order; no contingent linkage. Default.
+    BRACKET — entry + take-profit + stop, submitted as a unit linked to a thesis.
+    OCO — one-cancels-other; pair of orders where filling one cancels the other.
+    OTO — one-triggers-other; activates contingent orders only on its own fill.
+    MLEG — multi-leg options strategy submitted as a single Alpaca mleg order;
+           requires the instrument_spec to have instrument_type=STRATEGY.
+    """
+
+    SIMPLE = "SIMPLE"
+    BRACKET = "BRACKET"
+    OCO = "OCO"
+    OTO = "OTO"
+    MLEG = "MLEG"
+
+
 class OrderDuration(StrEnum):
+    """Order time-in-force duration for AlphaMind's 4-72h trading horizons.
+
+    DAY — expires at end of the current trading session.
+    GTC — good-till-cancelled; remains active until filled or explicitly cancelled.
+    GTD — good-till-date; expires at the end of a specified session date.
+    """
+
     DAY = "DAY"
     GTC = "GTC"
     GTD = "GTD"
-    IOC = "IOC"
-    FOK = "FOK"
 
 
 class OrderStatus(StrEnum):
@@ -175,6 +198,7 @@ class OrderRecord(BaseModel):
     instrument_spec: InstrumentSpec
     direction: OrderDirection
     order_type: OrderType
+    order_class: OrderClass = OrderClass.SIMPLE
     price_parameters: PriceParameters
     quantity: float
     duration: OrderDuration
@@ -193,11 +217,22 @@ class OrderRecord(BaseModel):
 
     @model_validator(mode="after")
     def _validate_all(self) -> OrderRecord:
+        self._check_mleg_requires_strategy()
         self._check_price_parameters()
         self._check_quantity_constraints()
         self._check_alpaca_chain()
         self._check_age_hours()
         return self
+
+    def _check_mleg_requires_strategy(self) -> None:
+        if self.order_class != OrderClass.MLEG:
+            return
+        if self.instrument_spec.instrument_type != InstrumentType.STRATEGY:
+            msg = (
+                f"order_class=MLEG requires instrument_spec.instrument_type=STRATEGY; "
+                f"got {self.instrument_spec.instrument_type!r}"
+            )
+            raise ValueError(msg)
 
     def _check_price_parameters(self) -> None:
         pp = self.price_parameters
