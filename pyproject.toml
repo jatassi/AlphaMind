@@ -61,7 +61,7 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-extend-exclude = [".claude/worktrees"]
+extend-exclude = [".claude/worktrees", ".claude/skills"]
 
 [tool.ruff.lint]
 select = [
