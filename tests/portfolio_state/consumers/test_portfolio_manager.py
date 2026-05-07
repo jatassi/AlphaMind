@@ -39,7 +39,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
-    InstrumentSpec,
+    EquityInstrumentSpec,
     OrderDirection,
     OrderDuration,
     OrderRecord,
@@ -52,7 +52,6 @@ from alphamind.portfolio_state.records.orders import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     PositionFill,
     PositionRecord,
     PositionStatus,
@@ -128,10 +127,7 @@ def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> Positi
             "status": PositionStatus.OPEN,
             "direction": Direction.LONG,
             "entry_timestamp": _T0,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": equity,
-            "options_details": None,
-            "strategy_details": None,
+            "details": equity,
             "execution_history": (_make_fill(),),
             "realized_pnl_to_date_usd": None,
             "current_market_value_usd": 15500.0,
@@ -177,7 +173,7 @@ def _make_pending_order(
     order_id: str = "ORD-001",
     position_id: str = "POS-001",
 ) -> OrderRecord:
-    spec = InstrumentSpec(instrument_type=InstrumentType.EQUITY, ticker="AAPL")
+    spec = EquityInstrumentSpec(ticker="AAPL")
     return OrderRecord.model_validate(
         {
             "order_id": order_id,

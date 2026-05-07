@@ -35,7 +35,7 @@ from alphamind.portfolio_state.records.capital import (
     RiskZone,
 )
 from alphamind.portfolio_state.records.orders import (
-    InstrumentSpec,
+    EquityInstrumentSpec,
     OrderDirection,
     OrderDuration,
     OrderRecord,
@@ -335,8 +335,7 @@ def _make_equity_position(
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=datetime(2026, 4, 27, 14, 0, 0, tzinfo=UTC),
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=equity_details,
+        details=equity_details,
         execution_history=(
             PositionFill(
                 fill_timestamp=datetime(2026, 4, 27, 14, 0, 0, tzinfo=UTC),
@@ -471,7 +470,7 @@ def _make_pm_pending_order(
         position_id=None,
         bracket_id="BR-001",
         role=OrderRole.ENTRY,
-        instrument_spec=InstrumentSpec(instrument_type=InstrumentType.EQUITY, ticker=ticker),
+        instrument_spec=EquityInstrumentSpec(ticker=ticker),
         direction=direction,
         order_type=OrderType.LIMIT,
         price_parameters=PriceParameters(limit_price=limit_price),

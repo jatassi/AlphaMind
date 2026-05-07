@@ -415,10 +415,7 @@ def _make_position(**overrides: object) -> PositionRecord:
         "status": PositionStatus.OPEN,
         "direction": Direction.LONG,
         "entry_timestamp": _NOW,
-        "instrument_type": InstrumentType.EQUITY,
-        "equity_details": _LONG_EQUITY,
-        "options_details": None,
-        "strategy_details": None,
+        "details": _LONG_EQUITY,
         "execution_history": (_FILL,),
         "realized_pnl_to_date_usd": None,
         "current_market_value_usd": 15000.0,
@@ -447,30 +444,16 @@ def _make_position(**overrides: object) -> PositionRecord:
 class TestPositionRecordDiscriminator:
     def test_equity_with_equity_details_passes(self) -> None:
         p = _make_position()
-        assert p.instrument_type == InstrumentType.EQUITY
-        assert p.equity_details is not None
-
-    def test_equity_with_options_details_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            _make_position(equity_details=None, options_details=_OPTIONS_DETAILS)
-        assert "instrument_type" in str(exc_info.value) or "details" in str(exc_info.value)
-
-    def test_two_details_populated_simultaneously_fails(self) -> None:
-        with pytest.raises(ValidationError):
-            _make_position(options_details=_OPTIONS_DETAILS)
-
-    def test_no_details_fails(self) -> None:
-        with pytest.raises(ValidationError):
-            _make_position(equity_details=None)
+        assert isinstance(p.details, EquityPositionDetails)
+        assert p.details.instrument_type == InstrumentType.EQUITY
 
     def test_options_with_options_details_passes(self) -> None:
         p = _make_position(
-            instrument_type=InstrumentType.OPTIONS,
-            equity_details=None,
-            options_details=_OPTIONS_DETAILS,
+            details=_OPTIONS_DETAILS,
+            direction=Direction.LONG,
             execution_history=(_FILL,),
         )
-        assert p.options_details is not None
+        assert isinstance(p.details, OptionsPositionDetails)
 
     def test_strategy_with_strategy_details_passes(self) -> None:
         leg = _make_strategy_leg()
@@ -483,12 +466,36 @@ class TestPositionRecordDiscriminator:
             breakeven_levels=(205.0,),
             strategy_greeks=_GREEKS,
         )
+        p = _make_position(details=strat, direction=Direction.LONG)
+        assert isinstance(p.details, StrategyPositionDetails)
+
+    def test_construction_from_dict_via_discriminator(self) -> None:
+        """Pydantic discriminator parses dict payloads into the correct concrete class."""
         p = _make_position(
-            instrument_type=InstrumentType.STRATEGY,
-            equity_details=None,
-            strategy_details=strat,
+            details={
+                "instrument_type": "EQUITY",
+                "ticker": "AAPL",
+                "share_count": 100.0,
+                "average_cost_basis_per_share": 150.0,
+            }
         )
-        assert p.strategy_details is not None
+        assert isinstance(p.details, EquityPositionDetails)
+        assert p.details.ticker == "AAPL"
+
+    def test_bogus_discriminator_tag_fails_at_parse_time(self) -> None:
+        """Unknown discriminator tag raises ValidationError before any model_validator runs."""
+        with pytest.raises(ValidationError) as exc_info:
+            _make_position(details={"instrument_type": "BOGUS"})
+        # Pydantic's native discriminator surfaces the tag error in the message
+        assert "BOGUS" in str(exc_info.value) or "instrument_type" in str(exc_info.value)
+
+    def test_model_json_schema_has_discriminator(self) -> None:
+        """PositionRecord.model_json_schema() exposes the Pydantic-native discriminator."""
+        schema = PositionRecord.model_json_schema()
+        # The "details" property should declare a discriminator with propertyName="instrument_type"
+        details_schema = schema["properties"]["details"]
+        assert "discriminator" in details_schema
+        assert details_schema["discriminator"]["propertyName"] == "instrument_type"
 
 
 # ---------------------------------------------------------------------------
@@ -574,19 +581,19 @@ class TestClosedStatusRules:
 
 class TestDirectionShortFields:
     def test_long_with_no_short_fields_passes(self) -> None:
-        p = _make_position(direction=Direction.LONG, equity_details=_LONG_EQUITY)
-        assert p.equity_details is not None
-        assert p.equity_details.borrow_rate_pct is None
+        p = _make_position(direction=Direction.LONG, details=_LONG_EQUITY)
+        assert isinstance(p.details, EquityPositionDetails)
+        assert p.details.borrow_rate_pct is None
 
     def test_long_with_short_fields_populated_fails(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
-            _make_position(direction=Direction.LONG, equity_details=_SHORT_EQUITY)
+            _make_position(direction=Direction.LONG, details=_SHORT_EQUITY)
         assert "borrow_rate_pct" in str(exc_info.value) or "locate_status" in str(exc_info.value)
 
     def test_short_with_all_short_fields_passes(self) -> None:
-        p = _make_position(direction=Direction.SHORT, equity_details=_SHORT_EQUITY)
-        assert p.equity_details is not None
-        assert p.equity_details.locate_status == LocateStatus.LOCATED
+        p = _make_position(direction=Direction.SHORT, details=_SHORT_EQUITY)
+        assert isinstance(p.details, EquityPositionDetails)
+        assert p.details.locate_status == LocateStatus.LOCATED
 
     def test_short_with_missing_borrow_rate_fails(self) -> None:
         partial = EquityPositionDetails(
@@ -598,7 +605,7 @@ class TestDirectionShortFields:
             margin_held_usd=5000.0,
         )
         with pytest.raises(ValidationError) as exc_info:
-            _make_position(direction=Direction.SHORT, equity_details=partial)
+            _make_position(direction=Direction.SHORT, details=partial)
         assert "borrow_rate_pct" in str(exc_info.value)
 
 

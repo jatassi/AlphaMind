@@ -14,7 +14,6 @@ from alphamind.portfolio_state.computations.exposure import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     LocateStatus,
     OptionContractType,
     OptionGreeks,
@@ -62,14 +61,11 @@ def _make_long_equity(
             "status": PositionStatus.OPEN,
             "direction": Direction.LONG,
             "entry_timestamp": _NOW,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": EquityPositionDetails(
+            "details": EquityPositionDetails(
                 ticker=ticker,
                 share_count=100.0,
                 average_cost_basis_per_share=notional / 100.0,
             ),
-            "options_details": None,
-            "strategy_details": None,
             "execution_history": (_FILL,),
             "realized_pnl_to_date_usd": None,
             "current_market_value_usd": notional,
@@ -103,8 +99,7 @@ def _make_short_equity(
             "status": PositionStatus.OPEN,
             "direction": Direction.SHORT,
             "entry_timestamp": _NOW,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": EquityPositionDetails(
+            "details": EquityPositionDetails(
                 ticker=ticker,
                 share_count=100.0,
                 average_cost_basis_per_share=notional / 100.0,
@@ -112,8 +107,6 @@ def _make_short_equity(
                 locate_status=LocateStatus.LOCATED,
                 margin_held_usd=1_000.0,
             ),
-            "options_details": None,
-            "strategy_details": None,
             "execution_history": (_FILL,),
             "realized_pnl_to_date_usd": None,
             "current_market_value_usd": notional,
@@ -159,10 +152,7 @@ def _make_long_option(
             "status": PositionStatus.OPEN,
             "direction": Direction.LONG,
             "entry_timestamp": _NOW,
-            "instrument_type": InstrumentType.OPTIONS,
-            "equity_details": None,
-            "options_details": options_details,
-            "strategy_details": None,
+            "details": options_details,
             "execution_history": (_FILL,),
             "realized_pnl_to_date_usd": None,
             "current_market_value_usd": 1_000.0,
@@ -212,8 +202,8 @@ class TestComputeSectorExposureHappyPath:
 
         def resolver(pos: PositionRecord) -> str | None:
             ticker_map = {"NVDA": "tech", "AMD": "tech", "JPM": "financials"}
-            if pos.equity_details:
-                return ticker_map.get(pos.equity_details.ticker)
+            if isinstance(pos.details, EquityPositionDetails):
+                return ticker_map.get(pos.details.ticker)
             return None
 
         total = 100_000.0
@@ -265,7 +255,7 @@ class TestComputeSectorExposureUnclassified:
         unknown = _make_long_equity("POS-XYZ", "XYZ", 2_000.0)
 
         def resolver(pos: PositionRecord) -> str | None:
-            if pos.equity_details and pos.equity_details.ticker == "NVDA":
+            if isinstance(pos.details, EquityPositionDetails) and pos.details.ticker == "NVDA":
                 return "tech"
             return None
 
@@ -319,9 +309,9 @@ class TestComputeSectorExposureOrdering:
         xom = _make_long_equity("POS-XOM", "XOM", 6_000.0)
 
         def resolver(pos: PositionRecord) -> str | None:
-            if pos.equity_details:
+            if isinstance(pos.details, EquityPositionDetails):
                 return {"NVDA": "tech", "JPM": "financials", "XOM": "energy"}.get(
-                    pos.equity_details.ticker
+                    pos.details.ticker
                 )
             return None
 
@@ -432,7 +422,10 @@ class TestDeterminism:
         amd = _make_short_equity("POS-AMD", "AMD", -5_000.0)
 
         def resolver(pos: PositionRecord) -> str | None:
-            if pos.equity_details and pos.equity_details.ticker in ("NVDA", "AMD"):
+            if isinstance(pos.details, EquityPositionDetails) and pos.details.ticker in (
+                "NVDA",
+                "AMD",
+            ):
                 return "tech"
             return None
 

@@ -37,7 +37,6 @@ from alphamind.portfolio_state.records.orders import (
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
-    InstrumentType,
     PositionRecord,
     PositionStatus,
 )
@@ -359,8 +358,8 @@ def _make_position_record(position_id: str) -> PositionRecord:
             "status": PositionStatus.PENDING,
             "direction": Direction.LONG,
             "entry_timestamp": None,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": {
+            "details": {
+                "instrument_type": "EQUITY",
                 "ticker": "AAPL",
                 "share_count": 10.0,
                 "average_cost_basis_per_share": 150.0,

@@ -19,7 +19,6 @@ from alphamind.config.models.guardrails import BreachResponse
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     LocateStatus,
     PositionFill,
     PositionRecord,
@@ -210,8 +209,7 @@ def _short_position(
         status=PositionStatus.OPEN,
         direction=Direction.SHORT,
         entry_timestamp=fill_ts,
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=EquityPositionDetails(
+        details=EquityPositionDetails(
             ticker=ticker,
             share_count=100.0,
             average_cost_basis_per_share=market_value_usd / 100.0,
@@ -260,8 +258,7 @@ def _long_position(
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=fill_ts,
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=EquityPositionDetails(
+        details=EquityPositionDetails(
             ticker=ticker,
             share_count=100.0,
             average_cost_basis_per_share=market_value_usd / 100.0,
@@ -516,7 +513,9 @@ def _proposed_close_for_position(
     pre_usd = pre_pct / 100.0 * portfolio_value_usd
     return ProposedClose(
         position_id=position.position_id,
-        ticker=position.equity_details.ticker if position.equity_details is not None else "X",
+        ticker=(
+            position.details.ticker if isinstance(position.details, EquityPositionDetails) else "X"
+        ),
         asset_type="equity",
         direction="long" if position.direction == Direction.LONG else "short",
         pre_close_size_pct_of_portfolio=pre_pct,
@@ -923,7 +922,9 @@ def _follow_up_full_close_selector(
     pre_usd = pre_pct / 100.0 * portfolio_value_usd
     close = ProposedClose(
         position_id=target.position_id,
-        ticker=target.equity_details.ticker if target.equity_details else "X",
+        ticker=(
+            target.details.ticker if isinstance(target.details, EquityPositionDetails) else "X"
+        ),
         asset_type="equity",
         direction="long" if target.direction == Direction.LONG else "short",
         pre_close_size_pct_of_portfolio=pre_pct,

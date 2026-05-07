@@ -41,7 +41,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
-    InstrumentSpec,
+    EquityInstrumentSpec,
     OrderDirection,
     OrderDuration,
     OrderRecord,
@@ -54,7 +54,6 @@ from alphamind.portfolio_state.records.orders import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     LocateStatus,
     OptionContractType,
     OptionGreeks,
@@ -266,10 +265,7 @@ def _make_equity_position(
             "status": status,
             "direction": direction,
             "entry_timestamp": entry_timestamp if status == PositionStatus.OPEN else None,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": equity,
-            "options_details": None,
-            "strategy_details": None,
+            "details": equity,
             "execution_history": execution_history,
             "realized_pnl_to_date_usd": None,
             "current_market_value_usd": 0.0,
@@ -327,7 +323,7 @@ def _make_pending_equity_order(
     limit_price: float,
     submission_timestamp: datetime = _ENTRY_AT,
 ) -> OrderRecord:
-    spec = InstrumentSpec(instrument_type=InstrumentType.EQUITY, ticker=ticker)
+    spec = EquityInstrumentSpec(ticker=ticker)
     return OrderRecord.model_validate(
         {
             "order_id": order_id,
@@ -544,10 +540,7 @@ def _make_options_position(
             "status": PositionStatus.OPEN,
             "direction": Direction.LONG,
             "entry_timestamp": entry_timestamp,
-            "instrument_type": InstrumentType.OPTIONS,
-            "equity_details": None,
-            "options_details": options,
-            "strategy_details": None,
+            "details": options,
             "execution_history": (fill,),
             "realized_pnl_to_date_usd": None,
             "current_market_value_usd": 0.0,
@@ -605,10 +598,11 @@ def _make_base_fixture(
 
 def _make_sector_resolver(mapping: dict[str, str]) -> Callable[[PositionRecord], str | None]:
     def _resolve(pos: PositionRecord) -> str | None:
-        if pos.equity_details is not None:
-            return mapping.get(pos.equity_details.ticker)
-        if pos.options_details is not None:
-            return mapping.get(pos.options_details.underlying_ticker)
+        details = pos.details
+        if isinstance(details, EquityPositionDetails):
+            return mapping.get(details.ticker)
+        if isinstance(details, OptionsPositionDetails):
+            return mapping.get(details.underlying_ticker)
         return None
 
     return _resolve

@@ -15,8 +15,10 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    EquityInstrumentSpec,
     EventTrigger,
     InstrumentSpec,
+    OptionsInstrumentSpec,
     OrderClass,
     OrderDirection,
     OrderDuration,
@@ -27,6 +29,7 @@ from alphamind.portfolio_state.records.orders import (
     PLAnchorSpec,
     PriceParameters,
     PriceTrigger,
+    StrategyInstrumentSpec,
     TimeTrigger,
 )
 from alphamind.portfolio_state.records.positions import InstrumentType, OptionContractType
@@ -40,13 +43,12 @@ TODAY = date(2025, 6, 15)
 # ---------------------------------------------------------------------------
 
 
-def _equity_spec() -> InstrumentSpec:
-    return InstrumentSpec(instrument_type=InstrumentType.EQUITY, ticker="AAPL")
+def _equity_spec() -> EquityInstrumentSpec:
+    return EquityInstrumentSpec(ticker="AAPL")
 
 
-def _options_spec() -> InstrumentSpec:
-    return InstrumentSpec(
-        instrument_type=InstrumentType.OPTIONS,
+def _options_spec() -> OptionsInstrumentSpec:
+    return OptionsInstrumentSpec(
         underlying="AAPL",
         strike=150.0,
         expiration=TODAY,
@@ -55,11 +57,8 @@ def _options_spec() -> InstrumentSpec:
     )
 
 
-def _strategy_spec() -> InstrumentSpec:
-    return InstrumentSpec(
-        instrument_type=InstrumentType.STRATEGY,
-        legs=(_equity_spec(),),
-    )
+def _strategy_spec() -> StrategyInstrumentSpec:
+    return StrategyInstrumentSpec(legs=(_options_spec(),))
 
 
 def _market_price_params() -> PriceParameters:
@@ -342,60 +341,51 @@ class TestBracketLegStatus:
 class TestInstrumentSpecDiscriminator:
     def test_equity_passes(self) -> None:
         spec = _equity_spec()
+        assert isinstance(spec, EquityInstrumentSpec)
         assert spec.instrument_type == InstrumentType.EQUITY
         assert spec.ticker == "AAPL"
 
     def test_options_passes(self) -> None:
         spec = _options_spec()
+        assert isinstance(spec, OptionsInstrumentSpec)
         assert spec.instrument_type == InstrumentType.OPTIONS
         assert spec.underlying == "AAPL"
         assert spec.strike == 150.0
 
     def test_strategy_passes(self) -> None:
         spec = _strategy_spec()
+        assert isinstance(spec, StrategyInstrumentSpec)
         assert spec.instrument_type == InstrumentType.STRATEGY
         assert spec.legs is not None
         assert len(spec.legs) == 1
 
-    def test_equity_with_options_field_fails(self) -> None:
-        with pytest.raises(ValidationError):
-            InstrumentSpec(
-                instrument_type=InstrumentType.EQUITY,
-                ticker="AAPL",
-                underlying="AAPL",  # options field on equity spec
-            )
-
     def test_equity_without_ticker_fails(self) -> None:
         with pytest.raises(ValidationError):
-            InstrumentSpec.model_validate({"instrument_type": "EQUITY"})
-
-    def test_options_with_ticker_fails(self) -> None:
-        with pytest.raises(ValidationError):
-            InstrumentSpec(
-                instrument_type=InstrumentType.OPTIONS,
-                ticker="AAPL",  # equity field on options spec
-                underlying="AAPL",
-                strike=150.0,
-                expiration=TODAY,
-                contract_type=OptionContractType.CALL,
-                contract_multiplier=100.0,
-            )
+            EquityInstrumentSpec.model_validate({"instrument_type": "EQUITY"})
 
     def test_strategy_with_empty_legs_fails(self) -> None:
         with pytest.raises(ValidationError):
-            InstrumentSpec(instrument_type=InstrumentType.STRATEGY, legs=())
+            StrategyInstrumentSpec(legs=())
 
     def test_strategy_with_none_legs_fails(self) -> None:
         with pytest.raises(ValidationError):
-            InstrumentSpec.model_validate({"instrument_type": "STRATEGY"})
+            StrategyInstrumentSpec.model_validate({"instrument_type": "STRATEGY"})
 
-    def test_strategy_with_equity_field_fails(self) -> None:
+    def test_bogus_discriminator_fails_at_parse_time(self) -> None:
+        """Unknown discriminator tag raises ValidationError at parse time on the union."""
+        from pydantic import TypeAdapter
+
+        from alphamind.portfolio_state.records.orders import InstrumentSpec
+
+        adapter: TypeAdapter[InstrumentSpec] = TypeAdapter(InstrumentSpec)
+        with pytest.raises(ValidationError) as exc_info:
+            adapter.validate_python({"instrument_type": "BOGUS"})
+        assert "BOGUS" in str(exc_info.value) or "instrument_type" in str(exc_info.value)
+
+    def test_strategy_legs_must_be_options_specs(self) -> None:
+        """Strategy legs must be OptionsInstrumentSpec — equity legs raise ValidationError."""
         with pytest.raises(ValidationError):
-            InstrumentSpec(
-                instrument_type=InstrumentType.STRATEGY,
-                ticker="AAPL",  # equity field on strategy spec
-                legs=(_equity_spec(),),
-            )
+            StrategyInstrumentSpec(legs=(_equity_spec(),))  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

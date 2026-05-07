@@ -7,7 +7,13 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel, ConfigDict
 
 from alphamind.portfolio_state.computations.exposure import SectorResolver
-from alphamind.portfolio_state.records.positions import Direction, PositionRecord
+from alphamind.portfolio_state.records.positions import (
+    Direction,
+    EquityPositionDetails,
+    OptionsPositionDetails,
+    PositionRecord,
+    StrategyPositionDetails,
+)
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
 
 # ---------------------------------------------------------------------------
@@ -81,12 +87,13 @@ class SynthesizerPortfolioStateReader(Protocol):
 
 
 def _ticker_from_position(pos: PositionRecord) -> str:
-    if pos.equity_details is not None:
-        return pos.equity_details.ticker
-    if pos.options_details is not None:
-        return pos.options_details.underlying_ticker
-    if pos.strategy_details is not None and pos.strategy_details.legs:
-        return pos.strategy_details.legs[0].options.underlying_ticker
+    details = pos.details
+    if isinstance(details, EquityPositionDetails):
+        return details.ticker
+    if isinstance(details, OptionsPositionDetails):
+        return details.underlying_ticker
+    if isinstance(details, StrategyPositionDetails) and details.legs:
+        return details.legs[0].options.underlying_ticker
     return ""
 
 

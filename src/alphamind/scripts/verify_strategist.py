@@ -73,7 +73,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
-    InstrumentSpec,
+    EquityInstrumentSpec,
     OrderDirection,
     OrderDuration,
     OrderRecord,
@@ -86,7 +86,6 @@ from alphamind.portfolio_state.records.orders import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     PositionFill,
     PositionRecord,
     PositionStatus,
@@ -306,8 +305,7 @@ def _make_equity_position(
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_AS_OF - timedelta(hours=age_hours),
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=EquityPositionDetails(
+        details=EquityPositionDetails(
             ticker=ticker,
             share_count=share_count,
             average_cost_basis_per_share=avg_cost,
@@ -445,10 +443,7 @@ def _make_pending_order(*, position_id: str, ticker: str) -> OrderRecord:
         position_id=position_id,
         bracket_id=f"BRK-{position_id}",
         role=OrderRole.ADD_ENTRY,
-        instrument_spec=InstrumentSpec(
-            instrument_type=InstrumentType.EQUITY,
-            ticker=ticker,
-        ),
+        instrument_spec=EquityInstrumentSpec(ticker=ticker),
         direction=OrderDirection.BUY,
         order_type=OrderType.LIMIT,
         price_parameters=PriceParameters(limit_price=_current_price_lookup(ticker) * 0.99),

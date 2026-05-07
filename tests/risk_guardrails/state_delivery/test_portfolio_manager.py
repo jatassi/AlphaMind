@@ -32,7 +32,6 @@ from alphamind.portfolio_state.records.capital import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     LocateStatus,
     PositionFill,
     PositionRecord,
@@ -222,8 +221,7 @@ def _make_position(
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=datetime(2026, 4, 1, 14, 30, 0, tzinfo=UTC),
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=equity,
+        details=equity,
         execution_history=(fill,),
         realized_pnl_to_date_usd=None,
         current_market_value_usd=weight_pct * 5_000.0,
@@ -332,9 +330,9 @@ def _sector_resolver(position: PositionRecord) -> str | None:
         "MU": "semis",
         "AVGO": "semis",
     }
-    if position.equity_details is None:
+    if not isinstance(position.details, EquityPositionDetails):
         return None
-    return ticker_to_sector.get(position.equity_details.ticker)
+    return ticker_to_sector.get(position.details.ticker)
 
 
 # ---------------------------------------------------------------------------

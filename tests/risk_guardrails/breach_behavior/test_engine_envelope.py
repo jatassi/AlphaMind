@@ -9,7 +9,6 @@ import pytest
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     LocateStatus,
     PositionFill,
     PositionRecord,
@@ -41,8 +40,7 @@ def _short_mara_position() -> PositionRecord:
         status=PositionStatus.OPEN,
         direction=Direction.SHORT,
         entry_timestamp=fill_ts,
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=EquityPositionDetails(
+        details=EquityPositionDetails(
             ticker="MARA",
             share_count=140.0,
             average_cost_basis_per_share=20.0,

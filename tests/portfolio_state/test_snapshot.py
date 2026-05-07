@@ -34,7 +34,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
-    InstrumentSpec,
+    EquityInstrumentSpec,
     OrderDirection,
     OrderDuration,
     OrderRecord,
@@ -47,7 +47,6 @@ from alphamind.portfolio_state.records.orders import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     PositionFill,
     PositionRecord,
     PositionStatus,
@@ -123,10 +122,7 @@ def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> Positi
             "status": PositionStatus.OPEN,
             "direction": Direction.LONG,
             "entry_timestamp": _T0,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": equity,
-            "options_details": None,
-            "strategy_details": None,
+            "details": equity,
             "execution_history": (_make_fill(),),
             "realized_pnl_to_date_usd": None,
             "current_market_value_usd": 15500.0,
@@ -160,10 +156,7 @@ def _make_pending_position(pos_id: str = "POS-003") -> PositionRecord:
             "status": PositionStatus.PENDING,
             "direction": Direction.LONG,
             "entry_timestamp": None,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": equity,
-            "options_details": None,
-            "strategy_details": None,
+            "details": equity,
             "execution_history": (),
             "realized_pnl_to_date_usd": None,
             "current_market_value_usd": 0.0,
@@ -210,7 +203,7 @@ def _make_pending_order(
     position_id: str = "POS-001",
     status: OrderStatus = OrderStatus.PENDING,
 ) -> OrderRecord:
-    spec = InstrumentSpec(instrument_type=InstrumentType.EQUITY, ticker="AAPL")
+    spec = EquityInstrumentSpec(ticker="AAPL")
     return OrderRecord.model_validate(
         {
             "order_id": order_id,
@@ -801,9 +794,7 @@ class TestPendingOrderStatusValidator:
                 "position_id": "POS-001",
                 "bracket_id": "BRK-001",
                 "role": OrderRole.ENTRY,
-                "instrument_spec": InstrumentSpec(
-                    instrument_type=InstrumentType.EQUITY, ticker="AAPL"
-                ),
+                "instrument_spec": EquityInstrumentSpec(ticker="AAPL"),
                 "direction": OrderDirection.BUY,
                 "order_type": OrderType.MARKET,
                 "price_parameters": PriceParameters(limit_price=None, stop_trigger_price=None),
@@ -833,9 +824,7 @@ class TestPendingOrderStatusValidator:
                 "position_id": "POS-001",
                 "bracket_id": "BRK-001",
                 "role": OrderRole.ENTRY,
-                "instrument_spec": InstrumentSpec(
-                    instrument_type=InstrumentType.EQUITY, ticker="AAPL"
-                ),
+                "instrument_spec": EquityInstrumentSpec(ticker="AAPL"),
                 "direction": OrderDirection.BUY,
                 "order_type": OrderType.MARKET,
                 "price_parameters": PriceParameters(limit_price=None, stop_trigger_price=None),
