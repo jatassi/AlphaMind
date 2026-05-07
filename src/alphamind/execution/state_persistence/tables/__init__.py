@@ -10,5 +10,14 @@ from alphamind.execution.state_persistence.tables.activity_log import ActivityLo
 from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.execution.state_persistence.tables.positions import PositionRow
 from alphamind.execution.state_persistence.tables.process_lifetimes import ProcessLifetimeRow
+from alphamind.execution.state_persistence.tables.theses import ThesisRow
+from alphamind.execution.state_persistence.tables.thesis_components import ThesisComponentRow
 
-__all__ = ["ActivityLogRow", "InvocationRow", "PositionRow", "ProcessLifetimeRow"]
+__all__ = [
+    "ActivityLogRow",
+    "InvocationRow",
+    "PositionRow",
+    "ProcessLifetimeRow",
+    "ThesisComponentRow",
+    "ThesisRow",
+]
