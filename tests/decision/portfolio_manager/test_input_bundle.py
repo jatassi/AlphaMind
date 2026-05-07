@@ -71,13 +71,10 @@ from alphamind.portfolio_state.records.positions import (
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
-    SupportingSignal,
-    SupportingSignalStatus,
     ThesisComponent,
     ThesisComponentType,
     ThesisRecord,
     ThesisRecordStatus,
-    ThesisStatus,
 )
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.snapshot import (
@@ -355,7 +352,6 @@ def _make_thesis(
     *,
     thesis_id: str = "TH-NVDA-001",
     position_id: str = "POS-NVDA-001",
-    prior_status: ThesisStatus | None = ThesisStatus.AT_RISK,
 ) -> ThesisRecord:
     def _comp(ctype: ThesisComponentType, cid: str, narrative: str) -> ThesisComponent:
         return ThesisComponent(
@@ -370,9 +366,6 @@ def _make_thesis(
                     text="Microsoft Q1 capex guide >= $24B",
                     outcome=None,
                 ),
-            ),
-            supporting_signals=(
-                SupportingSignal(name="capex_signal", status=SupportingSignalStatus.PRESENT),
             ),
             generation_timestamp=_ENTRY_TIMESTAMP,
             resolution_outcome=None,
@@ -402,8 +395,6 @@ def _make_thesis(
                 ),
             ),
             "status": ThesisRecordStatus.ACTIVE,
-            "health_status": ThesisStatus.ON_TRACK,
-            "prior_health_status": prior_status,
             "generation_timestamp": _ENTRY_TIMESTAMP,
             "time_expectation_hours": 48.0,
             "age_hours": 36.4,

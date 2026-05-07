@@ -55,6 +55,7 @@ from alphamind.portfolio_state.snapshot import (
     DirectionalExposure,
     PortfolioPnL,
 )
+from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery import (
@@ -130,8 +131,14 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_strategist
     tool_names: tuple[str, ...],
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
 ) -> str:
-    """Compose the strategist's user-message text for a normal-mode invocation."""
+    """Compose the strategist's user-message text for a normal-mode invocation.
+
+    *prior_health_snapshots* carries the prior invocation's per-thesis health
+    re-assessments; rendered into each thesis block as ``Prior status: <status>``.
+    Pass an empty tuple on the first invocation after position entry.
+    """
     header = render_strategist_header(
         strategist_view=strategist_view,
         invocation_id=invocation_id,
@@ -147,7 +154,9 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_strategist
         regime_transition_breaches=regime_transition_breaches,
     )
     tool_reminder = _render_tool_reminder(tool_names, defensive_posture=False)
-    portfolio_state_section = _render_portfolio_state_section(strategist_view, current_price_lookup)
+    portfolio_state_section = _render_portfolio_state_section(
+        strategist_view, current_price_lookup, prior_health_snapshots
+    )
     return (
         f"{header}\n\n{tool_reminder}\n\n{portfolio_state_section}"
         f"\n\n{_BRIEF_HEADER}\n{synthesizer_brief_text}"
@@ -172,8 +181,12 @@ def assemble_input_bundle_defensive_posture(  # noqa: PLR0913 — mirrors render
     tool_names: tuple[str, ...],
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
 ) -> str:
-    """Compose the strategist's user-message text for a defensive-posture invocation."""
+    """Compose the strategist's user-message text for a defensive-posture invocation.
+
+    *prior_health_snapshots* — see :func:`assemble_input_bundle_normal`.
+    """
     header = render_strategist_header_halt_mode(
         halt_state=halt_state,
         strategist_view=strategist_view,
@@ -190,7 +203,9 @@ def assemble_input_bundle_defensive_posture(  # noqa: PLR0913 — mirrors render
         regime_transition_breaches=regime_transition_breaches,
     )
     tool_reminder = _render_tool_reminder(tool_names, defensive_posture=True)
-    portfolio_state_section = _render_portfolio_state_section(strategist_view, current_price_lookup)
+    portfolio_state_section = _render_portfolio_state_section(
+        strategist_view, current_price_lookup, prior_health_snapshots
+    )
     return (
         f"{header}\n\n{tool_reminder}\n\n{portfolio_state_section}"
         f"\n\n{_BRIEF_HEADER}\n{synthesizer_brief_text}"
@@ -224,8 +239,10 @@ def _render_tool_reminder(tool_names: tuple[str, ...], *, defensive_posture: boo
 def _render_portfolio_state_section(
     strategist_view: StrategistView,
     current_price_lookup: Callable[[str], float],
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...],
 ) -> str:
     """Compose the strategist-specific portfolio-state block."""
+    snapshots_by_thesis_id = {snap.thesis_id: snap for snap in prior_health_snapshots}
     blocks: list[str] = [
         _PORTFOLIO_HEADER,
         _render_aggregate_block(strategist_view),
@@ -233,7 +250,12 @@ def _render_portfolio_state_section(
     if strategist_view.positions:
         blocks.append("Per-position records:")
         for view in strategist_view.positions:
-            blocks.append(_render_position_record(view, current_price_lookup))
+            prior = (
+                snapshots_by_thesis_id.get(view.thesis.thesis_id)
+                if view.thesis is not None
+                else None
+            )
+            blocks.append(_render_position_record(view, current_price_lookup, prior))
     else:
         blocks.append("Per-position records:\n  None")
     blocks.append(_render_intra_invocation_changelog(strategist_view.intra_invocation_changelog))
@@ -293,6 +315,7 @@ def _render_directional_lines(directional: DirectionalExposure) -> str:
 def _render_position_record(
     view: StrategistPositionView,
     current_price_lookup: Callable[[str], float],
+    prior_health_snapshot: ThesisHealthSnapshot | None,
 ) -> str:
     pos = view.position
     ticker = _resolve_position_ticker(pos)
@@ -311,7 +334,7 @@ def _render_position_record(
     rows.append(_render_age_line(pos))
     rows.append(_render_distance_and_rr_line(pos, view.bracket, current_price))
     rows.append(_render_bracket_block(view.bracket))
-    rows.append(_render_thesis_block(view.thesis))
+    rows.append(_render_thesis_block(view.thesis, prior_health_snapshot))
     if view.pending_orders:
         rows.append(_render_pending_orders_for_position(view.pending_orders, current_price))
     if view.modification_trail:
@@ -459,7 +482,10 @@ def _find_leg(bracket: BracketRecord, leg_type: BracketLegType) -> BracketLeg | 
     return None
 
 
-def _render_thesis_block(thesis: ThesisRecord | None) -> str:
+def _render_thesis_block(
+    thesis: ThesisRecord | None,
+    prior_health_snapshot: ThesisHealthSnapshot | None,
+) -> str:
     if thesis is None:
         return "  Thesis: NONE — pending position"
     lines: list[str] = [f"  Thesis ({thesis.thesis_id}):"]
@@ -473,8 +499,8 @@ def _render_thesis_block(thesis: ThesisRecord | None) -> str:
         lines.append("    Key assumptions:")
         for assumption in assumptions:
             lines.append(f'      - "{assumption.text}"')
-    if thesis.prior_health_status is not None:
-        lines.append(f"    Prior status: {thesis.prior_health_status.value}")
+    if prior_health_snapshot is not None:
+        lines.append(f"    Prior status: {prior_health_snapshot.health_status.value}")
     return "\n".join(lines)
 
 

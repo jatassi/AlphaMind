@@ -41,6 +41,7 @@ from pydantic import (
     model_validator,
 )
 
+from alphamind.portfolio_state.views.thesis_health import ComponentHealthEntry
 from alphamind.risk_guardrails.guardrail_evaluation import Greeks, RuleProjection
 
 __all__ = [
@@ -50,6 +51,7 @@ __all__ = [
     "BracketAdjustNewStopLevel",
     "BracketAdjustNewTargetLevel",
     "CloseParameters",
+    "ComponentHealthEntry",
     "DefensivePostureSummary",
     "EntryOrder",
     "ExposureImpact",
@@ -314,6 +316,10 @@ class PositionAssessment(BaseModel):
     adjustment_rationale: str | None = None
     remedy_rationale: str | None = None
     cross_position_observations: str | None = None
+    # ALP-351: per-invocation supporting-signal re-assessment, one entry per
+    # active thesis component. Mirrors the data carried on
+    # ``ThesisHealthSnapshot.component_health``; the typed shape is the schema.
+    component_health: tuple[ComponentHealthEntry, ...] = ()
 
     @model_validator(mode="after")
     def _validate_invariants(self) -> PositionAssessment:

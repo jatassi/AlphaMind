@@ -49,6 +49,7 @@ from alphamind.portfolio_state.records.theses import (
     ThesisComponentType,
     ThesisRecord,
 )
+from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
@@ -131,8 +132,12 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_pm_header
     active_regime_overrides: tuple[RegimeOverride, ...] = (),
     correlation_state: CorrelationState | None = None,
     dependency_risk_flag: DependencyRiskFlag | None = None,
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
 ) -> str:
-    """Compose the PM's user-message text for a normal-mode invocation."""
+    """Compose the PM's user-message text for a normal-mode invocation.
+
+    *prior_health_snapshots* — see strategist input bundle counterpart.
+    """
     header = render_pm_header(
         pm_view=pm_view,
         invocation_id=invocation_id,
@@ -157,6 +162,7 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_pm_header
         synthesizer_brief_text=synthesizer_brief_text,
         pm_view=pm_view,
         tool_names=tool_names,
+        prior_health_snapshots=prior_health_snapshots,
     )
 
 
@@ -184,8 +190,12 @@ def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_pm_header_ha
     active_regime_overrides: tuple[RegimeOverride, ...] = (),
     correlation_state: CorrelationState | None = None,
     dependency_risk_flag: DependencyRiskFlag | None = None,
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
 ) -> str:
-    """Compose the PM's user-message text for a halt-mode invocation."""
+    """Compose the PM's user-message text for a halt-mode invocation.
+
+    *prior_health_snapshots* — see :func:`assemble_input_bundle_normal`.
+    """
     header = render_pm_header_halt_mode(
         halt_state=halt_state,
         pm_view=pm_view,
@@ -213,6 +223,7 @@ def assemble_input_bundle_halt(  # noqa: PLR0913 — mirrors render_pm_header_ha
         synthesizer_brief_text=synthesizer_brief_text,
         pm_view=pm_view,
         tool_names=tool_names,
+        prior_health_snapshots=prior_health_snapshots,
     )
 
 
@@ -228,12 +239,13 @@ def _compose_user_message(
     synthesizer_brief_text: str,
     pm_view: PortfolioManagerView,
     tool_names: tuple[str, ...],
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...],
 ) -> str:
     """Build the seven-block user message: header → tools → pre-processor → brief → portfolio."""
     tool_reminder = _render_tool_reminder(tool_names)
     pre_processor_block = _render_pre_processor_bundle(pre_processor_bundle)
     brief_block = f"{_BRIEF_HEADER}\n{synthesizer_brief_text}"
-    portfolio_block = _render_portfolio_state_section(pm_view)
+    portfolio_block = _render_portfolio_state_section(pm_view, prior_health_snapshots)
     return "\n\n".join(
         [
             header,
@@ -273,14 +285,23 @@ def _render_pre_processor_bundle(bundle: ProposalPreProcessorBundle) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _render_portfolio_state_section(pm_view: PortfolioManagerView) -> str:
+def _render_portfolio_state_section(
+    pm_view: PortfolioManagerView,
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...],
+) -> str:
     """Compose the PM-specific portfolio-state block."""
+    snapshots_by_thesis_id = {snap.thesis_id: snap for snap in prior_health_snapshots}
     blocks: list[str] = [_PORTFOLIO_HEADER]
     if pm_view.positions:
         blocks.append("Per-position records:")
         for view in pm_view.positions:
             trail = pm_view.position_modification_trail.get(view.position.position_id, ())
-            blocks.append(_render_per_position_record(view, trail))
+            prior = (
+                snapshots_by_thesis_id.get(view.thesis.thesis_id)
+                if view.thesis is not None
+                else None
+            )
+            blocks.append(_render_per_position_record(view, trail, prior))
     else:
         blocks.append(f"Per-position records:\n{_NONE_LINE}")
     blocks.append(_render_activity_log_block(_INTRA_LOG_HEADER, pm_view.intra_invocation_changelog))
@@ -301,6 +322,7 @@ def _render_portfolio_state_section(pm_view: PortfolioManagerView) -> str:
 def _render_per_position_record(
     view: StrategistPositionView,
     modification_trail: tuple[ActivityLogEntry, ...],
+    prior_health_snapshot: ThesisHealthSnapshot | None,
 ) -> str:
     pos = view.position
     rows: list[str] = [pos.position_id]
@@ -309,7 +331,7 @@ def _render_per_position_record(
     rows.append(_render_pnl_line(pos))
     rows.append(_render_age_line(pos))
     rows.append(_render_distance_line(pos, view.bracket))
-    rows.append(_render_thesis_summary_block(view.thesis))
+    rows.append(_render_thesis_summary_block(view.thesis, prior_health_snapshot))
     if modification_trail:
         rows.append(_render_modification_trail(modification_trail))
     return "\n".join(rows)
@@ -386,7 +408,10 @@ def _find_leg(bracket: BracketRecord, leg_type: BracketLegType) -> BracketLeg | 
     return None
 
 
-def _render_thesis_summary_block(thesis: ThesisRecord | None) -> str:
+def _render_thesis_summary_block(
+    thesis: ThesisRecord | None,
+    prior_health_snapshot: ThesisHealthSnapshot | None,
+) -> str:
     if thesis is None:
         return "  Thesis: NONE — pending position"
     lines: list[str] = [f"  Thesis ({thesis.thesis_id}):"]
@@ -400,8 +425,8 @@ def _render_thesis_summary_block(thesis: ThesisRecord | None) -> str:
         lines.append("    Key assumptions:")
         for assumption in assumptions:
             lines.append(f'      - "{assumption.text}"')
-    if thesis.prior_health_status is not None:
-        lines.append(f"    Prior status: {thesis.prior_health_status.value}")
+    if prior_health_snapshot is not None:
+        lines.append(f"    Prior status: {prior_health_snapshot.health_status.value}")
     return "\n".join(lines)
 
 

@@ -64,8 +64,6 @@ from alphamind.portfolio_state.records.positions import (
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
-    SupportingSignal,
-    SupportingSignalStatus,
     ThesisComponent,
     ThesisComponentType,
     ThesisRecord,
@@ -331,7 +329,6 @@ def _make_thesis(
     *,
     thesis_id: str = "TH-NVDA-001",
     position_id: str = "POS-NVDA-001",
-    prior_status: ThesisStatus | None = ThesisStatus.AT_RISK,
 ) -> ThesisRecord:
     def _comp(ctype: ThesisComponentType, cid: str, narrative: str) -> ThesisComponent:
         return ThesisComponent(
@@ -347,9 +344,6 @@ def _make_thesis(
                     outcome=None,
                 ),
                 KeyAssumption(text="AI demand persistence", outcome=None),
-            ),
-            supporting_signals=(
-                SupportingSignal(name="capex_signal", status=SupportingSignalStatus.PRESENT),
             ),
             generation_timestamp=_ENTRY_TIMESTAMP,
             resolution_outcome=None,
@@ -379,8 +373,6 @@ def _make_thesis(
                 ),
             ),
             "status": ThesisRecordStatus.ACTIVE,
-            "health_status": ThesisStatus.ON_TRACK,
-            "prior_health_status": prior_status,
             "generation_timestamp": _ENTRY_TIMESTAMP,
             "time_expectation_hours": 48.0,
             "age_hours": 36.4,
@@ -857,13 +849,33 @@ def test_thesis_block_renders_summary_and_components() -> None:
     assert "Invalidation: MSFT guides AI capex lower" in out
 
 
-def test_thesis_block_renders_prior_status() -> None:
+def test_thesis_block_renders_prior_status_from_snapshot() -> None:
+    """Prior status renders from a passed-in ThesisHealthSnapshot (story ALP-351)."""
+    from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
+
+    prior_snap = ThesisHealthSnapshot(
+        thesis_id="TH-NVDA-001",
+        invocation_id="prior-inv-000",
+        snapshot_timestamp=_TIMESTAMP,
+        health_status=ThesisStatus.AT_RISK,
+        prior_health_status=None,
+        component_health=(),
+    )
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(),  # type: ignore[arg-type]
+        sector_label_display=_SECTOR_LABELS,
+        prior_health_snapshots=(prior_snap,),
+    )
+    assert "Prior status: AT_RISK" in out
+
+
+def test_thesis_block_omits_prior_status_when_no_snapshot() -> None:
+    """When no prior snapshot is supplied, no Prior-status line is rendered."""
     out = assemble_input_bundle_normal(
         **_normal_kwargs(),  # type: ignore[arg-type]
         sector_label_display=_SECTOR_LABELS,
     )
-    # prior_health_status was set to AT_RISK in fixture
-    assert "AT_RISK" in out or "at-risk" in out.lower()
+    assert "Prior status:" not in out
 
 
 def test_position_without_thesis_renders_pending_marker() -> None:

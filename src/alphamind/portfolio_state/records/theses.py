@@ -71,7 +71,12 @@ class SupportingSignal(BaseModel):
 
 
 class ThesisComponent(BaseModel):
-    """A typed, individually-addressable component linked to a specific order or bracket leg."""
+    """A typed, individually-addressable component linked to a specific order or bracket leg.
+
+    Carries entry-time component data only. Per-invocation supporting-signal
+    re-assessment lives on
+    :class:`alphamind.portfolio_state.views.thesis_health.ComponentHealthEntry`.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -83,14 +88,18 @@ class ThesisComponent(BaseModel):
     instrument_reference: str
     narrative: str
     key_assumptions: tuple[KeyAssumption, ...]
-    supporting_signals: tuple[SupportingSignal, ...]
     generation_timestamp: datetime
     resolution_outcome: ThesisComponentOutcome | None
     resolution_notes: str | None
 
 
 class ThesisRecord(BaseModel):
-    """Full consumer-facing thesis record, one-to-one with a position."""
+    """Full consumer-facing thesis record, one-to-one with a position.
+
+    Carries entry-time + lifecycle thesis data only. Per-invocation
+    health-status re-assessment lives on
+    :class:`alphamind.portfolio_state.views.thesis_health.ThesisHealthSnapshot`.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -105,8 +114,6 @@ class ThesisRecord(BaseModel):
     position_size_rationale: str | None = None
     components: tuple[ThesisComponent, ...]
     status: ThesisRecordStatus
-    health_status: ThesisStatus | None
-    prior_health_status: ThesisStatus | None
     generation_timestamp: datetime
     time_expectation_hours: Annotated[float, Field(gt=0)]
     age_hours: float

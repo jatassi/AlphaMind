@@ -261,7 +261,7 @@ def test_normal_view_has_positions_across_active_sectors() -> None:
     Per parent-issue decisions, the normal scenario seeds 4 positions
     across 3 sectors so the strategist sees a non-trivial book.
     """
-    view = build_fixture_normal_view()
+    view, _snapshots = build_fixture_normal_view()
 
     # Positions span at least 3 sectors (parent-issue spec calls for 4
     # positions across 3 sectors).
@@ -278,7 +278,7 @@ def test_normal_view_has_positions_across_active_sectors() -> None:
 def test_normal_view_has_pending_order() -> None:
     """The normal scenario emits exactly one pending order so the strategist
     exercises the ``pending_order_assessments`` branch."""
-    view = build_fixture_normal_view()
+    view, _snapshots = build_fixture_normal_view()
 
     pending = [pv for pv in view.positions if pv.pending_orders]
     assert len(pending) >= 1
@@ -286,7 +286,7 @@ def test_normal_view_has_pending_order() -> None:
 
 def test_defensive_posture_view_carries_drawdown_at_threshold() -> None:
     """The defensive_posture scenario's drawdown sits at the daily-halt threshold."""
-    view = build_fixture_defensive_posture_view()
+    view, _snapshots = build_fixture_defensive_posture_view()
 
     # 6 positions across more sectors per spec.
     assert len(view.positions) >= 6
@@ -298,7 +298,7 @@ def test_defensive_posture_view_records_engine_close_in_activity_log() -> None:
     """A recent engine-originated CLOSE on a sector-correlated position must be
     present in the activity log so the strategist's
     ``engine_originated_closure_signal`` discipline is exercised."""
-    view = build_fixture_defensive_posture_view()
+    view, _snapshots = build_fixture_defensive_posture_view()
 
     assert any(
         entry.event_type.value == "POSITION_CLOSED" for entry in view.intra_invocation_changelog
@@ -319,7 +319,7 @@ def test_emergency_view_triggers_regime_transition_breach() -> None:
 def test_emergency_view_normal_drawdown_no_halt() -> None:
     """The emergency scenario runs without a halt; the strategist should be
     invoked in normal mode but with regime_transition_breaches populated."""
-    view = build_fixture_emergency_view()
+    view, _snapshots = build_fixture_emergency_view()
 
     # 4 positions per spec.
     assert len(view.positions) >= 3
@@ -552,9 +552,9 @@ def test_strategist_view_fixtures_resolve_in_runner() -> None:
     to catch regressions if a record schema changes after the fixtures
     were authored.
     """
-    normal = build_fixture_normal_view()
-    defensive = build_fixture_defensive_posture_view()
-    emergency = build_fixture_emergency_view()
+    normal, _ = build_fixture_normal_view()
+    defensive, _ = build_fixture_defensive_posture_view()
+    emergency, _ = build_fixture_emergency_view()
 
     assert isinstance(normal, StrategistView)
     assert isinstance(defensive, StrategistView)
