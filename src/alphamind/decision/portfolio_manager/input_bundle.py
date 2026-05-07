@@ -33,6 +33,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     OrderRecord,
+    PriceTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -358,14 +359,19 @@ def _render_distance_line(pos: PositionRecord, bracket: BracketRecord | None) ->
     if bracket is not None:
         target_leg = _find_leg(bracket, BracketLegType.TAKE_PROFIT)
         stop_leg = _find_leg(bracket, BracketLegType.PRICE_STOP)
-        if target_leg is not None:
-            bracket_legs.append(f"target {target_leg.trigger_condition}")
-        if stop_leg is not None:
-            bracket_legs.append(f"stop {stop_leg.trigger_condition}")
+        if target_leg is not None and isinstance(target_leg.trigger, PriceTrigger):
+            bracket_legs.append(f"target {_format_price_trigger(target_leg.trigger)}")
+        if stop_leg is not None and isinstance(stop_leg.trigger, PriceTrigger):
+            bracket_legs.append(f"stop {_format_price_trigger(stop_leg.trigger)}")
     bracket_str = " | ".join(bracket_legs) if bracket_legs else "—"
     return (
         f"  Distance:      target {target_str}  /  stop {stop_str}\n  Bracket legs:  {bracket_str}"
     )
+
+
+def _format_price_trigger(trigger: PriceTrigger) -> str:
+    """Render a PriceTrigger as ``<ticker> <GTE/LTE> $<threshold>``."""
+    return f"{trigger.underlying_ticker} {trigger.direction} ${trigger.threshold_usd}"
 
 
 def _find_leg(bracket: BracketRecord, leg_type: BracketLegType) -> BracketLeg | None:

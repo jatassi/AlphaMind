@@ -60,6 +60,7 @@ from alphamind.portfolio_state.records.orders import (
     OrderStatus,
     OrderType,
     PriceParameters,
+    PriceTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -427,7 +428,7 @@ def _make_bracket(
         leg_id="leg-target",
         leg_type=BracketLegType.TAKE_PROFIT,
         order_id="ord-target",
-        trigger_condition="price >= 880.00",
+        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=880.00, direction="GTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
         pl_based=False,
@@ -436,7 +437,7 @@ def _make_bracket(
         leg_id="leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
         order_id="ord-stop",
-        trigger_condition="price <= 760.00",
+        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=760.00, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
         pl_based=False,
