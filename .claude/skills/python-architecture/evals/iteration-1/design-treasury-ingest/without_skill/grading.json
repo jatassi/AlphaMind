@@ -1,0 +1,44 @@
+{
+  "expectations": [
+    {
+      "text": "Brief names the application shape (data pipeline / K3)",
+      "passed": false,
+      "evidence": "Searched for K3 / data pipeline / pipeline shape"
+    },
+    {
+      "text": "Brief names 2-3 load-bearing principles guiding the design",
+      "passed": false,
+      "evidence": "Found 0 P-principles: []"
+    },
+    {
+      "text": "Brief includes a concrete package layout / directory tree",
+      "passed": true,
+      "evidence": "Searched for tree characters / src/alphamind layout"
+    },
+    {
+      "text": "Brief defines domain primitives as concrete Python code (NewType / StrEnum / frozen dataclass)",
+      "passed": false,
+      "evidence": "Searched for NewType / StrEnum / frozen dataclass"
+    },
+    {
+      "text": "Brief defines boundary types (Pydantic at boundary, dataclass internal) with conversion function",
+      "passed": false,
+      "evidence": "Pydantic block: True, dataclass block: False, conversion fn: True"
+    },
+    {
+      "text": "Brief specifies testing seam with at least one named Protocol and a fake skeleton",
+      "passed": false,
+      "evidence": "Protocol class: False; 'Protocol' / 'Fake' references found in text"
+    },
+    {
+      "text": "Brief surfaces 3-4 hardest-to-reverse decisions with tradeoffs",
+      "passed": false,
+      "evidence": "'reconsider' count: 0; 'hardest-to-reverse' present: False"
+    },
+    {
+      "text": "Brief cites at least 2 P-principles or reference-thesis IDs",
+      "passed": false,
+      "evidence": "P-principles: 0, thesis IDs: 0"
+    }
+  ]
+}

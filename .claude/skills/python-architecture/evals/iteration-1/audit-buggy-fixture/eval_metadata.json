@@ -1,0 +1,22 @@
+{
+  "eval_id": 1,
+  "eval_name": "audit-buggy-fixture",
+  "prompt": "Audit the buggy_app codebase. Find the planted issues.",
+  "assertions": [
+    {"text": "Identifies the import cycle between core.orders and storage.repo", "category": "structural"},
+    {"text": "Identifies the god module core/risk.py (>400 lines)", "category": "structural"},
+    {"text": "Flags L8 (mutable dataclass): Order without frozen=True", "category": "antipattern"},
+    {"text": "Flags L11 (naive datetime): datetime.now() without timezone", "category": "antipattern"},
+    {"text": "Flags L12 (float for money): price/cost_basis as float", "category": "antipattern"},
+    {"text": "Flags L9 (Pydantic for internal domain object): Position(BaseModel)", "category": "antipattern"},
+    {"text": "Flags L4 (broad except): except Exception in submit_order", "category": "antipattern"},
+    {"text": "Flags L5 (star import): from buggy_app.core.orders import *", "category": "antipattern"},
+    {"text": "Flags L3 (mutable default args): blocked_symbols=[] / exposures={}", "category": "antipattern"},
+    {"text": "Flags L17 (httpx without timeout)", "category": "antipattern"},
+    {"text": "Flags L16 (asyncio.create_task without TaskGroup)", "category": "antipattern"},
+    {"text": "Flags L20 (free-text fstring log) in risk.py", "category": "antipattern"},
+    {"text": "Flags L25 (print in non-CLI module)", "category": "antipattern"},
+    {"text": "Cites at least 3 P-principles or reference-thesis IDs", "category": "rigor"},
+    {"text": "Provides ordered punch list balancing structural and quick-win fixes", "category": "actionability"}
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "expectations": [
+    {
+      "text": "Report cites at least 3 P-principles (e.g., P1, P3, P5, P7) on findings",
+      "passed": true,
+      "evidence": "Found 6 distinct P-principle references: ['P2', 'P3', 'P4', 'P5', 'P7', 'P8']"
+    },
+    {
+      "text": "Report cites at least 2 reference-thesis IDs (e.g., \u00a7A1, \u00a7D2, \u00a7G1, \u00a7J2)",
+      "passed": false,
+      "evidence": "Found 0 distinct thesis IDs: []"
+    },
+    {
+      "text": "Report identifies the data-pipeline application shape (K3) and applies shape-specific theses",
+      "passed": false,
+      "evidence": "Searched for K3 / data pipeline / pipeline shape"
+    },
+    {
+      "text": "Report references at least one structural-script output (cycle, god-module, antipattern count)",
+      "passed": true,
+      "evidence": "Searched for cycle / god-module / N findings / Lxx tags"
+    },
+    {
+      "text": "Each finding has a concrete one-line fix paired with the issue",
+      "passed": true,
+      "evidence": "'fix' appears 15 times"
+    },
+    {
+      "text": "Report ends with an ordered punch list (not just an inventory)",
+      "passed": true,
+      "evidence": "Searched for punch list / ordering / numbered list"
+    },
+    {
+      "text": "Report identifies at least one load-bearing finding (P-principle violation or structural pathology)",
+      "passed": true,
+      "evidence": "Searched for load-bearing / structural / cycle / god-module"
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "expectations": [
+    {
+      "text": "Identifies the import cycle between core.orders and storage.repo",
+      "passed": true,
+      "evidence": "Looked for 'cycle' near 'orders' and 'repo' or 'circular import'"
+    },
+    {
+      "text": "Identifies the god module core/risk.py (>400 lines)",
+      "passed": true,
+      "evidence": "Looked for god-module mention referencing risk.py"
+    },
+    {
+      "text": "Flags L8 (mutable dataclass): Order without frozen=True",
+      "passed": true,
+      "evidence": "Looked for L8 / frozen / mutable dataclass"
+    },
+    {
+      "text": "Flags L11 (naive datetime): datetime.now() without timezone",
+      "passed": true,
+      "evidence": "Looked for L11 / naive datetime / timezone"
+    },
+    {
+      "text": "Flags L12 (float for money): price/cost_basis as float",
+      "passed": true,
+      "evidence": "Looked for L12 / float for money / Decimal recommendation"
+    },
+    {
+      "text": "Flags L9 (Pydantic for internal domain object): Position(BaseModel)",
+      "passed": true,
+      "evidence": "Looked for L9 / Pydantic-internal / Position"
+    },
+    {
+      "text": "Flags L4 (broad except): except Exception in submit_order",
+      "passed": true,
+      "evidence": "Looked for L4 / except Exception / broad except"
+    },
+    {
+      "text": "Flags L5 (star import): from buggy_app.core.orders import *",
+      "passed": true,
+      "evidence": "Looked for L5 / star/wildcard import"
+    },
+    {
+      "text": "Flags L3 (mutable default args): blocked_symbols=[] / exposures={}",
+      "passed": true,
+      "evidence": "Looked for L3 / mutable default args"
+    },
+    {
+      "text": "Flags L17 (httpx without timeout)",
+      "passed": true,
+      "evidence": "Looked for L17 / timeout / httpx"
+    },
+    {
+      "text": "Flags L16 (asyncio.create_task without TaskGroup)",
+      "passed": true,
+      "evidence": "Looked for L16 / create_task / TaskGroup"
+    },
+    {
+      "text": "Flags L20 (free-text fstring log) in risk.py",
+      "passed": true,
+      "evidence": "Looked for L20 / f-string log / structured log"
+    },
+    {
+      "text": "Flags L25 (print in non-CLI module)",
+      "passed": true,
+      "evidence": "Looked for L25 / print()"
+    },
+    {
+      "text": "Cites at least 3 P-principles or reference-thesis IDs",
+      "passed": true,
+      "evidence": "P-principles: 5, thesis IDs: 6"
+    },
+    {
+      "text": "Provides ordered punch list balancing structural and quick-win fixes",
+      "passed": true,
+      "evidence": "Looked for punch list / priority + quick-win + structural"
+    }
+  ]
+}

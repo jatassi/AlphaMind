@@ -1,0 +1,44 @@
+{
+  "expectations": [
+    {
+      "text": "Brief names the application shape (data pipeline / K3)",
+      "passed": true,
+      "evidence": "Searched for K3 / data pipeline / pipeline shape"
+    },
+    {
+      "text": "Brief names 2-3 load-bearing principles guiding the design",
+      "passed": true,
+      "evidence": "Found 4 P-principles: ['P1', 'P3', 'P5', 'P7']"
+    },
+    {
+      "text": "Brief includes a concrete package layout / directory tree",
+      "passed": true,
+      "evidence": "Searched for tree characters / src/alphamind layout"
+    },
+    {
+      "text": "Brief defines domain primitives as concrete Python code (NewType / StrEnum / frozen dataclass)",
+      "passed": true,
+      "evidence": "Searched for NewType / StrEnum / frozen dataclass"
+    },
+    {
+      "text": "Brief defines boundary types (Pydantic at boundary, dataclass internal) with conversion function",
+      "passed": true,
+      "evidence": "Pydantic block: True, dataclass block: True, conversion fn: True"
+    },
+    {
+      "text": "Brief specifies testing seam with at least one named Protocol and a fake skeleton",
+      "passed": true,
+      "evidence": "Protocol class: True; 'Protocol' / 'Fake' references found in text"
+    },
+    {
+      "text": "Brief surfaces 3-4 hardest-to-reverse decisions with tradeoffs",
+      "passed": true,
+      "evidence": "'reconsider' count: 4; 'hardest-to-reverse' present: True"
+    },
+    {
+      "text": "Brief cites at least 2 P-principles or reference-thesis IDs",
+      "passed": true,
+      "evidence": "P-principles: 4, thesis IDs: 0"
+    }
+  ]
+}

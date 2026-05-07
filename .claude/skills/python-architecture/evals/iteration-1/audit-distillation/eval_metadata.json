@@ -1,0 +1,14 @@
+{
+  "eval_id": 0,
+  "eval_name": "audit-distillation",
+  "prompt": "Audit the alphamind.distillation subpackage (~30 min depth). Findings ordered by what to tackle first.",
+  "assertions": [
+    {"text": "Report cites at least 3 P-principles (e.g., P1, P3, P5, P7) on findings", "category": "structure"},
+    {"text": "Report cites at least 2 reference-thesis IDs (e.g., §A1, §D2, §G1, §J2)", "category": "structure"},
+    {"text": "Report identifies the data-pipeline application shape (K3) and applies shape-specific theses", "category": "shape"},
+    {"text": "Report references at least one structural-script output (cycle, god-module, antipattern count)", "category": "tooling"},
+    {"text": "Each finding has a concrete one-line fix paired with the issue", "category": "completeness"},
+    {"text": "Report ends with an ordered punch list (not just an inventory)", "category": "actionability"},
+    {"text": "Report identifies at least one load-bearing finding (P-principle violation or structural pathology)", "category": "rigor"}
+  ]
+}

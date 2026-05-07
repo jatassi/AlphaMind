@@ -1,0 +1,15 @@
+{
+  "eval_id": 2,
+  "eval_name": "design-treasury-ingest",
+  "prompt": "Design a Treasury auction ingest module. Produce a concrete brief.",
+  "assertions": [
+    {"text": "Brief names the application shape (data pipeline / K3)", "category": "structure"},
+    {"text": "Brief names 2-3 load-bearing principles guiding the design", "category": "rigor"},
+    {"text": "Brief includes a concrete package layout / directory tree", "category": "completeness"},
+    {"text": "Brief defines domain primitives as concrete Python code (NewType / StrEnum / frozen dataclass)", "category": "completeness"},
+    {"text": "Brief defines boundary types (Pydantic at boundary, dataclass internal) with conversion function", "category": "data-modelling"},
+    {"text": "Brief specifies testing seam with at least one named Protocol and a fake skeleton", "category": "testing"},
+    {"text": "Brief surfaces 3-4 hardest-to-reverse decisions with tradeoffs", "category": "decisions"},
+    {"text": "Brief cites at least 2 P-principles or reference-thesis IDs", "category": "rigor"}
+  ]
+}

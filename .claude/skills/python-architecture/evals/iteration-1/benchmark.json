@@ -1,0 +1,166 @@
+{
+  "metadata": {
+    "skill_name": "python-architecture",
+    "skill_path": "/Users/jatassi/Git/AlphaMind/.claude/skills/python-architecture",
+    "timestamp": "2026-05-07T03:14:13.118070+00:00",
+    "evals_run": [
+      0,
+      1,
+      2
+    ],
+    "runs_per_configuration": 1
+  },
+  "runs": [
+    {
+      "eval_id": 0,
+      "eval_name": "audit-distillation",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.7143,
+        "passed": 5,
+        "failed": 2,
+        "total": 7,
+        "time_seconds": 228.5,
+        "tokens": 111048,
+        "tool_calls": 0,
+        "errors": 0
+      }
+    },
+    {
+      "eval_id": 0,
+      "eval_name": "audit-distillation",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.2857,
+        "passed": 2,
+        "failed": 5,
+        "total": 7,
+        "time_seconds": 132.3,
+        "tokens": 119026,
+        "tool_calls": 0,
+        "errors": 0
+      }
+    },
+    {
+      "eval_id": 1,
+      "eval_name": "audit-buggy-fixture",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 15,
+        "failed": 0,
+        "total": 15,
+        "time_seconds": 235.4,
+        "tokens": 109338,
+        "tool_calls": 0,
+        "errors": 0
+      }
+    },
+    {
+      "eval_id": 1,
+      "eval_name": "audit-buggy-fixture",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.8667,
+        "passed": 13,
+        "failed": 2,
+        "total": 15,
+        "time_seconds": 179.5,
+        "tokens": 80184,
+        "tool_calls": 0,
+        "errors": 0
+      }
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "design-treasury-ingest",
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 8,
+        "failed": 0,
+        "total": 8,
+        "time_seconds": 132.5,
+        "tokens": 103852,
+        "tool_calls": 0,
+        "errors": 0
+      }
+    },
+    {
+      "eval_id": 2,
+      "eval_name": "design-treasury-ingest",
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.125,
+        "passed": 1,
+        "failed": 7,
+        "total": 8,
+        "time_seconds": 218.3,
+        "tokens": 110489,
+        "tool_calls": 0,
+        "errors": 0
+      }
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 0.9048,
+        "stddev": 0.1649,
+        "min": 0.7143,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 198.8,
+        "stddev": 57.521,
+        "min": 132.5,
+        "max": 235.4
+      },
+      "tokens": {
+        "mean": 108079.3333,
+        "stddev": 3759.4927,
+        "min": 103852.0,
+        "max": 111048.0
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.4258,
+        "stddev": 0.3902,
+        "min": 0.125,
+        "max": 0.8667
+      },
+      "time_seconds": {
+        "mean": 176.7,
+        "stddev": 43.0683,
+        "min": 132.3,
+        "max": 218.3
+      },
+      "tokens": {
+        "mean": 103233.0,
+        "stddev": 20412.3098,
+        "min": 80184.0,
+        "max": 119026.0
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.48",
+      "time_seconds": "+22.1",
+      "tokens": "+4846"
+    }
+  },
+  "notes": [
+    "With-skill pass rate: 90%; without-skill: 43% (delta +48%).",
+    "audit-distillation: with-skill found the import cycle (P2) and cited principles; without-skill found similar issues but did not anchor them to a principle taxonomy.",
+    "audit-buggy-fixture: both runs found most planted issues \u2014 small surface, easy targets; with-skill nonetheless cleaner with full P-principle / antipattern-ID citations.",
+    "design-treasury-ingest: largest delta (1.00 vs 0.125). Without-skill produced prose narrative; with-skill produced concrete domain primitives, Pydantic+dataclass split with conversion fn, named Protocols, and 4 hardest-to-reverse decisions.",
+    "Time delta: with-skill runs ~199s avg, without-skill ~177s avg \u2014 skill adds ~22s for substantially more rigorous output.",
+    "Each eval ran once (not 3x) due to wall-clock budget; values are point estimates, not means with variance."
+  ]
+}
