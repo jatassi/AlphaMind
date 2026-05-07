@@ -10,7 +10,6 @@ from pydantic import ValidationError
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     LocateStatus,
     PositionFill,
     PositionRecord,
@@ -62,8 +61,7 @@ def _make_long_position(
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=fill_timestamp,
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=EquityPositionDetails(
+        details=EquityPositionDetails(
             ticker=ticker,
             share_count=10.0,
             average_cost_basis_per_share=100.0,
@@ -113,8 +111,7 @@ def _make_short_position(
         status=PositionStatus.OPEN,
         direction=Direction.SHORT,
         entry_timestamp=fill_timestamp,
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=EquityPositionDetails(
+        details=EquityPositionDetails(
             ticker=ticker,
             share_count=10.0,
             average_cost_basis_per_share=100.0,

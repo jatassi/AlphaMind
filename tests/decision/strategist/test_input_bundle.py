@@ -43,8 +43,8 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    EquityInstrumentSpec,
     EventTrigger,
-    InstrumentSpec,
     OrderDirection,
     OrderDuration,
     OrderRecord,
@@ -58,7 +58,6 @@ from alphamind.portfolio_state.records.orders import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     PositionFill,
     PositionRecord,
     PositionStatus,
@@ -308,8 +307,7 @@ def _make_position_record(
             "status": PositionStatus.OPEN,
             "direction": Direction.LONG,
             "entry_timestamp": _ENTRY_TIMESTAMP,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": equity,
+            "details": equity,
             "execution_history": (fill,),
             "realized_pnl_to_date_usd": None,
             "current_market_value_usd": market_value,
@@ -452,7 +450,7 @@ def _make_pending_order(
     limit_price: float = 380.0,
     age_hours: float = 36.0,
 ) -> OrderRecord:
-    spec = InstrumentSpec(instrument_type=InstrumentType.EQUITY, ticker=ticker)
+    spec = EquityInstrumentSpec(ticker=ticker)
     return OrderRecord(
         order_id=order_id,
         position_id=position_id,
@@ -620,8 +618,8 @@ def _sector_resolver(position: PositionRecord) -> str | None:
         "AAPL": "tech",
         "AMD": "semis",
     }
-    if position.equity_details is not None:
-        return sector_by_ticker.get(position.equity_details.ticker)
+    if isinstance(position.details, EquityPositionDetails):
+        return sector_by_ticker.get(position.details.ticker)
     return None
 
 

@@ -37,7 +37,6 @@ from alphamind.portfolio_state.records.orders import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     LocateStatus,
     OptionContractType,
     OptionGreeks,
@@ -97,8 +96,7 @@ def _equity_position(
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_NOW,
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=equity_details,
+        details=equity_details,
         execution_history=(_fill(),),
         realized_pnl_to_date_usd=None,
         current_market_value_usd=1000.0,
@@ -153,8 +151,7 @@ def _options_position(
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_NOW,
-        instrument_type=InstrumentType.OPTIONS,
-        options_details=_options_details(
+        details=_options_details(
             contract_count=contract_count,
             contract_multiplier=contract_multiplier,
             delta=delta,
@@ -201,8 +198,7 @@ def _strategy_position(
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW,
-        instrument_type=InstrumentType.STRATEGY,
-        strategy_details=StrategyPositionDetails(
+        details=StrategyPositionDetails(
             strategy_type_label="iron_condor",
             legs=strategy_legs,
             net_premium_usd=200.0,

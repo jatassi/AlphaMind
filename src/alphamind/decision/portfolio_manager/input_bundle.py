@@ -37,8 +37,11 @@ from alphamind.portfolio_state.records.orders import (
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
+    EquityPositionDetails,
     InstrumentType,
+    OptionsPositionDetails,
     PositionRecord,
+    StrategyPositionDetails,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -320,12 +323,13 @@ def _render_underlying_line(pos: PositionRecord) -> str:
 
 
 def _resolve_position_ticker(pos: PositionRecord) -> str:
-    if pos.equity_details is not None:
-        return pos.equity_details.ticker
-    if pos.options_details is not None:
-        return pos.options_details.underlying_ticker
-    if pos.strategy_details is not None and pos.strategy_details.legs:
-        return pos.strategy_details.legs[0].options.underlying_ticker
+    details = pos.details
+    if isinstance(details, EquityPositionDetails):
+        return details.ticker
+    if isinstance(details, OptionsPositionDetails):
+        return details.underlying_ticker
+    if isinstance(details, StrategyPositionDetails) and details.legs:
+        return details.legs[0].options.underlying_ticker
     msg = f"position {pos.position_id!r} has no resolvable ticker"
     raise ValueError(msg)
 
@@ -333,10 +337,11 @@ def _resolve_position_ticker(pos: PositionRecord) -> str:
 def _render_size_line(pos: PositionRecord) -> str:
     market_value = format_dollar(pos.current_market_value_usd)
     weight = format_pct(pos.position_weight_pct)
-    if pos.equity_details is not None:
-        size_label = f"{pos.equity_details.share_count:.0f} shares"
-    elif pos.options_details is not None:
-        size_label = f"{pos.options_details.contract_count:.0f} contracts"
+    details = pos.details
+    if isinstance(details, EquityPositionDetails):
+        size_label = f"{details.share_count:.0f} shares"
+    elif isinstance(details, OptionsPositionDetails):
+        size_label = f"{details.contract_count:.0f} contracts"
     else:
         size_label = "—"
     return f"  Size:          {size_label}  {market_value}  ({weight}% of portfolio)"

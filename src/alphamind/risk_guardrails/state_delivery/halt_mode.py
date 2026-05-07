@@ -20,7 +20,11 @@ from alphamind.portfolio_state.records.capital import (
     ActiveRiskParameterSet,
     RiskBudgetConsumption,
 )
-from alphamind.portfolio_state.records.orders import OrderRecord
+from alphamind.portfolio_state.records.orders import (
+    EquityInstrumentSpec,
+    OptionsInstrumentSpec,
+    OrderRecord,
+)
 from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
@@ -292,9 +296,9 @@ def _render_pending_order_row(
 
 def _resolve_order_ticker(order: OrderRecord) -> str:
     spec = order.instrument_spec
-    if spec.ticker is not None:
+    if isinstance(spec, EquityInstrumentSpec):
         return spec.ticker
-    if spec.underlying is not None:
+    if isinstance(spec, OptionsInstrumentSpec):
         return spec.underlying
     msg = f"pending order {order.order_id!r} has no ticker or underlying"
     raise ValueError(msg)

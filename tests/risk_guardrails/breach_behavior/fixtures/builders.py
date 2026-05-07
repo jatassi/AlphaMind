@@ -30,7 +30,6 @@ from alphamind.portfolio_state.records.capital import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     LocateStatus,
     PositionFill,
     PositionRecord,
@@ -87,8 +86,7 @@ def make_position_record(
         status=PositionStatus.OPEN,
         direction=direction_enum,
         entry_timestamp=fill_timestamp,
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=equity_details,
+        details=equity_details,
         execution_history=(
             PositionFill(
                 fill_timestamp=fill_timestamp,

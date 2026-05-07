@@ -51,7 +51,7 @@ from alphamind.portfolio_state.records.capital import (
     RiskZone,
 )
 from alphamind.portfolio_state.records.orders import (
-    InstrumentSpec,
+    EquityInstrumentSpec,
     OrderDirection,
     OrderDuration,
     OrderRecord,
@@ -565,8 +565,7 @@ def _build_equity_position(
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_ENTRY_TIMESTAMP,
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=equity,
+        details=equity,
         execution_history=(fill,),
         realized_pnl_to_date_usd=None,
         current_market_value_usd=market_value,
@@ -617,8 +616,7 @@ def _build_option_position(
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_ENTRY_TIMESTAMP,
-        instrument_type=InstrumentType.OPTIONS,
-        options_details=options,
+        details=options,
         execution_history=(fill,),
         realized_pnl_to_date_usd=None,
         current_market_value_usd=market_value,
@@ -986,7 +984,7 @@ def _make_halt_state() -> HaltState:
 
 
 def _build_pending_order() -> OrderRecord:
-    spec = InstrumentSpec(instrument_type=InstrumentType.EQUITY, ticker="NVDA")
+    spec = EquityInstrumentSpec(ticker="NVDA")
     return OrderRecord(
         order_id="ORD-PENDING-1",
         position_id="POS-NVDA-001",

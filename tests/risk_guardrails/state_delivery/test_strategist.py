@@ -223,8 +223,7 @@ def _make_equity_position(
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=datetime(2026, 4, 27, 14, 0, 0, tzinfo=UTC),
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=equity_details,
+        details=equity_details,
         execution_history=(
             PositionFill(
                 fill_timestamp=datetime(2026, 4, 27, 14, 0, 0, tzinfo=UTC),
@@ -266,8 +265,7 @@ def _make_options_position(
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=datetime(2026, 4, 27, 14, 0, 0, tzinfo=UTC),
-        instrument_type=InstrumentType.OPTIONS,
-        options_details=OptionsPositionDetails(
+        details=OptionsPositionDetails(
             underlying_ticker=underlying_ticker,
             strike_price=150.0,
             expiration_date=datetime(2026, 6, 19, tzinfo=UTC).date(),

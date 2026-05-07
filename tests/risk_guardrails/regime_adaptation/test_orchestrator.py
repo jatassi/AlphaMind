@@ -65,7 +65,6 @@ from alphamind.portfolio_state.records.capital import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     PositionFill,
     PositionRecord,
     PositionStatus,
@@ -228,8 +227,7 @@ def _equity_position(*, position_id: str, position_weight_pct: float) -> Positio
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW,
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=EquityPositionDetails(
+        details=EquityPositionDetails(
             ticker="AAPL",
             share_count=10.0,
             average_cost_basis_per_share=100.0,

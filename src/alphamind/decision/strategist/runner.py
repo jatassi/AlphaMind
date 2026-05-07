@@ -45,7 +45,12 @@ from alphamind.decision.strategist.input_bundle import (
 from alphamind.decision.strategist.models import StrategistOutput
 from alphamind.decision.strategist.validation import ValidationResult
 from alphamind.portfolio_state.consumers.strategist import StrategistView
-from alphamind.portfolio_state.records.positions import PositionRecord
+from alphamind.portfolio_state.records.positions import (
+    EquityPositionDetails,
+    OptionsPositionDetails,
+    PositionRecord,
+    StrategyPositionDetails,
+)
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
     FeatureFlagsView,
@@ -169,12 +174,13 @@ def _resolve_position_ticker(position: PositionRecord) -> str | None:
     ticker in a different details record; this helper consolidates the
     extraction so the input-bundle adapter is a one-liner.
     """
-    if position.equity_details is not None:
-        return position.equity_details.ticker
-    if position.options_details is not None:
-        return position.options_details.underlying_ticker
-    if position.strategy_details is not None and position.strategy_details.legs:
-        return position.strategy_details.legs[0].options.underlying_ticker
+    details = position.details
+    if isinstance(details, EquityPositionDetails):
+        return details.ticker
+    if isinstance(details, OptionsPositionDetails):
+        return details.underlying_ticker
+    if isinstance(details, StrategyPositionDetails) and details.legs:
+        return details.legs[0].options.underlying_ticker
     return None
 
 

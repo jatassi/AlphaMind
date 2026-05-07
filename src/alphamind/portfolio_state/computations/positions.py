@@ -13,8 +13,11 @@ from alphamind.portfolio_state.pricing import PriceQuote
 from alphamind.portfolio_state.records.orders import BracketLegType, BracketRecord, PriceTrigger
 from alphamind.portfolio_state.records.positions import (
     Direction,
+    EquityPositionDetails,
     InstrumentType,
+    OptionsPositionDetails,
     PositionRecord,
+    StrategyPositionDetails,
 )
 
 
@@ -42,17 +45,13 @@ def compute_market_value_usd(position: PositionRecord, price: PriceQuote) -> flo
     if position.instrument_type == InstrumentType.STRATEGY:
         msg = "use compute_strategy_market_value_usd"
         raise ValueError(msg)
-    if position.instrument_type == InstrumentType.EQUITY:
-        assert position.equity_details is not None
-        mv = position.equity_details.share_count * price.price_usd
+    details = position.details
+    if isinstance(details, EquityPositionDetails):
+        mv = details.share_count * price.price_usd
         return mv if position.direction == Direction.LONG else -mv
     # OPTIONS
-    assert position.options_details is not None
-    return (
-        position.options_details.contract_count
-        * position.options_details.contract_multiplier
-        * price.price_usd
-    )
+    assert isinstance(details, OptionsPositionDetails)
+    return details.contract_count * details.contract_multiplier * price.price_usd
 
 
 def compute_strategy_market_value_usd(
@@ -65,9 +64,9 @@ def compute_strategy_market_value_usd(
 
     Raises MissingLegPriceError if any leg_id is absent from leg_prices.
     """
-    assert position.strategy_details is not None
+    assert isinstance(position.details, StrategyPositionDetails)
     total = 0.0
-    for leg in position.strategy_details.legs:
+    for leg in position.details.legs:
         if leg.leg_id not in leg_prices:
             raise MissingLegPriceError(leg.leg_id)
         opts = leg.options
@@ -248,16 +247,12 @@ def compute_notional_exposure_usd(position: PositionRecord, price: PriceQuote) -
     if position.instrument_type == InstrumentType.STRATEGY:
         msg = "use compute_strategy_notional_exposure_usd"
         raise ValueError(msg)
-    if position.instrument_type == InstrumentType.EQUITY:
-        assert position.equity_details is not None
-        return position.equity_details.share_count * price.price_usd
+    details = position.details
+    if isinstance(details, EquityPositionDetails):
+        return details.share_count * price.price_usd
     # OPTIONS
-    assert position.options_details is not None
-    return (
-        position.options_details.contract_count
-        * position.options_details.contract_multiplier
-        * price.price_usd
-    )
+    assert isinstance(details, OptionsPositionDetails)
+    return details.contract_count * details.contract_multiplier * price.price_usd
 
 
 def compute_strategy_notional_exposure_usd(
@@ -270,9 +265,9 @@ def compute_strategy_notional_exposure_usd(
 
     Raises MissingLegPriceError if any leg_id is absent from leg_underlying_prices.
     """
-    assert position.strategy_details is not None
+    assert isinstance(position.details, StrategyPositionDetails)
     total = 0.0
-    for leg in position.strategy_details.legs:
+    for leg in position.details.legs:
         if leg.leg_id not in leg_underlying_prices:
             raise MissingLegPriceError(leg.leg_id)
         opts = leg.options
@@ -302,14 +297,18 @@ def compute_delta_adjusted_exposure_usd(position: PositionRecord, price: PriceQu
     if position.instrument_type == InstrumentType.STRATEGY:
         msg = "use compute_strategy_delta_adjusted_exposure_usd"
         raise ValueError(msg)
-    if position.instrument_type == InstrumentType.EQUITY:
-        assert position.equity_details is not None
-        notional = position.equity_details.share_count * price.price_usd
+    details = position.details
+    if isinstance(details, EquityPositionDetails):
+        notional = details.share_count * price.price_usd
         return notional if position.direction == Direction.LONG else -notional
     # OPTIONS
-    assert position.options_details is not None
-    opts = position.options_details
-    return opts.contract_count * opts.contract_multiplier * opts.greeks.delta * price.price_usd
+    assert isinstance(details, OptionsPositionDetails)
+    return (
+        details.contract_count
+        * details.contract_multiplier
+        * details.greeks.delta
+        * price.price_usd
+    )
 
 
 def compute_strategy_delta_adjusted_exposure_usd(
@@ -320,12 +319,12 @@ def compute_strategy_delta_adjusted_exposure_usd(
 
     Returns: strategy_greeks.delta * sum(leg notional exposures)
 
-    The strategy's net delta (from strategy_details.strategy_greeks) is applied to the
+    The strategy's net delta (from details.strategy_greeks) is applied to the
     summed underlying notional. Raises MissingLegPriceError if any leg_id is absent.
     """
-    assert position.strategy_details is not None
+    assert isinstance(position.details, StrategyPositionDetails)
     summed_notional = compute_strategy_notional_exposure_usd(position, leg_underlying_prices)
-    return position.strategy_details.strategy_greeks.delta * summed_notional
+    return position.details.strategy_greeks.delta * summed_notional
 
 
 __all__ = [

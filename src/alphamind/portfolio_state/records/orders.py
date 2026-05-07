@@ -108,74 +108,52 @@ _MECHANICAL_BACKSTOP_TYPES = frozenset(
 )
 
 
-class InstrumentSpec(BaseModel):
-    """Instrument specification for an order, discriminated by instrument_type."""
+class EquityInstrumentSpec(BaseModel):
+    """Instrument spec for an equity order, discriminated by ``instrument_type=EQUITY``."""
 
     model_config = ConfigDict(frozen=True)
 
-    instrument_type: InstrumentType
-    ticker: str | None = None
-    underlying: str | None = None
-    strike: float | None = None
-    expiration: date | None = None
-    contract_type: OptionContractType | None = None
-    contract_multiplier: float | None = None
-    legs: tuple[InstrumentSpec, ...] | None = None
+    instrument_type: Literal[InstrumentType.EQUITY] = InstrumentType.EQUITY
+    ticker: str = Field(min_length=1)
+
+
+class OptionsInstrumentSpec(BaseModel):
+    """Instrument spec for an options order, discriminated by ``instrument_type=OPTIONS``."""
+
+    model_config = ConfigDict(frozen=True)
+
+    instrument_type: Literal[InstrumentType.OPTIONS] = InstrumentType.OPTIONS
+    underlying: str = Field(min_length=1)
+    strike: float
+    expiration: date
+    contract_type: OptionContractType
+    contract_multiplier: float
+
+
+class StrategyInstrumentSpec(BaseModel):
+    """Instrument spec for a multi-leg strategy order.
+
+    Legs are tightened from the prior generic ``InstrumentSpec`` to
+    ``OptionsInstrumentSpec`` — strategy legs are always options.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    instrument_type: Literal[InstrumentType.STRATEGY] = InstrumentType.STRATEGY
+    legs: tuple[OptionsInstrumentSpec, ...]
 
     @model_validator(mode="after")
-    def _validate_shape(self) -> InstrumentSpec:
-        if self.instrument_type == InstrumentType.EQUITY:
-            self._validate_equity_shape()
-        elif self.instrument_type == InstrumentType.OPTIONS:
-            self._validate_options_shape()
-        elif self.instrument_type == InstrumentType.STRATEGY:
-            self._validate_strategy_shape()
-        return self
-
-    def _options_field_values(self) -> list[object]:
-        return [
-            self.underlying,
-            self.strike,
-            self.expiration,
-            self.contract_type,
-            self.contract_multiplier,
-        ]
-
-    def _validate_equity_shape(self) -> None:
-        if self.ticker is None:
-            msg = "EQUITY InstrumentSpec requires ticker"
-            raise ValueError(msg)
-        if any(f is not None for f in self._options_field_values()):
-            msg = "EQUITY InstrumentSpec must not have options fields set"
-            raise ValueError(msg)
-        if self.legs is not None:
-            msg = "EQUITY InstrumentSpec must not have legs set"
-            raise ValueError(msg)
-
-    def _validate_options_shape(self) -> None:
-        if any(f is None for f in self._options_field_values()):
-            msg = (
-                "OPTIONS InstrumentSpec requires underlying, strike, expiration, "
-                "contract_type, and contract_multiplier"
-            )
-            raise ValueError(msg)
-        if self.ticker is not None:
-            msg = "OPTIONS InstrumentSpec must not have ticker set"
-            raise ValueError(msg)
-        if self.legs is not None:
-            msg = "OPTIONS InstrumentSpec must not have legs set"
-            raise ValueError(msg)
-
-    def _validate_strategy_shape(self) -> None:
+    def _legs_non_empty(self) -> StrategyInstrumentSpec:
         if not self.legs:
             msg = "STRATEGY InstrumentSpec requires non-empty legs"
             raise ValueError(msg)
-        if self.ticker is not None:
-            msg = "STRATEGY InstrumentSpec must not have ticker set"
-            raise ValueError(msg)
-        if any(f is not None for f in self._options_field_values()):
-            msg = "STRATEGY InstrumentSpec must not have options fields set"
-            raise ValueError(msg)
+        return self
+
+
+InstrumentSpec = Annotated[
+    EquityInstrumentSpec | OptionsInstrumentSpec | StrategyInstrumentSpec,
+    Field(discriminator="instrument_type"),
+]
 
 
 class PriceParameters(BaseModel):

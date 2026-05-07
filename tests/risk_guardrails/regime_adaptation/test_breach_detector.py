@@ -23,7 +23,6 @@ from alphamind.portfolio_state.records.capital import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     LocateStatus,
     PositionFill,
     PositionRecord,
@@ -79,8 +78,7 @@ def _equity_position(
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_NOW,
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=equity_details,
+        details=equity_details,
         execution_history=(_fill(),),
         realized_pnl_to_date_usd=None,
         current_market_value_usd=1000.0,

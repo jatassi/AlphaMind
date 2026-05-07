@@ -83,7 +83,13 @@ from alphamind.portfolio_state.records.capital import (
     RiskBudgetConsumption,
 )
 from alphamind.portfolio_state.records.orders import BracketRecord, OrderRecord
-from alphamind.portfolio_state.records.positions import InstrumentType, PositionRecord
+from alphamind.portfolio_state.records.positions import (
+    EquityPositionDetails,
+    InstrumentType,
+    OptionsPositionDetails,
+    PositionRecord,
+    StrategyPositionDetails,
+)
 from alphamind.portfolio_state.records.theses import RecentThesisResolution, ThesisRecord
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.repository import (
@@ -106,20 +112,14 @@ def _classify_position_price_fetch(
         - category: "fresh" | "stale" | "unknown"
         - as_of_timestamp: the quote's as_of_timestamp when category is "fresh", else None
     """
-    ticker: str | None = None
-    if pos.instrument_type == InstrumentType.EQUITY:
-        assert pos.equity_details is not None
-        ticker = pos.equity_details.ticker
-    elif pos.instrument_type == InstrumentType.OPTIONS:
-        assert pos.options_details is not None
-        ticker = pos.options_details.underlying_ticker
+    details = pos.details
+    ticker: str | None
+    if isinstance(details, EquityPositionDetails):
+        ticker = details.ticker
+    elif isinstance(details, OptionsPositionDetails):
+        ticker = details.underlying_ticker
     else:  # STRATEGY — use first leg's underlying
-        assert pos.strategy_details is not None
-        ticker = (
-            pos.strategy_details.legs[0].options.underlying_ticker
-            if pos.strategy_details.legs
-            else None
-        )
+        ticker = details.legs[0].options.underlying_ticker if details.legs else None
     quote = price_map.get(ticker or "")
     if quote is None:
         return "unknown", None
@@ -207,15 +207,13 @@ def _resolve_pricing_tickers(
     """
     seen: dict[str, None] = {}  # preserves insertion order
     for pos in positions:
-        if pos.instrument_type == InstrumentType.EQUITY:
-            assert pos.equity_details is not None
-            seen[pos.equity_details.ticker] = None
-        elif pos.instrument_type == InstrumentType.OPTIONS:
-            assert pos.options_details is not None
-            seen[pos.options_details.underlying_ticker] = None
+        details = pos.details
+        if isinstance(details, EquityPositionDetails):
+            seen[details.ticker] = None
+        elif isinstance(details, OptionsPositionDetails):
+            seen[details.underlying_ticker] = None
         else:  # STRATEGY
-            assert pos.strategy_details is not None
-            for leg in pos.strategy_details.legs:
+            for leg in details.legs:
                 seen[leg.options.underlying_ticker] = None
     return tuple(seen)
 
@@ -253,8 +251,9 @@ def _price_fields_equity(
     position: PositionRecord,
     price_map: dict[str, PriceQuote],
 ) -> _PriceFields:
-    assert position.equity_details is not None
-    ticker = position.equity_details.ticker
+    assert isinstance(position.details, EquityPositionDetails)
+    details = position.details
+    ticker = details.ticker
     raw_quote = price_map.get(ticker)
     if raw_quote is None:
         log.warning(
@@ -265,9 +264,7 @@ def _price_fields_equity(
         return _ZERO_PRICE_FIELDS
     if raw_quote.is_stale:
         return _ZERO_PRICE_FIELDS
-    cost_basis = (
-        position.equity_details.share_count * position.equity_details.average_cost_basis_per_share
-    )
+    cost_basis = details.share_count * details.average_cost_basis_per_share
     return _PriceFields(
         current_market_value_usd=compute_market_value_usd(position, raw_quote),
         notional_exposure_usd=compute_notional_exposure_usd(position, raw_quote),
@@ -281,8 +278,9 @@ def _price_fields_options(
     position: PositionRecord,
     price_map: dict[str, PriceQuote],
 ) -> _PriceFields:
-    assert position.options_details is not None
-    underlying_ticker = position.options_details.underlying_ticker
+    assert isinstance(position.details, OptionsPositionDetails)
+    details = position.details
+    underlying_ticker = details.underlying_ticker
     raw_underlying = price_map.get(underlying_ticker)
     if raw_underlying is None:
         log.warning(
@@ -293,13 +291,9 @@ def _price_fields_options(
         return _ZERO_PRICE_FIELDS
     if raw_underlying.is_stale:
         return _ZERO_PRICE_FIELDS
-    premium = position.options_details.premium_paid_per_contract
+    premium = details.premium_paid_per_contract
     mv_quote = raw_underlying.model_copy(update={"price_usd": premium})
-    cost_basis = (
-        position.options_details.contract_count
-        * position.options_details.contract_multiplier
-        * premium
-    )
+    cost_basis = details.contract_count * details.contract_multiplier * premium
     return _PriceFields(
         current_market_value_usd=compute_market_value_usd(position, mv_quote),
         notional_exposure_usd=compute_notional_exposure_usd(position, raw_underlying),
@@ -313,9 +307,10 @@ def _price_fields_strategy(
     position: PositionRecord,
     price_map: dict[str, PriceQuote],
 ) -> _PriceFields:
-    assert position.strategy_details is not None
+    assert isinstance(position.details, StrategyPositionDetails)
+    details = position.details
     leg_prices: dict[str, PriceQuote] = {}
-    for leg in position.strategy_details.legs:
+    for leg in details.legs:
         underlying_ticker = leg.options.underlying_ticker
         raw_leg = price_map.get(underlying_ticker)
         if raw_leg is None:
@@ -332,16 +327,16 @@ def _price_fields_strategy(
         leg.leg_id: leg_prices[leg.leg_id].model_copy(
             update={"price_usd": leg.options.premium_paid_per_contract}
         )
-        for leg in position.strategy_details.legs
+        for leg in details.legs
     }
-    first_leg = position.strategy_details.legs[0] if position.strategy_details.legs else None
+    first_leg = details.legs[0] if details.legs else None
     return _PriceFields(
         current_market_value_usd=compute_strategy_market_value_usd(position, premium_prices),
         notional_exposure_usd=compute_strategy_notional_exposure_usd(position, leg_prices),
         delta_adjusted_exposure_usd=compute_strategy_delta_adjusted_exposure_usd(
             position, leg_prices
         ),
-        cost_basis=position.strategy_details.net_premium_usd,
+        cost_basis=details.net_premium_usd,
         current_price_usd=leg_prices[first_leg.leg_id].price_usd if first_leg else 0.0,
     )
 

@@ -20,7 +20,9 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
+    OptionsPositionDetails,
     PositionRecord,
+    StrategyPositionDetails,
 )
 from alphamind.risk_guardrails.breach_behavior.config import BreachBehaviorConfig
 from alphamind.risk_guardrails.breach_behavior.types import (
@@ -87,12 +89,13 @@ def _ticker_of(position: PositionRecord) -> str:
     detail records is populated; this keeps callers (rationale strings, audit
     logs) from crashing on degenerate inputs.
     """
-    if isinstance(position.equity_details, EquityPositionDetails):
-        return position.equity_details.ticker
-    if position.options_details is not None:
-        return position.options_details.underlying_ticker
-    if position.strategy_details is not None:
-        return position.strategy_details.strategy_type_label
+    details = position.details
+    if isinstance(details, EquityPositionDetails):
+        return details.ticker
+    if isinstance(details, OptionsPositionDetails):
+        return details.underlying_ticker
+    if isinstance(details, StrategyPositionDetails):
+        return details.strategy_type_label
     return position.position_id
 
 

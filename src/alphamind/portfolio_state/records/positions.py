@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -143,6 +143,7 @@ class EquityPositionDetails(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    instrument_type: Literal[InstrumentType.EQUITY] = InstrumentType.EQUITY
     ticker: str
     share_count: float
     average_cost_basis_per_share: float
@@ -156,6 +157,7 @@ class OptionsPositionDetails(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    instrument_type: Literal[InstrumentType.OPTIONS] = InstrumentType.OPTIONS
     underlying_ticker: str
     strike_price: float
     expiration_date: date
@@ -181,6 +183,7 @@ class StrategyPositionDetails(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    instrument_type: Literal[InstrumentType.STRATEGY] = InstrumentType.STRATEGY
     strategy_type_label: str
     legs: tuple[StrategyLeg, ...]
     net_premium_usd: float
@@ -188,6 +191,12 @@ class StrategyPositionDetails(BaseModel):
     max_loss_usd: float
     breakeven_levels: tuple[float, ...]
     strategy_greeks: OptionGreeks
+
+
+PositionDetailsPayload = Annotated[
+    EquityPositionDetails | OptionsPositionDetails | StrategyPositionDetails,
+    Field(discriminator="instrument_type"),
+]
 
 
 class PositionRecord(BaseModel):
@@ -219,12 +228,7 @@ class PositionRecord(BaseModel):
     status: PositionStatus
     direction: Direction
     entry_timestamp: datetime | None
-    instrument_type: InstrumentType
-
-    # Exactly one non-None, matching instrument_type — enforced by _check_discriminator
-    equity_details: EquityPositionDetails | None = None
-    options_details: OptionsPositionDetails | None = None
-    strategy_details: StrategyPositionDetails | None = None
+    details: PositionDetailsPayload
 
     execution_history: tuple[PositionFill, ...]
     realized_pnl_to_date_usd: float | None
@@ -245,44 +249,18 @@ class PositionRecord(BaseModel):
     parent_position_id: str | None
     origin: str | None
 
+    @property
+    def instrument_type(self) -> InstrumentType:
+        """Derived from the discriminated ``details`` payload."""
+        return self.details.instrument_type
+
     @model_validator(mode="after")
     def _validate_all(self) -> PositionRecord:
-        self._check_discriminator()
         self._check_status_rules()
         self._check_equity_direction_fields()
         self._check_range_constraints()
         self._check_spinoff_invariant()
         return self
-
-    def _check_discriminator(self) -> None:
-        populated = [
-            name
-            for name, val in [
-                ("equity_details", self.equity_details),
-                ("options_details", self.options_details),
-                ("strategy_details", self.strategy_details),
-            ]
-            if val is not None
-        ]
-        if len(populated) != 1:
-            msg = (
-                f"Exactly one of equity_details, options_details, strategy_details must be "
-                f"non-None; got {len(populated)} non-None: {populated}"
-            )
-            raise ValueError(msg)
-        field_name = populated[0]
-        expected_map = {
-            InstrumentType.EQUITY: "equity_details",
-            InstrumentType.OPTIONS: "options_details",
-            InstrumentType.STRATEGY: "strategy_details",
-        }
-        expected = expected_map[self.instrument_type]
-        if field_name != expected:
-            msg = (
-                f"instrument_type={self.instrument_type!r} requires {expected!r} "
-                f"to be non-None, but {field_name!r} is set instead"
-            )
-            raise ValueError(msg)
 
     def _check_status_rules(self) -> None:
         if self.status == PositionStatus.PENDING:
@@ -305,12 +283,12 @@ class PositionRecord(BaseModel):
                 raise ValueError(msg)
 
     def _check_equity_direction_fields(self) -> None:
-        if self.equity_details is None:
+        if not isinstance(self.details, EquityPositionDetails):
             return
         short_fields = (
-            self.equity_details.borrow_rate_pct,
-            self.equity_details.locate_status,
-            self.equity_details.margin_held_usd,
+            self.details.borrow_rate_pct,
+            self.details.locate_status,
+            self.details.margin_held_usd,
         )
         if self.direction == Direction.SHORT and any(f is None for f in short_fields):
             msg = (
