@@ -14,11 +14,11 @@ Reading: the story file at
 from __future__ import annotations
 
 from alphamind.config.models.regimes import Regime
-from alphamind.portfolio_state.records.capital import RegimeTransitionState
 from alphamind.risk_guardrails.regime_adaptation.types import (
     LOOSENING_INVOCATIONS,
     NextTransitionDecision,
     RegimeAdaptationState,
+    RegimeTransitionState,
 )
 
 _REGIME_VOLATILITY_LADDER: tuple[Regime, ...] = (

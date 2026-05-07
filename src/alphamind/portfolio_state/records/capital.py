@@ -1,13 +1,41 @@
-"""Capital and capacity state records (raw state categories 2c, 4a, 4c, 4d)."""
+"""Capital and capacity state records (raw state categories 2c, 4a, 4c, 4d).
+
+The four risk-guardrail enums (``RegimeLabel``, ``RegimeTransitionState``,
+``RiskZone``, ``DrawdownTier``) live under ``risk_guardrails/`` and are
+re-exported here so the records that consume them as field types — and the
+~30+ legacy importers that still reference ``portfolio_state.records.capital``
+— continue to work. The re-export is via Python's import machinery; identity
+is preserved across both import paths.
+"""
 
 from __future__ import annotations
 
 import math
 from datetime import datetime
-from enum import StrEnum
 from typing import Annotated, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from alphamind.risk_guardrails.breach_behavior.types import DrawdownTier
+from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+from alphamind.risk_guardrails.regime_adaptation.types import (
+    RegimeLabel,
+    RegimeTransitionState,
+)
+
+__all__ = [
+    "ActiveRiskParameterEntry",
+    "ActiveRiskParameterSet",
+    "CashLedger",
+    "DrawdownState",
+    "DrawdownTier",
+    "RegimeLabel",
+    "RegimeTransitionState",
+    "RiskBudgetConsumption",
+    "RiskBudgetEntry",
+    "RiskZone",
+    "UnsettledProceedsEntry",
+]
 
 
 class _HasRuleId(Protocol):
@@ -19,40 +47,6 @@ def _assert_unique_rule_ids(entries: tuple[_HasRuleId, ...]) -> None:
     if len(ids) != len(set(ids)):
         msg = "entries must have unique rule_id values"
         raise ValueError(msg)
-
-
-class RegimeLabel(StrEnum):
-    """Volatility regime classification."""
-
-    LOW_VOL = "LOW_VOL"
-    NORMAL = "NORMAL"
-    ELEVATED = "ELEVATED"
-    CRISIS = "CRISIS"
-
-
-class RegimeTransitionState(StrEnum):
-    """Whether the system is stable or transitioning between volatility regimes."""
-
-    STABLE = "STABLE"
-    TIGHTENING = "TIGHTENING"
-    LOOSENING = "LOOSENING"
-
-
-class RiskZone(StrEnum):
-    """Proximity zone for a risk rule limit."""
-
-    NORMAL = "NORMAL"
-    WARNING = "WARNING"
-    CRITICAL = "CRITICAL"
-    BLOCKED = "BLOCKED"
-
-
-class DrawdownTier(StrEnum):
-    """Cumulative drawdown progressive response tier."""
-
-    CONSTRAINED = "CONSTRAINED"
-    HEAVILY_CONSTRAINED = "HEAVILY_CONSTRAINED"
-    FULL_HALT = "FULL_HALT"
 
 
 # ---------------------------------------------------------------------------

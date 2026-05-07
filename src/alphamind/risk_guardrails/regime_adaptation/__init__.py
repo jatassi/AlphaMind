@@ -3,6 +3,12 @@
 This story (02) lands the typed value objects every downstream story consumes;
 subsequent stories drop function modules into this package and add their own
 re-exports below.
+
+Module load order (``types`` first) is load-bearing: ``types.py`` is the
+canonical home for ``RegimeLabel`` and ``RegimeTransitionState``, which
+``portfolio_state.records.capital`` re-exports. Loading any function-module
+first would put us mid-load on ``regime_adaptation`` while capital tries to
+resolve those enums and trigger an ``ImportError``.
 """
 
 from alphamind.risk_guardrails.regime_adaptation.breach_detector import (

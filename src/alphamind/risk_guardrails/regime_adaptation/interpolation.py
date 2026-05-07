@@ -21,8 +21,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from types import MappingProxyType
 
-from alphamind.portfolio_state.records.capital import RegimeTransitionState
-from alphamind.risk_guardrails.regime_adaptation.types import LOOSENING_INVOCATIONS
+from alphamind.risk_guardrails.regime_adaptation.types import (
+    LOOSENING_INVOCATIONS,
+    RegimeTransitionState,
+)
 
 
 def interpolate_loosening_multipliers(
