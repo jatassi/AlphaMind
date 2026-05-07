@@ -159,9 +159,9 @@ class TestInvocationRecord:
         readback_row.phase1_completed_at = "2026-05-07T14:31:00Z"
         readback_row.staleness_flag = 0
         session.commit()
-        re_readback = invocation_record_from_row(
-            session.get(InvocationRow, "inv-2026-05-07T14:30:00Z-abcd")  # type: ignore[arg-type]
-        )
+        re_readback_row = session.get(InvocationRow, "inv-2026-05-07T14:30:00Z-abcd")
+        assert re_readback_row is not None
+        re_readback = invocation_record_from_row(re_readback_row)
         assert re_readback.phase1_completed_at == "2026-05-07T14:31:00Z"
         assert re_readback.staleness_flag is False
 
