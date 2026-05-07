@@ -23,12 +23,12 @@ from alphamind.portfolio_state.records.capital import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     LocateStatus,
     PositionFill,
     PositionRecord,
     PositionStatus,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.regime_adaptation import (
     RegimeTransitionBreach,
     RuleMetadata,
@@ -61,7 +61,7 @@ def _equity_position(
     position_id: str,
     position_weight_pct: float,
     direction: Direction = Direction.LONG,
-) -> PositionRecord:
+) -> PositionView:
     is_short = direction == Direction.SHORT
     equity_details = EquityPositionDetails(
         ticker="AAPL",
@@ -72,17 +72,22 @@ def _equity_position(
         margin_held_usd=500.0 if is_short else None,
     )
     delta_adjusted = 1000.0 if direction == Direction.LONG else -1000.0
-    return PositionRecord(
+    record = PositionRecord(
         position_id=position_id,
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_NOW,
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=equity_details,
+        details=equity_details,
         execution_history=(_fill(),),
         realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
         current_market_value_usd=1000.0,
         unrealized_pnl_usd=0.0,
         unrealized_pnl_pct=0.0,
@@ -93,9 +98,6 @@ def _equity_position(
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
     )
 
 

@@ -83,7 +83,13 @@ from alphamind.portfolio_state.records.capital import (
     RiskBudgetConsumption,
 )
 from alphamind.portfolio_state.records.orders import BracketRecord, OrderRecord
-from alphamind.portfolio_state.records.positions import InstrumentType, PositionRecord
+from alphamind.portfolio_state.records.positions import (
+    EquityPositionDetails,
+    InstrumentType,
+    OptionsPositionDetails,
+    PositionRecord,
+    StrategyPositionDetails,
+)
 from alphamind.portfolio_state.records.theses import RecentThesisResolution, ThesisRecord
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.repository import (
@@ -91,6 +97,7 @@ from alphamind.portfolio_state.repository import (
     PortfolioStateRepository,
 )
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
+from alphamind.portfolio_state.views.positions import PositionView
 
 log = logging.getLogger(__name__)
 
@@ -106,20 +113,14 @@ def _classify_position_price_fetch(
         - category: "fresh" | "stale" | "unknown"
         - as_of_timestamp: the quote's as_of_timestamp when category is "fresh", else None
     """
-    ticker: str | None = None
-    if pos.instrument_type == InstrumentType.EQUITY:
-        assert pos.equity_details is not None
-        ticker = pos.equity_details.ticker
-    elif pos.instrument_type == InstrumentType.OPTIONS:
-        assert pos.options_details is not None
-        ticker = pos.options_details.underlying_ticker
+    details = pos.details
+    ticker: str | None
+    if isinstance(details, EquityPositionDetails):
+        ticker = details.ticker
+    elif isinstance(details, OptionsPositionDetails):
+        ticker = details.underlying_ticker
     else:  # STRATEGY — use first leg's underlying
-        assert pos.strategy_details is not None
-        ticker = (
-            pos.strategy_details.legs[0].options.underlying_ticker
-            if pos.strategy_details.legs
-            else None
-        )
+        ticker = details.legs[0].options.underlying_ticker if details.legs else None
     quote = price_map.get(ticker or "")
     if quote is None:
         return "unknown", None
@@ -168,13 +169,13 @@ def _enrich_positions_with_price_classification(
     ids_fresh: set[str],
     ids_stale: set[str],
     ids_unknown: set[str],
-) -> tuple[list[PositionRecord], datetime | None]:
+) -> tuple[list[PositionView], datetime | None]:
     """Enrich positions (first pass) and accumulate price-fetch outcome classification.
 
     Mutates *ids_fresh*, *ids_stale*, *ids_unknown* in place.
     Returns (enriched_list, oldest_price_as_of).
     """
-    enriched: list[PositionRecord] = []
+    enriched: list[PositionView] = []
     oldest: datetime | None = None
     for pos in positions:
         category, as_of = _classify_position_price_fetch(pos, price_map)
@@ -207,15 +208,13 @@ def _resolve_pricing_tickers(
     """
     seen: dict[str, None] = {}  # preserves insertion order
     for pos in positions:
-        if pos.instrument_type == InstrumentType.EQUITY:
-            assert pos.equity_details is not None
-            seen[pos.equity_details.ticker] = None
-        elif pos.instrument_type == InstrumentType.OPTIONS:
-            assert pos.options_details is not None
-            seen[pos.options_details.underlying_ticker] = None
+        details = pos.details
+        if isinstance(details, EquityPositionDetails):
+            seen[details.ticker] = None
+        elif isinstance(details, OptionsPositionDetails):
+            seen[details.underlying_ticker] = None
         else:  # STRATEGY
-            assert pos.strategy_details is not None
-            for leg in pos.strategy_details.legs:
+            for leg in details.legs:
                 seen[leg.options.underlying_ticker] = None
     return tuple(seen)
 
@@ -253,8 +252,9 @@ def _price_fields_equity(
     position: PositionRecord,
     price_map: dict[str, PriceQuote],
 ) -> _PriceFields:
-    assert position.equity_details is not None
-    ticker = position.equity_details.ticker
+    assert isinstance(position.details, EquityPositionDetails)
+    details = position.details
+    ticker = details.ticker
     raw_quote = price_map.get(ticker)
     if raw_quote is None:
         log.warning(
@@ -265,9 +265,7 @@ def _price_fields_equity(
         return _ZERO_PRICE_FIELDS
     if raw_quote.is_stale:
         return _ZERO_PRICE_FIELDS
-    cost_basis = (
-        position.equity_details.share_count * position.equity_details.average_cost_basis_per_share
-    )
+    cost_basis = details.share_count * details.average_cost_basis_per_share
     return _PriceFields(
         current_market_value_usd=compute_market_value_usd(position, raw_quote),
         notional_exposure_usd=compute_notional_exposure_usd(position, raw_quote),
@@ -281,8 +279,9 @@ def _price_fields_options(
     position: PositionRecord,
     price_map: dict[str, PriceQuote],
 ) -> _PriceFields:
-    assert position.options_details is not None
-    underlying_ticker = position.options_details.underlying_ticker
+    assert isinstance(position.details, OptionsPositionDetails)
+    details = position.details
+    underlying_ticker = details.underlying_ticker
     raw_underlying = price_map.get(underlying_ticker)
     if raw_underlying is None:
         log.warning(
@@ -293,13 +292,9 @@ def _price_fields_options(
         return _ZERO_PRICE_FIELDS
     if raw_underlying.is_stale:
         return _ZERO_PRICE_FIELDS
-    premium = position.options_details.premium_paid_per_contract
+    premium = details.premium_paid_per_contract
     mv_quote = raw_underlying.model_copy(update={"price_usd": premium})
-    cost_basis = (
-        position.options_details.contract_count
-        * position.options_details.contract_multiplier
-        * premium
-    )
+    cost_basis = details.contract_count * details.contract_multiplier * premium
     return _PriceFields(
         current_market_value_usd=compute_market_value_usd(position, mv_quote),
         notional_exposure_usd=compute_notional_exposure_usd(position, raw_underlying),
@@ -313,9 +308,10 @@ def _price_fields_strategy(
     position: PositionRecord,
     price_map: dict[str, PriceQuote],
 ) -> _PriceFields:
-    assert position.strategy_details is not None
+    assert isinstance(position.details, StrategyPositionDetails)
+    details = position.details
     leg_prices: dict[str, PriceQuote] = {}
-    for leg in position.strategy_details.legs:
+    for leg in details.legs:
         underlying_ticker = leg.options.underlying_ticker
         raw_leg = price_map.get(underlying_ticker)
         if raw_leg is None:
@@ -332,16 +328,16 @@ def _price_fields_strategy(
         leg.leg_id: leg_prices[leg.leg_id].model_copy(
             update={"price_usd": leg.options.premium_paid_per_contract}
         )
-        for leg in position.strategy_details.legs
+        for leg in details.legs
     }
-    first_leg = position.strategy_details.legs[0] if position.strategy_details.legs else None
+    first_leg = details.legs[0] if details.legs else None
     return _PriceFields(
         current_market_value_usd=compute_strategy_market_value_usd(position, premium_prices),
         notional_exposure_usd=compute_strategy_notional_exposure_usd(position, leg_prices),
         delta_adjusted_exposure_usd=compute_strategy_delta_adjusted_exposure_usd(
             position, leg_prices
         ),
-        cost_basis=position.strategy_details.net_premium_usd,
+        cost_basis=details.net_premium_usd,
         current_price_usd=leg_prices[first_leg.leg_id].price_usd if first_leg else 0.0,
     )
 
@@ -358,8 +354,12 @@ def _enrich_position_first_pass(
     price_map: dict[str, PriceQuote],
     brackets_by_bracket_id: dict[str, BracketRecord],
     now: datetime,
-) -> PositionRecord:
+) -> PositionView:
     """Compute all per-position enrichment fields except position_weight_pct.
+
+    Constructs a :class:`PositionView` wrapping the persistent record. The
+    ``position_weight_pct`` field is set to 0.0 here as a placeholder; the
+    second-pass enrichment (after total portfolio value is known) updates it.
 
     Missing-price / stale-price handling: when the pricing ticker is absent
     from *price_map*, or the returned quote has ``is_stale=True``, all
@@ -393,18 +393,18 @@ def _enrich_position_first_pass(
             distance_to_target_usd, distance_to_stop_usd
         )
 
-    return position.model_copy(
-        update={
-            "current_market_value_usd": pf.current_market_value_usd,
-            "unrealized_pnl_usd": unrealized_pnl_usd,
-            "unrealized_pnl_pct": unrealized_pnl_pct,
-            "position_age_hours": position_age_hours,
-            "notional_exposure_usd": pf.notional_exposure_usd,
-            "delta_adjusted_exposure_usd": pf.delta_adjusted_exposure_usd,
-            "distance_to_target_usd": distance_to_target_usd,
-            "distance_to_stop_usd": distance_to_stop_usd,
-            "risk_reward_at_current": risk_reward_at_current,
-        }
+    return PositionView(
+        record=position,
+        current_market_value_usd=pf.current_market_value_usd,
+        unrealized_pnl_usd=unrealized_pnl_usd,
+        unrealized_pnl_pct=unrealized_pnl_pct,
+        position_weight_pct=0.0,  # second pass overwrites once total portfolio value is known
+        position_age_hours=position_age_hours,
+        notional_exposure_usd=pf.notional_exposure_usd,
+        delta_adjusted_exposure_usd=pf.delta_adjusted_exposure_usd,
+        distance_to_target_usd=distance_to_target_usd,
+        distance_to_stop_usd=distance_to_stop_usd,
+        risk_reward_at_current=risk_reward_at_current,
     )
 
 
@@ -546,32 +546,32 @@ async def assemble_snapshot(
     # ------------------------------------------------------------------
     # Step 8 — Enrich positions with weight (second pass) + sort
     # ------------------------------------------------------------------
-    final_open: list[PositionRecord] = sorted(
+    final_open: list[PositionView] = sorted(
         (
-            pos.model_copy(
+            view.model_copy(
                 update={
                     "position_weight_pct": compute_position_weight_pct(
-                        pos.current_market_value_usd, total_portfolio_value
+                        view.current_market_value_usd, total_portfolio_value
                     )
                 }
             )
-            for pos in enriched_open
+            for view in enriched_open
         ),
-        key=lambda p: p.position_id,
+        key=lambda v: v.position_id,
     )
 
-    final_pending: list[PositionRecord] = sorted(
+    final_pending: list[PositionView] = sorted(
         (
-            pos.model_copy(
+            view.model_copy(
                 update={
                     "position_weight_pct": compute_position_weight_pct(
-                        pos.current_market_value_usd, total_portfolio_value
+                        view.current_market_value_usd, total_portfolio_value
                     )
                 }
             )
-            for pos in enriched_pending
+            for view in enriched_pending
         ),
-        key=lambda p: p.position_id,
+        key=lambda v: v.position_id,
     )
 
     # ------------------------------------------------------------------

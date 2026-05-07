@@ -43,7 +43,8 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
-    InstrumentSpec,
+    EquityInstrumentSpec,
+    EventTrigger,
     OrderDirection,
     OrderDuration,
     OrderRecord,
@@ -51,19 +52,18 @@ from alphamind.portfolio_state.records.orders import (
     OrderStatus,
     OrderType,
     PriceParameters,
+    PriceTrigger,
+    TimeTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     PositionFill,
     PositionRecord,
     PositionStatus,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
-    SupportingSignal,
-    SupportingSignalStatus,
     ThesisComponent,
     ThesisComponentType,
     ThesisRecord,
@@ -74,6 +74,7 @@ from alphamind.portfolio_state.snapshot import (
     DirectionalExposure,
     PortfolioPnL,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 
@@ -283,7 +284,7 @@ def _make_position_record(
     age_hours: float = 36.4,
     share_count: float = 200.0,
     avg_cost: float = 800.0,
-) -> PositionRecord:
+) -> PositionView:
     market_value = weight_pct * _TOTAL_PORTFOLIO_VALUE_USD / 100.0
     equity = EquityPositionDetails(
         ticker=ticker,
@@ -297,7 +298,7 @@ def _make_position_record(
         slippage=0.01,
         fees=1.0,
     )
-    return PositionRecord.model_validate(
+    record = PositionRecord.model_validate(
         {
             "position_id": position_id,
             "thesis_id": None,
@@ -305,24 +306,26 @@ def _make_position_record(
             "status": PositionStatus.OPEN,
             "direction": Direction.LONG,
             "entry_timestamp": _ENTRY_TIMESTAMP,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": equity,
+            "details": equity,
             "execution_history": (fill,),
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": market_value,
-            "unrealized_pnl_usd": unrealized_pnl_usd,
-            "unrealized_pnl_pct": unrealized_pnl_pct,
-            "position_weight_pct": weight_pct,
-            "position_age_hours": age_hours,
-            "notional_exposure_usd": market_value,
-            "delta_adjusted_exposure_usd": market_value,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
         }
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=market_value,
+        unrealized_pnl_usd=unrealized_pnl_usd,
+        unrealized_pnl_pct=unrealized_pnl_pct,
+        position_weight_pct=weight_pct,
+        position_age_hours=age_hours,
+        notional_exposure_usd=market_value,
+        delta_adjusted_exposure_usd=market_value,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
     )
 
 
@@ -330,7 +333,6 @@ def _make_thesis(
     *,
     thesis_id: str = "TH-NVDA-001",
     position_id: str = "POS-NVDA-001",
-    prior_status: ThesisStatus | None = ThesisStatus.AT_RISK,
 ) -> ThesisRecord:
     def _comp(ctype: ThesisComponentType, cid: str, narrative: str) -> ThesisComponent:
         return ThesisComponent(
@@ -346,9 +348,6 @@ def _make_thesis(
                     outcome=None,
                 ),
                 KeyAssumption(text="AI demand persistence", outcome=None),
-            ),
-            supporting_signals=(
-                SupportingSignal(name="capex_signal", status=SupportingSignalStatus.PRESENT),
             ),
             generation_timestamp=_ENTRY_TIMESTAMP,
             resolution_outcome=None,
@@ -378,10 +377,8 @@ def _make_thesis(
                 ),
             ),
             "status": ThesisRecordStatus.ACTIVE,
-            "health_status": ThesisStatus.ON_TRACK,
-            "prior_health_status": prior_status,
             "generation_timestamp": _ENTRY_TIMESTAMP,
-            "time_expectation_hours": "24-72h",
+            "time_expectation_hours": 48.0,
             "age_hours": 36.4,
             "expected_resolution_at": datetime(2026, 5, 5, 14, 0, 0, tzinfo=UTC),
             "resolution_timestamp": None,
@@ -402,37 +399,33 @@ def _make_bracket(
         leg_id="leg-target",
         leg_type=BracketLegType.TAKE_PROFIT,
         order_id="ord-target",
-        trigger_condition="price >= 189.00",
+        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=189.00, direction="GTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     stop_leg = BracketLeg(
         leg_id="leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
         order_id="ord-stop",
-        trigger_condition="price <= 167.00",
+        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=167.00, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     time_leg = BracketLeg(
         leg_id="leg-time",
         leg_type=BracketLegType.TIME_EXPIRATION,
         order_id="ord-time",
-        trigger_condition="time >= 2026-04-25T16:00Z",
+        trigger=TimeTrigger(deadline=datetime(2026, 4, 25, 16, 0, tzinfo=UTC)),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     event_leg = BracketLeg(
         leg_id="leg-event",
         leg_type=BracketLegType.EVENT_INVALIDATION,
         order_id=None,
-        trigger_condition="MSFT guides AI capex lower than consensus",
+        trigger=EventTrigger(description="MSFT guides AI capex lower than consensus"),
         enforcement=BracketLegEnforcement.ADVISORY,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     return BracketRecord(
         bracket_id=bracket_id,
@@ -453,7 +446,7 @@ def _make_pending_order(
     limit_price: float = 380.0,
     age_hours: float = 36.0,
 ) -> OrderRecord:
-    spec = InstrumentSpec(instrument_type=InstrumentType.EQUITY, ticker=ticker)
+    spec = EquityInstrumentSpec(ticker=ticker)
     return OrderRecord(
         order_id=order_id,
         position_id=position_id,
@@ -621,8 +614,8 @@ def _sector_resolver(position: PositionRecord) -> str | None:
         "AAPL": "tech",
         "AMD": "semis",
     }
-    if position.equity_details is not None:
-        return sector_by_ticker.get(position.equity_details.ticker)
+    if isinstance(position.details, EquityPositionDetails):
+        return sector_by_ticker.get(position.details.ticker)
     return None
 
 
@@ -860,13 +853,33 @@ def test_thesis_block_renders_summary_and_components() -> None:
     assert "Invalidation: MSFT guides AI capex lower" in out
 
 
-def test_thesis_block_renders_prior_status() -> None:
+def test_thesis_block_renders_prior_status_from_snapshot() -> None:
+    """Prior status renders from a passed-in ThesisHealthSnapshot (story ALP-351)."""
+    from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
+
+    prior_snap = ThesisHealthSnapshot(
+        thesis_id="TH-NVDA-001",
+        invocation_id="prior-inv-000",
+        snapshot_timestamp=_TIMESTAMP,
+        health_status=ThesisStatus.AT_RISK,
+        prior_health_status=None,
+        component_health=(),
+    )
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(),  # type: ignore[arg-type]
+        sector_label_display=_SECTOR_LABELS,
+        prior_health_snapshots=(prior_snap,),
+    )
+    assert "Prior status: AT_RISK" in out
+
+
+def test_thesis_block_omits_prior_status_when_no_snapshot() -> None:
+    """When no prior snapshot is supplied, no Prior-status line is rendered."""
     out = assemble_input_bundle_normal(
         **_normal_kwargs(),  # type: ignore[arg-type]
         sector_label_display=_SECTOR_LABELS,
     )
-    # prior_health_status was set to AT_RISK in fixture
-    assert "AT_RISK" in out or "at-risk" in out.lower()
+    assert "Prior status:" not in out
 
 
 def test_position_without_thesis_renders_pending_marker() -> None:

@@ -58,7 +58,13 @@ from alphamind.portfolio_state.records.capital import (
     RiskBudgetConsumption,
 )
 from alphamind.portfolio_state.records.orders import OrderRecord
-from alphamind.portfolio_state.records.positions import PositionRecord
+from alphamind.portfolio_state.records.positions import (
+    EquityPositionDetails,
+    OptionsPositionDetails,
+    PositionRecord,
+    StrategyPositionDetails,
+)
+from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
     FeatureFlagsView,
@@ -197,12 +203,13 @@ def _adapt_sector_resolver_for_input_bundle(
 
 def _resolve_position_ticker(position: PositionRecord) -> str | None:
     """Extract the underlying ticker from a position, or return None."""
-    if position.equity_details is not None:
-        return position.equity_details.ticker
-    if position.options_details is not None:
-        return position.options_details.underlying_ticker
-    if position.strategy_details is not None and position.strategy_details.legs:
-        return position.strategy_details.legs[0].options.underlying_ticker
+    details = position.details
+    if isinstance(details, EquityPositionDetails):
+        return details.ticker
+    if isinstance(details, OptionsPositionDetails):
+        return details.underlying_ticker
+    if isinstance(details, StrategyPositionDetails) and details.legs:
+        return details.legs[0].options.underlying_ticker
     return None
 
 
@@ -248,6 +255,7 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
     agent_config: BaseAgentConfig | None = None,
     borrow_cost_resolver: Callable[[str], float] | None = None,
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
 ) -> PMResult:
     """Invoke the portfolio manager and return a :class:`PMResult`.
 
@@ -328,6 +336,7 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
         active_regime_overrides=active_regime_overrides,
         correlation_state=correlation_state,
         dependency_risk_flag=dependency_risk_flag,
+        prior_health_snapshots=prior_health_snapshots,
     )
     logger.info(
         "portfolio_manager input bundle assembled (mode=%s, chars=%d)",
@@ -402,6 +411,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
     active_regime_overrides: tuple[RegimeOverride, ...],
     correlation_state: CorrelationState | None,
     dependency_risk_flag: DependencyRiskFlag | None,
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...],
 ) -> str:
     """Dispatch to the mode-specific input-bundle assembler.
 
@@ -430,6 +440,7 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
             active_regime_overrides=active_regime_overrides,
             correlation_state=correlation_state,
             dependency_risk_flag=dependency_risk_flag,
+            prior_health_snapshots=prior_health_snapshots,
         )
 
     # mode == "halt" — the runner-side guard above guarantees halt_state and
@@ -459,4 +470,5 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
         active_regime_overrides=active_regime_overrides,
         correlation_state=correlation_state,
         dependency_risk_flag=dependency_risk_flag,
+        prior_health_snapshots=prior_health_snapshots,
     )

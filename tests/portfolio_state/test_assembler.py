@@ -42,7 +42,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
-    InstrumentSpec,
+    EquityInstrumentSpec,
     OrderDirection,
     OrderDuration,
     OrderRecord,
@@ -50,11 +50,11 @@ from alphamind.portfolio_state.records.orders import (
     OrderStatus,
     OrderType,
     PriceParameters,
+    PriceTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     LocateStatus,
     OptionContractType,
     OptionGreeks,
@@ -276,10 +276,7 @@ def _make_open_equity_position(
             "status": PositionStatus.OPEN,
             "direction": direction,
             "entry_timestamp": _ENTRY_AT,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": equity,
-            "options_details": None,
-            "strategy_details": None,
+            "details": equity,
             "execution_history": (fill,),
             "realized_pnl_to_date_usd": None,
             "current_market_value_usd": 0.0,  # assembler will recompute
@@ -324,7 +321,7 @@ def _make_pending_order(
     position_id: str = "POS-001",
     submission_timestamp: datetime = _ORDER_SUBMITTED_AT,
 ) -> OrderRecord:
-    spec = InstrumentSpec(instrument_type=InstrumentType.EQUITY, ticker="NVDA")
+    spec = EquityInstrumentSpec(ticker="NVDA")
     return OrderRecord.model_validate(
         {
             "order_id": order_id,
@@ -363,19 +360,17 @@ def _make_bracket(
         leg_id="leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
         order_id="ord-stop-1",
-        trigger_condition=str(stop_price),
+        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=stop_price, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     target_leg = BracketLeg(
         leg_id="leg-target",
         leg_type=BracketLegType.TAKE_PROFIT,
         order_id="ord-target-1",
-        trigger_condition=str(target_price),
+        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=target_price, direction="GTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     return BracketRecord.model_validate(
         {
@@ -423,10 +418,7 @@ def _make_options_position(
             "status": PositionStatus.OPEN,
             "direction": Direction.LONG,
             "entry_timestamp": _ENTRY_AT,
-            "instrument_type": InstrumentType.OPTIONS,
-            "equity_details": None,
-            "options_details": options,
-            "strategy_details": None,
+            "details": options,
             "execution_history": (fill,),
             "realized_pnl_to_date_usd": None,
             "current_market_value_usd": 0.0,
@@ -500,10 +492,7 @@ def _make_strategy_position(
             "status": PositionStatus.OPEN,
             "direction": Direction.LONG,
             "entry_timestamp": _ENTRY_AT,
-            "instrument_type": InstrumentType.STRATEGY,
-            "equity_details": None,
-            "options_details": None,
-            "strategy_details": strategy_details,
+            "details": strategy_details,
             "execution_history": (fill,),
             "realized_pnl_to_date_usd": None,
             "current_market_value_usd": 0.0,
@@ -569,10 +558,10 @@ def _ticker_sector_resolver(
     mapping: dict[str, str],
 ) -> Callable[[PositionRecord], str | None]:
     def _resolve(pos: PositionRecord) -> str | None:
-        if pos.equity_details is not None:
-            return mapping.get(pos.equity_details.ticker)
-        if pos.options_details is not None:
-            return mapping.get(pos.options_details.underlying_ticker)
+        if isinstance(pos.details, EquityPositionDetails):
+            return mapping.get(pos.details.ticker)
+        if isinstance(pos.details, OptionsPositionDetails):
+            return mapping.get(pos.details.underlying_ticker)
         return None
 
     return _resolve
@@ -799,8 +788,8 @@ def test_multi_position_rollup() -> None:
 
     def sector_resolver(pos: PositionRecord) -> str | None:
         mapping = {"NVDA": "TECH", "AMD": "TECH", "JNJ": "HEALTHCARE"}
-        if pos.equity_details is not None:
-            return mapping.get(pos.equity_details.ticker)
+        if isinstance(pos.details, EquityPositionDetails):
+            return mapping.get(pos.details.ticker)
         return None
 
     assembled = _run(

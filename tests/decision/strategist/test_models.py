@@ -522,6 +522,32 @@ class TestPositionAssessmentInvariants:
         )
         assert pa.remedy_flag == "BREACH-1"
 
+    def test_component_health_field_present_default_empty(self) -> None:
+        """ALP-351 — PositionAssessment carries the new per-component health snapshot.
+
+        Defaults to empty so existing callers and the schema's ``allOf`` blocks
+        keep working; producers populate it when they re-assess cited signals.
+        """
+        pa = _make_position_assessment()
+        assert pa.component_health == ()
+
+    def test_component_health_accepts_per_component_entries(self) -> None:
+        """ALP-351 — each entry mirrors ComponentHealthEntry shape."""
+        from alphamind.portfolio_state.records.theses import (
+            SupportingSignal,
+            SupportingSignalStatus,
+        )
+        from alphamind.portfolio_state.views.thesis_health import ComponentHealthEntry
+
+        entry = ComponentHealthEntry(
+            component_id="comp-entry",
+            supporting_signals=(
+                SupportingSignal(name="capex", status=SupportingSignalStatus.STRENGTHENED),
+            ),
+        )
+        pa = _make_position_assessment(component_health=(entry,))
+        assert pa.component_health == (entry,)
+
 
 # ---------------------------------------------------------------------------
 # 5. CloseParameters: conviction_reduced forbids quantity="all"

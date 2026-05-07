@@ -33,10 +33,10 @@ from alphamind.portfolio_state.records.orders import (
     BracketRecord,
     BracketStatus,
     OrderRecord,
+    PriceTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
-    InstrumentType,
     PositionRecord,
     PositionStatus,
 )
@@ -358,8 +358,8 @@ def _make_position_record(position_id: str) -> PositionRecord:
             "status": PositionStatus.PENDING,
             "direction": Direction.LONG,
             "entry_timestamp": None,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": {
+            "details": {
+                "instrument_type": "EQUITY",
                 "ticker": "AAPL",
                 "share_count": 10.0,
                 "average_cost_basis_per_share": 150.0,
@@ -413,10 +413,9 @@ def _make_bracket_record(position_id: str) -> BracketRecord:
             "leg_id": "leg-1",
             "leg_type": BracketLegType.PRICE_STOP,
             "order_id": "ord-1",
-            "trigger_condition": "price < 140",
+            "trigger": PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
             "enforcement": BracketLegEnforcement.MECHANICAL,
             "status": BracketLegStatus.ACTIVE,
-            "pl_based": False,
         }
     )
     return BracketRecord.model_validate(

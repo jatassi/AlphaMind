@@ -1,0 +1,113 @@
+"""Tier 1 — core mutable entities per ``state-persistence.md`` § Logical entities.
+
+Primary mutable business objects the OMS manages: positions, theses, orders +
+brackets, and the cash ledger. Each has a well-defined lifecycle with creation,
+update, and terminal states.
+
+Tier 2 (lifecycle/event records) lives in ``alphamind.portfolio_state.events``;
+Tier 3 (derived/aggregate records) lives in ``alphamind.portfolio_state.aggregates``.
+"""
+
+from __future__ import annotations
+
+from alphamind.portfolio_state.records.cash import (
+    CashLedger,
+    UnsettledProceedsEntry,
+)
+from alphamind.portfolio_state.records.orders import (
+    BracketLeg,
+    BracketLegEnforcement,
+    BracketLegStatus,
+    BracketLegType,
+    BracketRecord,
+    BracketStatus,
+    EventTrigger,
+    InstrumentSpec,
+    OrderClass,
+    OrderDirection,
+    OrderDuration,
+    OrderRecord,
+    OrderRole,
+    OrderStatus,
+    OrderType,
+    PLAnchorSpec,
+    PriceParameters,
+    PriceTrigger,
+    TimeTrigger,
+)
+from alphamind.portfolio_state.records.positions import (
+    Direction,
+    EquityPositionDetails,
+    InstrumentType,
+    LiveExecutionEstimate,
+    LocateStatus,
+    OptionContractType,
+    OptionGreeks,
+    OptionsPositionDetails,
+    PositionFill,
+    PositionRecord,
+    PositionStatus,
+    StrategyLeg,
+    StrategyPositionDetails,
+)
+from alphamind.portfolio_state.records.theses import (
+    KeyAssumption,
+    RecentThesisResolution,
+    SupportingSignal,
+    SupportingSignalStatus,
+    ThesisComponent,
+    ThesisComponentOutcome,
+    ThesisComponentType,
+    ThesisRecord,
+    ThesisRecordStatus,
+    ThesisResolutionCategory,
+    ThesisStatus,
+)
+
+__all__ = [
+    "BracketLeg",
+    "BracketLegEnforcement",
+    "BracketLegStatus",
+    "BracketLegType",
+    "BracketRecord",
+    "BracketStatus",
+    "CashLedger",
+    "Direction",
+    "EquityPositionDetails",
+    "EventTrigger",
+    "InstrumentSpec",
+    "InstrumentType",
+    "KeyAssumption",
+    "LiveExecutionEstimate",
+    "LocateStatus",
+    "OptionContractType",
+    "OptionGreeks",
+    "OptionsPositionDetails",
+    "OrderClass",
+    "OrderDirection",
+    "OrderDuration",
+    "OrderRecord",
+    "OrderRole",
+    "OrderStatus",
+    "OrderType",
+    "PLAnchorSpec",
+    "PositionFill",
+    "PositionRecord",
+    "PositionStatus",
+    "PriceParameters",
+    "PriceTrigger",
+    "RecentThesisResolution",
+    "StrategyLeg",
+    "StrategyPositionDetails",
+    "SupportingSignal",
+    "SupportingSignalStatus",
+    "ThesisComponent",
+    "ThesisComponentOutcome",
+    "ThesisComponentType",
+    "ThesisRecord",
+    "ThesisRecordStatus",
+    "ThesisResolutionCategory",
+    "ThesisStatus",
+    "TimeTrigger",
+    "UnsettledProceedsEntry",
+]

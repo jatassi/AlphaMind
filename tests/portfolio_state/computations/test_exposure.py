@@ -14,7 +14,6 @@ from alphamind.portfolio_state.computations.exposure import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     LocateStatus,
     OptionContractType,
     OptionGreeks,
@@ -24,6 +23,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
 )
 from alphamind.portfolio_state.snapshot import DirectionalExposure, SectorExposureEntry
+from alphamind.portfolio_state.views.positions import PositionView
 
 
 def _resolve_tech(_: PositionRecord) -> str | None:
@@ -53,8 +53,8 @@ def _make_long_equity(
     ticker: str,
     delta_adjusted_exposure_usd: float,
     notional: float = 10_000.0,
-) -> PositionRecord:
-    return PositionRecord.model_validate(
+) -> PositionView:
+    record = PositionRecord.model_validate(
         {
             "position_id": position_id,
             "thesis_id": None,
@@ -62,30 +62,30 @@ def _make_long_equity(
             "status": PositionStatus.OPEN,
             "direction": Direction.LONG,
             "entry_timestamp": _NOW,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": EquityPositionDetails(
+            "details": EquityPositionDetails(
                 ticker=ticker,
                 share_count=100.0,
                 average_cost_basis_per_share=notional / 100.0,
             ),
-            "options_details": None,
-            "strategy_details": None,
             "execution_history": (_FILL,),
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": notional,
-            "unrealized_pnl_usd": 0.0,
-            "unrealized_pnl_pct": 0.0,
-            "position_weight_pct": 10.0,
-            "position_age_hours": 24.0,
-            "notional_exposure_usd": notional,
-            "delta_adjusted_exposure_usd": delta_adjusted_exposure_usd,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
         }
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=notional,
+        unrealized_pnl_usd=0.0,
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=10.0,
+        position_age_hours=24.0,
+        notional_exposure_usd=notional,
+        delta_adjusted_exposure_usd=delta_adjusted_exposure_usd,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
     )
 
 
@@ -94,8 +94,8 @@ def _make_short_equity(
     ticker: str,
     delta_adjusted_exposure_usd: float,
     notional: float = 5_000.0,
-) -> PositionRecord:
-    return PositionRecord.model_validate(
+) -> PositionView:
+    record = PositionRecord.model_validate(
         {
             "position_id": position_id,
             "thesis_id": None,
@@ -103,8 +103,7 @@ def _make_short_equity(
             "status": PositionStatus.OPEN,
             "direction": Direction.SHORT,
             "entry_timestamp": _NOW,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": EquityPositionDetails(
+            "details": EquityPositionDetails(
                 ticker=ticker,
                 share_count=100.0,
                 average_cost_basis_per_share=notional / 100.0,
@@ -112,24 +111,25 @@ def _make_short_equity(
                 locate_status=LocateStatus.LOCATED,
                 margin_held_usd=1_000.0,
             ),
-            "options_details": None,
-            "strategy_details": None,
             "execution_history": (_FILL,),
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": notional,
-            "unrealized_pnl_usd": 0.0,
-            "unrealized_pnl_pct": 0.0,
-            "position_weight_pct": 5.0,
-            "position_age_hours": 24.0,
-            "notional_exposure_usd": notional,
-            "delta_adjusted_exposure_usd": delta_adjusted_exposure_usd,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
         }
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=notional,
+        unrealized_pnl_usd=0.0,
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=5.0,
+        position_age_hours=24.0,
+        notional_exposure_usd=notional,
+        delta_adjusted_exposure_usd=delta_adjusted_exposure_usd,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
     )
 
 
@@ -138,7 +138,7 @@ def _make_long_option(
     ticker: str,
     delta_adjusted_exposure_usd: float,
     delta: float = -0.4,
-) -> PositionRecord:
+) -> PositionView:
     """Build a long put (negative delta) for testing sign-based bucket assignment."""
     greeks = OptionGreeks(delta=delta, gamma=0.05, theta=-0.01, vega=0.3)
     options_details = OptionsPositionDetails(
@@ -151,7 +151,7 @@ def _make_long_option(
         premium_paid_per_contract=5.0,
         greeks=greeks,
     )
-    return PositionRecord.model_validate(
+    record = PositionRecord.model_validate(
         {
             "position_id": position_id,
             "thesis_id": None,
@@ -159,26 +159,26 @@ def _make_long_option(
             "status": PositionStatus.OPEN,
             "direction": Direction.LONG,
             "entry_timestamp": _NOW,
-            "instrument_type": InstrumentType.OPTIONS,
-            "equity_details": None,
-            "options_details": options_details,
-            "strategy_details": None,
+            "details": options_details,
             "execution_history": (_FILL,),
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": 1_000.0,
-            "unrealized_pnl_usd": 0.0,
-            "unrealized_pnl_pct": 0.0,
-            "position_weight_pct": 2.0,
-            "position_age_hours": 10.0,
-            "notional_exposure_usd": 8_000.0,
-            "delta_adjusted_exposure_usd": delta_adjusted_exposure_usd,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
         }
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=1_000.0,
+        unrealized_pnl_usd=0.0,
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=2.0,
+        position_age_hours=10.0,
+        notional_exposure_usd=8_000.0,
+        delta_adjusted_exposure_usd=delta_adjusted_exposure_usd,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
     )
 
 
@@ -195,7 +195,7 @@ class TestSectorResolverTypeAlias:
 
         resolver: SectorResolver = my_resolver
         pos = _make_long_equity("POS-001", "NVDA", 10_000.0)
-        assert resolver(pos) == "tech"
+        assert resolver(pos.record) == "tech"
 
 
 # ---------------------------------------------------------------------------
@@ -212,8 +212,8 @@ class TestComputeSectorExposureHappyPath:
 
         def resolver(pos: PositionRecord) -> str | None:
             ticker_map = {"NVDA": "tech", "AMD": "tech", "JPM": "financials"}
-            if pos.equity_details:
-                return ticker_map.get(pos.equity_details.ticker)
+            if isinstance(pos.details, EquityPositionDetails):
+                return ticker_map.get(pos.details.ticker)
             return None
 
         total = 100_000.0
@@ -265,7 +265,7 @@ class TestComputeSectorExposureUnclassified:
         unknown = _make_long_equity("POS-XYZ", "XYZ", 2_000.0)
 
         def resolver(pos: PositionRecord) -> str | None:
-            if pos.equity_details and pos.equity_details.ticker == "NVDA":
+            if isinstance(pos.details, EquityPositionDetails) and pos.details.ticker == "NVDA":
                 return "tech"
             return None
 
@@ -319,9 +319,9 @@ class TestComputeSectorExposureOrdering:
         xom = _make_long_equity("POS-XOM", "XOM", 6_000.0)
 
         def resolver(pos: PositionRecord) -> str | None:
-            if pos.equity_details:
+            if isinstance(pos.details, EquityPositionDetails):
                 return {"NVDA": "tech", "JPM": "financials", "XOM": "energy"}.get(
-                    pos.equity_details.ticker
+                    pos.details.ticker
                 )
             return None
 
@@ -432,7 +432,10 @@ class TestDeterminism:
         amd = _make_short_equity("POS-AMD", "AMD", -5_000.0)
 
         def resolver(pos: PositionRecord) -> str | None:
-            if pos.equity_details and pos.equity_details.ticker in ("NVDA", "AMD"):
+            if isinstance(pos.details, EquityPositionDetails) and pos.details.ticker in (
+                "NVDA",
+                "AMD",
+            ):
                 return "tech"
             return None
 

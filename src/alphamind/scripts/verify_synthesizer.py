@@ -448,7 +448,7 @@ class _FixturePortfolioReader:
                 ticker="NVDA",
                 summary="AI-capex acceleration via hyperscaler reads.",
                 key_catalyst="Q1 earnings",
-                time_expectation_hours="48",
+                time_expectation_hours=48.0,
             ),
         )
         self._exposure: SynthesizerExposureSnapshot = SynthesizerExposureSnapshot(

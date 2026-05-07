@@ -41,7 +41,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
-    InstrumentSpec,
+    EquityInstrumentSpec,
     OrderDirection,
     OrderDuration,
     OrderRecord,
@@ -49,11 +49,11 @@ from alphamind.portfolio_state.records.orders import (
     OrderStatus,
     OrderType,
     PriceParameters,
+    PriceTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     LocateStatus,
     OptionContractType,
     OptionGreeks,
@@ -265,22 +265,9 @@ def _make_equity_position(
             "status": status,
             "direction": direction,
             "entry_timestamp": entry_timestamp if status == PositionStatus.OPEN else None,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": equity,
-            "options_details": None,
-            "strategy_details": None,
+            "details": equity,
             "execution_history": execution_history,
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": 0.0,
-            "unrealized_pnl_usd": 0.0,
-            "unrealized_pnl_pct": 0.0,
-            "position_weight_pct": 0.0,
-            "position_age_hours": 0.0,
-            "notional_exposure_usd": 0.0,
-            "delta_adjusted_exposure_usd": 0.0,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
@@ -293,19 +280,17 @@ def _make_bracket(bracket_id: str, position_id: str) -> BracketRecord:
         leg_id=f"{bracket_id}-stop",
         leg_type=BracketLegType.PRICE_STOP,
         order_id=f"ord-stop-{bracket_id}",
-        trigger_condition="400.0",
+        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=400.0, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     target_leg = BracketLeg(
         leg_id=f"{bracket_id}-target",
         leg_type=BracketLegType.TAKE_PROFIT,
         order_id=f"ord-target-{bracket_id}",
-        trigger_condition="600.0",
+        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=600.0, direction="GTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     return BracketRecord.model_validate(
         {
@@ -328,7 +313,7 @@ def _make_pending_equity_order(
     limit_price: float,
     submission_timestamp: datetime = _ENTRY_AT,
 ) -> OrderRecord:
-    spec = InstrumentSpec(instrument_type=InstrumentType.EQUITY, ticker=ticker)
+    spec = EquityInstrumentSpec(ticker=ticker)
     return OrderRecord.model_validate(
         {
             "order_id": order_id,
@@ -371,7 +356,6 @@ def _make_thesis(
             "instrument_reference": "NVDA",
             "narrative": "Entry rationale text.",
             "key_assumptions": (),
-            "supporting_signals": (),
             "generation_timestamp": now,
             "resolution_outcome": None,
             "resolution_notes": None,
@@ -386,7 +370,6 @@ def _make_thesis(
             "instrument_reference": "NVDA",
             "narrative": "Target rationale text.",
             "key_assumptions": (),
-            "supporting_signals": (),
             "generation_timestamp": now,
             "resolution_outcome": None,
             "resolution_notes": None,
@@ -401,7 +384,6 @@ def _make_thesis(
             "instrument_reference": "NVDA",
             "narrative": "Invalidation rationale text.",
             "key_assumptions": (),
-            "supporting_signals": (),
             "generation_timestamp": now,
             "resolution_outcome": None,
             "resolution_notes": None,
@@ -414,10 +396,8 @@ def _make_thesis(
             "summary": "Test thesis summary",
             "components": (entry_component, target_component, inval_component),
             "status": ThesisRecordStatus.ACTIVE,
-            "health_status": None,
-            "prior_health_status": None,
             "generation_timestamp": now,
-            "time_expectation_hours": "24-48 hours",
+            "time_expectation_hours": 48.0,
             "age_hours": 0.5,
             "expected_resolution_at": now + timedelta(hours=48),
             "resolution_timestamp": None,
@@ -545,22 +525,9 @@ def _make_options_position(
             "status": PositionStatus.OPEN,
             "direction": Direction.LONG,
             "entry_timestamp": entry_timestamp,
-            "instrument_type": InstrumentType.OPTIONS,
-            "equity_details": None,
-            "options_details": options,
-            "strategy_details": None,
+            "details": options,
             "execution_history": (fill,),
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": 0.0,
-            "unrealized_pnl_usd": 0.0,
-            "unrealized_pnl_pct": 0.0,
-            "position_weight_pct": 0.0,
-            "position_age_hours": 0.0,
-            "notional_exposure_usd": 0.0,
-            "delta_adjusted_exposure_usd": 0.0,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
@@ -606,10 +573,11 @@ def _make_base_fixture(
 
 def _make_sector_resolver(mapping: dict[str, str]) -> Callable[[PositionRecord], str | None]:
     def _resolve(pos: PositionRecord) -> str | None:
-        if pos.equity_details is not None:
-            return mapping.get(pos.equity_details.ticker)
-        if pos.options_details is not None:
-            return mapping.get(pos.options_details.underlying_ticker)
+        details = pos.details
+        if isinstance(details, EquityPositionDetails):
+            return mapping.get(details.ticker)
+        if isinstance(details, OptionsPositionDetails):
+            return mapping.get(details.underlying_ticker)
         return None
 
     return _resolve

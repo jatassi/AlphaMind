@@ -18,8 +18,10 @@ from alphamind.portfolio_state.records.capital import (
 )
 from alphamind.portfolio_state.records.positions import (
     InstrumentType,
-    PositionRecord,
+    OptionsPositionDetails,
+    StrategyPositionDetails,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 
 # ---------------------------------------------------------------------------
@@ -397,7 +399,7 @@ def _max_loss_for(active: ActiveRiskParameterSet, rule_id: str) -> float | None:
 
 
 def _max_loss_for_position(
-    pos: PositionRecord,
+    pos: PositionView,
     max_loss_equity: float | None,
     max_loss_options: float | None,
 ) -> float | None:
@@ -477,13 +479,11 @@ def render_position_proximity_block(
 def _render_sector_row(view: StrategistPositionView) -> str:
     pos = view.position
     base = f"    {pos.position_id}: {format_pct(pos.position_weight_pct)}% (delta-adj)"
-    # The PositionRecord discriminator validator pairs instrument_type with the
-    # matching detail block; the ``or 0.0`` defensive fallback satisfies mypy
-    # since the type system can't see the runtime invariant.
-    if pos.instrument_type == InstrumentType.OPTIONS and pos.options_details is not None:
-        return f"{base} [options, delta {pos.options_details.greeks.delta:.2f}]"
-    if pos.instrument_type == InstrumentType.STRATEGY and pos.strategy_details is not None:
-        return f"{base} [strategy, delta {pos.strategy_details.strategy_greeks.delta:.2f}]"
+    details = pos.details
+    if isinstance(details, OptionsPositionDetails):
+        return f"{base} [options, delta {details.greeks.delta:.2f}]"
+    if isinstance(details, StrategyPositionDetails):
+        return f"{base} [strategy, delta {details.strategy_greeks.delta:.2f}]"
     return base
 
 
@@ -506,7 +506,7 @@ def render_sector_breakdown_block(
     grouped: dict[str, list[StrategistPositionView]] = {sector: [] for sector in active_sectors}
     unclassified: list[StrategistPositionView] = []
     for view in positions:
-        sector_key = sector_resolver(view.position)
+        sector_key = sector_resolver(view.position.record)
         if sector_key is None:
             unclassified.append(view)
         elif sector_key in grouped:

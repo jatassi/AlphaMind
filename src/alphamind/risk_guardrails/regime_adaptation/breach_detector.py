@@ -14,17 +14,24 @@ Reading: the story file at
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from alphamind.portfolio_state.records.capital import (
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-)
-from alphamind.portfolio_state.records.positions import Direction, PositionRecord
+from alphamind.portfolio_state.records.positions import Direction
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.regime_adaptation.types import (
     RegimeTransitionBreach,
+    RegimeTransitionState,
     RuleMetadata,
 )
+
+if TYPE_CHECKING:
+    # ``RiskBudgetConsumption`` lives in ``portfolio_state.records.capital``,
+    # which re-exports the four risk-guardrail enums from
+    # ``risk_guardrails.regime_adaptation.types`` (and siblings). Importing it
+    # at runtime would cycle through capital → regime_adaptation package init
+    # → this module. The annotation-only usage is safe under
+    # ``from __future__ import annotations``.
+    from alphamind.portfolio_state.records.capital import RiskBudgetConsumption
 
 # ---------------------------------------------------------------------------
 # Deferred-classification rule set (per breach-behavior.md § Per-rule breach
@@ -65,7 +72,7 @@ per breaching rule with ``position_id=None``."""
 
 def detect_regime_transition_breaches(
     *,
-    held_positions: tuple[PositionRecord, ...],
+    held_positions: tuple[PositionView, ...],
     risk_budget: RiskBudgetConsumption,
     new_effective_limits: Mapping[str, float],
     transition_state: RegimeTransitionState,
@@ -135,10 +142,10 @@ def _classify_rule_id(rule_id: str) -> Literal["per_position", "aggregate"] | No
 def _scan_per_position_rule(
     *,
     rule_id: str,
-    held_positions: tuple[PositionRecord, ...],
+    held_positions: tuple[PositionView, ...],
     new_effective_limits: Mapping[str, float],
     rule_metadata: Mapping[str, RuleMetadata],
-    position_filter: Callable[[PositionRecord], bool],
+    position_filter: Callable[[PositionView], bool],
 ) -> list[RegimeTransitionBreach]:
     new_limit = _require(new_effective_limits, rule_id, source="new_effective_limits")
     metadata = _require(rule_metadata, rule_id, source="rule_metadata")

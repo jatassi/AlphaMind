@@ -20,8 +20,10 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from alphamind.portfolio_state.records.positions import (
     EquityPositionDetails,
-    PositionRecord,
+    OptionsPositionDetails,
+    StrategyPositionDetails,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior.config import BreachBehaviorConfig
 from alphamind.risk_guardrails.breach_behavior.types import (
     PositionSelectionAction,
@@ -78,7 +80,7 @@ class PositionRiskReward(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _ticker_of(position: PositionRecord) -> str:
+def _ticker_of(position: PositionView) -> str:
     """Return a human-readable ticker label for the rationale string.
 
     Equity positions carry a ticker directly; options/strategies surface their
@@ -87,17 +89,18 @@ def _ticker_of(position: PositionRecord) -> str:
     detail records is populated; this keeps callers (rationale strings, audit
     logs) from crashing on degenerate inputs.
     """
-    if isinstance(position.equity_details, EquityPositionDetails):
-        return position.equity_details.ticker
-    if position.options_details is not None:
-        return position.options_details.underlying_ticker
-    if position.strategy_details is not None:
-        return position.strategy_details.strategy_type_label
+    details = position.details
+    if isinstance(details, EquityPositionDetails):
+        return details.ticker
+    if isinstance(details, OptionsPositionDetails):
+        return details.underlying_ticker
+    if isinstance(details, StrategyPositionDetails):
+        return details.strategy_type_label
     return position.position_id
 
 
 def _build_liquidity_lookup(
-    positions: tuple[PositionRecord, ...],
+    positions: tuple[PositionView, ...],
     liquidity: tuple[PositionLiquidity, ...],
 ) -> dict[str, float]:
     """Build a {position_id: ratio} lookup; raise if any open position is uncovered."""
@@ -118,7 +121,7 @@ def _build_liquidity_lookup(
 
 def select_for_drawdown_breach(
     *,
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     liquidity: tuple[PositionLiquidity, ...],
 ) -> PositionSelectionResult:
     """Select the position to close in response to a drawdown breach.
@@ -195,7 +198,7 @@ def select_for_drawdown_breach(
 def select_for_position_max_loss(
     *,
     breaching_position_id: str,
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     loss_pct: float,
     limit_pct: float,
 ) -> PositionSelectionResult:
@@ -251,7 +254,7 @@ def select_for_position_max_loss(
 
 def select_for_total_short_exposure_breach(
     *,
-    short_positions: tuple[PositionRecord, ...],
+    short_positions: tuple[PositionView, ...],
     liquidity: tuple[PositionLiquidity, ...],
     total_short_limit_pct_of_portfolio: float,
     config: BreachBehaviorConfig,
@@ -336,7 +339,7 @@ def select_for_total_short_exposure_breach(
 def select_for_single_short_max_size_breach(
     *,
     breaching_position_id: str,
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     single_short_max_pct_of_portfolio: float,
     config: BreachBehaviorConfig,
 ) -> PositionSelectionResult:
@@ -391,7 +394,7 @@ def select_for_single_short_max_size_breach(
 
 def select_for_margin_call(
     *,
-    open_positions: tuple[PositionRecord, ...],
+    open_positions: tuple[PositionView, ...],
     liquidity: tuple[PositionLiquidity, ...],
     additional_margin_required_usd: float,
     risk_reward_metric: tuple[PositionRiskReward, ...],

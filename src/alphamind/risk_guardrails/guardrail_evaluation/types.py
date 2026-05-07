@@ -20,12 +20,27 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Protocol
 
 # ---------------------------------------------------------------------------
 # Classification enums
 # ---------------------------------------------------------------------------
+
+
+class RiskZone(StrEnum):
+    """Proximity zone for a risk rule limit.
+
+    Produced by the guardrail-evaluation library's per-rule projection and
+    consumed by breach-behavior, state-delivery, and capital-state aggregates.
+    Re-exported from ``portfolio_state.records.capital`` for backward
+    compatibility.
+    """
+
+    NORMAL = "NORMAL"
+    WARNING = "WARNING"
+    CRITICAL = "CRITICAL"
+    BLOCKED = "BLOCKED"
 
 
 class Status(Enum):

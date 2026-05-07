@@ -30,11 +30,13 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    EventTrigger,
+    PriceTrigger,
+    TimeTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     LocateStatus,
     OptionContractType,
     OptionGreeks,
@@ -94,20 +96,9 @@ def _equity_position(
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_NOW,
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=equity_details,
+        details=equity_details,
         execution_history=(_fill(),),
         realized_pnl_to_date_usd=None,
-        current_market_value_usd=1000.0,
-        unrealized_pnl_usd=0.0,
-        unrealized_pnl_pct=0.0,
-        position_weight_pct=10.0,
-        position_age_hours=0.0,
-        notional_exposure_usd=1000.0,
-        delta_adjusted_exposure_usd=1000.0 if direction == Direction.LONG else -1000.0,
-        distance_to_target_usd=None,
-        distance_to_stop_usd=None,
-        risk_reward_at_current=None,
         corporate_action_adjustment_needed=False,
         parent_position_id=None,
         origin=None,
@@ -150,8 +141,7 @@ def _options_position(
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_NOW,
-        instrument_type=InstrumentType.OPTIONS,
-        options_details=_options_details(
+        details=_options_details(
             contract_count=contract_count,
             contract_multiplier=contract_multiplier,
             delta=delta,
@@ -159,16 +149,6 @@ def _options_position(
         ),
         execution_history=(_fill(),),
         realized_pnl_to_date_usd=None,
-        current_market_value_usd=1000.0,
-        unrealized_pnl_usd=0.0,
-        unrealized_pnl_pct=0.0,
-        position_weight_pct=10.0,
-        position_age_hours=0.0,
-        notional_exposure_usd=1000.0,
-        delta_adjusted_exposure_usd=1000.0,
-        distance_to_target_usd=None,
-        distance_to_stop_usd=None,
-        risk_reward_at_current=None,
         corporate_action_adjustment_needed=False,
         parent_position_id=None,
         origin=None,
@@ -198,8 +178,7 @@ def _strategy_position(
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW,
-        instrument_type=InstrumentType.STRATEGY,
-        strategy_details=StrategyPositionDetails(
+        details=StrategyPositionDetails(
             strategy_type_label="iron_condor",
             legs=strategy_legs,
             net_premium_usd=200.0,
@@ -210,16 +189,6 @@ def _strategy_position(
         ),
         execution_history=(_fill(),),
         realized_pnl_to_date_usd=None,
-        current_market_value_usd=1000.0,
-        unrealized_pnl_usd=0.0,
-        unrealized_pnl_pct=0.0,
-        position_weight_pct=10.0,
-        position_age_hours=0.0,
-        notional_exposure_usd=1000.0,
-        delta_adjusted_exposure_usd=500.0,
-        distance_to_target_usd=None,
-        distance_to_stop_usd=None,
-        risk_reward_at_current=None,
         corporate_action_adjustment_needed=False,
         parent_position_id=None,
         origin=None,
@@ -229,12 +198,17 @@ def _strategy_position(
 def _bracket(
     legs: list[tuple[BracketLegType, str, BracketLegEnforcement | None]],
 ) -> BracketRecord:
-    """Build a BracketRecord. Each leg entry: (leg_type, trigger_condition, enforcement).
+    """Build a BracketRecord. Each leg entry: (leg_type, trigger_value, enforcement).
+
+    For TAKE_PROFIT / PRICE_STOP, trigger_value is parsed as a numeric threshold
+    and wrapped in a PriceTrigger. For TIME_EXPIRATION, it is parsed as an ISO
+    datetime and wrapped in a TimeTrigger. For EVENT_INVALIDATION, it becomes
+    the EventTrigger description.
 
     enforcement=None → MECHANICAL for TAKE_PROFIT/PRICE_STOP/TIME_EXPIRATION, else ADVISORY.
     """
     bracket_legs = []
-    for i, (leg_type, trigger, enforcement) in enumerate(legs):
+    for i, (leg_type, trigger_value, enforcement) in enumerate(legs):
         if enforcement is None:
             if leg_type in (
                 BracketLegType.TAKE_PROFIT,
@@ -244,15 +218,31 @@ def _bracket(
                 enforcement = BracketLegEnforcement.MECHANICAL
             else:
                 enforcement = BracketLegEnforcement.ADVISORY
+        trigger: PriceTrigger | TimeTrigger | EventTrigger
+        if leg_type == BracketLegType.TAKE_PROFIT:
+            trigger = PriceTrigger(
+                underlying_ticker="AAPL",
+                threshold_usd=float(trigger_value),
+                direction="GTE",
+            )
+        elif leg_type == BracketLegType.PRICE_STOP:
+            trigger = PriceTrigger(
+                underlying_ticker="AAPL",
+                threshold_usd=float(trigger_value),
+                direction="LTE",
+            )
+        elif leg_type == BracketLegType.TIME_EXPIRATION:
+            trigger = TimeTrigger(deadline=datetime.fromisoformat(trigger_value))
+        else:
+            trigger = EventTrigger(description=trigger_value)
         bracket_legs.append(
             BracketLeg(
                 leg_id=f"leg-{i}",
                 leg_type=leg_type,
                 order_id=None if leg_type == BracketLegType.EVENT_INVALIDATION else "ord-001",
-                trigger_condition=trigger,
+                trigger=trigger,
                 enforcement=enforcement,
                 status=BracketLegStatus.ACTIVE,
-                pl_based=False,
             )
         )
     return BracketRecord(
@@ -463,11 +453,6 @@ class TestComputeDistanceToTargetUsd:
         result = compute_distance_to_target_usd(150.0, bracket, Direction.SHORT)
         assert result == pytest.approx(-50.0)
 
-    def test_non_numeric_trigger_returns_none(self) -> None:
-        bracket = _bracket([(BracketLegType.TAKE_PROFIT, "earnings_announcement", None)])
-        result = compute_distance_to_target_usd(150.0, bracket, Direction.LONG)
-        assert result is None
-
     def test_no_take_profit_leg_returns_none(self) -> None:
         bracket = _bracket([(BracketLegType.PRICE_STOP, "100.00", None)])
         result = compute_distance_to_target_usd(150.0, bracket, Direction.LONG)
@@ -499,16 +484,6 @@ class TestComputeDistanceToStopUsd:
 
     def test_no_price_stop_leg_returns_none(self) -> None:
         bracket = _bracket([(BracketLegType.TAKE_PROFIT, "200.00", None)])
-        result = compute_distance_to_stop_usd(150.0, bracket, Direction.LONG)
-        assert result is None
-
-    def test_non_numeric_trigger_returns_none(self) -> None:
-        bracket = _bracket(
-            [
-                (BracketLegType.TAKE_PROFIT, "200.00", None),
-                (BracketLegType.PRICE_STOP, "2025-01-15T16:00:00", None),
-            ]
-        )
         result = compute_distance_to_stop_usd(150.0, bracket, Direction.LONG)
         assert result is None
 

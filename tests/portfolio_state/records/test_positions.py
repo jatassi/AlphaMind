@@ -9,6 +9,7 @@ from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
     InstrumentType,
+    LiveExecutionEstimate,
     LocateStatus,
     OptionContractType,
     OptionGreeks,
@@ -93,6 +94,90 @@ class TestOptionGreeks:
         with pytest.raises(ValidationError):
             OptionGreeks.model_validate({"delta": 0.5})
 
+    def test_freshness_defaults_all_none_or_false(self) -> None:
+        """(a) All freshness fields default to None/False; legacy construction succeeds."""
+        g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3)
+        assert g.as_of_timestamp is None
+        assert g.iv_used is None
+        assert g.refresh_failed is False
+
+    def test_populated_freshness_fields_succeed(self) -> None:
+        """(b) Populated freshness fields with valid values succeed."""
+        ts = datetime.now(tz=UTC)
+        g = OptionGreeks(
+            delta=0.5,
+            gamma=0.1,
+            theta=-0.02,
+            vega=0.3,
+            as_of_timestamp=ts,
+            iv_used=0.25,
+            refresh_failed=True,
+        )
+        assert g.as_of_timestamp == ts
+        assert g.iv_used == 0.25
+        assert g.refresh_failed is True
+
+    def test_naive_datetime_rejected(self) -> None:
+        """(c) Naive datetime (no tzinfo) raises ValidationError."""
+        with pytest.raises(ValidationError):
+            OptionGreeks(
+                delta=0.5,
+                gamma=0.1,
+                theta=-0.02,
+                vega=0.3,
+                as_of_timestamp=datetime.now(),  # noqa: DTZ005
+            )
+
+    def test_tz_aware_datetime_accepted(self) -> None:
+        """(c) tz-aware datetime is accepted."""
+        ts = datetime.now(tz=UTC)
+        g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, as_of_timestamp=ts)
+        assert g.as_of_timestamp == ts
+
+    def test_zero_iv_used_rejected(self) -> None:
+        """(d) iv_used=0.0 raises ValidationError."""
+        with pytest.raises(ValidationError):
+            OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, iv_used=0.0)
+
+    def test_negative_iv_used_rejected(self) -> None:
+        """(d) iv_used=-0.1 raises ValidationError."""
+        with pytest.raises(ValidationError):
+            OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, iv_used=-0.1)
+
+    def test_positive_iv_used_accepted(self) -> None:
+        """(d) iv_used=0.45 succeeds."""
+        g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, iv_used=0.45)
+        assert g.iv_used == 0.45
+
+    def test_refresh_failed_true_with_freshness_populated(self) -> None:
+        """(e) refresh_failed=True when freshness fields are populated."""
+        ts = datetime.now(tz=UTC)
+        g = OptionGreeks(
+            delta=0.5,
+            gamma=0.1,
+            theta=-0.02,
+            vega=0.3,
+            as_of_timestamp=ts,
+            iv_used=0.30,
+            refresh_failed=True,
+        )
+        assert g.refresh_failed is True
+
+    def test_frozen_after_freshness_field_set(self) -> None:
+        """(f) Frozen model — can't mutate as_of_timestamp after construction."""
+        ts = datetime.now(tz=UTC)
+        g = OptionGreeks(delta=0.5, gamma=0.1, theta=-0.02, vega=0.3, as_of_timestamp=ts)
+        with pytest.raises(ValidationError):
+            g.as_of_timestamp = datetime.now(tz=UTC)
+
+    def test_docstring_sign_convention_paragraphs(self) -> None:
+        """Class docstring includes the four sign-convention paragraphs."""
+        doc = OptionGreeks.__doc__ or ""
+        assert "delta" in doc
+        assert "gamma" in doc
+        assert "theta" in doc
+        assert "vega" in doc
+
 
 class TestPositionFill:
     def _now_utc(self) -> datetime:
@@ -124,6 +209,47 @@ class TestPositionFill:
     def test_required_fields_enforced(self) -> None:
         with pytest.raises(ValidationError):
             PositionFill.model_validate({"fill_price": 100.0})
+
+    def test_live_execution_estimate_defaults_to_none(self) -> None:
+        """(a) live_execution_estimate defaults to None (live-mode case)."""
+        fill = PositionFill(
+            fill_timestamp=self._now_utc(),
+            fill_price=100.0,
+            fill_quantity=10.0,
+            slippage=0.01,
+            fees=1.50,
+        )
+        assert fill.live_execution_estimate is None
+
+    def test_live_execution_estimate_populated_succeeds(self) -> None:
+        """(b) Populating live_execution_estimate (paper-mode case) succeeds."""
+        est = _make_live_estimate()
+        fill = PositionFill(
+            fill_timestamp=self._now_utc(),
+            fill_price=150.0,
+            fill_quantity=10.0,
+            slippage=0.01,
+            fees=0.50,
+            live_execution_estimate=est,
+        )
+        assert fill.live_execution_estimate is est
+
+    def test_negative_fees_rejected(self) -> None:
+        """(c) Negative fees raises ValidationError (newly enforced constraint)."""
+        with pytest.raises(ValidationError):
+            PositionFill(
+                fill_timestamp=self._now_utc(),
+                fill_price=100.0,
+                fill_quantity=10.0,
+                slippage=0.01,
+                fees=-1.0,
+            )
+
+    def test_docstring_includes_slippage_sign_convention(self) -> None:
+        """PositionFill docstring includes slippage and fees sign-convention paragraphs."""
+        doc = PositionFill.__doc__ or ""
+        assert "slippage" in doc
+        assert "fees" in doc
 
 
 class TestEquityPositionDetails:
@@ -281,7 +407,7 @@ _OPTIONS_DETAILS = _make_options_details()
 
 
 def _make_position(**overrides: object) -> PositionRecord:
-    """Build a valid open long equity PositionRecord."""
+    """Build a valid open long equity PositionRecord (post-05a — persistent fields only)."""
     kwargs: dict[str, object] = {
         "position_id": "POS-AAPL-001",
         "thesis_id": "THESIS-001",
@@ -289,22 +415,9 @@ def _make_position(**overrides: object) -> PositionRecord:
         "status": PositionStatus.OPEN,
         "direction": Direction.LONG,
         "entry_timestamp": _NOW,
-        "instrument_type": InstrumentType.EQUITY,
-        "equity_details": _LONG_EQUITY,
-        "options_details": None,
-        "strategy_details": None,
+        "details": _LONG_EQUITY,
         "execution_history": (_FILL,),
         "realized_pnl_to_date_usd": None,
-        "current_market_value_usd": 15000.0,
-        "unrealized_pnl_usd": 500.0,
-        "unrealized_pnl_pct": 3.4,
-        "position_weight_pct": 10.0,
-        "position_age_hours": 24.0,
-        "notional_exposure_usd": 15000.0,
-        "delta_adjusted_exposure_usd": 15000.0,
-        "distance_to_target_usd": None,
-        "distance_to_stop_usd": None,
-        "risk_reward_at_current": None,
         "corporate_action_adjustment_needed": False,
         "parent_position_id": None,
         "origin": None,
@@ -321,30 +434,16 @@ def _make_position(**overrides: object) -> PositionRecord:
 class TestPositionRecordDiscriminator:
     def test_equity_with_equity_details_passes(self) -> None:
         p = _make_position()
-        assert p.instrument_type == InstrumentType.EQUITY
-        assert p.equity_details is not None
-
-    def test_equity_with_options_details_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            _make_position(equity_details=None, options_details=_OPTIONS_DETAILS)
-        assert "instrument_type" in str(exc_info.value) or "details" in str(exc_info.value)
-
-    def test_two_details_populated_simultaneously_fails(self) -> None:
-        with pytest.raises(ValidationError):
-            _make_position(options_details=_OPTIONS_DETAILS)
-
-    def test_no_details_fails(self) -> None:
-        with pytest.raises(ValidationError):
-            _make_position(equity_details=None)
+        assert isinstance(p.details, EquityPositionDetails)
+        assert p.details.instrument_type == InstrumentType.EQUITY
 
     def test_options_with_options_details_passes(self) -> None:
         p = _make_position(
-            instrument_type=InstrumentType.OPTIONS,
-            equity_details=None,
-            options_details=_OPTIONS_DETAILS,
+            details=_OPTIONS_DETAILS,
+            direction=Direction.LONG,
             execution_history=(_FILL,),
         )
-        assert p.options_details is not None
+        assert isinstance(p.details, OptionsPositionDetails)
 
     def test_strategy_with_strategy_details_passes(self) -> None:
         leg = _make_strategy_leg()
@@ -357,12 +456,36 @@ class TestPositionRecordDiscriminator:
             breakeven_levels=(205.0,),
             strategy_greeks=_GREEKS,
         )
+        p = _make_position(details=strat, direction=Direction.LONG)
+        assert isinstance(p.details, StrategyPositionDetails)
+
+    def test_construction_from_dict_via_discriminator(self) -> None:
+        """Pydantic discriminator parses dict payloads into the correct concrete class."""
         p = _make_position(
-            instrument_type=InstrumentType.STRATEGY,
-            equity_details=None,
-            strategy_details=strat,
+            details={
+                "instrument_type": "EQUITY",
+                "ticker": "AAPL",
+                "share_count": 100.0,
+                "average_cost_basis_per_share": 150.0,
+            }
         )
-        assert p.strategy_details is not None
+        assert isinstance(p.details, EquityPositionDetails)
+        assert p.details.ticker == "AAPL"
+
+    def test_bogus_discriminator_tag_fails_at_parse_time(self) -> None:
+        """Unknown discriminator tag raises ValidationError before any model_validator runs."""
+        with pytest.raises(ValidationError) as exc_info:
+            _make_position(details={"instrument_type": "BOGUS"})
+        # Pydantic's native discriminator surfaces the tag error in the message
+        assert "BOGUS" in str(exc_info.value) or "instrument_type" in str(exc_info.value)
+
+    def test_model_json_schema_has_discriminator(self) -> None:
+        """PositionRecord.model_json_schema() exposes the Pydantic-native discriminator."""
+        schema = PositionRecord.model_json_schema()
+        # The "details" property should declare a discriminator with propertyName="instrument_type"
+        details_schema = schema["properties"]["details"]
+        assert "discriminator" in details_schema
+        assert details_schema["discriminator"]["propertyName"] == "instrument_type"
 
 
 # ---------------------------------------------------------------------------
@@ -401,12 +524,10 @@ class TestOpenStatusRules:
 
 
 class TestClosedStatusRules:
-    def test_closed_with_pnl_and_zero_market_value_passes(self) -> None:
+    def test_closed_with_realized_pnl_passes(self) -> None:
         p = _make_position(
             status=PositionStatus.CLOSED,
             realized_pnl_to_date_usd=500.0,
-            current_market_value_usd=0.0,
-            unrealized_pnl_usd=0.0,
         )
         assert p.status == PositionStatus.CLOSED
 
@@ -415,30 +536,8 @@ class TestClosedStatusRules:
             _make_position(
                 status=PositionStatus.CLOSED,
                 realized_pnl_to_date_usd=None,
-                current_market_value_usd=0.0,
-                unrealized_pnl_usd=0.0,
             )
         assert "realized_pnl_to_date_usd" in str(exc_info.value)
-
-    def test_closed_with_nonzero_market_value_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            _make_position(
-                status=PositionStatus.CLOSED,
-                realized_pnl_to_date_usd=500.0,
-                current_market_value_usd=100.0,
-                unrealized_pnl_usd=0.0,
-            )
-        assert "current_market_value_usd" in str(exc_info.value)
-
-    def test_closed_with_nonzero_unrealized_pnl_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            _make_position(
-                status=PositionStatus.CLOSED,
-                realized_pnl_to_date_usd=500.0,
-                current_market_value_usd=0.0,
-                unrealized_pnl_usd=50.0,
-            )
-        assert "unrealized_pnl_usd" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -448,19 +547,19 @@ class TestClosedStatusRules:
 
 class TestDirectionShortFields:
     def test_long_with_no_short_fields_passes(self) -> None:
-        p = _make_position(direction=Direction.LONG, equity_details=_LONG_EQUITY)
-        assert p.equity_details is not None
-        assert p.equity_details.borrow_rate_pct is None
+        p = _make_position(direction=Direction.LONG, details=_LONG_EQUITY)
+        assert isinstance(p.details, EquityPositionDetails)
+        assert p.details.borrow_rate_pct is None
 
     def test_long_with_short_fields_populated_fails(self) -> None:
         with pytest.raises(ValidationError) as exc_info:
-            _make_position(direction=Direction.LONG, equity_details=_SHORT_EQUITY)
+            _make_position(direction=Direction.LONG, details=_SHORT_EQUITY)
         assert "borrow_rate_pct" in str(exc_info.value) or "locate_status" in str(exc_info.value)
 
     def test_short_with_all_short_fields_passes(self) -> None:
-        p = _make_position(direction=Direction.SHORT, equity_details=_SHORT_EQUITY)
-        assert p.equity_details is not None
-        assert p.equity_details.locate_status == LocateStatus.LOCATED
+        p = _make_position(direction=Direction.SHORT, details=_SHORT_EQUITY)
+        assert isinstance(p.details, EquityPositionDetails)
+        assert p.details.locate_status == LocateStatus.LOCATED
 
     def test_short_with_missing_borrow_rate_fails(self) -> None:
         partial = EquityPositionDetails(
@@ -472,49 +571,13 @@ class TestDirectionShortFields:
             margin_held_usd=5000.0,
         )
         with pytest.raises(ValidationError) as exc_info:
-            _make_position(direction=Direction.SHORT, equity_details=partial)
+            _make_position(direction=Direction.SHORT, details=partial)
         assert "borrow_rate_pct" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
 # Range constraint tests
 # ---------------------------------------------------------------------------
-
-
-class TestRangeConstraints:
-    def test_position_weight_pct_above_100_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            _make_position(position_weight_pct=101.0)
-        assert "position_weight_pct" in str(exc_info.value)
-
-    def test_position_weight_pct_below_0_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            _make_position(position_weight_pct=-1.0)
-        assert "position_weight_pct" in str(exc_info.value)
-
-    def test_position_weight_pct_at_bounds_passes(self) -> None:
-        p0 = _make_position(position_weight_pct=0.0)
-        p100 = _make_position(position_weight_pct=100.0)
-        assert p0.position_weight_pct == 0.0
-        assert p100.position_weight_pct == 100.0
-
-    def test_position_age_hours_negative_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            _make_position(position_age_hours=-1.0)
-        assert "position_age_hours" in str(exc_info.value)
-
-    def test_position_age_hours_zero_passes(self) -> None:
-        p = _make_position(position_age_hours=0.0)
-        assert p.position_age_hours == 0.0
-
-    def test_notional_exposure_usd_negative_fails(self) -> None:
-        with pytest.raises(ValidationError) as exc_info:
-            _make_position(notional_exposure_usd=-1.0)
-        assert "notional_exposure_usd" in str(exc_info.value)
-
-    def test_notional_exposure_usd_zero_passes(self) -> None:
-        p = _make_position(notional_exposure_usd=0.0)
-        assert p.notional_exposure_usd == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -549,3 +612,96 @@ class TestSpinOffInvariant:
         )
         assert p.origin == "SPIN"
         assert p.parent_position_id == "POS-AAPL-000"
+
+
+# ---------------------------------------------------------------------------
+# LiveExecutionEstimate tests
+# ---------------------------------------------------------------------------
+
+
+def _make_live_estimate(**overrides: object) -> LiveExecutionEstimate:
+    kwargs: dict[str, object] = {
+        "estimated_spread_usd": 0.05,
+        "estimated_impact_usd": 0.02,
+        "estimated_regulatory_fees_usd": 0.01,
+        "live_adjusted_fill_price": 149.92,
+    }
+    kwargs.update(overrides)
+    return LiveExecutionEstimate.model_validate(kwargs)
+
+
+class TestLiveExecutionEstimate:
+    def test_happy_path(self) -> None:
+        """(a) Valid construction succeeds with all four fields."""
+        est = _make_live_estimate()
+        assert est.estimated_spread_usd == 0.05
+        assert est.estimated_impact_usd == 0.02
+        assert est.estimated_regulatory_fees_usd == 0.01
+        assert est.live_adjusted_fill_price == 149.92
+
+    def test_negative_spread_rejected(self) -> None:
+        """(b) Negative estimated_spread_usd raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(estimated_spread_usd=-0.1)
+
+    def test_negative_impact_rejected(self) -> None:
+        """(b) Negative estimated_impact_usd raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(estimated_impact_usd=-0.01)
+
+    def test_negative_regulatory_fees_rejected(self) -> None:
+        """(b) Negative estimated_regulatory_fees_usd raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(estimated_regulatory_fees_usd=-0.005)
+
+    def test_nan_spread_rejected(self) -> None:
+        """(c) nan in estimated_spread_usd raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(estimated_spread_usd=float("nan"))
+
+    def test_inf_impact_rejected(self) -> None:
+        """(c) inf in estimated_impact_usd raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(estimated_impact_usd=float("inf"))
+
+    def test_nan_regulatory_fees_rejected(self) -> None:
+        """(c) nan in estimated_regulatory_fees_usd raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(estimated_regulatory_fees_usd=float("nan"))
+
+    def test_inf_live_adjusted_fill_price_rejected(self) -> None:
+        """(c) inf in live_adjusted_fill_price raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(live_adjusted_fill_price=float("inf"))
+
+    def test_nan_live_adjusted_fill_price_rejected(self) -> None:
+        """(c) nan in live_adjusted_fill_price raises ValidationError."""
+        with pytest.raises(ValidationError):
+            _make_live_estimate(live_adjusted_fill_price=float("nan"))
+
+    def test_frozen(self) -> None:
+        """(d) Model is frozen — mutation raises ValidationError."""
+        est = _make_live_estimate()
+        with pytest.raises(ValidationError):
+            est.estimated_spread_usd = 1.0
+
+    def test_zero_cost_fields_accepted(self) -> None:
+        """Cost fields accept exactly zero (ge=0.0 boundary)."""
+        est = _make_live_estimate(
+            estimated_spread_usd=0.0,
+            estimated_impact_usd=0.0,
+            estimated_regulatory_fees_usd=0.0,
+        )
+        assert est.estimated_spread_usd == 0.0
+
+    def test_negative_live_adjusted_fill_price_accepted(self) -> None:
+        """live_adjusted_fill_price has no lower bound constraint."""
+        est = _make_live_estimate(live_adjusted_fill_price=-5.0)
+        assert est.live_adjusted_fill_price == -5.0
+
+    def test_docstring_includes_sign_convention(self) -> None:
+        """LiveExecutionEstimate docstring documents cost/sign convention."""
+        doc = LiveExecutionEstimate.__doc__ or ""
+        assert "positive" in doc
+        assert "estimated_spread_usd" in doc
+        assert "live_adjusted_fill_price" in doc

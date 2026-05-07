@@ -28,25 +28,28 @@ from alphamind.config.models.guardrails import (
     EscalationZones,
     ProgressiveTier,
 )
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    DrawdownState,
-    DrawdownTier,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
-)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     InstrumentType,
     PositionRecord,
 )
+from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+from alphamind.risk_guardrails.regime_adaptation.types import (
+    RegimeLabel,
+    RegimeTransitionState,
+)
 
 # ---------------------------------------------------------------------------
 # Enums introduced by this package
 # ---------------------------------------------------------------------------
+
+
+class DrawdownTier(StrEnum):
+    """Cumulative drawdown progressive response tier."""
+
+    CONSTRAINED = "CONSTRAINED"
+    HEAVILY_CONSTRAINED = "HEAVILY_CONSTRAINED"
+    FULL_HALT = "FULL_HALT"
 
 
 class EmergencyTrigger(StrEnum):
@@ -441,12 +444,10 @@ class PositionSelectionResult(BaseModel):
 
 
 __all__ = [
-    "ActiveRiskParameterSet",
     "BreachDetails",
     "BreachResponse",
     "CloseRationaleType",
     "Direction",
-    "DrawdownState",
     "DrawdownTier",
     "EmergencyContext",
     "EmergencyTrigger",
@@ -465,8 +466,6 @@ __all__ = [
     "RegimeLabel",
     "RegimeTransitionState",
     "RejectionRuleEntry",
-    "RiskBudgetConsumption",
-    "RiskBudgetEntry",
     "RiskManagementSubtype",
     "RiskZone",
     "SecondaryBreachCheckResult",

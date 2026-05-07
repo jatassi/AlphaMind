@@ -35,7 +35,7 @@ from alphamind.portfolio_state.records.capital import (
     RiskZone,
 )
 from alphamind.portfolio_state.records.orders import (
-    InstrumentSpec,
+    EquityInstrumentSpec,
     OrderDirection,
     OrderDuration,
     OrderRecord,
@@ -59,6 +59,7 @@ from alphamind.portfolio_state.snapshot import (
     PortfolioPnL,
     SectorExposureEntry,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.state_delivery import (
     CrossConstraintImpact,
@@ -318,7 +319,7 @@ def _make_equity_position(
     direction: Direction = Direction.LONG,
     position_weight_pct: float = 3.0,
     unrealized_pnl_pct: float = -2.0,
-) -> PositionRecord:
+) -> PositionView:
     is_short = direction == Direction.SHORT
     equity_details = EquityPositionDetails(
         ticker=position_id.split("-")[1],
@@ -328,15 +329,14 @@ def _make_equity_position(
         locate_status=LocateStatus.LOCATED if is_short else None,
         margin_held_usd=5_000.0 if is_short else None,
     )
-    return PositionRecord(
+    record = PositionRecord(
         position_id=position_id,
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=datetime(2026, 4, 27, 14, 0, 0, tzinfo=UTC),
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=equity_details,
+        details=equity_details,
         execution_history=(
             PositionFill(
                 fill_timestamp=datetime(2026, 4, 27, 14, 0, 0, tzinfo=UTC),
@@ -347,6 +347,12 @@ def _make_equity_position(
             ),
         ),
         realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
         current_market_value_usd=position_weight_pct * 5_000.0,
         unrealized_pnl_usd=-1_800.0,
         unrealized_pnl_pct=unrealized_pnl_pct,
@@ -357,15 +363,12 @@ def _make_equity_position(
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
     )
 
 
-def _wrap_position(record: PositionRecord) -> StrategistPositionView:
+def _wrap_position(view: PositionView) -> StrategistPositionView:
     return StrategistPositionView(
-        position=record,
+        position=view,
         thesis=None,
         bracket=None,
         pending_orders=(),
@@ -471,7 +474,7 @@ def _make_pm_pending_order(
         position_id=None,
         bracket_id="BR-001",
         role=OrderRole.ENTRY,
-        instrument_spec=InstrumentSpec(instrument_type=InstrumentType.EQUITY, ticker=ticker),
+        instrument_spec=EquityInstrumentSpec(ticker=ticker),
         direction=direction,
         order_type=OrderType.LIMIT,
         price_parameters=PriceParameters(limit_price=limit_price),

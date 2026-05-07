@@ -53,6 +53,7 @@ from alphamind.portfolio_state.records.capital import (
 )
 from alphamind.portfolio_state.records.theses import ThesisComponent
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
+from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.guardrail_evaluation import (
     EscalationZones,
     FeatureFlagsView,
@@ -424,7 +425,7 @@ def _build_tightened_library_config() -> LibraryConfig:
 # ---------------------------------------------------------------------------
 
 
-def _common_runner_kwargs(
+def _common_runner_kwargs(  # noqa: PLR0913 — parametric kwargs assembly
     *,
     mode: Literal["normal", "halt"],
     pre_processor_bundle: ProposalPreProcessorBundle,
@@ -434,6 +435,7 @@ def _common_runner_kwargs(
     library_config: LibraryConfig,
     invocation_id: str,
     timestamp: datetime,
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
 ) -> dict[str, Any]:
     """Collect the kwargs every scenario shares — extracted to keep each
     builder focused on its scenario-specific deltas."""
@@ -460,6 +462,7 @@ def _common_runner_kwargs(
         "total_portfolio_value_usd": _PORTFOLIO_VALUE,
         "available_for_new_positions_usd": _AVAILABLE_FOR_NEW_POSITIONS_USD,
         "cross_constraint_impact": _build_cross_constraint_impact(),
+        "prior_health_snapshots": prior_health_snapshots,
     }
 
 
@@ -481,7 +484,8 @@ def build_normal_scenario_inputs(
     positions: NVDA, JPM, XOM, AAPL) and lifts to :class:`PortfolioManagerView`.
     Pairs with the pre-processor's ``normal.json`` fixture.
     """
-    pm_view = _lift_to_pm_view(build_fixture_normal_view())
+    strategist_view, prior_health_snapshots = build_fixture_normal_view()
+    pm_view = _lift_to_pm_view(strategist_view)
     return _common_runner_kwargs(
         mode="normal",
         pre_processor_bundle=_read_pre_processor_bundle("normal"),
@@ -491,6 +495,7 @@ def build_normal_scenario_inputs(
         library_config=build_fixture_library_config(),
         invocation_id=invocation_id,
         timestamp=timestamp or _STRATEGIST_AS_OF,
+        prior_health_snapshots=prior_health_snapshots,
     )
 
 
@@ -507,7 +512,8 @@ def build_halt_scenario_inputs(
     (6 positions; the engine-originated MSFT close is in the changelog).
     Pairs with the pre-processor's ``halt.json`` fixture.
     """
-    pm_view = _lift_to_pm_view(build_fixture_defensive_posture_view())
+    strategist_view, prior_health_snapshots = build_fixture_defensive_posture_view()
+    pm_view = _lift_to_pm_view(strategist_view)
     kwargs = _common_runner_kwargs(
         mode="halt",
         pre_processor_bundle=_read_pre_processor_bundle("halt"),
@@ -517,6 +523,7 @@ def build_halt_scenario_inputs(
         library_config=build_fixture_library_config(),
         invocation_id=invocation_id,
         timestamp=timestamp or _STRATEGIST_AS_OF,
+        prior_health_snapshots=prior_health_snapshots,
     )
     kwargs["halt_state"] = build_fixture_halt_state()
     kwargs["current_price_lookup"] = _current_price_lookup
@@ -538,7 +545,8 @@ def build_emergency_scenario_inputs(
     regime-transition breach record. Pairs with the pre-processor's
     ``emergency.json`` fixture.
     """
-    pm_view = _lift_to_pm_view(build_fixture_emergency_view())
+    strategist_view, prior_health_snapshots = build_fixture_emergency_view()
+    pm_view = _lift_to_pm_view(strategist_view)
     kwargs = _common_runner_kwargs(
         mode="normal",
         pre_processor_bundle=_read_pre_processor_bundle("emergency"),
@@ -548,6 +556,7 @@ def build_emergency_scenario_inputs(
         library_config=build_fixture_library_config(),
         invocation_id=invocation_id,
         timestamp=timestamp or _STRATEGIST_AS_OF,
+        prior_health_snapshots=prior_health_snapshots,
     )
     kwargs["regime_transition_breaches"] = (build_fixture_regime_transition_breach(),)
     return kwargs
@@ -570,7 +579,8 @@ def build_synchronous_rejection_scenario_inputs(
     is expected to receive at least one synchronous rejection and exercise
     the post-rejection modification path.
     """
-    pm_view = _lift_to_pm_view(build_fixture_normal_view())
+    strategist_view, prior_health_snapshots = build_fixture_normal_view()
+    pm_view = _lift_to_pm_view(strategist_view)
     return _common_runner_kwargs(
         mode="normal",
         pre_processor_bundle=_read_pre_processor_bundle("normal_with_breach"),
@@ -580,6 +590,7 @@ def build_synchronous_rejection_scenario_inputs(
         library_config=_build_tightened_library_config(),
         invocation_id=invocation_id,
         timestamp=timestamp or _STRATEGIST_AS_OF,
+        prior_health_snapshots=prior_health_snapshots,
     )
 
 

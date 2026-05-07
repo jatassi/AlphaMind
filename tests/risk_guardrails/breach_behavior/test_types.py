@@ -20,12 +20,6 @@ from alphamind.config.models.guardrails import (
     ProgressiveTier as UpstreamProgressiveTier,
 )
 from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet as UpstreamActiveRiskParameterSet,
-)
-from alphamind.portfolio_state.records.capital import (
-    DrawdownState as UpstreamDrawdownState,
-)
-from alphamind.portfolio_state.records.capital import (
     DrawdownTier as UpstreamDrawdownTier,
 )
 from alphamind.portfolio_state.records.capital import (
@@ -33,12 +27,6 @@ from alphamind.portfolio_state.records.capital import (
 )
 from alphamind.portfolio_state.records.capital import (
     RegimeTransitionState as UpstreamRegimeTransitionState,
-)
-from alphamind.portfolio_state.records.capital import (
-    RiskBudgetConsumption as UpstreamRiskBudgetConsumption,
-)
-from alphamind.portfolio_state.records.capital import (
-    RiskBudgetEntry as UpstreamRiskBudgetEntry,
 )
 from alphamind.portfolio_state.records.capital import (
     RiskZone as UpstreamRiskZone,
@@ -53,12 +41,10 @@ from alphamind.portfolio_state.records.positions import (
     PositionRecord as UpstreamPositionRecord,
 )
 from alphamind.risk_guardrails.breach_behavior import (
-    ActiveRiskParameterSet,
     BreachDetails,
     BreachResponse,
     CloseRationaleType,
     Direction,
-    DrawdownState,
     DrawdownTier,
     EmergencyContext,
     EmergencyTrigger,
@@ -77,8 +63,6 @@ from alphamind.risk_guardrails.breach_behavior import (
     RegimeLabel,
     RegimeTransitionState,
     RejectionRuleEntry,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
     RiskManagementSubtype,
     RiskZone,
     SecondaryBreachCheckResult,
@@ -96,10 +80,6 @@ def test_reexports_reference_upstream_classes() -> None:
     assert EnforcementTier is UpstreamEnforcementTier
     assert EscalationZones is UpstreamEscalationZones
     assert ProgressiveTier is UpstreamProgressiveTier
-    assert DrawdownState is UpstreamDrawdownState
-    assert RiskBudgetEntry is UpstreamRiskBudgetEntry
-    assert RiskBudgetConsumption is UpstreamRiskBudgetConsumption
-    assert ActiveRiskParameterSet is UpstreamActiveRiskParameterSet
     assert Direction is UpstreamDirection
     assert InstrumentType is UpstreamInstrumentType
     assert PositionRecord is UpstreamPositionRecord

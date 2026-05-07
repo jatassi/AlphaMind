@@ -10,11 +10,14 @@ from __future__ import annotations
 from datetime import datetime
 
 from alphamind.portfolio_state.pricing import PriceQuote
-from alphamind.portfolio_state.records.orders import BracketLegType, BracketRecord
+from alphamind.portfolio_state.records.orders import BracketLegType, BracketRecord, PriceTrigger
 from alphamind.portfolio_state.records.positions import (
     Direction,
+    EquityPositionDetails,
     InstrumentType,
+    OptionsPositionDetails,
     PositionRecord,
+    StrategyPositionDetails,
 )
 
 
@@ -42,17 +45,13 @@ def compute_market_value_usd(position: PositionRecord, price: PriceQuote) -> flo
     if position.instrument_type == InstrumentType.STRATEGY:
         msg = "use compute_strategy_market_value_usd"
         raise ValueError(msg)
-    if position.instrument_type == InstrumentType.EQUITY:
-        assert position.equity_details is not None
-        mv = position.equity_details.share_count * price.price_usd
+    details = position.details
+    if isinstance(details, EquityPositionDetails):
+        mv = details.share_count * price.price_usd
         return mv if position.direction == Direction.LONG else -mv
     # OPTIONS
-    assert position.options_details is not None
-    return (
-        position.options_details.contract_count
-        * position.options_details.contract_multiplier
-        * price.price_usd
-    )
+    assert isinstance(details, OptionsPositionDetails)
+    return details.contract_count * details.contract_multiplier * price.price_usd
 
 
 def compute_strategy_market_value_usd(
@@ -65,9 +64,9 @@ def compute_strategy_market_value_usd(
 
     Raises MissingLegPriceError if any leg_id is absent from leg_prices.
     """
-    assert position.strategy_details is not None
+    assert isinstance(position.details, StrategyPositionDetails)
     total = 0.0
-    for leg in position.strategy_details.legs:
+    for leg in position.details.legs:
         if leg.leg_id not in leg_prices:
             raise MissingLegPriceError(leg.leg_id)
         opts = leg.options
@@ -155,17 +154,6 @@ def compute_unrealized_pnl_pct(unrealized_pnl_usd: float, cost_basis_usd: float)
 # ---------------------------------------------------------------------------
 
 
-def _parse_price_trigger(trigger_condition: str) -> float | None:
-    """Parse a trigger_condition string as a price level.
-
-    Returns the float value when the string is numeric, None otherwise.
-    """
-    try:
-        return float(trigger_condition)
-    except ValueError:
-        return None
-
-
 def compute_distance_to_target_usd(
     current_price_usd: float,
     bracket: BracketRecord,
@@ -177,15 +165,14 @@ def compute_distance_to_target_usd(
     - LONG:  target_price - current_price_usd  (positive = upside remaining)
     - SHORT: current_price_usd - target_price  (positive = downside remaining)
 
-    Returns None when:
-    - No TAKE_PROFIT leg is present in the bracket.
-    - The leg's trigger_condition is non-numeric (event- or time-based).
+    Returns None when no TAKE_PROFIT leg is present in the bracket. The
+    BracketLeg validator guarantees that a TAKE_PROFIT leg always carries a
+    ``PriceTrigger`` payload, so no string parsing is required.
     """
     for leg in bracket.protective_legs:
         if leg.leg_type == BracketLegType.TAKE_PROFIT:
-            target_price = _parse_price_trigger(leg.trigger_condition)
-            if target_price is None:
-                return None
+            assert isinstance(leg.trigger, PriceTrigger)
+            target_price = leg.trigger.threshold_usd
             if direction == Direction.LONG:
                 return target_price - current_price_usd
             return current_price_usd - target_price
@@ -203,15 +190,13 @@ def compute_distance_to_stop_usd(
     - LONG:  current_price_usd - stop_price  (positive = cushion above the stop)
     - SHORT: stop_price - current_price_usd  (positive = cushion below the stop)
 
-    Returns None when:
-    - No PRICE_STOP leg is present.
-    - The leg's trigger_condition is non-numeric.
+    Returns None when no PRICE_STOP leg is present. The BracketLeg validator
+    guarantees that a PRICE_STOP leg always carries a ``PriceTrigger`` payload.
     """
     for leg in bracket.protective_legs:
         if leg.leg_type == BracketLegType.PRICE_STOP:
-            stop_price = _parse_price_trigger(leg.trigger_condition)
-            if stop_price is None:
-                return None
+            assert isinstance(leg.trigger, PriceTrigger)
+            stop_price = leg.trigger.threshold_usd
             if direction == Direction.LONG:
                 return current_price_usd - stop_price
             return stop_price - current_price_usd
@@ -262,16 +247,12 @@ def compute_notional_exposure_usd(position: PositionRecord, price: PriceQuote) -
     if position.instrument_type == InstrumentType.STRATEGY:
         msg = "use compute_strategy_notional_exposure_usd"
         raise ValueError(msg)
-    if position.instrument_type == InstrumentType.EQUITY:
-        assert position.equity_details is not None
-        return position.equity_details.share_count * price.price_usd
+    details = position.details
+    if isinstance(details, EquityPositionDetails):
+        return details.share_count * price.price_usd
     # OPTIONS
-    assert position.options_details is not None
-    return (
-        position.options_details.contract_count
-        * position.options_details.contract_multiplier
-        * price.price_usd
-    )
+    assert isinstance(details, OptionsPositionDetails)
+    return details.contract_count * details.contract_multiplier * price.price_usd
 
 
 def compute_strategy_notional_exposure_usd(
@@ -284,9 +265,9 @@ def compute_strategy_notional_exposure_usd(
 
     Raises MissingLegPriceError if any leg_id is absent from leg_underlying_prices.
     """
-    assert position.strategy_details is not None
+    assert isinstance(position.details, StrategyPositionDetails)
     total = 0.0
-    for leg in position.strategy_details.legs:
+    for leg in position.details.legs:
         if leg.leg_id not in leg_underlying_prices:
             raise MissingLegPriceError(leg.leg_id)
         opts = leg.options
@@ -316,14 +297,18 @@ def compute_delta_adjusted_exposure_usd(position: PositionRecord, price: PriceQu
     if position.instrument_type == InstrumentType.STRATEGY:
         msg = "use compute_strategy_delta_adjusted_exposure_usd"
         raise ValueError(msg)
-    if position.instrument_type == InstrumentType.EQUITY:
-        assert position.equity_details is not None
-        notional = position.equity_details.share_count * price.price_usd
+    details = position.details
+    if isinstance(details, EquityPositionDetails):
+        notional = details.share_count * price.price_usd
         return notional if position.direction == Direction.LONG else -notional
     # OPTIONS
-    assert position.options_details is not None
-    opts = position.options_details
-    return opts.contract_count * opts.contract_multiplier * opts.greeks.delta * price.price_usd
+    assert isinstance(details, OptionsPositionDetails)
+    return (
+        details.contract_count
+        * details.contract_multiplier
+        * details.greeks.delta
+        * price.price_usd
+    )
 
 
 def compute_strategy_delta_adjusted_exposure_usd(
@@ -334,12 +319,12 @@ def compute_strategy_delta_adjusted_exposure_usd(
 
     Returns: strategy_greeks.delta * sum(leg notional exposures)
 
-    The strategy's net delta (from strategy_details.strategy_greeks) is applied to the
+    The strategy's net delta (from details.strategy_greeks) is applied to the
     summed underlying notional. Raises MissingLegPriceError if any leg_id is absent.
     """
-    assert position.strategy_details is not None
+    assert isinstance(position.details, StrategyPositionDetails)
     summed_notional = compute_strategy_notional_exposure_usd(position, leg_underlying_prices)
-    return position.strategy_details.strategy_greeks.delta * summed_notional
+    return position.details.strategy_greeks.delta * summed_notional
 
 
 __all__ = [

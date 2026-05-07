@@ -14,12 +14,20 @@ sequence so operator tuning does not require code changes.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from alphamind.config.models.guardrails import ProgressiveTier
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownTier,
-)
+from alphamind.risk_guardrails.breach_behavior.types import DrawdownTier
+
+if TYPE_CHECKING:
+    # ``ActiveRiskParameter*`` records live in ``portfolio_state.records.capital``,
+    # which re-exports ``DrawdownTier`` from this package. Importing them at
+    # runtime would cycle through capital → breach_behavior package init → this
+    # module. They appear only in annotations, so deferring is sound.
+    from alphamind.portfolio_state.records.capital import (
+        ActiveRiskParameterEntry,
+        ActiveRiskParameterSet,
+    )
 
 _POSITION_MAX_SIZE_RULE_ID = "position_max_size_pct"
 _GROSS_EXPOSURE_RULE_ID = "gross_exposure_pct"

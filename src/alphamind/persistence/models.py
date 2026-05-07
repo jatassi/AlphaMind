@@ -23,7 +23,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from alphamind.config.models.regimes import Regime
 from alphamind.distillation.calibration import CALIBRATION_STATE_VALUES
-from alphamind.portfolio_state.records.capital import RegimeTransitionState
+from alphamind.risk_guardrails.regime_adaptation.types import RegimeTransitionState
 
 
 class Base(DeclarativeBase):

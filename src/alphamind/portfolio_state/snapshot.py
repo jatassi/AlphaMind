@@ -15,9 +15,10 @@ from alphamind.portfolio_state.records.capital import (
     RiskBudgetConsumption,
 )
 from alphamind.portfolio_state.records.orders import BracketRecord, OrderRecord, OrderStatus
-from alphamind.portfolio_state.records.positions import PositionRecord, PositionStatus
+from alphamind.portfolio_state.records.positions import PositionStatus
 from alphamind.portfolio_state.records.theses import RecentThesisResolution, ThesisRecord
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
+from alphamind.portfolio_state.views.positions import PositionView
 
 # ---------------------------------------------------------------------------
 # Snapshot-time rollup types (declared here, not in records/)
@@ -84,8 +85,8 @@ class PortfolioStateSnapshot(BaseModel):
     pipeline_invocation_started_at: datetime | None = None
 
     # Category 1 — Position inventory
-    open_positions: tuple[PositionRecord, ...]
-    pending_positions: tuple[PositionRecord, ...]
+    open_positions: tuple[PositionView, ...]
+    pending_positions: tuple[PositionView, ...]
     sector_exposure: tuple[SectorExposureEntry, ...]
     directional_exposure: DirectionalExposure
 
@@ -271,8 +272,8 @@ class PortfolioStateSnapshot(BaseModel):
     # Helper methods
     # ------------------------------------------------------------------
 
-    def position_by_id(self, position_id: str) -> PositionRecord | None:
-        """Return the PositionRecord with the given position_id, searching open and pending."""
+    def position_by_id(self, position_id: str) -> PositionView | None:
+        """Return the PositionView with the given position_id, searching open and pending."""
         for pos in self.open_positions:
             if pos.position_id == position_id:
                 return pos

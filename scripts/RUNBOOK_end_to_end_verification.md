@@ -18,7 +18,7 @@ on success, and the next script reads its predecessor's outputs via
 
 ## TL;DR for the agent
 
-You're going to run 11 verification scripts in 7 phases. Three rules:
+You're going to run 15 verification scripts in 10 phases. Three rules:
 
 1. **Stop on first FAIL.** Each phase depends on prior phases' state
    AND its predecessor's stage artifacts. Don't continue past a red
@@ -91,6 +91,7 @@ they read time-dependent DB state.
 
 | Phase | Layer | Scripts | SDK? | Wall-clock |
 |-------|-------|---------|------|------------|
+| 0 | Types | position_thesis_model | No | <10s |
 | 1 | Data | bootstrap, ongoing_collection | No | ~5s |
 | 2 | Distillation | distillation, regime_transition, calibration_mix | Yes (1 of 3) | ~30–60s |
 | 3 | Analysis: domain researchers | domain_researchers, domain_researcher_failure_modes | Yes (1 of 2) | ~30–60s |
@@ -100,6 +101,30 @@ they read time-dependent DB state.
 | 7 | Decision: strategist | strategist (normal + defensive_posture + emergency scenarios) | Yes (Opus) | ~10–15 min |
 | 8 | Decision: proposal pre-processor | proposal_pre_processor (4 scenarios) | No | <1s |
 | 9 | Decision: portfolio manager | pm (normal + halt + emergency + synchronous_rejection scenarios) | Yes (Opus) | ~20–30 min |
+
+## Phase 0 — Type-layer self-check
+
+Pure in-process checks against the position-thesis-model type layer (ALP-122
+work tree). No SDK calls; no DB reads. Must complete in under 10 seconds.
+Failures here invalidate every downstream layer — the type contracts the
+pipeline builds on are broken.
+
+```bash
+uv run python scripts/verify_position_thesis_model.py
+```
+
+Verifies: 40 cases across 6 waves covering the 15 sub-stories of ALP-122
+(bracket-thesis coverage validator, thesis-resolution classifier, strategy-payoff
+utilities, seven additive schema fields, RegimeLabel relocation, typed bracket-leg
+payloads, records/events/aggregates structural reorg, PositionRecord/PositionView
+split, BasePositionProtocol, ThesisHealthSnapshot lifecycle).
+
+**On failure:** read `scripts/RUNBOOK_position_thesis_model.md` § Failure-mode
+triage. The FAIL output names the wave and scenario; match the wave number to
+the responsible story IDs in that table. Do not proceed to Phase 1 — if the
+type layer is broken, the data pipeline will still read and write successfully
+but the downstream agents consuming typed records will fail at parse time in
+harder-to-diagnose ways.
 
 ## Phase 1 — Data layer
 
@@ -546,6 +571,7 @@ Report a one-line summary to the operator:
 
 ```
 End-to-end verification: <PASS|FAIL|WARN-only>
+- Phase 0 (types): PASS (40/40 cases)
 - Phase 1 (data): PASS
 - Phase 2 (distillation): PASS
 - Phase 3 (domain researchers): PASS
@@ -567,6 +593,7 @@ the operator can act.
 
 | Script | Model | Input tokens | Output tokens |
 |--------|-------|--------------|---------------|
+| verify_position_thesis_model | (none) | 0 | 0 |
 | verify_distillation | Sonnet | 12K–16K | 2K–4K |
 | verify_domain_researchers | Sonnet | 18K–24K | 3K–6K |
 | verify_qualitative_researcher | Sonnet | 6K–8K | 0.4K–0.6K |
@@ -625,6 +652,7 @@ update the runbook in the same change.
 
 ## References
 
+- `scripts/RUNBOOK_position_thesis_model.md` — phase 0 failure triage (ALP-122 work tree).
 - `scripts/RUNBOOK_domain_researchers.md` — phase 3 failure triage.
 - `scripts/RUNBOOK_qualitative_researcher.md` — phase 4 failure triage.
 - `scripts/RUNBOOK_adaptive_researcher.md` — phase 4 failure triage.

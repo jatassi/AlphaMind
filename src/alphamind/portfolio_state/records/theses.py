@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from alphamind.portfolio_state.records.orders import BracketLegType
 
@@ -70,7 +71,12 @@ class SupportingSignal(BaseModel):
 
 
 class ThesisComponent(BaseModel):
-    """A typed, individually-addressable component linked to a specific order or bracket leg."""
+    """A typed, individually-addressable component linked to a specific order or bracket leg.
+
+    Carries entry-time component data only. Per-invocation supporting-signal
+    re-assessment lives on
+    :class:`alphamind.portfolio_state.views.thesis_health.ComponentHealthEntry`.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -78,41 +84,57 @@ class ThesisComponent(BaseModel):
     thesis_id: str
     component_type: ThesisComponentType
     linked_bracket_leg_type: BracketLegType | None
+    linked_bracket_leg_id: str | None = None
     instrument_reference: str
     narrative: str
     key_assumptions: tuple[KeyAssumption, ...]
-    supporting_signals: tuple[SupportingSignal, ...]
     generation_timestamp: datetime
     resolution_outcome: ThesisComponentOutcome | None
     resolution_notes: str | None
 
 
 class ThesisRecord(BaseModel):
-    """Full consumer-facing thesis record, one-to-one with a position."""
+    """Full consumer-facing thesis record, one-to-one with a position.
+
+    Carries entry-time + lifecycle thesis data only. Per-invocation
+    health-status re-assessment lives on
+    :class:`alphamind.portfolio_state.views.thesis_health.ThesisHealthSnapshot`.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     thesis_id: str
     position_id: str
     summary: str
+    key_catalyst: str
+    # The analyst's prose rationale for *why this size at this conviction*.
+    # Read by the PM's sizing-proportionality evaluation criterion.
+    # Persisted from the analyst's proposal at OPEN time; not modified by
+    # ADJUST or ADD (those have their own per-action rationale fields).
+    position_size_rationale: str | None = None
     components: tuple[ThesisComponent, ...]
     status: ThesisRecordStatus
-    health_status: ThesisStatus | None
-    prior_health_status: ThesisStatus | None
     generation_timestamp: datetime
-    time_expectation_hours: str
+    time_expectation_hours: Annotated[float, Field(gt=0)]
     age_hours: float
     expected_resolution_at: datetime
     resolution_timestamp: datetime | None
     resolution_category: ThesisResolutionCategory | None
     resolution_pnl_usd: float | None
     entry_fill_gap_usd: float | None
-    key_catalyst: str
+
+    @field_validator("position_size_rationale")
+    @classmethod
+    def _require_non_empty_when_populated(cls, v: str | None) -> str | None:
+        if v is not None and not v.strip():
+            msg = "position_size_rationale must be non-empty when not None"
+            raise ValueError(msg)
+        return v
 
     @model_validator(mode="after")
     def _validate_all(self) -> ThesisRecord:
         self._check_summary_non_empty()
-        self._check_time_expectation_non_empty()
+        self._check_time_expectation_consistency()
         self._check_age_hours()
         self._check_components_non_empty_for_active_resolved()
         self._check_mandatory_coverage()
@@ -125,9 +147,20 @@ class ThesisRecord(BaseModel):
             msg = "summary must be a non-empty string"
             raise ValueError(msg)
 
-    def _check_time_expectation_non_empty(self) -> None:
-        if not self.time_expectation_hours:
-            msg = "time_expectation_hours must be a non-empty string"
+    def _check_time_expectation_consistency(self) -> None:
+        """Validate expected_resolution_at is consistent with time_expectation_hours within 60s.
+
+        Allows up to 60 seconds of drift for fractional-hour rounding in producers.
+        """
+        expected = self.generation_timestamp + timedelta(hours=self.time_expectation_hours)
+        delta_seconds = abs((self.expected_resolution_at - expected).total_seconds())
+        if delta_seconds > 60.0:
+            msg = (
+                f"expected_resolution_at ({self.expected_resolution_at!r}) must equal "
+                f"generation_timestamp ({self.generation_timestamp!r}) + "
+                f"time_expectation_hours ({self.time_expectation_hours}) within 60s; "
+                f"got delta of {delta_seconds:.1f}s"
+            )
             raise ValueError(msg)
 
     def _check_age_hours(self) -> None:

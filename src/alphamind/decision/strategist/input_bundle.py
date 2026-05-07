@@ -32,12 +32,18 @@ from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegType,
     BracketRecord,
+    EventTrigger,
     OrderRecord,
+    PriceTrigger,
+    TimeTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
+    EquityPositionDetails,
     InstrumentType,
+    OptionsPositionDetails,
     PositionRecord,
+    StrategyPositionDetails,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -49,6 +55,8 @@ from alphamind.portfolio_state.snapshot import (
     DirectionalExposure,
     PortfolioPnL,
 )
+from alphamind.portfolio_state.views.positions import PositionView
+from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.regime_adaptation import RegimeTransitionBreach
 from alphamind.risk_guardrails.state_delivery import (
@@ -124,8 +132,14 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_strategist
     tool_names: tuple[str, ...],
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
 ) -> str:
-    """Compose the strategist's user-message text for a normal-mode invocation."""
+    """Compose the strategist's user-message text for a normal-mode invocation.
+
+    *prior_health_snapshots* carries the prior invocation's per-thesis health
+    re-assessments; rendered into each thesis block as ``Prior status: <status>``.
+    Pass an empty tuple on the first invocation after position entry.
+    """
     header = render_strategist_header(
         strategist_view=strategist_view,
         invocation_id=invocation_id,
@@ -141,7 +155,9 @@ def assemble_input_bundle_normal(  # noqa: PLR0913 — mirrors render_strategist
         regime_transition_breaches=regime_transition_breaches,
     )
     tool_reminder = _render_tool_reminder(tool_names, defensive_posture=False)
-    portfolio_state_section = _render_portfolio_state_section(strategist_view, current_price_lookup)
+    portfolio_state_section = _render_portfolio_state_section(
+        strategist_view, current_price_lookup, prior_health_snapshots
+    )
     return (
         f"{header}\n\n{tool_reminder}\n\n{portfolio_state_section}"
         f"\n\n{_BRIEF_HEADER}\n{synthesizer_brief_text}"
@@ -166,8 +182,12 @@ def assemble_input_bundle_defensive_posture(  # noqa: PLR0913 — mirrors render
     tool_names: tuple[str, ...],
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
 ) -> str:
-    """Compose the strategist's user-message text for a defensive-posture invocation."""
+    """Compose the strategist's user-message text for a defensive-posture invocation.
+
+    *prior_health_snapshots* — see :func:`assemble_input_bundle_normal`.
+    """
     header = render_strategist_header_halt_mode(
         halt_state=halt_state,
         strategist_view=strategist_view,
@@ -184,7 +204,9 @@ def assemble_input_bundle_defensive_posture(  # noqa: PLR0913 — mirrors render
         regime_transition_breaches=regime_transition_breaches,
     )
     tool_reminder = _render_tool_reminder(tool_names, defensive_posture=True)
-    portfolio_state_section = _render_portfolio_state_section(strategist_view, current_price_lookup)
+    portfolio_state_section = _render_portfolio_state_section(
+        strategist_view, current_price_lookup, prior_health_snapshots
+    )
     return (
         f"{header}\n\n{tool_reminder}\n\n{portfolio_state_section}"
         f"\n\n{_BRIEF_HEADER}\n{synthesizer_brief_text}"
@@ -218,8 +240,10 @@ def _render_tool_reminder(tool_names: tuple[str, ...], *, defensive_posture: boo
 def _render_portfolio_state_section(
     strategist_view: StrategistView,
     current_price_lookup: Callable[[str], float],
+    prior_health_snapshots: tuple[ThesisHealthSnapshot, ...],
 ) -> str:
     """Compose the strategist-specific portfolio-state block."""
+    snapshots_by_thesis_id = {snap.thesis_id: snap for snap in prior_health_snapshots}
     blocks: list[str] = [
         _PORTFOLIO_HEADER,
         _render_aggregate_block(strategist_view),
@@ -227,7 +251,12 @@ def _render_portfolio_state_section(
     if strategist_view.positions:
         blocks.append("Per-position records:")
         for view in strategist_view.positions:
-            blocks.append(_render_position_record(view, current_price_lookup))
+            prior = (
+                snapshots_by_thesis_id.get(view.thesis.thesis_id)
+                if view.thesis is not None
+                else None
+            )
+            blocks.append(_render_position_record(view, current_price_lookup, prior))
     else:
         blocks.append("Per-position records:\n  None")
     blocks.append(_render_intra_invocation_changelog(strategist_view.intra_invocation_changelog))
@@ -287,6 +316,7 @@ def _render_directional_lines(directional: DirectionalExposure) -> str:
 def _render_position_record(
     view: StrategistPositionView,
     current_price_lookup: Callable[[str], float],
+    prior_health_snapshot: ThesisHealthSnapshot | None,
 ) -> str:
     pos = view.position
     ticker = _resolve_position_ticker(pos)
@@ -305,7 +335,7 @@ def _render_position_record(
     rows.append(_render_age_line(pos))
     rows.append(_render_distance_and_rr_line(pos, view.bracket, current_price))
     rows.append(_render_bracket_block(view.bracket))
-    rows.append(_render_thesis_block(view.thesis))
+    rows.append(_render_thesis_block(view.thesis, prior_health_snapshot))
     if view.pending_orders:
         rows.append(_render_pending_orders_for_position(view.pending_orders, current_price))
     if view.modification_trail:
@@ -313,44 +343,44 @@ def _render_position_record(
     return "\n".join(rows)
 
 
-def _resolve_position_ticker(pos: PositionRecord) -> str:
-    if pos.equity_details is not None:
-        return pos.equity_details.ticker
-    if pos.options_details is not None:
-        return pos.options_details.underlying_ticker
-    if pos.strategy_details is not None and pos.strategy_details.legs:
-        return pos.strategy_details.legs[0].options.underlying_ticker
+def _resolve_position_ticker(pos: PositionRecord | PositionView) -> str:
+    details = pos.details
+    if isinstance(details, EquityPositionDetails):
+        return details.ticker
+    if isinstance(details, OptionsPositionDetails):
+        return details.underlying_ticker
+    if isinstance(details, StrategyPositionDetails) and details.legs:
+        return details.legs[0].options.underlying_ticker
     msg = f"position {pos.position_id!r} has no resolvable ticker"
     raise ValueError(msg)
 
 
-def _render_underlying_line(pos: PositionRecord, ticker: str) -> str:
+def _render_underlying_line(pos: PositionView, ticker: str) -> str:
     direction = _DIRECTION_DISPLAY[pos.direction]
     instrument = _INSTRUMENT_TYPE_DISPLAY[pos.instrument_type]
     return f"  Underlying:    {ticker} (instrument: {instrument}, direction: {direction})"
 
 
-def _render_size_line(pos: PositionRecord) -> str:
+def _render_size_line(pos: PositionView) -> str:
     market_value = format_dollar(pos.current_market_value_usd)
     weight = format_pct(pos.position_weight_pct)
-    if pos.equity_details is not None:
-        share_count = pos.equity_details.share_count
-        size_label = f"{share_count:.0f} shares"
-    elif pos.options_details is not None:
-        contracts = pos.options_details.contract_count
-        size_label = f"{contracts:.0f} contracts"
+    details = pos.details
+    if isinstance(details, EquityPositionDetails):
+        size_label = f"{details.share_count:.0f} shares"
+    elif isinstance(details, OptionsPositionDetails):
+        size_label = f"{details.contract_count:.0f} contracts"
     else:
         size_label = "—"
     return f"  Size:          {size_label}  {market_value}  ({weight}% of portfolio)"
 
 
-def _render_pnl_line(pos: PositionRecord) -> str:
+def _render_pnl_line(pos: PositionView) -> str:
     pnl_abs = _format_signed_dollar(pos.unrealized_pnl_usd)
     pnl_pct = _format_signed_pct(pos.unrealized_pnl_pct)
     return f"  P/L:           {pnl_abs} since open ({pnl_pct})"
 
 
-def _render_age_line(pos: PositionRecord) -> str:
+def _render_age_line(pos: PositionView) -> str:
     age = f"{pos.position_age_hours:.1f}"
     placed = (
         pos.entry_timestamp.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -361,7 +391,7 @@ def _render_age_line(pos: PositionRecord) -> str:
 
 
 def _render_distance_and_rr_line(
-    pos: PositionRecord,
+    pos: PositionView,
     bracket: BracketRecord | None,
     current_price: float,
 ) -> str:
@@ -380,30 +410,20 @@ def _bracket_leg_price(
     bracket: BracketRecord | None,
     leg_type: BracketLegType,
 ) -> float | None:
+    """Return the threshold price for the matching leg, or None when absent.
+
+    The BracketLeg validator guarantees ``leg.trigger`` is a ``PriceTrigger``
+    whenever ``leg_type`` is ``TAKE_PROFIT`` or ``PRICE_STOP``.
+    """
     if bracket is None:
         return None
     for leg in bracket.protective_legs:
         if leg.leg_type != leg_type:
             continue
-        return _trigger_price_from_condition(leg.trigger_condition)
+        if isinstance(leg.trigger, PriceTrigger):
+            return leg.trigger.threshold_usd
+        return None
     return None
-
-
-def _trigger_price_from_condition(condition: str) -> float | None:
-    """Extract the numeric price from a trigger condition string.
-
-    Trigger conditions are short comparison strings — ``"price >= 189.00"``,
-    ``"price <= 167.00"``. Pull the trailing numeric token; fall back to
-    ``None`` when no parseable number is present.
-    """
-    tokens = condition.split()
-    if not tokens:
-        return None
-    last = tokens[-1].strip().rstrip(".")
-    try:
-        return float(last)
-    except ValueError:
-        return None
 
 
 def _signed_distance_pct(current_price: float, target: float | None) -> str | None:
@@ -440,15 +460,20 @@ def _render_bracket_block(bracket: BracketRecord | None) -> str:
     stop_leg = _find_leg(bracket, BracketLegType.PRICE_STOP)
     time_leg = _find_leg(bracket, BracketLegType.TIME_EXPIRATION)
     event_leg = _find_leg(bracket, BracketLegType.EVENT_INVALIDATION)
-    if target_leg is not None:
-        lines.append(f"    target: {target_leg.trigger_condition}")
-    if stop_leg is not None:
-        lines.append(f"    stop: {stop_leg.trigger_condition}")
-    if time_leg is not None:
-        lines.append(f"    time deadline: {time_leg.trigger_condition}")
-    if event_leg is not None:
-        lines.append(f'    event invalidation: "{event_leg.trigger_condition}"')
+    if target_leg is not None and isinstance(target_leg.trigger, PriceTrigger):
+        lines.append(f"    target: {_format_price_trigger(target_leg.trigger)}")
+    if stop_leg is not None and isinstance(stop_leg.trigger, PriceTrigger):
+        lines.append(f"    stop: {_format_price_trigger(stop_leg.trigger)}")
+    if time_leg is not None and isinstance(time_leg.trigger, TimeTrigger):
+        lines.append(f"    time deadline: {time_leg.trigger.deadline.isoformat()}")
+    if event_leg is not None and isinstance(event_leg.trigger, EventTrigger):
+        lines.append(f'    event invalidation: "{event_leg.trigger.description}"')
     return "\n".join(lines)
+
+
+def _format_price_trigger(trigger: PriceTrigger) -> str:
+    """Render a PriceTrigger as ``<ticker> <GTE/LTE> $<threshold>``."""
+    return f"{trigger.underlying_ticker} {trigger.direction} ${trigger.threshold_usd}"
 
 
 def _find_leg(bracket: BracketRecord, leg_type: BracketLegType) -> BracketLeg | None:
@@ -458,7 +483,10 @@ def _find_leg(bracket: BracketRecord, leg_type: BracketLegType) -> BracketLeg | 
     return None
 
 
-def _render_thesis_block(thesis: ThesisRecord | None) -> str:
+def _render_thesis_block(
+    thesis: ThesisRecord | None,
+    prior_health_snapshot: ThesisHealthSnapshot | None,
+) -> str:
     if thesis is None:
         return "  Thesis: NONE — pending position"
     lines: list[str] = [f"  Thesis ({thesis.thesis_id}):"]
@@ -472,8 +500,11 @@ def _render_thesis_block(thesis: ThesisRecord | None) -> str:
         lines.append("    Key assumptions:")
         for assumption in assumptions:
             lines.append(f'      - "{assumption.text}"')
-    if thesis.prior_health_status is not None:
-        lines.append(f"    Prior status: {thesis.prior_health_status.value}")
+    if prior_health_snapshot is not None:
+        # The snapshot's own `health_status` (the prior invocation's reading)
+        # is what the new invocation sees as its "prior status" — not the
+        # snapshot's `prior_health_status` (which is one further back).
+        lines.append(f"    Prior status: {prior_health_snapshot.health_status.value}")
     return "\n".join(lines)
 
 

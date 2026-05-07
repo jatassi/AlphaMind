@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -133,9 +133,6 @@ def _make_component(
         instrument_reference="AAPL",
         narrative="Price above 200-day MA with increasing volume.",
         key_assumptions=(KeyAssumption(text="momentum holds", outcome=None),),
-        supporting_signals=(
-            SupportingSignal(name="options volume", status=SupportingSignalStatus.PRESENT),
-        ),
         generation_timestamp=NOW,
         resolution_outcome=resolution_outcome,
         resolution_notes=resolution_notes,
@@ -158,7 +155,6 @@ def _make_full_components(
             instrument_reference="AAPL",
             narrative="Target at 200.",
             key_assumptions=(),
-            supporting_signals=(),
             generation_timestamp=NOW,
             resolution_outcome=outcome,
             resolution_notes=notes,
@@ -171,7 +167,6 @@ def _make_full_components(
             instrument_reference="AAPL",
             narrative="Stop at 150.",
             key_assumptions=(),
-            supporting_signals=(),
             generation_timestamp=NOW,
             resolution_outcome=outcome,
             resolution_notes=notes,
@@ -180,19 +175,21 @@ def _make_full_components(
 
 
 def _make_thesis_record(**overrides: object) -> ThesisRecord:
-    """Build a valid ACTIVE ThesisRecord with optional overrides."""
+    """Build a valid ACTIVE ThesisRecord with optional overrides.
+
+    Default time_expectation_hours=24.0 with expected_resolution_at=NOW+24h
+    so the cross-field consistency validator passes without needing overrides.
+    """
     base: dict[str, object] = {
         "thesis_id": "thesis-1",
         "position_id": "pos-1",
         "summary": "Long AAPL on momentum breakout.",
         "components": _make_full_components(),
         "status": ThesisRecordStatus.ACTIVE,
-        "health_status": None,
-        "prior_health_status": None,
         "generation_timestamp": NOW,
-        "time_expectation_hours": "4-24h",
+        "time_expectation_hours": 24.0,
         "age_hours": 2.0,
-        "expected_resolution_at": NOW,
+        "expected_resolution_at": NOW + timedelta(hours=24),
         "resolution_timestamp": None,
         "resolution_category": None,
         "resolution_pnl_usd": None,
@@ -234,7 +231,6 @@ def test_thesis_component_requires_component_id() -> None:
                 "instrument_reference": "AAPL",
                 "narrative": "x",
                 "key_assumptions": [],
-                "supporting_signals": [],
                 "generation_timestamp": NOW.isoformat(),
                 "resolution_outcome": None,
                 "resolution_notes": None,
@@ -246,7 +242,6 @@ def test_thesis_record_valid_active() -> None:
     rec = _make_thesis_record()
     assert rec.thesis_id == "thesis-1"
     assert rec.status == ThesisRecordStatus.ACTIVE
-    assert rec.health_status is None
     assert rec.resolution_timestamp is None
 
 
@@ -412,14 +407,100 @@ def test_summary_empty_rejected() -> None:
         _make_thesis_record(summary="")
 
 
-def test_time_expectation_non_empty_passes() -> None:
-    rec = _make_thesis_record(time_expectation_hours="24-72h")
-    assert rec.time_expectation_hours == "24-72h"
+# ---------------------------------------------------------------------------
+# time_expectation_hours field type and constraints (ALP-337)
+# ---------------------------------------------------------------------------
 
 
-def test_time_expectation_empty_rejected() -> None:
+def test_time_expectation_field_type() -> None:
+    """time_expectation_hours must be typed as float with gt=0 constraint."""
+    import alphamind.portfolio_state.records.theses as theses_mod
+
+    field_info = theses_mod.ThesisRecord.model_fields["time_expectation_hours"]
+    assert field_info.annotation is float, (
+        f"Expected float annotation, got: {field_info.annotation}"
+    )
+    assert any(getattr(m, "gt", None) == 0 for m in (field_info.metadata or [])), (
+        f"Expected gt=0 constraint in metadata, got: {field_info.metadata}"
+    )
+
+
+def test_time_expectation_valid_float_passes() -> None:
+    """Valid positive float is accepted."""
+    rec = _make_thesis_record(time_expectation_hours=24.0)
+    assert rec.time_expectation_hours == 24.0
+
+
+def test_time_expectation_zero_rejected() -> None:
+    """time_expectation_hours=0 must raise ValidationError (gt=0 constraint)."""
     with pytest.raises(ValidationError):
-        _make_thesis_record(time_expectation_hours="")
+        _make_thesis_record(time_expectation_hours=0, expected_resolution_at=NOW)
+
+
+def test_time_expectation_negative_rejected() -> None:
+    """time_expectation_hours=-5.0 must raise ValidationError."""
+    with pytest.raises(ValidationError):
+        _make_thesis_record(time_expectation_hours=-5.0, expected_resolution_at=NOW)
+
+
+def test_time_expectation_fractional_passes() -> None:
+    """Fractional float (24.5h) is a valid non-integer value."""
+    expected_at = NOW + timedelta(hours=24.5)
+    rec = _make_thesis_record(time_expectation_hours=24.5, expected_resolution_at=expected_at)
+    assert rec.time_expectation_hours == 24.5
+
+
+def test_time_expectation_consistency_validator_passes() -> None:
+    """Canonical acceptance-criteria case: 48h from 2026-05-01T12:00:00Z → 2026-05-03T12:00:00Z."""
+    gen_ts = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
+    expected_at = datetime(2026, 5, 3, 12, 0, 0, tzinfo=UTC)  # exactly 48h later
+    rec = _make_thesis_record(
+        generation_timestamp=gen_ts,
+        time_expectation_hours=48.0,
+        expected_resolution_at=expected_at,
+    )
+    assert rec.time_expectation_hours == 48.0
+
+
+def test_time_expectation_consistency_validator_fails_and_names_delta() -> None:
+    """Consistency validator raises ValueError naming the actual delta when > 60s."""
+    gen_ts = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
+    # 24h off — expected_resolution_at is 24h earlier than generation + 48h
+    bad_resolution = datetime(2026, 5, 2, 12, 0, 0, tzinfo=UTC)
+    with pytest.raises(ValidationError) as exc_info:
+        _make_thesis_record(
+            generation_timestamp=gen_ts,
+            time_expectation_hours=48.0,
+            expected_resolution_at=bad_resolution,
+        )
+    error_str = str(exc_info.value)
+    # Error message must name the delta in seconds
+    assert "86400" in error_str or "delta" in error_str.lower()
+
+
+def test_time_expectation_consistency_within_60s_tolerance_passes() -> None:
+    """Up to 60 seconds of drift is within the allowed tolerance."""
+    gen_ts = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
+    # 59 seconds short of exact
+    expected_at = gen_ts + timedelta(hours=48) - timedelta(seconds=59)
+    rec = _make_thesis_record(
+        generation_timestamp=gen_ts,
+        time_expectation_hours=48.0,
+        expected_resolution_at=expected_at,
+    )
+    assert rec.time_expectation_hours == 48.0
+
+
+def test_time_expectation_exactly_61s_off_fails() -> None:
+    """61 seconds beyond tolerance must be rejected."""
+    gen_ts = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
+    expected_at = gen_ts + timedelta(hours=48) + timedelta(seconds=61)
+    with pytest.raises(ValidationError):
+        _make_thesis_record(
+            generation_timestamp=gen_ts,
+            time_expectation_hours=48.0,
+            expected_resolution_at=expected_at,
+        )
 
 
 def test_recent_thesis_resolution_valid() -> None:
@@ -464,3 +545,56 @@ def test_recent_thesis_resolution_requires_thesis_id() -> None:
                 "signal_post_mortem": None,
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# position_size_rationale field (ALP-343)
+# ---------------------------------------------------------------------------
+
+
+def test_position_size_rationale_defaults_to_none() -> None:
+    """(a) Constructing ThesisRecord without position_size_rationale yields None."""
+    rec = _make_thesis_record()
+    assert rec.position_size_rationale is None
+
+
+def test_position_size_rationale_non_empty_string_accepted() -> None:
+    """(b) A non-empty rationale string is accepted."""
+    rec = _make_thesis_record(
+        position_size_rationale="Conviction 4 with tight invalidation supports top-of-band size."
+    )
+    assert rec.position_size_rationale == (
+        "Conviction 4 with tight invalidation supports top-of-band size."
+    )
+
+
+def test_position_size_rationale_empty_string_rejected() -> None:
+    """(c) An empty string is rejected by the field validator."""
+    with pytest.raises(ValidationError):
+        _make_thesis_record(position_size_rationale="")
+
+
+def test_position_size_rationale_whitespace_only_rejected() -> None:
+    """(d) A whitespace-only string is rejected by the field validator."""
+    with pytest.raises(ValidationError):
+        _make_thesis_record(position_size_rationale="   ")
+
+
+# ---------------------------------------------------------------------------
+# ALP-351 — supporting_signals / health_status lifecycle refactor
+# ---------------------------------------------------------------------------
+
+
+def test_supporting_signals_removed_from_thesis_component() -> None:
+    """ThesisComponent must no longer carry supporting_signals — moved to ThesisHealthSnapshot."""
+    assert "supporting_signals" not in ThesisComponent.model_fields
+
+
+def test_health_status_removed_from_thesis_record() -> None:
+    """ThesisRecord must no longer carry health_status — moved to ThesisHealthSnapshot."""
+    assert "health_status" not in ThesisRecord.model_fields
+
+
+def test_prior_health_status_removed_from_thesis_record() -> None:
+    """ThesisRecord must no longer carry prior_health_status — moved to ThesisHealthSnapshot."""
+    assert "prior_health_status" not in ThesisRecord.model_fields

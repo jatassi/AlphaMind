@@ -67,11 +67,11 @@ from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     PositionFill,
     PositionRecord,
     PositionStatus,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.regime_adaptation import RuleMetadata
 
 CONFIG_DIR = Path(__file__).parent.parent.parent.parent / "config"
@@ -143,8 +143,8 @@ def rule_metadata_from_shipped_registry(
 
 
 @pytest.fixture()
-def held_position_at_5pct() -> PositionRecord:
-    """A synthetic NVDA long position sized at 5% of portfolio.
+def held_position_at_5pct() -> PositionView:
+    """A synthetic NVDA long position view sized at 5% of portfolio.
 
     Used by tests that verify the breach detector emits a
     ``RegimeTransitionBreach`` when a tightening transition (e.g., low_vol
@@ -153,15 +153,14 @@ def held_position_at_5pct() -> PositionRecord:
     5% position breaches by 3 percentage points).
     """
     fill_timestamp = datetime(2026, 4, 29, 13, 30, tzinfo=UTC)
-    return PositionRecord(
+    record = PositionRecord(
         position_id="NVDA-LONG-1",
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=fill_timestamp,
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=EquityPositionDetails(
+        details=EquityPositionDetails(
             ticker="NVDA",
             share_count=10.0,
             average_cost_basis_per_share=100.0,
@@ -179,6 +178,12 @@ def held_position_at_5pct() -> PositionRecord:
             ),
         ),
         realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
         current_market_value_usd=1000.0,
         unrealized_pnl_usd=0.0,
         unrealized_pnl_pct=0.0,
@@ -189,7 +194,4 @@ def held_position_at_5pct() -> PositionRecord:
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
     )

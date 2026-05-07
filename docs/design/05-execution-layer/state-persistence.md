@@ -68,7 +68,7 @@ Order record:
 - Order type: market, limit, stop, stop-limit
 - Quantity: shares or contracts
 - Price parameters: limit price, stop trigger price (nullable based on order type)
-- Duration: day, GTC, GTD, IOC, FOK
+- Duration: day, GTC, GTD
 - Status: pending, partially-filled, filled, cancelled, expired, rejected
 - Alpaca order ID: Alpaca's internal identifier for the order (changes when the order is replaced via PATCH — see reference chain below)
 - Alpaca order ID chain: ordered array of all Alpaca order IDs this logical order has held across replacements, for audit trail on modified orders

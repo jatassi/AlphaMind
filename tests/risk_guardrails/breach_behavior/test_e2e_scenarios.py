@@ -22,10 +22,12 @@ import pytest
 from pydantic import ValidationError
 
 from alphamind.config.models.guardrails import ProgressiveTier
-from alphamind.portfolio_state.records.capital import RegimeTransitionState
-from alphamind.portfolio_state.records.positions import PositionRecord
-from alphamind.risk_guardrails.breach_behavior import (
+from alphamind.portfolio_state.records.capital import (
     ActiveRiskParameterSet,
+    RegimeTransitionState,
+)
+from alphamind.portfolio_state.views.positions import PositionView
+from alphamind.risk_guardrails.breach_behavior import (
     BreachBehaviorConfig,
     BreachDetails,
     CascadeContext,
@@ -176,7 +178,7 @@ def test_a4_recovery_to_2pct2_still_breaches_when_evaluated_in_isolation() -> No
 _A6_TRIGGER_TS = datetime(2026, 4, 28, 14, 30, tzinfo=UTC)
 
 
-def _a6_position() -> PositionRecord:
+def _a6_position() -> PositionView:
     """A6 fixture: 140-share MARA short at $20 entry, current $28 (40% loss)."""
     return make_position_record(
         position_id="POS-MARA-001",
@@ -268,7 +270,7 @@ _A7_PORTFOLIO_VALUE_USD = 98_000.0
 _A7_MARGIN_CALL_AMOUNT_USD = 3_000.0
 
 
-def _a7_positions() -> tuple[PositionRecord, ...]:
+def _a7_positions() -> tuple[PositionView, ...]:
     """A7 fixture: 3 short positions COIN 8% / SQ 7% / HOOD 7% on $98K portfolio."""
     return (
         make_position_record(
@@ -521,7 +523,7 @@ def test_a10_regime_jump_low_vol_to_crisis_fires_emergency() -> None:
         context.trigger = EmergencyTrigger.MARGIN_CALL
 
 
-def _a10_positions() -> tuple[PositionRecord, ...]:
+def _a10_positions() -> tuple[PositionView, ...]:
     """A10 fixture: positions one of which exceeds the per-position 2% crisis cap.
 
     The aggregate breaches (net_long, gross, options_delta) come from the risk

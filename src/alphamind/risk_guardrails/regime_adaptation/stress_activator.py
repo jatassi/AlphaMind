@@ -26,17 +26,23 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from alphamind.config.models.overlays import Overlay, StressOverlay, StressTrigger
 from alphamind.distillation.calibration import CalibrationState
-from alphamind.persistence.models import DistillationCompositeState
 from alphamind.risk_guardrails.regime_adaptation.types import (
     CompositeAlertState,
     OverlayActivationDecision,
 )
+
+if TYPE_CHECKING:
+    # Eager import would re-enter ``persistence.models`` mid-load (it
+    # imports ``RegimeTransitionState`` from this package). The DB-read
+    # helper imports lazily below.
+    from alphamind.persistence.models import DistillationCompositeState
 
 # ---------------------------------------------------------------------------
 # Composite-kind ↔ overlay-trigger bridge
@@ -187,6 +193,9 @@ def _latest_composite_row(
     session: Session,
     composite_kind: str,
 ) -> DistillationCompositeState | None:
+    # Lazy import — see TYPE_CHECKING block at top of module for the cycle rationale.
+    from alphamind.persistence.models import DistillationCompositeState
+
     statement = (
         select(DistillationCompositeState)
         .where(DistillationCompositeState.composite_kind == composite_kind)

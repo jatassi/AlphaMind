@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -34,7 +34,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
-    InstrumentSpec,
+    EquityInstrumentSpec,
     OrderDirection,
     OrderDuration,
     OrderRecord,
@@ -42,24 +42,21 @@ from alphamind.portfolio_state.records.orders import (
     OrderStatus,
     OrderType,
     PriceParameters,
+    PriceTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     PositionFill,
     PositionRecord,
     PositionStatus,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
-    SupportingSignal,
-    SupportingSignalStatus,
     ThesisComponent,
     ThesisComponentType,
     ThesisRecord,
     ThesisRecordStatus,
-    ThesisStatus,
 )
 from alphamind.portfolio_state.records.thesis_quality import (
     AlphaBetaDecomposition,
@@ -82,6 +79,7 @@ from alphamind.portfolio_state.snapshot import (
     PortfolioStateSnapshot,
     SectorExposureEntry,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 
 # ---------------------------------------------------------------------------
 # Shared timestamps
@@ -108,13 +106,13 @@ def _make_fill(price: float = 150.0) -> PositionFill:
     )
 
 
-def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> PositionRecord:
+def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> PositionView:
     equity = EquityPositionDetails(
         ticker=ticker,
         share_count=100.0,
         average_cost_basis_per_share=150.0,
     )
-    return PositionRecord.model_validate(
+    record = PositionRecord.model_validate(
         {
             "position_id": pos_id,
             "thesis_id": None,
@@ -122,36 +120,36 @@ def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> Positi
             "status": PositionStatus.OPEN,
             "direction": Direction.LONG,
             "entry_timestamp": _T0,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": equity,
-            "options_details": None,
-            "strategy_details": None,
+            "details": equity,
             "execution_history": (_make_fill(),),
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": 15500.0,
-            "unrealized_pnl_usd": 500.0,
-            "unrealized_pnl_pct": 3.33,
-            "position_weight_pct": 10.0,
-            "position_age_hours": 4.0,
-            "notional_exposure_usd": 15000.0,
-            "delta_adjusted_exposure_usd": 15000.0,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
         }
     )
+    return PositionView(
+        record=record,
+        current_market_value_usd=15500.0,
+        unrealized_pnl_usd=500.0,
+        unrealized_pnl_pct=3.33,
+        position_weight_pct=10.0,
+        position_age_hours=4.0,
+        notional_exposure_usd=15000.0,
+        delta_adjusted_exposure_usd=15000.0,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
+    )
 
 
-def _make_pending_position(pos_id: str = "POS-003") -> PositionRecord:
+def _make_pending_position(pos_id: str = "POS-003") -> PositionView:
     equity = EquityPositionDetails(
         ticker="GOOG",
         share_count=10.0,
         average_cost_basis_per_share=2800.0,
     )
-    return PositionRecord.model_validate(
+    record = PositionRecord.model_validate(
         {
             "position_id": pos_id,
             "thesis_id": None,
@@ -159,26 +157,26 @@ def _make_pending_position(pos_id: str = "POS-003") -> PositionRecord:
             "status": PositionStatus.PENDING,
             "direction": Direction.LONG,
             "entry_timestamp": None,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": equity,
-            "options_details": None,
-            "strategy_details": None,
+            "details": equity,
             "execution_history": (),
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": 0.0,
-            "unrealized_pnl_usd": 0.0,
-            "unrealized_pnl_pct": 0.0,
-            "position_weight_pct": 0.0,
-            "position_age_hours": 0.0,
-            "notional_exposure_usd": 0.0,
-            "delta_adjusted_exposure_usd": 0.0,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
         }
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=0.0,
+        unrealized_pnl_usd=0.0,
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=0.0,
+        position_age_hours=0.0,
+        notional_exposure_usd=0.0,
+        delta_adjusted_exposure_usd=0.0,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
     )
 
 
@@ -187,10 +185,9 @@ def _make_bracket(bracket_id: str = "BRK-001", position_id: str = "POS-001") -> 
         leg_id="leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
         order_id="ord-stop-1",
-        trigger_condition="price < 140.0",
+        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
-        pl_based=False,
     )
     return BracketRecord.model_validate(
         {
@@ -210,7 +207,7 @@ def _make_pending_order(
     position_id: str = "POS-001",
     status: OrderStatus = OrderStatus.PENDING,
 ) -> OrderRecord:
-    spec = InstrumentSpec(instrument_type=InstrumentType.EQUITY, ticker="AAPL")
+    spec = EquityInstrumentSpec(ticker="AAPL")
     return OrderRecord.model_validate(
         {
             "order_id": order_id,
@@ -252,9 +249,6 @@ def _make_thesis(
             instrument_reference="AAPL",
             narrative="Narrative text.",
             key_assumptions=(KeyAssumption(text="Assumption", outcome=None),),
-            supporting_signals=(
-                SupportingSignal(name="volume", status=SupportingSignalStatus.PRESENT),
-            ),
             generation_timestamp=_T0,
             resolution_outcome=None,
             resolution_notes=None,
@@ -271,12 +265,10 @@ def _make_thesis(
                 _comp(ThesisComponentType.INVALIDATION_RATIONALE, "comp-3"),
             ),
             "status": ThesisRecordStatus.ACTIVE,
-            "health_status": ThesisStatus.ON_TRACK,
-            "prior_health_status": None,
             "generation_timestamp": _T0,
-            "time_expectation_hours": "4-24h",
+            "time_expectation_hours": 24.0,
             "age_hours": 4.0,
-            "expected_resolution_at": _T2,
+            "expected_resolution_at": _T0 + timedelta(hours=24),
             "resolution_timestamp": None,
             "resolution_category": None,
             "resolution_pnl_usd": None,
@@ -801,9 +793,7 @@ class TestPendingOrderStatusValidator:
                 "position_id": "POS-001",
                 "bracket_id": "BRK-001",
                 "role": OrderRole.ENTRY,
-                "instrument_spec": InstrumentSpec(
-                    instrument_type=InstrumentType.EQUITY, ticker="AAPL"
-                ),
+                "instrument_spec": EquityInstrumentSpec(ticker="AAPL"),
                 "direction": OrderDirection.BUY,
                 "order_type": OrderType.MARKET,
                 "price_parameters": PriceParameters(limit_price=None, stop_trigger_price=None),
@@ -833,9 +823,7 @@ class TestPendingOrderStatusValidator:
                 "position_id": "POS-001",
                 "bracket_id": "BRK-001",
                 "role": OrderRole.ENTRY,
-                "instrument_spec": InstrumentSpec(
-                    instrument_type=InstrumentType.EQUITY, ticker="AAPL"
-                ),
+                "instrument_spec": EquityInstrumentSpec(ticker="AAPL"),
                 "direction": OrderDirection.BUY,
                 "order_type": OrderType.MARKET,
                 "price_parameters": PriceParameters(limit_price=None, stop_trigger_price=None),

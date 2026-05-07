@@ -27,7 +27,6 @@ from alphamind.portfolio_state.records.capital import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     PositionFill,
     PositionRecord,
     PositionStatus,
@@ -37,6 +36,7 @@ from alphamind.portfolio_state.snapshot import (
     PortfolioPnL,
     PortfolioStateSnapshot,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 
 # ---------------------------------------------------------------------------
 # Shared timestamps
@@ -67,7 +67,7 @@ def _make_config(
     )
 
 
-def _make_open_position(position_id: str = "POS-001", ticker: str = "NVDA") -> PositionRecord:
+def _make_open_position(position_id: str = "POS-001", ticker: str = "NVDA") -> PositionView:
     equity = EquityPositionDetails(
         ticker=ticker,
         share_count=100.0,
@@ -83,7 +83,7 @@ def _make_open_position(position_id: str = "POS-001", ticker: str = "NVDA") -> P
         slippage=0.0,
         fees=1.0,
     )
-    return PositionRecord.model_validate(
+    record = PositionRecord.model_validate(
         {
             "position_id": position_id,
             "thesis_id": None,
@@ -91,30 +91,30 @@ def _make_open_position(position_id: str = "POS-001", ticker: str = "NVDA") -> P
             "status": PositionStatus.OPEN,
             "direction": Direction.LONG,
             "entry_timestamp": _ENTRY_AT,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": equity,
-            "options_details": None,
-            "strategy_details": None,
+            "details": equity,
             "execution_history": (fill,),
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": 52000.0,
-            "unrealized_pnl_usd": 2000.0,
-            "unrealized_pnl_pct": 4.0,
-            "position_weight_pct": 100.0,
-            "position_age_hours": 1.5,
-            "notional_exposure_usd": 52000.0,
-            "delta_adjusted_exposure_usd": 52000.0,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
         }
     )
+    return PositionView(
+        record=record,
+        current_market_value_usd=52000.0,
+        unrealized_pnl_usd=2000.0,
+        unrealized_pnl_pct=4.0,
+        position_weight_pct=100.0,
+        position_age_hours=1.5,
+        notional_exposure_usd=52000.0,
+        delta_adjusted_exposure_usd=52000.0,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
+    )
 
 
-def _make_pending_position(position_id: str = "PEND-001", ticker: str = "AAPL") -> PositionRecord:
+def _make_pending_position(position_id: str = "PEND-001", ticker: str = "AAPL") -> PositionView:
     equity = EquityPositionDetails(
         ticker=ticker,
         share_count=10.0,
@@ -123,7 +123,7 @@ def _make_pending_position(position_id: str = "PEND-001", ticker: str = "AAPL") 
         locate_status=None,
         margin_held_usd=None,
     )
-    return PositionRecord.model_validate(
+    record = PositionRecord.model_validate(
         {
             "position_id": position_id,
             "thesis_id": None,
@@ -131,26 +131,26 @@ def _make_pending_position(position_id: str = "PEND-001", ticker: str = "AAPL") 
             "status": PositionStatus.PENDING,
             "direction": Direction.LONG,
             "entry_timestamp": None,
-            "instrument_type": InstrumentType.EQUITY,
-            "equity_details": equity,
-            "options_details": None,
-            "strategy_details": None,
+            "details": equity,
             "execution_history": (),
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": 1600.0,
-            "unrealized_pnl_usd": 100.0,
-            "unrealized_pnl_pct": 6.7,
-            "position_weight_pct": 3.0,
-            "position_age_hours": 0.0,
-            "notional_exposure_usd": 1600.0,
-            "delta_adjusted_exposure_usd": 1600.0,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
         }
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=1600.0,
+        unrealized_pnl_usd=100.0,
+        unrealized_pnl_pct=6.7,
+        position_weight_pct=3.0,
+        position_age_hours=0.0,
+        notional_exposure_usd=1600.0,
+        delta_adjusted_exposure_usd=1600.0,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
     )
 
 
@@ -230,8 +230,8 @@ def _make_directional_exposure() -> DirectionalExposure:
 
 
 def _make_snapshot(
-    open_positions: tuple[PositionRecord, ...] = (),
-    pending_positions: tuple[PositionRecord, ...] = (),
+    open_positions: tuple[PositionView, ...] = (),
+    pending_positions: tuple[PositionView, ...] = (),
     phase1_committed_at: datetime = _PHASE1_AT,
     snapshot_assembled_at: datetime = _NOW,
 ) -> PortfolioStateSnapshot:

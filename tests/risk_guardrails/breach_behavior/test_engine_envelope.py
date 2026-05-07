@@ -9,12 +9,12 @@ import pytest
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
-    InstrumentType,
     LocateStatus,
     PositionFill,
     PositionRecord,
     PositionStatus,
 )
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import (
     BreachDetails,
     EngineCloseCommand,
@@ -31,18 +31,17 @@ from alphamind.risk_guardrails.breach_behavior import (
 )
 
 
-def _short_mara_position() -> PositionRecord:
+def _short_mara_position() -> PositionView:
     """A6 / A7 fixture: 140 shares short MARA at $20 avg cost, current $28."""
     fill_ts = datetime(2026, 4, 28, 14, 0, tzinfo=UTC)
-    return PositionRecord(
+    record = PositionRecord(
         position_id="POS-MARA-001",
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.SHORT,
         entry_timestamp=fill_ts,
-        instrument_type=InstrumentType.EQUITY,
-        equity_details=EquityPositionDetails(
+        details=EquityPositionDetails(
             ticker="MARA",
             share_count=140.0,
             average_cost_basis_per_share=20.0,
@@ -60,6 +59,12 @@ def _short_mara_position() -> PositionRecord:
             ),
         ),
         realized_pnl_to_date_usd=None,
+        corporate_action_adjustment_needed=False,
+        parent_position_id=None,
+        origin=None,
+    )
+    return PositionView(
+        record=record,
         current_market_value_usd=3920.0,
         unrealized_pnl_usd=-1120.0,
         unrealized_pnl_pct=-40.0,
@@ -70,9 +75,6 @@ def _short_mara_position() -> PositionRecord:
         distance_to_target_usd=None,
         distance_to_stop_usd=None,
         risk_reward_at_current=None,
-        corporate_action_adjustment_needed=False,
-        parent_position_id=None,
-        origin=None,
     )
 
 

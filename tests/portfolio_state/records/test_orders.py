@@ -15,14 +15,22 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegType,
     BracketRecord,
     BracketStatus,
+    EquityInstrumentSpec,
+    EventTrigger,
     InstrumentSpec,
+    OptionsInstrumentSpec,
+    OrderClass,
     OrderDirection,
     OrderDuration,
     OrderRecord,
     OrderRole,
     OrderStatus,
     OrderType,
+    PLAnchorSpec,
     PriceParameters,
+    PriceTrigger,
+    StrategyInstrumentSpec,
+    TimeTrigger,
 )
 from alphamind.portfolio_state.records.positions import InstrumentType, OptionContractType
 
@@ -35,13 +43,12 @@ TODAY = date(2025, 6, 15)
 # ---------------------------------------------------------------------------
 
 
-def _equity_spec() -> InstrumentSpec:
-    return InstrumentSpec(instrument_type=InstrumentType.EQUITY, ticker="AAPL")
+def _equity_spec() -> EquityInstrumentSpec:
+    return EquityInstrumentSpec(ticker="AAPL")
 
 
-def _options_spec() -> InstrumentSpec:
-    return InstrumentSpec(
-        instrument_type=InstrumentType.OPTIONS,
+def _options_spec() -> OptionsInstrumentSpec:
+    return OptionsInstrumentSpec(
         underlying="AAPL",
         strike=150.0,
         expiration=TODAY,
@@ -50,11 +57,8 @@ def _options_spec() -> InstrumentSpec:
     )
 
 
-def _strategy_spec() -> InstrumentSpec:
-    return InstrumentSpec(
-        instrument_type=InstrumentType.STRATEGY,
-        legs=(_equity_spec(),),
-    )
+def _strategy_spec() -> StrategyInstrumentSpec:
+    return StrategyInstrumentSpec(legs=(_options_spec(),))
 
 
 def _market_price_params() -> PriceParameters:
@@ -91,6 +95,17 @@ def _make_order(**overrides: object) -> OrderRecord:
     return OrderRecord.model_validate(base)
 
 
+def _trigger_for(leg_type: BracketLegType) -> PriceTrigger | TimeTrigger | EventTrigger:
+    """Build the canonical typed trigger payload for a given leg_type."""
+    if leg_type == BracketLegType.TAKE_PROFIT:
+        return PriceTrigger(underlying_ticker="AAPL", threshold_usd=160.0, direction="GTE")
+    if leg_type == BracketLegType.PRICE_STOP:
+        return PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE")
+    if leg_type == BracketLegType.TIME_EXPIRATION:
+        return TimeTrigger(deadline=datetime(2025, 6, 1, 16, 0, tzinfo=UTC))
+    return EventTrigger(description="thesis invalidated")
+
+
 def _make_mechanical_leg(
     leg_id: str = "leg-1",
     leg_type: BracketLegType = BracketLegType.PRICE_STOP,
@@ -100,10 +115,9 @@ def _make_mechanical_leg(
         leg_id=leg_id,
         leg_type=leg_type,
         order_id="ord-stop",
-        trigger_condition="price < 140.0",
+        trigger=_trigger_for(leg_type),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=status,
-        pl_based=False,
     )
 
 
@@ -112,7 +126,7 @@ def _make_modification() -> BracketLegModification:
         timestamp=NOW,
         pm_command_id=None,
         source="fill-anchor-recalculation",
-        field_changed="trigger_condition",
+        field_changed="trigger",
         old_value="price < 140.0",
         new_value="price < 138.5",
         rationale="fill anchor recalculated after entry fill",
@@ -136,6 +150,27 @@ def _make_bracket(**overrides: object) -> BracketRecord:
 # ---------------------------------------------------------------------------
 # Enum tests
 # ---------------------------------------------------------------------------
+
+
+class TestOrderClass:
+    def test_members(self) -> None:
+        assert set(OrderClass) == {
+            OrderClass.SIMPLE,
+            OrderClass.BRACKET,
+            OrderClass.OCO,
+            OrderClass.OTO,
+            OrderClass.MLEG,
+        }
+
+    def test_string_values(self) -> None:
+        assert OrderClass.SIMPLE == "SIMPLE"
+        assert OrderClass.BRACKET == "BRACKET"
+        assert OrderClass.OCO == "OCO"
+        assert OrderClass.OTO == "OTO"
+        assert OrderClass.MLEG == "MLEG"
+
+    def test_strenum_semantics(self) -> None:
+        assert isinstance(OrderClass.MLEG, str)
 
 
 class TestOrderRole:
@@ -200,16 +235,16 @@ class TestOrderDuration:
             OrderDuration.DAY,
             OrderDuration.GTC,
             OrderDuration.GTD,
-            OrderDuration.IOC,
-            OrderDuration.FOK,
         }
+
+    def test_exact_member_set(self) -> None:
+        """Pinned set — any re-addition of IOC/FOK or new member trips this test."""
+        assert {m.value for m in OrderDuration} == {"DAY", "GTC", "GTD"}
 
     def test_string_values(self) -> None:
         assert OrderDuration.DAY == "DAY"
         assert OrderDuration.GTC == "GTC"
         assert OrderDuration.GTD == "GTD"
-        assert OrderDuration.IOC == "IOC"
-        assert OrderDuration.FOK == "FOK"
 
 
 class TestOrderStatus:
@@ -306,60 +341,51 @@ class TestBracketLegStatus:
 class TestInstrumentSpecDiscriminator:
     def test_equity_passes(self) -> None:
         spec = _equity_spec()
+        assert isinstance(spec, EquityInstrumentSpec)
         assert spec.instrument_type == InstrumentType.EQUITY
         assert spec.ticker == "AAPL"
 
     def test_options_passes(self) -> None:
         spec = _options_spec()
+        assert isinstance(spec, OptionsInstrumentSpec)
         assert spec.instrument_type == InstrumentType.OPTIONS
         assert spec.underlying == "AAPL"
         assert spec.strike == 150.0
 
     def test_strategy_passes(self) -> None:
         spec = _strategy_spec()
+        assert isinstance(spec, StrategyInstrumentSpec)
         assert spec.instrument_type == InstrumentType.STRATEGY
         assert spec.legs is not None
         assert len(spec.legs) == 1
 
-    def test_equity_with_options_field_fails(self) -> None:
-        with pytest.raises(ValidationError):
-            InstrumentSpec(
-                instrument_type=InstrumentType.EQUITY,
-                ticker="AAPL",
-                underlying="AAPL",  # options field on equity spec
-            )
-
     def test_equity_without_ticker_fails(self) -> None:
         with pytest.raises(ValidationError):
-            InstrumentSpec.model_validate({"instrument_type": "EQUITY"})
-
-    def test_options_with_ticker_fails(self) -> None:
-        with pytest.raises(ValidationError):
-            InstrumentSpec(
-                instrument_type=InstrumentType.OPTIONS,
-                ticker="AAPL",  # equity field on options spec
-                underlying="AAPL",
-                strike=150.0,
-                expiration=TODAY,
-                contract_type=OptionContractType.CALL,
-                contract_multiplier=100.0,
-            )
+            EquityInstrumentSpec.model_validate({"instrument_type": "EQUITY"})
 
     def test_strategy_with_empty_legs_fails(self) -> None:
         with pytest.raises(ValidationError):
-            InstrumentSpec(instrument_type=InstrumentType.STRATEGY, legs=())
+            StrategyInstrumentSpec(legs=())
 
     def test_strategy_with_none_legs_fails(self) -> None:
         with pytest.raises(ValidationError):
-            InstrumentSpec.model_validate({"instrument_type": "STRATEGY"})
+            StrategyInstrumentSpec.model_validate({"instrument_type": "STRATEGY"})
 
-    def test_strategy_with_equity_field_fails(self) -> None:
+    def test_bogus_discriminator_fails_at_parse_time(self) -> None:
+        """Unknown discriminator tag raises ValidationError at parse time on the union."""
+        from pydantic import TypeAdapter
+
+        from alphamind.portfolio_state.records.orders import InstrumentSpec
+
+        adapter: TypeAdapter[InstrumentSpec] = TypeAdapter(InstrumentSpec)
+        with pytest.raises(ValidationError) as exc_info:
+            adapter.validate_python({"instrument_type": "BOGUS"})
+        assert "BOGUS" in str(exc_info.value) or "instrument_type" in str(exc_info.value)
+
+    def test_strategy_legs_must_be_options_specs(self) -> None:
+        """Strategy legs must be OptionsInstrumentSpec — equity legs raise ValidationError."""
         with pytest.raises(ValidationError):
-            InstrumentSpec(
-                instrument_type=InstrumentType.STRATEGY,
-                ticker="AAPL",  # equity field on strategy spec
-                legs=(_equity_spec(),),
-            )
+            StrategyInstrumentSpec(legs=(_equity_spec(),))  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -549,10 +575,9 @@ class TestBracketLegEventInvalidation:
             leg_id="leg-1",
             leg_type=BracketLegType.EVENT_INVALIDATION,
             order_id=None,
-            trigger_condition="thesis invalidation event",
+            trigger=EventTrigger(description="thesis invalidation event"),
             enforcement=BracketLegEnforcement.ADVISORY,
             status=BracketLegStatus.PENDING_ACTIVATION,
-            pl_based=False,
         )
         assert leg.order_id is None
 
@@ -562,10 +587,9 @@ class TestBracketLegEventInvalidation:
                 leg_id="leg-1",
                 leg_type=BracketLegType.EVENT_INVALIDATION,
                 order_id="ord-1",  # must be None for EVENT_INVALIDATION
-                trigger_condition="thesis invalidation event",
+                trigger=EventTrigger(description="thesis invalidation event"),
                 enforcement=BracketLegEnforcement.ADVISORY,
                 status=BracketLegStatus.PENDING_ACTIVATION,
-                pl_based=False,
             )
 
     def test_non_event_invalidation_may_have_order_id(self) -> None:
@@ -573,10 +597,9 @@ class TestBracketLegEventInvalidation:
             leg_id="leg-1",
             leg_type=BracketLegType.PRICE_STOP,
             order_id="ord-stop",
-            trigger_condition="price < 140.0",
+            trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
-            pl_based=False,
         )
         assert leg.order_id == "ord-stop"
 
@@ -625,10 +648,9 @@ class TestHardBackstopRule:
             leg_id="leg-1",
             leg_type=BracketLegType.EVENT_INVALIDATION,
             order_id=None,
-            trigger_condition="thesis invalidated",
+            trigger=EventTrigger(description="thesis invalidated"),
             enforcement=BracketLegEnforcement.ADVISORY,
             status=BracketLegStatus.PENDING_ACTIVATION,
-            pl_based=False,
         )
         with pytest.raises(ValidationError):
             _make_bracket(protective_legs=(advisory_event_leg,))
@@ -638,10 +660,9 @@ class TestHardBackstopRule:
             leg_id="leg-1",
             leg_type=BracketLegType.PRICE_STOP,
             order_id="ord-stop",
-            trigger_condition="price < 140.0",
+            trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
             enforcement=BracketLegEnforcement.ADVISORY,  # advisory, not mechanical
             status=BracketLegStatus.PENDING_ACTIVATION,
-            pl_based=False,
         )
         with pytest.raises(ValidationError):
             _make_bracket(protective_legs=(advisory_stop,))
@@ -651,10 +672,9 @@ class TestHardBackstopRule:
             leg_id="leg-2",
             leg_type=BracketLegType.EVENT_INVALIDATION,
             order_id=None,
-            trigger_condition="thesis invalidated",
+            trigger=EventTrigger(description="thesis invalidated"),
             enforcement=BracketLegEnforcement.ADVISORY,
             status=BracketLegStatus.PENDING_ACTIVATION,
-            pl_based=False,
         )
         bracket = _make_bracket(
             protective_legs=(
@@ -708,6 +728,38 @@ class TestDissolvedRule:
 
 
 # ---------------------------------------------------------------------------
+# OrderRecord order_class field and MLEG cross-validation
+# ---------------------------------------------------------------------------
+
+
+class TestOrderRecordOrderClass:
+    def test_default_order_class_is_simple(self) -> None:
+        order = _make_order()
+        assert order.order_class == OrderClass.SIMPLE
+
+    def test_mleg_with_equity_spec_raises(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            _make_order(order_class=OrderClass.MLEG, instrument_spec=_equity_spec())
+        assert "STRATEGY" in str(exc_info.value)
+
+    def test_mleg_with_strategy_spec_passes(self) -> None:
+        order = _make_order(order_class=OrderClass.MLEG, instrument_spec=_strategy_spec())
+        assert order.order_class == OrderClass.MLEG
+
+    def test_bracket_with_equity_spec_passes(self) -> None:
+        order = _make_order(order_class=OrderClass.BRACKET, instrument_spec=_equity_spec())
+        assert order.order_class == OrderClass.BRACKET
+
+    def test_oco_with_equity_spec_passes(self) -> None:
+        order = _make_order(order_class=OrderClass.OCO, instrument_spec=_equity_spec())
+        assert order.order_class == OrderClass.OCO
+
+    def test_oto_with_equity_spec_passes(self) -> None:
+        order = _make_order(order_class=OrderClass.OTO, instrument_spec=_equity_spec())
+        assert order.order_class == OrderClass.OTO
+
+
+# ---------------------------------------------------------------------------
 # OrderRecord round-trip / frozen check
 # ---------------------------------------------------------------------------
 
@@ -729,3 +781,442 @@ class TestBracketRecordFrozen:
         bracket = _make_bracket()
         with pytest.raises((AttributeError, ValidationError)):
             bracket.bracket_id = "changed"
+
+
+# ---------------------------------------------------------------------------
+# entry_window_deadline field (ALP-341)
+# ---------------------------------------------------------------------------
+
+
+class TestBracketRecordEntryWindowDeadline:
+    def test_none_default(self) -> None:
+        bracket = _make_bracket()
+        assert bracket.entry_window_deadline is None
+
+    def test_tz_aware_datetime_accepted(self) -> None:
+        deadline = datetime(2026, 5, 6, 18, 0, tzinfo=UTC)
+        bracket = _make_bracket(entry_window_deadline=deadline)
+        assert bracket.entry_window_deadline == deadline
+
+    def test_naive_datetime_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            _make_bracket(entry_window_deadline=datetime(2026, 5, 6, 18, 0))  # noqa: DTZ001
+
+    def test_pending_entry_with_deadline_succeeds(self) -> None:
+        deadline = datetime(2026, 5, 6, 18, 0, tzinfo=UTC)
+        bracket = _make_bracket(
+            status=BracketStatus.PENDING_ENTRY,
+            entry_window_deadline=deadline,
+        )
+        assert bracket.status == BracketStatus.PENDING_ENTRY
+        assert bracket.entry_window_deadline == deadline
+
+    def test_active_status_with_deadline_informational(self) -> None:
+        deadline = datetime(2026, 5, 6, 18, 0, tzinfo=UTC)
+        bracket = _make_bracket(
+            status=BracketStatus.ACTIVE,
+            protective_legs=(_make_mechanical_leg(status=BracketLegStatus.ACTIVE),),
+            entry_window_deadline=deadline,
+        )
+        assert bracket.status == BracketStatus.ACTIVE
+        assert bracket.entry_window_deadline == deadline
+
+
+# ---------------------------------------------------------------------------
+# Typed trigger payload classes (ALP-345)
+# ---------------------------------------------------------------------------
+
+
+_LEG_PRICE_TRIGGER_TYPES = (BracketLegType.TAKE_PROFIT, BracketLegType.PRICE_STOP)
+
+
+class TestPriceTrigger:
+    def test_construct_with_valid_fields(self) -> None:
+        trigger = PriceTrigger(underlying_ticker="NVDA", threshold_usd=800.0, direction="LTE")
+        assert trigger.trigger_type == "price"
+        assert trigger.underlying_ticker == "NVDA"
+        assert trigger.threshold_usd == 800.0
+        assert trigger.direction == "LTE"
+
+    def test_negative_threshold_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            PriceTrigger(underlying_ticker="NVDA", threshold_usd=-5.0, direction="LTE")
+
+    def test_zero_threshold_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            PriceTrigger(underlying_ticker="NVDA", threshold_usd=0.0, direction="LTE")
+
+    def test_empty_ticker_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            PriceTrigger(underlying_ticker="", threshold_usd=10.0, direction="LTE")
+
+    def test_invalid_direction_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            PriceTrigger.model_validate(
+                {"underlying_ticker": "NVDA", "threshold_usd": 10.0, "direction": "ABOVE"}
+            )
+
+    def test_frozen(self) -> None:
+        trigger = PriceTrigger(underlying_ticker="NVDA", threshold_usd=10.0, direction="GTE")
+        with pytest.raises((AttributeError, ValidationError)):
+            trigger.threshold_usd = 20.0
+
+
+class TestTimeTrigger:
+    def test_construct_with_tz_aware(self) -> None:
+        deadline = datetime(2026, 6, 1, 16, 0, tzinfo=UTC)
+        trigger = TimeTrigger(deadline=deadline)
+        assert trigger.trigger_type == "time"
+        assert trigger.deadline == deadline
+
+    def test_naive_datetime_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TimeTrigger(deadline=datetime(2026, 6, 1, 16, 0))  # noqa: DTZ001
+
+
+class TestEventTrigger:
+    def test_construct_with_description(self) -> None:
+        trigger = EventTrigger(description="thesis invalidated")
+        assert trigger.trigger_type == "event"
+        assert trigger.description == "thesis invalidated"
+        assert trigger.condition_evaluator_id is None
+
+    def test_construct_with_condition_evaluator_id(self) -> None:
+        trigger = EventTrigger(
+            description="thesis invalidated", condition_evaluator_id="evaluator-1"
+        )
+        assert trigger.condition_evaluator_id == "evaluator-1"
+
+    def test_empty_description_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            EventTrigger(description="")
+
+
+class TestBracketLegTriggerLegTypeValidator:
+    """leg_type ↔ trigger_type cross-validation."""
+
+    def test_take_profit_with_price_trigger_passes(self) -> None:
+        leg = BracketLeg(
+            leg_id="leg-1",
+            leg_type=BracketLegType.TAKE_PROFIT,
+            order_id="ord-1",
+            trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=200.0, direction="GTE"),
+            enforcement=BracketLegEnforcement.MECHANICAL,
+            status=BracketLegStatus.ACTIVE,
+        )
+        assert isinstance(leg.trigger, PriceTrigger)
+
+    def test_price_stop_with_price_trigger_passes(self) -> None:
+        leg = BracketLeg(
+            leg_id="leg-1",
+            leg_type=BracketLegType.PRICE_STOP,
+            order_id="ord-1",
+            trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=160.0, direction="LTE"),
+            enforcement=BracketLegEnforcement.MECHANICAL,
+            status=BracketLegStatus.ACTIVE,
+        )
+        assert isinstance(leg.trigger, PriceTrigger)
+
+    def test_time_expiration_with_time_trigger_passes(self) -> None:
+        leg = BracketLeg(
+            leg_id="leg-1",
+            leg_type=BracketLegType.TIME_EXPIRATION,
+            order_id="ord-1",
+            trigger=TimeTrigger(deadline=datetime(2026, 6, 1, 16, 0, tzinfo=UTC)),
+            enforcement=BracketLegEnforcement.MECHANICAL,
+            status=BracketLegStatus.ACTIVE,
+        )
+        assert isinstance(leg.trigger, TimeTrigger)
+
+    def test_event_invalidation_with_event_trigger_passes(self) -> None:
+        leg = BracketLeg(
+            leg_id="leg-1",
+            leg_type=BracketLegType.EVENT_INVALIDATION,
+            order_id=None,
+            trigger=EventTrigger(description="thesis invalidated"),
+            enforcement=BracketLegEnforcement.ADVISORY,
+            status=BracketLegStatus.ACTIVE,
+        )
+        assert isinstance(leg.trigger, EventTrigger)
+
+    @pytest.mark.parametrize("leg_type", _LEG_PRICE_TRIGGER_TYPES)
+    def test_price_leg_with_time_trigger_rejected(self, leg_type: BracketLegType) -> None:
+        with pytest.raises(ValidationError):
+            BracketLeg(
+                leg_id="leg-1",
+                leg_type=leg_type,
+                order_id="ord-1",
+                trigger=TimeTrigger(deadline=datetime(2026, 6, 1, 16, 0, tzinfo=UTC)),
+                enforcement=BracketLegEnforcement.MECHANICAL,
+                status=BracketLegStatus.ACTIVE,
+            )
+
+    @pytest.mark.parametrize("leg_type", _LEG_PRICE_TRIGGER_TYPES)
+    def test_price_leg_with_event_trigger_rejected(self, leg_type: BracketLegType) -> None:
+        with pytest.raises(ValidationError):
+            BracketLeg(
+                leg_id="leg-1",
+                leg_type=leg_type,
+                order_id="ord-1",
+                trigger=EventTrigger(description="qualitative"),
+                enforcement=BracketLegEnforcement.MECHANICAL,
+                status=BracketLegStatus.ACTIVE,
+            )
+
+    def test_time_expiration_with_price_trigger_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            BracketLeg(
+                leg_id="leg-1",
+                leg_type=BracketLegType.TIME_EXPIRATION,
+                order_id="ord-1",
+                trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=10.0, direction="GTE"),
+                enforcement=BracketLegEnforcement.MECHANICAL,
+                status=BracketLegStatus.ACTIVE,
+            )
+
+    def test_time_expiration_with_event_trigger_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            BracketLeg(
+                leg_id="leg-1",
+                leg_type=BracketLegType.TIME_EXPIRATION,
+                order_id="ord-1",
+                trigger=EventTrigger(description="qualitative"),
+                enforcement=BracketLegEnforcement.MECHANICAL,
+                status=BracketLegStatus.ACTIVE,
+            )
+
+    def test_event_invalidation_with_price_trigger_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            BracketLeg(
+                leg_id="leg-1",
+                leg_type=BracketLegType.EVENT_INVALIDATION,
+                order_id=None,
+                trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=10.0, direction="GTE"),
+                enforcement=BracketLegEnforcement.ADVISORY,
+                status=BracketLegStatus.ACTIVE,
+            )
+
+    def test_event_invalidation_with_time_trigger_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            BracketLeg(
+                leg_id="leg-1",
+                leg_type=BracketLegType.EVENT_INVALIDATION,
+                order_id=None,
+                trigger=TimeTrigger(deadline=datetime(2026, 6, 1, 16, 0, tzinfo=UTC)),
+                enforcement=BracketLegEnforcement.ADVISORY,
+                status=BracketLegStatus.ACTIVE,
+            )
+
+
+class TestBracketLegTriggerDiscriminatedUnionRoundTrip:
+    """Pydantic discriminator-keyed deserialization round-trips."""
+
+    def test_price_trigger_round_trip(self) -> None:
+        leg = BracketLeg(
+            leg_id="leg-1",
+            leg_type=BracketLegType.PRICE_STOP,
+            order_id="ord-1",
+            trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=160.0, direction="LTE"),
+            enforcement=BracketLegEnforcement.MECHANICAL,
+            status=BracketLegStatus.ACTIVE,
+        )
+        dumped = leg.model_dump()
+        rehydrated = BracketLeg.model_validate(dumped)
+        assert isinstance(rehydrated.trigger, PriceTrigger)
+        assert rehydrated.trigger.threshold_usd == 160.0
+
+    def test_time_trigger_round_trip(self) -> None:
+        deadline = datetime(2026, 6, 1, 16, 0, tzinfo=UTC)
+        leg = BracketLeg(
+            leg_id="leg-1",
+            leg_type=BracketLegType.TIME_EXPIRATION,
+            order_id="ord-1",
+            trigger=TimeTrigger(deadline=deadline),
+            enforcement=BracketLegEnforcement.MECHANICAL,
+            status=BracketLegStatus.ACTIVE,
+        )
+        dumped = leg.model_dump()
+        rehydrated = BracketLeg.model_validate(dumped)
+        assert isinstance(rehydrated.trigger, TimeTrigger)
+        assert rehydrated.trigger.deadline == deadline
+
+    def test_event_trigger_round_trip(self) -> None:
+        leg = BracketLeg(
+            leg_id="leg-1",
+            leg_type=BracketLegType.EVENT_INVALIDATION,
+            order_id=None,
+            trigger=EventTrigger(description="thesis invalidated"),
+            enforcement=BracketLegEnforcement.ADVISORY,
+            status=BracketLegStatus.ACTIVE,
+        )
+        dumped = leg.model_dump()
+        rehydrated = BracketLeg.model_validate(dumped)
+        assert isinstance(rehydrated.trigger, EventTrigger)
+        assert rehydrated.trigger.description == "thesis invalidated"
+
+
+# ---------------------------------------------------------------------------
+# Typed pl_based payload (PLAnchorSpec) — ALP-346
+# ---------------------------------------------------------------------------
+
+
+class TestPLAnchorSpec:
+    """PLAnchorSpec captures the P/L percentage spec, planned-entry anchor, and
+    fill-recalc state per orders-and-brackets.md § P/L-based bracket legs."""
+
+    def test_construct_target_spec(self) -> None:
+        spec = PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=18.50)
+        assert spec.spec_type == "target"
+        assert spec.pct == 0.80
+        assert spec.planned_entry_price == 18.50
+        assert spec.actual_entry_price is None
+        assert spec.recalculated_at_fill is False
+
+    def test_construct_stop_spec(self) -> None:
+        spec = PLAnchorSpec(spec_type="stop", pct=0.30, planned_entry_price=18.50)
+        assert spec.spec_type == "stop"
+        assert spec.pct == 0.30
+
+    def test_construct_recalculated_spec(self) -> None:
+        spec = PLAnchorSpec(
+            spec_type="target",
+            pct=0.80,
+            planned_entry_price=18.50,
+            actual_entry_price=17.80,
+            recalculated_at_fill=True,
+        )
+        assert spec.actual_entry_price == 17.80
+        assert spec.recalculated_at_fill is True
+
+    def test_zero_pct_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            PLAnchorSpec(spec_type="target", pct=0.0, planned_entry_price=18.50)
+
+    def test_negative_pct_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            PLAnchorSpec(spec_type="target", pct=-0.10, planned_entry_price=18.50)
+
+    def test_pct_above_cap_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            PLAnchorSpec(spec_type="target", pct=11.0, planned_entry_price=18.50)
+
+    def test_pct_at_cap_passes(self) -> None:
+        spec = PLAnchorSpec(spec_type="target", pct=10.0, planned_entry_price=18.50)
+        assert spec.pct == 10.0
+
+    def test_negative_planned_entry_price_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=-5.0)
+
+    def test_zero_planned_entry_price_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=0.0)
+
+    def test_invalid_spec_type_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            PLAnchorSpec.model_validate(
+                {"spec_type": "limit", "pct": 0.80, "planned_entry_price": 18.50}
+            )
+
+    def test_recalculated_without_actual_price_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            PLAnchorSpec(
+                spec_type="target",
+                pct=0.80,
+                planned_entry_price=18.50,
+                recalculated_at_fill=True,
+            )
+
+    def test_actual_price_without_recalculated_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            PLAnchorSpec(
+                spec_type="target",
+                pct=0.80,
+                planned_entry_price=18.50,
+                actual_entry_price=17.80,
+                recalculated_at_fill=False,
+            )
+
+    def test_frozen(self) -> None:
+        spec = PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=18.50)
+        with pytest.raises((AttributeError, ValidationError)):
+            spec.pct = 0.50
+
+    def test_round_trip(self) -> None:
+        spec = PLAnchorSpec(
+            spec_type="stop",
+            pct=0.30,
+            planned_entry_price=18.50,
+            actual_entry_price=17.80,
+            recalculated_at_fill=True,
+        )
+        rehydrated = PLAnchorSpec.model_validate(spec.model_dump())
+        assert rehydrated == spec
+
+
+def _make_leg_with_anchor(
+    leg_type: BracketLegType,
+    pl_anchor: PLAnchorSpec | None,
+) -> BracketLeg:
+    """Build a BracketLeg with the canonical trigger for leg_type plus pl_anchor."""
+    return BracketLeg(
+        leg_id="leg-1",
+        leg_type=leg_type,
+        order_id=None if leg_type == BracketLegType.EVENT_INVALIDATION else "ord-1",
+        trigger=_trigger_for(leg_type),
+        enforcement=(
+            BracketLegEnforcement.ADVISORY
+            if leg_type == BracketLegType.EVENT_INVALIDATION
+            else BracketLegEnforcement.MECHANICAL
+        ),
+        status=BracketLegStatus.PENDING_ACTIVATION,
+        pl_anchor=pl_anchor,
+    )
+
+
+class TestBracketLegPLAnchor:
+    """BracketLeg.pl_anchor field replacing pl_based: bool (ALP-346)."""
+
+    def test_default_pl_anchor_is_none(self) -> None:
+        leg = _make_leg_with_anchor(BracketLegType.PRICE_STOP, pl_anchor=None)
+        assert leg.pl_anchor is None
+
+    def test_take_profit_with_target_anchor_passes(self) -> None:
+        anchor = PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=18.50)
+        leg = _make_leg_with_anchor(BracketLegType.TAKE_PROFIT, pl_anchor=anchor)
+        assert leg.pl_anchor is not None
+        assert leg.pl_anchor.spec_type == "target"
+
+    def test_price_stop_with_stop_anchor_passes(self) -> None:
+        anchor = PLAnchorSpec(spec_type="stop", pct=0.30, planned_entry_price=18.50)
+        leg = _make_leg_with_anchor(BracketLegType.PRICE_STOP, pl_anchor=anchor)
+        assert leg.pl_anchor is not None
+        assert leg.pl_anchor.spec_type == "stop"
+
+    def test_take_profit_with_stop_spec_type_rejected(self) -> None:
+        anchor = PLAnchorSpec(spec_type="stop", pct=0.30, planned_entry_price=18.50)
+        with pytest.raises(ValidationError):
+            _make_leg_with_anchor(BracketLegType.TAKE_PROFIT, pl_anchor=anchor)
+
+    def test_price_stop_with_target_spec_type_rejected(self) -> None:
+        anchor = PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=18.50)
+        with pytest.raises(ValidationError):
+            _make_leg_with_anchor(BracketLegType.PRICE_STOP, pl_anchor=anchor)
+
+    def test_time_expiration_with_pl_anchor_rejected(self) -> None:
+        anchor = PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=18.50)
+        with pytest.raises(ValidationError):
+            _make_leg_with_anchor(BracketLegType.TIME_EXPIRATION, pl_anchor=anchor)
+
+    def test_event_invalidation_with_pl_anchor_rejected(self) -> None:
+        anchor = PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=18.50)
+        with pytest.raises(ValidationError):
+            _make_leg_with_anchor(BracketLegType.EVENT_INVALIDATION, pl_anchor=anchor)
+
+    def test_round_trip_with_pl_anchor(self) -> None:
+        anchor = PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=18.50)
+        leg = _make_leg_with_anchor(BracketLegType.TAKE_PROFIT, pl_anchor=anchor)
+        rehydrated = BracketLeg.model_validate(leg.model_dump())
+        assert rehydrated.pl_anchor is not None
+        assert rehydrated.pl_anchor.spec_type == "target"
+        assert rehydrated.pl_anchor.pct == 0.80

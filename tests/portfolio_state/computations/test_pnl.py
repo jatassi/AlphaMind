@@ -21,6 +21,7 @@ from alphamind.portfolio_state.records.positions import (
 )
 from alphamind.portfolio_state.repository import PortfolioPnLInputs
 from alphamind.portfolio_state.snapshot import PortfolioPnL
+from alphamind.portfolio_state.views.positions import PositionView
 
 # ---------------------------------------------------------------------------
 # Shared fixtures / helpers
@@ -54,9 +55,9 @@ def _make_open_position(
     unrealized_pnl_usd: float,
     current_market_value_usd: float = 1000.0,
     direction: Direction = Direction.LONG,
-) -> PositionRecord:
+) -> PositionView:
     equity = _LONG_EQUITY if direction == Direction.LONG else _SHORT_EQUITY
-    return PositionRecord.model_validate(
+    record = PositionRecord.model_validate(
         {
             "position_id": position_id,
             "thesis_id": None,
@@ -64,32 +65,34 @@ def _make_open_position(
             "status": "OPEN",
             "direction": direction,
             "entry_timestamp": _NOW,
-            "instrument_type": "EQUITY",
-            "equity_details": equity.model_dump(),
+            "details": equity.model_dump(),
             "execution_history": [_FILL.model_dump()],
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": current_market_value_usd,
-            "unrealized_pnl_usd": unrealized_pnl_usd,
-            "unrealized_pnl_pct": 0.0,
-            "position_weight_pct": 10.0,
-            "position_age_hours": 1.0,
-            "notional_exposure_usd": abs(current_market_value_usd),
-            "delta_adjusted_exposure_usd": current_market_value_usd,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
         }
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=current_market_value_usd,
+        unrealized_pnl_usd=unrealized_pnl_usd,
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=10.0,
+        position_age_hours=1.0,
+        notional_exposure_usd=abs(current_market_value_usd),
+        delta_adjusted_exposure_usd=current_market_value_usd,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
     )
 
 
 def _make_pending_position(
     position_id: str,
     current_market_value_usd: float = 500.0,
-) -> PositionRecord:
-    return PositionRecord.model_validate(
+) -> PositionView:
+    record = PositionRecord.model_validate(
         {
             "position_id": position_id,
             "thesis_id": None,
@@ -97,24 +100,26 @@ def _make_pending_position(
             "status": "PENDING",
             "direction": "LONG",
             "entry_timestamp": None,
-            "instrument_type": "EQUITY",
-            "equity_details": _LONG_EQUITY.model_dump(),
+            "details": _LONG_EQUITY.model_dump(),
             "execution_history": [],
             "realized_pnl_to_date_usd": None,
-            "current_market_value_usd": current_market_value_usd,
-            "unrealized_pnl_usd": 0.0,
-            "unrealized_pnl_pct": 0.0,
-            "position_weight_pct": 5.0,
-            "position_age_hours": 0.0,
-            "notional_exposure_usd": current_market_value_usd,
-            "delta_adjusted_exposure_usd": current_market_value_usd,
-            "distance_to_target_usd": None,
-            "distance_to_stop_usd": None,
-            "risk_reward_at_current": None,
             "corporate_action_adjustment_needed": False,
             "parent_position_id": None,
             "origin": None,
         }
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=current_market_value_usd,
+        unrealized_pnl_usd=0.0,
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=5.0,
+        position_age_hours=0.0,
+        notional_exposure_usd=current_market_value_usd,
+        delta_adjusted_exposure_usd=current_market_value_usd,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
     )
 
 
