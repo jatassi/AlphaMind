@@ -408,7 +408,6 @@ def _make_bracket(
         trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=189.00, direction="GTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     stop_leg = BracketLeg(
         leg_id="leg-stop",
@@ -417,7 +416,6 @@ def _make_bracket(
         trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=167.00, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     time_leg = BracketLeg(
         leg_id="leg-time",
@@ -426,7 +424,6 @@ def _make_bracket(
         trigger=TimeTrigger(deadline=datetime(2026, 4, 25, 16, 0, tzinfo=UTC)),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     event_leg = BracketLeg(
         leg_id="leg-event",
@@ -435,7 +432,6 @@ def _make_bracket(
         trigger=EventTrigger(description="MSFT guides AI capex lower than consensus"),
         enforcement=BracketLegEnforcement.ADVISORY,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     return BracketRecord(
         bracket_id=bracket_id,

@@ -201,7 +201,6 @@ def _make_bracket(bracket_id: str = "BRK-001", position_id: str = "POS-001") -> 
         trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
-        pl_based=False,
     )
     return BracketRecord.model_validate(
         {

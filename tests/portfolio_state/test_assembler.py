@@ -367,7 +367,6 @@ def _make_bracket(
         trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=stop_price, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     target_leg = BracketLeg(
         leg_id="leg-target",
@@ -376,7 +375,6 @@ def _make_bracket(
         trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=target_price, direction="GTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     return BracketRecord.model_validate(
         {

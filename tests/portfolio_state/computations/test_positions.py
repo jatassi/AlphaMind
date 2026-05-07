@@ -277,7 +277,6 @@ def _bracket(
                 trigger=trigger,
                 enforcement=enforcement,
                 status=BracketLegStatus.ACTIVE,
-                pl_based=False,
             )
         )
     return BracketRecord(

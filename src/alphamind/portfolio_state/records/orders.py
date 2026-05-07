@@ -394,11 +394,57 @@ TriggerPayload = Annotated[
 ]
 
 
+class PLAnchorSpec(BaseModel):
+    """P/L-anchor specification for legs defined in P/L-percentage terms.
+
+    Per orders-and-brackets.md § P/L-based bracket legs:
+
+    * At OPEN time, the producer specifies one of `target_pct` or `stop_pct`
+      (per leg type) plus the `planned_entry_price` (the entry order's planned
+      fill price). The engine submits the equivalent absolute price to the
+      broker.
+    * On entry fill, the engine recalculates the absolute price using
+      `actual_entry_price` as the anchor. The recalculation logs as a
+      `bracket_modified` event with source `FILL_ANCHOR_RECALCULATION`. Once
+      complete, `recalculated_at_fill` is True.
+
+    Sign conventions:
+
+    * target_pct: percentage gain (e.g., 0.80 = 80% profit on premium for an
+      options take-profit; 0.05 = 5% gain for an equity take-profit).
+    * stop_pct: percentage loss (e.g., 0.30 = 30% loss on premium; 0.05 = 5%
+      loss on equity). Always expressed as a positive magnitude.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    spec_type: Literal["target", "stop"]
+    pct: Annotated[float, Field(gt=0, le=10.0, allow_inf_nan=False)]
+    planned_entry_price: Annotated[float, Field(gt=0, allow_inf_nan=False)]
+    actual_entry_price: float | None = None
+    recalculated_at_fill: bool = False
+
+    @model_validator(mode="after")
+    def _validate_recalc_consistency(self) -> PLAnchorSpec:
+        if self.recalculated_at_fill and self.actual_entry_price is None:
+            msg = "recalculated_at_fill=True requires actual_entry_price to be non-None"
+            raise ValueError(msg)
+        if not self.recalculated_at_fill and self.actual_entry_price is not None:
+            msg = "actual_entry_price must be None when recalculated_at_fill=False"
+            raise ValueError(msg)
+        return self
+
+
 _LEG_TYPE_TO_TRIGGER_TYPE: dict[BracketLegType, str] = {
     BracketLegType.TAKE_PROFIT: "price",
     BracketLegType.PRICE_STOP: "price",
     BracketLegType.TIME_EXPIRATION: "time",
     BracketLegType.EVENT_INVALIDATION: "event",
+}
+
+_LEG_TYPE_TO_PL_ANCHOR_SPEC_TYPE: dict[BracketLegType, str] = {
+    BracketLegType.TAKE_PROFIT: "target",
+    BracketLegType.PRICE_STOP: "stop",
 }
 
 
@@ -413,7 +459,7 @@ class BracketLeg(BaseModel):
     trigger: TriggerPayload
     enforcement: BracketLegEnforcement
     status: BracketLegStatus
-    pl_based: bool
+    pl_anchor: PLAnchorSpec | None = None
 
     @model_validator(mode="after")
     def _validate_event_invalidation(self) -> BracketLeg:
@@ -429,6 +475,25 @@ class BracketLeg(BaseModel):
             msg = (
                 f"leg_type={self.leg_type!r} requires trigger_type={expected!r}; "
                 f"got trigger_type={self.trigger.trigger_type!r}"
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_pl_anchor_compatibility(self) -> BracketLeg:
+        if self.pl_anchor is None:
+            return self
+        expected_spec_type = _LEG_TYPE_TO_PL_ANCHOR_SPEC_TYPE.get(self.leg_type)
+        if expected_spec_type is None:
+            msg = (
+                f"pl_anchor only valid on TAKE_PROFIT or PRICE_STOP legs; "
+                f"got leg_type={self.leg_type!r}"
+            )
+            raise ValueError(msg)
+        if self.pl_anchor.spec_type != expected_spec_type:
+            msg = (
+                f"leg_type={self.leg_type!r} requires pl_anchor.spec_type="
+                f"{expected_spec_type!r}; got {self.pl_anchor.spec_type!r}"
             )
             raise ValueError(msg)
         return self

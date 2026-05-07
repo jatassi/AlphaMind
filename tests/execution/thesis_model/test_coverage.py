@@ -59,7 +59,6 @@ def _make_leg(
         trigger=_trigger_for(leg_type),
         enforcement=enforcement,
         status=status,
-        pl_based=False,
     )
 
 

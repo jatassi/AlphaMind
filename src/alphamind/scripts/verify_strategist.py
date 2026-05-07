@@ -413,7 +413,6 @@ def _make_bracket(*, position_id: str) -> BracketRecord:
             ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.ACTIVE,
-            pl_based=False,
         ),
         BracketLeg(
             leg_id=f"LEG-{position_id}-PS",
@@ -426,7 +425,6 @@ def _make_bracket(*, position_id: str) -> BracketRecord:
             ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.ACTIVE,
-            pl_based=False,
         ),
     )
     return BracketRecord(
