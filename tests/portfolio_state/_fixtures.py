@@ -297,7 +297,6 @@ def _make_bracket(bracket_id: str, position_id: str) -> BracketRecord:
         trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=400.0, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     target_leg = BracketLeg(
         leg_id=f"{bracket_id}-target",
@@ -306,7 +305,6 @@ def _make_bracket(bracket_id: str, position_id: str) -> BracketRecord:
         trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=600.0, direction="GTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
-        pl_based=False,
     )
     return BracketRecord.model_validate(
         {
