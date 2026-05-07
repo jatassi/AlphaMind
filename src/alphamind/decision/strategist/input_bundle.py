@@ -501,6 +501,9 @@ def _render_thesis_block(
         for assumption in assumptions:
             lines.append(f'      - "{assumption.text}"')
     if prior_health_snapshot is not None:
+        # The snapshot's own `health_status` (the prior invocation's reading)
+        # is what the new invocation sees as its "prior status" — not the
+        # snapshot's `prior_health_status` (which is one further back).
         lines.append(f"    Prior status: {prior_health_snapshot.health_status.value}")
     return "\n".join(lines)
 

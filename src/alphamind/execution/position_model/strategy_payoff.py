@@ -20,7 +20,8 @@ from alphamind.portfolio_state.records.positions import (
 
 def _validate_legs(legs: tuple[StrategyLeg, ...]) -> None:
     """Run shared input validation. Raises ValueError on empty legs, missing
-    direction, non-positive contract count, or mixed expiration dates."""
+    direction, non-positive contract count, mixed expirations, or mixed
+    underlying tickers."""
     if not legs:
         msg = "legs must be non-empty"
         raise ValueError(msg)
@@ -30,6 +31,10 @@ def _validate_legs(legs: tuple[StrategyLeg, ...]) -> None:
             f"all legs must share a single expiration_date; got "
             f"{sorted(d.isoformat() for d in expirations)}"
         )
+        raise ValueError(msg)
+    underlyings = {leg.options.underlying_ticker for leg in legs}
+    if len(underlyings) > 1:
+        msg = f"all legs must share a single underlying_ticker; got {sorted(underlyings)}"
         raise ValueError(msg)
     for leg in legs:
         if leg.direction is None:

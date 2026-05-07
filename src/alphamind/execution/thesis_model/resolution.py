@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from alphamind.portfolio_state.records.activity_log import PositionExitMethod
+from alphamind.portfolio_state.events.activity_log import PositionExitMethod
 from alphamind.portfolio_state.records.theses import (
     ThesisComponentOutcome,
     ThesisResolutionCategory,

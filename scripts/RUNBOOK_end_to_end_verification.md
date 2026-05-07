@@ -18,7 +18,7 @@ on success, and the next script reads its predecessor's outputs via
 
 ## TL;DR for the agent
 
-You're going to run 12 verification scripts in 10 phases. Three rules:
+You're going to run 15 verification scripts in 10 phases. Three rules:
 
 1. **Stop on first FAIL.** Each phase depends on prior phases' state
    AND its predecessor's stage artifacts. Don't continue past a red
