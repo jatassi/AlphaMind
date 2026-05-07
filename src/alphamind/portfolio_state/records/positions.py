@@ -9,6 +9,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
+_NonNegFiniteFloat = Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
 
 
 class Direction(StrEnum):
@@ -87,8 +88,45 @@ class OptionGreeks(BaseModel):
         return v
 
 
+class LiveExecutionEstimate(BaseModel):
+    """Paper-mode harness estimate of live-execution drag for a single fill.
+
+    Attached by the paper-evaluation harness to fills produced in paper mode.
+    Absent in live mode (the broker reports actual costs separately). All four
+    fields use the same sign convention as the parent PositionFill:
+
+    * estimated_spread_usd: positive (cost). The estimated bid-ask spread the
+      live order would have crossed.
+    * estimated_impact_usd: positive (cost). The estimated market-impact drag
+      from order size.
+    * estimated_regulatory_fees_usd: positive (cost). SEC/FINRA/exchange fees
+      Alpaca reports at EOD via the activity feed, not per-fill.
+    * live_adjusted_fill_price: the raw paper fill price minus (for buys) or
+      plus (for sells) the per-share equivalent of the three drag components.
+      Always finite; can be above or below the raw fill_price depending on
+      direction.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    estimated_spread_usd: _NonNegFiniteFloat
+    estimated_impact_usd: _NonNegFiniteFloat
+    estimated_regulatory_fees_usd: _NonNegFiniteFloat
+    live_adjusted_fill_price: _FiniteFloat
+
+
 class PositionFill(BaseModel):
-    """Bare-minimum execution audit per position."""
+    """Bare-minimum execution audit per position.
+
+    Sign conventions:
+
+    * slippage: signed. Positive when the fill price was worse than the
+      reference price at submission (buy filled higher / sell filled lower).
+      Negative when the fill price was better (price improvement). Reference
+      price is the limit price for limit orders, and the mid-quote at
+      submission for market orders.
+    * fees: always positive (cost — broker, regulatory, exchange).
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -96,7 +134,8 @@ class PositionFill(BaseModel):
     fill_price: float
     fill_quantity: float
     slippage: float
-    fees: float
+    fees: Annotated[float, Field(ge=0.0)]
+    live_execution_estimate: LiveExecutionEstimate | None = None
 
 
 class EquityPositionDetails(BaseModel):
