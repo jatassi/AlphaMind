@@ -16,6 +16,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketRecord,
     BracketStatus,
     InstrumentSpec,
+    OrderClass,
     OrderDirection,
     OrderDuration,
     OrderRecord,
@@ -138,6 +139,27 @@ def _make_bracket(**overrides: object) -> BracketRecord:
 # ---------------------------------------------------------------------------
 
 
+class TestOrderClass:
+    def test_members(self) -> None:
+        assert set(OrderClass) == {
+            OrderClass.SIMPLE,
+            OrderClass.BRACKET,
+            OrderClass.OCO,
+            OrderClass.OTO,
+            OrderClass.MLEG,
+        }
+
+    def test_string_values(self) -> None:
+        assert OrderClass.SIMPLE == "SIMPLE"
+        assert OrderClass.BRACKET == "BRACKET"
+        assert OrderClass.OCO == "OCO"
+        assert OrderClass.OTO == "OTO"
+        assert OrderClass.MLEG == "MLEG"
+
+    def test_strenum_semantics(self) -> None:
+        assert isinstance(OrderClass.MLEG, str)
+
+
 class TestOrderRole:
     def test_members(self) -> None:
         assert set(OrderRole) == {
@@ -200,16 +222,16 @@ class TestOrderDuration:
             OrderDuration.DAY,
             OrderDuration.GTC,
             OrderDuration.GTD,
-            OrderDuration.IOC,
-            OrderDuration.FOK,
         }
+
+    def test_exact_member_set(self) -> None:
+        """Pinned set — any re-addition of IOC/FOK or new member trips this test."""
+        assert {m.value for m in OrderDuration} == {"DAY", "GTC", "GTD"}
 
     def test_string_values(self) -> None:
         assert OrderDuration.DAY == "DAY"
         assert OrderDuration.GTC == "GTC"
         assert OrderDuration.GTD == "GTD"
-        assert OrderDuration.IOC == "IOC"
-        assert OrderDuration.FOK == "FOK"
 
 
 class TestOrderStatus:
@@ -705,6 +727,38 @@ class TestDissolvedRule:
                 status=BracketStatus.DISSOLVED,
                 protective_legs=(_make_mechanical_leg(status=BracketLegStatus.TRIGGERED),),
             )
+
+
+# ---------------------------------------------------------------------------
+# OrderRecord order_class field and MLEG cross-validation
+# ---------------------------------------------------------------------------
+
+
+class TestOrderRecordOrderClass:
+    def test_default_order_class_is_simple(self) -> None:
+        order = _make_order()
+        assert order.order_class == OrderClass.SIMPLE
+
+    def test_mleg_with_equity_spec_raises(self) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            _make_order(order_class=OrderClass.MLEG, instrument_spec=_equity_spec())
+        assert "STRATEGY" in str(exc_info.value)
+
+    def test_mleg_with_strategy_spec_passes(self) -> None:
+        order = _make_order(order_class=OrderClass.MLEG, instrument_spec=_strategy_spec())
+        assert order.order_class == OrderClass.MLEG
+
+    def test_bracket_with_equity_spec_passes(self) -> None:
+        order = _make_order(order_class=OrderClass.BRACKET, instrument_spec=_equity_spec())
+        assert order.order_class == OrderClass.BRACKET
+
+    def test_oco_with_equity_spec_passes(self) -> None:
+        order = _make_order(order_class=OrderClass.OCO, instrument_spec=_equity_spec())
+        assert order.order_class == OrderClass.OCO
+
+    def test_oto_with_equity_spec_passes(self) -> None:
+        order = _make_order(order_class=OrderClass.OTO, instrument_spec=_equity_spec())
+        assert order.order_class == OrderClass.OTO
 
 
 # ---------------------------------------------------------------------------
