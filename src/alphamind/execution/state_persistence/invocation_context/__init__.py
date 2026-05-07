@@ -5,6 +5,9 @@ from alphamind.execution.state_persistence.invocation_context.activity_log impor
     activity_log_entry_to_row,
     append_activity_log_entry,
 )
+from alphamind.execution.state_persistence.invocation_context.config_change import (
+    emit_distillation_config_change_entry,
+)
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationContext,
     InvocationHandle,
@@ -26,6 +29,7 @@ __all__ = [
     "activity_log_entry_from_row",
     "activity_log_entry_to_row",
     "append_activity_log_entry",
+    "emit_distillation_config_change_entry",
     "invocation_record_from_row",
     "invocation_record_to_row",
     "process_lifetime_record_from_row",
