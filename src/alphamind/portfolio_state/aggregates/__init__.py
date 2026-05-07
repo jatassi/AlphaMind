@@ -1,13 +1,22 @@
-"""Backward-compat re-export. Thesis quality aggregates moved to ``aggregates/``
-in ALP-347.
+"""Tier 3 — derived/aggregate records per ``state-persistence.md`` § Tier 3.
 
-Prefer ``from alphamind.portfolio_state.aggregates import ...`` (or
-``...aggregates.thesis_quality``) for new code. This shim exists so the ~22
-existing import sites keep working unchanged.
+Pre-computed values that accelerate the read path; not authoritative — always
+recomputable from Tier 1 + Tier 2 data. Hosts drawdown, risk-budget consumption,
+the active risk parameter set, and the thesis-quality aggregate consumed by
+raw state category 6.
 """
 
 from __future__ import annotations
 
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.aggregates.thesis_quality import (
     AlphaBetaDecomposition,
     AttributionDimension,
@@ -16,7 +25,6 @@ from alphamind.portfolio_state.aggregates.thesis_quality import (
     InvalidationTimingClass,
     InvalidationTimingStat,
     PerformanceAttributionEntry,
-    RegimeLabel,
     ResolutionWindowCounts,
     SignalHitRate,
     SignalToThesisConversion,
@@ -27,15 +35,19 @@ from alphamind.portfolio_state.aggregates.thesis_quality import (
 )
 
 __all__ = [
+    "ActiveRiskParameterEntry",
+    "ActiveRiskParameterSet",
     "AlphaBetaDecomposition",
     "AttributionDimension",
     "ConvictionCalibrationEntry",
     "ConvictionSizingDeviation",
+    "DrawdownState",
     "InvalidationTimingClass",
     "InvalidationTimingStat",
     "PerformanceAttributionEntry",
-    "RegimeLabel",
     "ResolutionWindowCounts",
+    "RiskBudgetConsumption",
+    "RiskBudgetEntry",
     "SignalHitRate",
     "SignalToThesisConversion",
     "ThesisDurationStat",

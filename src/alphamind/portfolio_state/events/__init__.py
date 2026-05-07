@@ -1,8 +1,10 @@
-"""Backward-compat re-export. Activity log records moved to ``events/`` in ALP-347.
+"""Tier 2 — append-only lifecycle/event records per ``state-persistence.md``
+§ Tier 2.
 
-Prefer ``from alphamind.portfolio_state.events import ...`` (or ``...events.activity_log``)
-for new code. This shim exists so the ~28 existing import sites keep working
-unchanged.
+Event records capture state mutations and serve raw state category 5. Today
+this subpackage hosts the activity log entry plus its per-event-type detail
+payloads; fill records and other Tier 2 entities are tracked separately and
+will be reorganized here in follow-up work.
 """
 
 from __future__ import annotations
