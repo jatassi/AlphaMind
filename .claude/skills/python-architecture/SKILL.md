@@ -81,7 +81,39 @@ python .claude/skills/python-architecture/scripts/antipattern_scan.py <src_path>
 
 The scripts produce **data**. The findings come from interpreting the data against the principles in §2 and the references.
 
-### 3.4 Walk the audit dimensions
+### 3.4 Decide: in-context or delegate to subagents
+
+Decide whether to perform the audit in this context or delegate subdivision-scoped audits to subagents. The deliverable is identical either way — only the production process differs.
+
+**Default to in-context.** Single-context audits produce more coherent reports because the synthesiser sees all dimensions together, and the "don't shuffle dimensions" rule in §3.5 depends on this — earlier findings reshape later ones. Cross-package patterns (cycles, primitive obsession, layer violations) are also easier to spot when one context holds the whole picture. Delegate only when the codebase won't fit alongside the references, structural-script output, and working space for findings.
+
+**Quantitative trigger.** Delegate when *both* hold:
+
+1. Total Python LOC under audit > ~30K (sum the per-module line counts from `package_overview.py`).
+2. The codebase divides cleanly into ≥ 3 cohesive subdivisions — top-level packages, or first-level subdirectories of a monolithic `src/<project>/`.
+
+A scoped audit (single layer, single concern) stays in-context regardless of total codebase size — read only what's relevant. A monolith over 30K LOC that can't be partitioned is a hard case; ask the user whether to narrow scope or to dispatch by depth (subagent per dimension across the whole code).
+
+**Delegated mode.**
+
+Dispatch one subagent per subdivision using the Agent tool with `isolation: "worktree"`. Use Opus — the work is judgment-laden classification, not mechanical. Title each dispatch `[Opus] Audit: <subdivision>` so the model is visible at a glance.
+
+Each dispatch prompt includes:
+
+- The subdivision path; every Read/Edit/Write must be pinned to `$WORKTREE_ROOT/<path>`. The subagent verifies periodically that the main checkout stays clean (`git -C <main-repo-path> status --porcelain` empty); leakage to absolute paths pointing at the main repo is the most common failure mode for worktree subagents.
+- The structural-script output filtered to that subdivision.
+- An instruction to **invoke this same `python-architecture` skill in audit mode** for the subdivision — `Skill("python-architecture")` with the subdivision as the scope. The subagent re-enters at §3.1 and runs the full audit workflow on its slice, including the references and dimension walk, exactly as the orchestrator would for a small codebase. The subagent's slice is by construction below the §3.4 delegation trigger, so no recursive dispatch.
+- An instruction to **stop before §3.6** and return findings as structured data instead of generating the HTML report. The orchestrator owns the synthesis and the rendered HTML; subagents produce the inputs.
+- The structured findings schema: load-bearing / high-yield / worth-knowing, each with where / why / fix and principle citations (P1–P9, thesis IDs).
+
+Each subagent returns its subdivision's findings in the structured form. Once all reports return, this context becomes the synthesiser:
+
+1. **Cross-subdivision findings** — what no single subagent could see. Run `analyze_imports.py` against the full graph to catch cycles spanning subdivisions. Look for primitive obsession crossing subdivision boundaries (a `Money` candidate appearing in both `pricing/` and `persistence/`). Look for layer violations where a domain module in subdivision A imports an adapter in subdivision B.
+2. **Merge and reprioritise** the per-subdivision findings — duplicates often reveal system-wide patterns. An L11 finding appearing in three subdivisions is one system-wide L11 finding, not three.
+3. **Build the punch list** with complexity and blast-radius classifications (§3.6). Per-subdivision findings tend toward `Module` blast radius; cross-subdivision patterns are `Subsystem` or larger.
+4. **Write the HTML report** from `assets/audit_report_template.html` (§3.6).
+
+### 3.5 Walk the audit dimensions
 
 The structural scripts produce a frame, but they don't catch everything. Two complementary modes:
 
@@ -96,7 +128,7 @@ Either way, work the dimensions in this order. Earlier dimensions surface findin
 4. **Testing** (`references/testing.md`). For each module's dependencies, the right strategy per category — in-process / local-substitutable / remote-but-owned / true-external (§J0)? Sociable unit tests at module scope? Fakes for owned Protocols, not patches on third-party libs? Real DB for integration tests? `Clock` injected, randomness seeded? Hypothesis where invariants exist?
 5. **Application shape** (`references/app-shapes.md`). Identify the system's shape (CLI, web API, data pipeline, long-running daemon, agentic/LLM, numerical) and consult the shape-specific section. Some antipatterns are only antipatterns in a particular shape.
 
-### 3.5 Produce the report
+### 3.6 Produce the report
 
 Use `assets/audit_report_template.html` as the scaffold; produce a single self-contained HTML file. Save as `audit-<package>-<YYYY-MM-DD>.html` in the working directory unless the user specifies otherwise. Deviate from the template where the audit's findings demand a different shape — but keep the section ordering, since it leads with visuals to frame the system before per-finding detail.
 
@@ -147,7 +179,7 @@ The two dimensions:
 
 The template uses Mermaid (CDN) for diagrams and Prism (CDN) for code highlighting. The file degrades gracefully offline — diagram source remains readable as plain text. Verify Mermaid syntax by pasting each diagram into mermaid.live before delivering.
 
-### 3.6 What the audit is NOT
+### 3.7 What the audit is NOT
 
 - Not a style review. The linter handles style.
 - Not a security review.
@@ -265,6 +297,7 @@ Before handing back the audit report or design brief:
 - [ ] Severity is encoded as both a text badge and a visual cue (left-border colour on the finding card).
 - [ ] Principle citations appear as `.badge.principle` badges on each finding, not just inline references.
 - [ ] Each punch-list item carries a **complexity** badge (`Trivial`/`Low`/`Medium`/`High`/`Extreme`) and a **blast-radius** badge (`Surgical`/`Local`/`Module`/`Subsystem`/`System-wide`); no item carries a time-based estimate.
+- [ ] For delegated audits (§3.4), the synthesis adds cross-subdivision findings (cycles spanning subdivisions, primitive obsession crossing boundaries, layer violations between subdivisions) beyond the union of per-subdivision reports — duplicates collapsed to system-wide findings, not listed N times.
 - [ ] All `FILL:` comments and unused OPTIONAL section scaffolding are stripped.
 - [ ] Saved as `audit-<package>-<YYYY-MM-DD>.html`.
 
