@@ -46,8 +46,20 @@ _FILL_STREAM_SYMBOLS: frozenset[str] = frozenset(
     }
 )
 
+_EQUITY_SYMBOLS: frozenset[str] = frozenset(
+    {
+        "EquitySubmission",
+        "submit_equity_add",
+        "submit_equity_close",
+        "submit_equity_open",
+    }
+)
+
 _REQUIRED_SYMBOLS: frozenset[str] = (
-    _SUBSTRATE_SYMBOLS | _QUERIES_SYMBOLS | _FILL_STREAM_SYMBOLS
+    _SUBSTRATE_SYMBOLS
+    | _QUERIES_SYMBOLS
+    | _FILL_STREAM_SYMBOLS
+    | _EQUITY_SYMBOLS
 )
 
 
@@ -63,7 +75,6 @@ def test_public_surface_includes_all_required_symbols() -> None:
 
 
 def test_substrate_symbols_directly_importable() -> None:
-    """Each substrate symbol can be imported directly from the package root."""
     from alphamind.execution.broker_adapter import (
         AlpacaClientFactory,
         ExecutionMode,
@@ -94,7 +105,6 @@ def test_substrate_symbols_directly_importable() -> None:
 
 
 def test_queries_symbols_directly_importable() -> None:
-    """Each ALP-379 account-state-query symbol importable from package root."""
     from alphamind.execution.broker_adapter import (
         AccountStateQueries,
         ActivitySnapshot,
@@ -121,7 +131,6 @@ def test_queries_symbols_directly_importable() -> None:
 
 
 def test_fill_stream_symbols_directly_importable() -> None:
-    """Each fill-stream symbol from story 02f can be imported from the root."""
     from alphamind.execution.broker_adapter import (
         FillReport,
         OrderStatus,
@@ -130,3 +139,14 @@ def test_fill_stream_symbols_directly_importable() -> None:
     )
 
     _ = (FillReport, OrderStatus, subscribe_trade_updates, translate_trade_update)
+
+
+def test_equity_symbols_directly_importable() -> None:
+    from alphamind.execution.broker_adapter import (
+        EquitySubmission,
+        submit_equity_add,
+        submit_equity_close,
+        submit_equity_open,
+    )
+
+    _ = (EquitySubmission, submit_equity_add, submit_equity_close, submit_equity_open)

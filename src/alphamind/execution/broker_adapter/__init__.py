@@ -13,20 +13,11 @@ Story 01 (ALP-378) ships the foundational substrate:
   :class:`PermanentRejection` taxonomy aligned with
   ``broker-adapter.md § Order submission``.
 
-Story 02a (ALP-379) adds read-only account state wrappers:
+Story 02a (ALP-379) — :class:`AccountStateQueries` wrappers.
+Story 02b (ALP-380) — equity order POST translation.
+Story 02f (ALP-384) — fill-stream subscriber + translator.
 
-* :class:`AccountStateQueries` — thin wrappers over the seven Alpaca REST
-  GET endpoints the OMS, continuous monitor, paper-evaluation harness, and
-  corporate-actions processor consume for state reconciliation.
-
-Story 02f (ALP-384) adds the fill-stream subscriber + translator:
-
-* :func:`subscribe_trade_updates`, :func:`translate_trade_update`,
-  :class:`FillReport` — primitives the continuous monitor wraps with the
-  run-forever lifecycle.
-
-Order POST/PATCH translation, recovery, and venue constants ship in
-subsequent stories per the dependency graph in the parent issue
+Subsequent wave-2 stories ship in parallel; see the parent issue
 (`ALP-121 <https://linear.app/alphamind-jatassi/issue/ALP-121>`_).
 """
 
@@ -46,6 +37,12 @@ from alphamind.execution.broker_adapter.fill_stream import (
     OrderStatus,
     subscribe_trade_updates,
     translate_trade_update,
+)
+from alphamind.execution.broker_adapter.order_equity import (
+    EquitySubmission,
+    submit_equity_add,
+    submit_equity_close,
+    submit_equity_open,
 )
 from alphamind.execution.broker_adapter.queries import (
     AccountStateQueries,
@@ -71,6 +68,7 @@ __all__ = [
     "AlpacaClientFactory",
     "AssetSnapshot",
     "CalendarDay",
+    "EquitySubmission",
     "ExecutionMode",
     "FillReport",
     "GatewaySubmissionFailed",
@@ -87,6 +85,9 @@ __all__ = [
     "TradeAccountSnapshot",
     "classify_alpaca_error",
     "is_transient",
+    "submit_equity_add",
+    "submit_equity_close",
+    "submit_equity_open",
     "submit_with_retry",
     "subscribe_trade_updates",
     "translate_trade_update",
