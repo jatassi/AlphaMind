@@ -26,6 +26,14 @@ from typing import Any
 
 from sqlalchemy import Engine, event
 from sqlalchemy import create_engine as _sa_create_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+)
+from sqlalchemy.ext.asyncio import (
+    create_async_engine as _sa_create_async_engine,
+)
 from sqlalchemy.orm import Session, sessionmaker
 
 _PERCENT_VAR_PATTERN = re.compile(r"%([A-Za-z_][A-Za-z0-9_]*)%")
@@ -92,4 +100,35 @@ def make_engine(path: str | None = None) -> Engine:
 def make_session_factory(engine: Engine) -> sessionmaker[Session]:
     """Return a :class:`~sqlalchemy.orm.sessionmaker` bound to *engine*."""
     factory: sessionmaker[Session] = sessionmaker(bind=engine, expire_on_commit=False)
+    return factory
+
+
+def make_async_engine(path: str | None = None) -> AsyncEngine:
+    """
+    Create and return a SQLAlchemy :class:`~sqlalchemy.ext.asyncio.AsyncEngine`.
+
+    Mirrors :func:`make_engine` but uses the ``sqlite+aiosqlite`` driver and
+    applies the same four pragmas on every fresh connection. Used by the
+    state-persistence ``InvocationContext`` (story 02b) and downstream
+    write paths that opt into the async session.
+    """
+    resolved = _resolve_path(path)
+    url = (
+        "sqlite+aiosqlite:///:memory:"
+        if resolved == ":memory:"
+        else f"sqlite+aiosqlite:///{resolved}"
+    )
+    engine = _sa_create_async_engine(url)
+    # The sync ``Engine`` underlying an ``AsyncEngine`` exposes the same
+    # ``connect`` event the sync helper hooks; pragmas fire on every fresh
+    # DBAPI connection regardless of whether the caller is sync or async.
+    event.listen(engine.sync_engine, "connect", _apply_pragmas)
+    return engine
+
+
+def make_async_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    """Return an :class:`~sqlalchemy.ext.asyncio.async_sessionmaker` bound to *engine*."""
+    factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
+        bind=engine, expire_on_commit=False
+    )
     return factory

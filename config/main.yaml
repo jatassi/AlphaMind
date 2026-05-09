@@ -12,3 +12,13 @@ paths:
   logs:     '%USERPROFILE%\AlphaMind\logs'
   archive:  '%USERPROFILE%\AlphaMind\archive'
   prompts:  prompts/
+
+# State-persistence layer knobs — see docs/design/05-execution-layer/state-persistence.md.
+# pip_freeze_snapshot_root and invocation_provenance_root are filesystem roots
+# whose %USERPROFILE% expansions are resolved at the OS boundary, not at YAML parse —
+# matching the convention of paths.database above.
+state_persistence:
+  pm_decision_log_sliding_window_invocations: 2          # category 5b — recent N PM-decision invocations served to the snapshot read
+  snapshot_read_timeout_seconds: 30.0                    # snapshot-isolation read transaction wall-clock budget
+  pip_freeze_snapshot_root: '%USERPROFILE%\AlphaMind\data\provenance\process_lifetimes'
+  invocation_provenance_root: '%USERPROFILE%\AlphaMind\data\provenance\invocations'

@@ -24,6 +24,10 @@ from typing import Any
 
 from sqlalchemy import inspect, text
 
+# Side-effect import: registers state-persistence tables on
+# ``Base.metadata`` so the inspector below sees them and the table-existence
+# check covers the durable substrate alongside the data-layer tables.
+import alphamind.execution.state_persistence.tables  # noqa: F401
 from alphamind.persistence.session import make_engine
 
 # ---------------------------------------------------------------------------
@@ -68,7 +72,26 @@ TABLE_SPECS: list[TableSpec] = [
     TableSpec("event_calendar", 1_600, 0.50),
 ]
 
-# All tables that must exist (from storage.md S Tables)
+# State-persistence durable substrate (ALP-119 work tree). Listed alongside the
+# data-layer tables so a single bootstrap-verification pass covers both.
+_STATE_PERSISTENCE_TABLES: list[str] = [
+    "process_lifetimes",
+    "invocations",
+    "activity_log",
+    "positions",
+    "theses",
+    "thesis_components",
+    "orders",
+    "brackets",
+    "bracket_legs",
+    "cash_ledger",
+    "drawdown_state",
+    "fill_records",
+    "corporate_action_integration_ledger",
+]
+
+# All tables that must exist (data layer per storage.md § Tables + state
+# persistence per state-persistence.md § Tables).
 ALL_TABLES: list[str] = [
     "asset_universe",
     "sector_classification",
@@ -87,6 +110,7 @@ ALL_TABLES: list[str] = [
     "prediction_market_contracts",
     "prediction_market_snapshots",
     "collection_runs",
+    *_STATE_PERSISTENCE_TABLES,
 ]
 
 _REFERENCE_TABLES = [

@@ -1331,3 +1331,49 @@ def test_assemble_snapshot_returns_assembled_snapshot_bundle() -> None:
     # Position is priced fresh (NVDA quote provided)
     assert assembled.freshness.all_position_prices_fresh is True
     assert "POS-NVDA" in assembled.freshness.position_ids_priced_fresh
+
+
+def test_assembler_recomputes_available_buying_power_from_canonical_formula() -> None:
+    """``available_buying_power_usd`` is a derived field — the assembler
+    overwrites whatever the cash_ledger row carries with the canonical
+    formula ``settled_cash - reserved_capital - margin_held``.
+
+    Phase 1/2 stop maintaining this field; the persisted value is whatever
+    the seed left there. The assembler is the single source of truth at
+    read time.
+    """
+    # Seed cash with a stale/wrong available_buying_power so the test fails
+    # if the assembler simply passes the field through unchanged.
+    cash = CashLedger.model_validate(
+        {
+            "current_cash_usd": 100_000.0,
+            "settled_cash_usd": 90_000.0,
+            "reserved_capital_usd": 5_000.0,
+            "available_buying_power_usd": 999_999.0,  # stale persisted value
+            "margin_held_usd": 3_000.0,
+            "unsettled_proceeds": (),
+            "cash_pct_of_portfolio": 0.0,
+            "true_deployable_capital_usd": 0.0,
+            "regt_excess_trailing_30d_usd": 0.0,
+            "regt_excess_trailing_90d_usd": 0.0,
+            "regt_excess_lifetime_usd": 0.0,
+        }
+    )
+    fixture = _make_fixture(cash_ledger=cash)
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider({}, _NOW)
+
+    assembled = _run(
+        assemble_snapshot(
+            repository=repo,
+            price_provider=provider,
+            sector_resolver=_null_sector_resolver,
+            config=_make_config(),
+            now=_NOW,
+        )
+    )
+    enriched = assembled.snapshot.cash_ledger
+    # 90_000 settled - 5_000 reserved - 3_000 margin = 82_000.
+    assert enriched.available_buying_power_usd == pytest.approx(82_000.0)
+    # The canonical formula matches true_deployable_capital_usd by construction.
+    assert enriched.available_buying_power_usd == enriched.true_deployable_capital_usd

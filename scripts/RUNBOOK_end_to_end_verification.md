@@ -18,7 +18,7 @@ on success, and the next script reads its predecessor's outputs via
 
 ## TL;DR for the agent
 
-You're going to run 15 verification scripts in 10 phases. Three rules:
+You're going to run 16 verification scripts in 11 phases. Three rules:
 
 1. **Stop on first FAIL.** Each phase depends on prior phases' state
    AND its predecessor's stage artifacts. Don't continue past a red
@@ -93,6 +93,7 @@ they read time-dependent DB state.
 |-------|-------|---------|------|------------|
 | 0 | Types | position_thesis_model | No | <10s |
 | 1 | Data | bootstrap, ongoing_collection | No | ~5s |
+| 1b | Execution: state persistence | state_persistence | No | <5s |
 | 2 | Distillation | distillation, regime_transition, calibration_mix | Yes (1 of 3) | ~30–60s |
 | 3 | Analysis: domain researchers | domain_researchers, domain_researcher_failure_modes | Yes (1 of 2) | ~30–60s |
 | 4 | Analysis: qualitative + adaptive | qualitative_researcher, adaptive_researcher | Yes | ~45–90s |
@@ -152,8 +153,45 @@ NYSE is closed.
 
 **On failure:** the data layer's bootstrap or ongoing collection has a
 gap. Check `/Volumes/Users/jacks/AlphaMind/logs/collector.{out,err}.log`
-on the dev machine for collector errors. Don't proceed to phase 2 —
-distillation reads from these tables.
+on the dev machine for collector errors. Don't proceed to phase 1b —
+both the state-persistence schema check and the distillation pipeline
+ultimately depend on the same DB.
+
+## Phase 1b — State-persistence substrate
+
+Pure in-process integration check against the durable substrate the
+execution layer writes through. No SDK calls, no LLM cost. Sub-second
+runtime against a fresh on-disk DB. Phase 1b proves the migration head is
+applied + every write/read path is internally consistent + the snapshot
+isolation contract holds.
+
+```bash
+uv run python scripts/verify_state_persistence.py \
+    --db-path "$DB_PATH"
+```
+
+Verifies six phases against a freshly-migrated DB: schema (table
+existence), `InvocationContext` round-trip (commit + rollback), Phase 1
+fill-integration (PENDING→OPEN position transition + activity-log event
+chain), Phase 2 envelope writeback (new position/thesis/bracket/orders
++ event chain), Phase 2 Layer-1 parse-failure (in-memory log + SQL
+`envelope_parse_failed` parallel surfaces), and `SqlPortfolioStateRepository`
+read parity (`assemble_snapshot` end-to-end + `RepositoryConsistencyError`
+on pre-Phase-1 reads).
+
+`--db-path` defaults to the standard resolution chain (`DATABASE_PATH` env
+var, then `config/main.yaml` `paths.database` key). For ad-hoc verification
+against a fresh DB, the script's runbook documents an in-process snippet
+that runs `Base.metadata.create_all` against a tmp-path DB.
+
+**On failure:** read `scripts/RUNBOOK_state_persistence.md` § Failure-mode
+triage. The FAIL output names the phase and a one-line diagnostic; match
+the phase letter (A–F) to its row in the triage table. Pass-state confirms
+the durable substrate is live; downstream pipeline-composition wiring
+(ALP-310) can be invoked safely. Failure here invalidates phase 9 (the PM
+runs against `submit_envelope` which writes through to the substrate); the
+PM will silently degrade to in-memory-only operation if the substrate is
+broken.
 
 ## Phase 2 — Distillation layer
 
@@ -653,6 +691,7 @@ update the runbook in the same change.
 ## References
 
 - `scripts/RUNBOOK_position_thesis_model.md` — phase 0 failure triage (ALP-122 work tree).
+- `scripts/RUNBOOK_state_persistence.md` — phase 1b failure triage (ALP-119 work tree).
 - `scripts/RUNBOOK_domain_researchers.md` — phase 3 failure triage.
 - `scripts/RUNBOOK_qualitative_researcher.md` — phase 4 failure triage.
 - `scripts/RUNBOOK_adaptive_researcher.md` — phase 4 failure triage.

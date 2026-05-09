@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import get_args
+from typing import Literal, get_args
 
 import pytest
 from pydantic import ValidationError
@@ -31,6 +31,7 @@ from alphamind.portfolio_state.records.activity_log import (
     CorporateActionAppliedDetail,
     CorporateActionType,
     DistillationConfigChange,
+    EnvelopeParseFailedDetail,
     EventGroup,
     EventSource,
     EventType,
@@ -118,8 +119,8 @@ class TestEnumMembers:
     def test_event_type_is_str_enum(self) -> None:
         assert issubclass(EventType, StrEnum)
 
-    def test_event_type_has_exactly_36_members(self) -> None:
-        assert len(EventType) == 36
+    def test_event_type_has_exactly_37_members(self) -> None:
+        assert len(EventType) == 37
 
     def test_event_type_position_lifecycle_members(self) -> None:
         for name in ("POSITION_OPENED", "POSITION_CLOSED", "POSITION_ADDED", "POSITION_REDUCED"):
@@ -175,7 +176,7 @@ class TestEnumMembers:
             assert hasattr(EventType, name), f"Missing EventType.{name}"
 
     def test_event_type_pm_decision_members(self) -> None:
-        for name in ("PM_DECISION", "COMMAND_ABANDONED"):
+        for name in ("PM_DECISION", "COMMAND_ABANDONED", "ENVELOPE_PARSE_FAILED"):
             assert hasattr(EventType, name), f"Missing EventType.{name}"
 
     def test_event_type_corporate_action_members(self) -> None:
@@ -295,9 +296,9 @@ class TestMappingExhaustiveness:
 class TestAnyDetailTypeAlias:
     """AnyDetailType is exported and covers all 35 detail-payload classes."""
 
-    def test_any_detail_type_has_36_members(self) -> None:
+    def test_any_detail_type_has_37_members(self) -> None:
         members = get_args(AnyDetailType)
-        assert len(members) == 36
+        assert len(members) == 37
 
     def test_any_detail_type_covers_all_detail_classes(self) -> None:
         members = set(get_args(AnyDetailType))
@@ -586,8 +587,37 @@ class TestDetailClassHappyPaths:
             originating_agent="pm_analyst",
             failure_reason="BROKER_TIMEOUT",
             retry_attempt_count=3,
+            command_type="ADD",
         )
         assert d.retry_attempt_count == 3
+
+    def test_command_abandoned_detail_requires_command_type(self) -> None:
+        """Omitting command_type must raise ValidationError — it is a required field."""
+        with pytest.raises(ValidationError):
+            CommandAbandonedDetail(  # type: ignore[call-arg]
+                envelope_id="env-001",
+                command_id="cmd-001",
+                originating_agent="pm_analyst",
+                failure_reason="BROKER_TIMEOUT",
+                retry_attempt_count=3,
+            )
+
+    @pytest.mark.parametrize("command_type", ["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"])
+    def test_command_abandoned_detail_command_type_roundtrip(
+        self,
+        command_type: Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"],
+    ) -> None:
+        """All five command_type values must survive model_dump_json/model_validate_json."""
+        d = CommandAbandonedDetail(
+            envelope_id="env-001",
+            command_id="cmd-001",
+            originating_agent="pm_analyst",
+            failure_reason="BROKER_TIMEOUT",
+            retry_attempt_count=0,
+            command_type=command_type,
+        )
+        roundtripped = CommandAbandonedDetail.model_validate_json(d.model_dump_json())
+        assert roundtripped.command_type == command_type
 
     def test_corporate_action_applied_detail(self) -> None:
         d = CorporateActionAppliedDetail(
@@ -1057,6 +1087,7 @@ class TestActivityLogEntryHappyPath:
             envelope_id="env-001",
             command_id="cmd-001",
             originating_agent="pm_analyst",
+            command_type="OPEN",
             failure_reason="BROKER_TIMEOUT",
             retry_attempt_count=3,
         )
@@ -1554,3 +1585,51 @@ class TestDistillationConfigChangeRegistration:
                 source=EventSource.CONFIG_RELOAD,
                 detail=detail,
             )
+
+
+class TestEnvelopeParseFailedDetail:
+    """ENVELOPE_PARSE_FAILED variant carries Layer-1 forensics (ALP-366)."""
+
+    def test_envelope_parse_failed_detail_round_trip(self) -> None:
+        detail = EnvelopeParseFailedDetail(
+            attempted_envelope_id="ENV-REC-99",
+            attempted_command_id="inv-2026-05-08.ENV-REC-99.0.0",
+            validation_error_repr="source_provenance: Field required",
+            raw_args_json='{"envelope_id": "ENV-REC-99", "garbage": "value"}',
+        )
+        assert detail.attempted_envelope_id == "ENV-REC-99"
+        assert detail.attempted_command_id == "inv-2026-05-08.ENV-REC-99.0.0"
+        assert "source_provenance" in detail.validation_error_repr
+        assert detail.raw_args_json.startswith("{")
+
+    def test_event_type_to_detail_class_lookup(self) -> None:
+        assert (
+            EVENT_TYPE_TO_DETAIL_CLASS[EventType.ENVELOPE_PARSE_FAILED] is EnvelopeParseFailedDetail
+        )
+
+    def test_event_type_to_group_lookup(self) -> None:
+        assert EVENT_TYPE_TO_GROUP[EventType.ENVELOPE_PARSE_FAILED] == EventGroup.PM_DECISION
+
+    def test_any_detail_type_includes_envelope_parse_failed(self) -> None:
+        assert EnvelopeParseFailedDetail in get_args(AnyDetailType)
+
+    def test_activity_log_entry_accepts_envelope_parse_failed(self) -> None:
+        detail = EnvelopeParseFailedDetail(
+            attempted_envelope_id="ENV-REC-99",
+            attempted_command_id="inv-2026-05-08.ENV-REC-99.0.0",
+            validation_error_repr="source_provenance: Field required",
+            raw_args_json='{"envelope_id": "ENV-REC-99"}',
+        )
+        entry = ActivityLogEntry(
+            entry_id="eid-001",
+            invocation_id="inv-001",
+            timestamp=_UTC_TS,
+            event_type=EventType.ENVELOPE_PARSE_FAILED,
+            event_group=EventGroup.PM_DECISION,
+            position_id=None,
+            order_id=None,
+            thesis_id=None,
+            source=EventSource.COMMAND_EXECUTOR,
+            detail=detail,
+        )
+        assert entry.event_type == EventType.ENVELOPE_PARSE_FAILED

@@ -73,9 +73,11 @@ class TestNewsArticleClustersMigration:
             eng.dispose()
 
     def test_downgrade_one_drops_table_and_column(self, tmp_path: Path) -> None:
+        """Targets the news-article-clusters revision explicitly so future
+        migrations on top don't shift the test's downgrade target."""
         db_path = tmp_path / "alembic.db"
         cfg = _alembic_config(db_path)
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, "c1f7d2e8a9b3")
         command.downgrade(cfg, "-1")
 
         eng = make_engine(str(db_path))

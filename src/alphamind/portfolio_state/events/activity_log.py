@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -77,6 +77,7 @@ class EventType(StrEnum):
     # PM decision events
     PM_DECISION = "PM_DECISION"
     COMMAND_ABANDONED = "COMMAND_ABANDONED"
+    ENVELOPE_PARSE_FAILED = "ENVELOPE_PARSE_FAILED"
 
     # Corporate action events
     CORPORATE_ACTION_APPLIED = "CORPORATE_ACTION_APPLIED"
@@ -571,8 +572,26 @@ class CommandAbandonedDetail(BaseModel):
     envelope_id: str
     command_id: str
     originating_agent: str
+    command_type: Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"]
     failure_reason: str
     retry_attempt_count: int
+
+
+class EnvelopeParseFailedDetail(BaseModel):
+    """Detail payload for ENVELOPE_PARSE_FAILED events.
+
+    Persists the Layer-1 (Pydantic) parse failure surfaced by the
+    ``submit_envelope`` MCP wrapper before any per-command processing runs.
+    Mirrors the in-memory ``FailedSubmissionEntry`` so the audit trail
+    survives process restart.
+    """
+
+    model_config = {"frozen": True}
+
+    attempted_envelope_id: str
+    attempted_command_id: str
+    validation_error_repr: str
+    raw_args_json: str
 
 
 # ---------------------------------------------------------------------------
@@ -689,6 +708,7 @@ AnyDetailType = (
     | RiskParameterChangedDetail
     | PMDecisionDetail
     | CommandAbandonedDetail
+    | EnvelopeParseFailedDetail
     | CorporateActionAppliedDetail
     | DistillationConfigChangeDetail
 )
@@ -732,6 +752,7 @@ EVENT_TYPE_TO_DETAIL_CLASS: dict[EventType, type] = {
     EventType.RISK_PARAMETER_CHANGED: RiskParameterChangedDetail,
     EventType.PM_DECISION: PMDecisionDetail,
     EventType.COMMAND_ABANDONED: CommandAbandonedDetail,
+    EventType.ENVELOPE_PARSE_FAILED: EnvelopeParseFailedDetail,
     EventType.CORPORATE_ACTION_APPLIED: CorporateActionAppliedDetail,
     EventType.DISTILLATION_CONFIG_CHANGE: DistillationConfigChangeDetail,
 }
@@ -771,6 +792,7 @@ EVENT_TYPE_TO_GROUP: dict[EventType, EventGroup] = {
     EventType.RISK_PARAMETER_CHANGED: EventGroup.RISK_AND_GUARDRAIL,
     EventType.PM_DECISION: EventGroup.PM_DECISION,
     EventType.COMMAND_ABANDONED: EventGroup.PM_DECISION,
+    EventType.ENVELOPE_PARSE_FAILED: EventGroup.PM_DECISION,
     EventType.CORPORATE_ACTION_APPLIED: EventGroup.CORPORATE_ACTION,
     EventType.DISTILLATION_CONFIG_CHANGE: EventGroup.CONFIGURATION,
 }
