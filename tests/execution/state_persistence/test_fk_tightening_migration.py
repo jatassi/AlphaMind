@@ -174,6 +174,121 @@ class TestFkTighteningMigration:
         finally:
             eng.dispose()
 
+    def test_cyclic_fk_seeds_commit_cleanly_on_tightened_schema(self, tmp_path: Path) -> None:
+        """A valid OPEN-shaped seed honoring all three real cycles commits.
+
+        Direct evidence the deferred-FK design handles the three cycles the
+        migration's docstring describes: positions↔theses, positions↔brackets,
+        and orders↔brackets. Every cross-reference resolves at COMMIT.
+        """
+        db_path = tmp_path / "alembic.db"
+        cfg = _alembic_config(db_path)
+        command.upgrade(cfg, "head")
+
+        eng = make_engine(str(db_path))
+        try:
+            with eng.begin() as conn:
+                conn.execute(text("PRAGMA foreign_keys = ON"))
+                # All cross-referenced rows go in one transaction so the
+                # DEFERRABLE FKs validate together at COMMIT.
+                conn.execute(
+                    text(
+                        "INSERT INTO positions "
+                        "(position_id, thesis_id, bracket_id, status, direction, "
+                        " entry_timestamp, instrument_type, details_json, "
+                        " execution_history_json, realized_pnl_to_date_usd, "
+                        " corporate_action_adjustment_needed, parent_position_id, "
+                        " origin) "
+                        "VALUES "
+                        "('pos-cycle', 'thesis-cycle', 'brk-cycle', 'PENDING', 'LONG', "
+                        " NULL, 'EQUITY', '{}', '[]', NULL, "
+                        " 0, NULL, NULL)"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "INSERT INTO theses "
+                        "(thesis_id, position_id, status, summary, "
+                        " generation_timestamp, narrative_json) "
+                        "VALUES "
+                        "('thesis-cycle', 'pos-cycle', 'ACTIVE', 'cycle test', "
+                        " '2026-05-08T12:00:00Z', '{}')"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "INSERT INTO brackets "
+                        "(bracket_id, position_id, status, entry_order_id, "
+                        " modification_history_json) "
+                        "VALUES "
+                        "('brk-cycle', 'pos-cycle', 'PENDING_ENTRY', 'ord-entry-cycle', "
+                        " '[]')"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "INSERT INTO orders "
+                        "(order_id, position_id, bracket_id, order_role, "
+                        " order_class, instrument_spec_json, direction, order_type, "
+                        " quantity, price_parameters_json, duration, status, "
+                        " alpaca_order_id, alpaca_order_id_chain_json, "
+                        " submission_timestamp, last_update_timestamp, "
+                        " filled_quantity, average_fill_price, remaining_quantity, "
+                        " modification_count, metadata_json) "
+                        "VALUES "
+                        "('ord-entry-cycle', 'pos-cycle', 'brk-cycle', 'ENTRY', "
+                        " 'SIMPLE', '{}', 'BUY', 'MARKET', 1.0, '{}', 'DAY', "
+                        " 'PENDING', 'alp-entry', '[]', '2026-05-08T12:00:00Z', "
+                        " '2026-05-08T12:00:00Z', 0.0, NULL, 1.0, 0, '{}')"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "INSERT INTO orders "
+                        "(order_id, position_id, bracket_id, order_role, "
+                        " order_class, instrument_spec_json, direction, order_type, "
+                        " quantity, price_parameters_json, duration, status, "
+                        " alpaca_order_id, alpaca_order_id_chain_json, "
+                        " submission_timestamp, last_update_timestamp, "
+                        " filled_quantity, average_fill_price, remaining_quantity, "
+                        " modification_count, metadata_json) "
+                        "VALUES "
+                        "('ord-stop-cycle', 'pos-cycle', 'brk-cycle', 'PRICE_STOP', "
+                        " 'SIMPLE', '{}', 'SELL', 'STOP', 1.0, '{}', 'GTC', "
+                        " 'PENDING', 'alp-stop', '[]', '2026-05-08T12:00:00Z', "
+                        " '2026-05-08T12:00:00Z', 0.0, NULL, 1.0, 0, '{}')"
+                    )
+                )
+                conn.execute(
+                    text(
+                        "INSERT INTO bracket_legs "
+                        "(bracket_leg_id, bracket_id, leg_index, leg_type, "
+                        " order_id, trigger_kind, trigger_payload_json, "
+                        " enforcement, leg_status) "
+                        "VALUES "
+                        "('leg-cycle', 'brk-cycle', 0, 'PRICE_STOP', "
+                        " 'ord-stop-cycle', 'PRICE', '{}', "
+                        " 'MECHANICAL', 'PENDING_ACTIVATION')"
+                    )
+                )
+            # Every row survives the COMMIT.
+            with eng.begin() as conn:
+                for table, key_col, key_val in (
+                    ("positions", "position_id", "pos-cycle"),
+                    ("theses", "thesis_id", "thesis-cycle"),
+                    ("brackets", "bracket_id", "brk-cycle"),
+                    ("orders", "order_id", "ord-entry-cycle"),
+                    ("orders", "order_id", "ord-stop-cycle"),
+                    ("bracket_legs", "bracket_leg_id", "leg-cycle"),
+                ):
+                    count = conn.execute(
+                        text(f"SELECT COUNT(*) FROM {table} WHERE {key_col} = :v"),
+                        {"v": key_val},
+                    ).scalar_one()
+                    assert count == 1, f"{table}.{key_col}={key_val!r} missing post-commit"
+        finally:
+            eng.dispose()
+
     def test_activity_log_position_id_fk_rejects_orphan(self, tmp_path: Path) -> None:
         """After upgrade, an activity_log entry with a non-NULL position_id
         pointing at a missing positions row is rejected at COMMIT. NULL still allowed.
