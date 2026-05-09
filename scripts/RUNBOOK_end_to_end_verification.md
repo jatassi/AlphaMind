@@ -18,7 +18,8 @@ on success, and the next script reads its predecessor's outputs via
 
 ## TL;DR for the agent
 
-You're going to run 16 verification scripts in 11 phases. Three rules:
+You're going to run 16 verification scripts in 11 phases plus a final
+HTML-report render. Three rules:
 
 1. **Stop on first FAIL.** Each phase depends on prior phases' state
    AND its predecessor's stage artifacts. Don't continue past a red
@@ -103,6 +104,7 @@ they read time-dependent DB state.
 | 7 | Decision: strategist | strategist (normal + defensive_posture + emergency scenarios) | Yes (Opus) | ~10–15 min |
 | 8 | Decision: proposal pre-processor | proposal_pre_processor (4 scenarios) | No | <1s |
 | 9 | Decision: portfolio manager | pm (normal + halt + emergency + synchronous_rejection scenarios) | Yes (Opus) | ~20–30 min |
+| 10 | Reporting | build_e2e_report (HTML render of the archive) | No | <2s |
 
 ## Phase 0 — Type-layer self-check
 
@@ -698,6 +700,71 @@ Fixtures at tests/fixtures/decision/{analyst,strategist,proposal_pre_processor,p
 If WARN-only or any FAIL, attach the per-script verdict block(s) so
 the operator can act.
 
+## Phase 10 — Generate HTML report
+
+After the run is complete (or when summarizing for someone else), assemble
+a single self-contained dark-mode HTML report from the archive:
+
+```bash
+uv run python scripts/build_e2e_report.py \
+    --archive-root "$ARCHIVE_ROOT" \
+    --invocation-id "$INVOCATION_ID" \
+    --phase-summary "$ARCHIVE_ROOT/phase_summary.json" \
+    --output "$ARCHIVE_ROOT/e2e-report.html"
+```
+
+The script auto-discovers the analyst / strategist / PM scenario invocations
+under `<archive-root>/invocations/`, loads the stage artifacts (sector
+briefs, qualitative + adaptive briefs, retrieval store, PM submission logs),
+and renders one section per phase plus a top-level run-summary table. The
+PM section renders each envelope from `submission_log.json` as a card
+(verdict-coded border, evaluation pills, anti-pattern chips, concerns,
+rationale narrative, and any emitted OMS commands). Open the file in a
+browser — it carries its own CSS via the sidecar at
+`scripts/_e2e_report_assets/style.css`.
+
+Phases 0, 1, 1b, and 1c produce no archive artifacts, so their verdicts +
+notes default to "PASS / baseline numbers." If the run differs from the
+baseline (a stale collector, a state-persistence regression, a tweak to
+phase 0's case count), pass `--phase-summary <path.json>` to override.
+Generate the schema with:
+
+```bash
+uv run python scripts/build_e2e_report.py --print-phase-template
+```
+
+Operators typically save a hand-edited `phase_summary.json` next to the
+archive (e.g. `<archive-root>/phase_summary.json`). Common overrides:
+
+```json
+{
+  "phase-1": {
+    "verdict": "WARN",
+    "note": "fred.macro stale (operator pre-cleared)",
+    "collectors": [
+      {"name": "fred.macro", "age": "15:13:46 ago (cap 8:00)", "status": "FAIL"},
+      {"name": "polygon.equity", "age": "(market closed)", "status": "SKIP"}
+    ]
+  },
+  "phase-7": {
+    "verdict": "FAIL",
+    "note": "defensive_posture failed schema-conditional validation"
+  }
+}
+```
+
+Per-collector rows for phase 1 are visible in the report; if you want them
+populated, copy the rows out of the `verify_ongoing_collection.py` console
+output into the override.
+
+**Reference example.** `docs/reports/e2e-verification-2026-05-09.html` is a
+worked example from the 2026-05-09 run — it covers the full envelope-card
+layout (4 PM scenarios, 21 envelopes), a phase-7 FAIL on the strategist
+defensive_posture scenario, a phase-9 WARN on synchronous_rejection, and a
+phase-1 WARN on `fred.macro`. Use it as a visual reference for what a
+"normal" run report should look like, and a sanity check that
+`build_e2e_report.py` still renders the same structure after edits.
+
 ## Cost summary
 
 | Script | Model | Input tokens | Output tokens |
@@ -745,7 +812,10 @@ if the existing thresholds become misleading.
 
 3. **No "run all" wrapper.** This runbook is the closest thing.
    Sequence is manual; if any phase changes (new script, removed
-   script, args drift), this runbook needs updating.
+   script, args drift), this runbook needs updating. Phase 10's
+   `build_e2e_report.py` is the closest the run gets to a single
+   summary artifact, but it only renders state — it does not drive
+   any of the verification phases.
 
 ## When a script's CLI doesn't match this runbook
 
@@ -783,6 +853,14 @@ update the runbook in the same change.
   independently iterable.
 - `src/alphamind/scripts/_artifact_io.py` — the typed dump/load helpers
   the verification scripts use to thread stage artifacts (ALP-287).
+- `scripts/build_e2e_report.py` — phase-10 HTML report builder; reads the
+  archive plus an optional `--phase-summary` JSON override and renders a
+  dark-mode page with PM-envelope cards.
+- `scripts/_e2e_report_assets/style.css` — sidecar stylesheet the report
+  loads at render time.
+- `docs/reports/e2e-verification-2026-05-09.html` — worked example of the
+  rendered report (full envelope-card layout, phase-7 FAIL, phase-9 WARN,
+  phase-1 WARN on fred.macro).
 - `docs/design/cost-and-rate-limit-modeling.md` — cap budgets and
   per-agent token expectations.
 - `docs/architecture/llm-integration.md` § Authentication —
