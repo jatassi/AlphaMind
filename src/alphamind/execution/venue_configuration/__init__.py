@@ -17,6 +17,11 @@ arrive in subsequent stories per the parent-issue dependency graph
 * Story 04a — ``settlement.py`` (T+1 settlement-date calculator).
 """
 
+from alphamind.execution.venue_configuration.calendar_cache import (
+    MarketClockSnapshot,
+    TradingCalendarCache,
+    get_market_clock,
+)
 from alphamind.execution.venue_configuration.constants import (
     INTRADAY_BUYING_POWER_MULTIPLIER_PDT_QUALIFIED,
     MARGIN_INTEREST_TIERS,
@@ -62,5 +67,8 @@ __all__ = [
     "InstrumentClass",
     "MarginInterestTier",
     "MarginRequirements",
+    "MarketClockSnapshot",
+    "TradingCalendarCache",
+    "get_market_clock",
     "resolve_margin_interest_tier",
 ]
