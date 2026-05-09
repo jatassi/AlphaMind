@@ -110,6 +110,18 @@ _BUY_DIRECTIONS = frozenset(
 _QTY_EPSILON = 1e-9
 
 
+class StateInconsistencyError(RuntimeError):
+    """Raised when a Tier-1 row references a parent FK target that is missing.
+
+    The Phase 1 mutators (``_activate_bracket``, ``_dissolve_bracket``,
+    ``_maybe_resolve_thesis``, ``_cancel_bracket_for_corporate_action``)
+    expect every FK reference they read to point at a live row. A missing
+    target would silently no-op and mask state corruption — we raise
+    instead so the surrounding ``InvocationContext`` rolls back and the
+    operator sees the violation.
+    """
+
+
 @dataclass(frozen=True)
 class _FillIntegrationOutcome:
     """Per-fill diff handed to the activity-log emitter.
@@ -397,6 +409,9 @@ def _apply_fill_to_position(
         return _apply_entry_fill(position, details, fill)
     if is_buy_side and position.status == PositionStatus.OPEN:
         return _apply_add_fill(position, details, fill)
+    if not is_buy_side and position.status == PositionStatus.PENDING:
+        msg = "SHORT entry fills not yet supported by Phase 1; supported direction is LONG only."
+        raise NotImplementedError(msg)
     return _apply_exit_fill(position, details, fill)
 
 
@@ -540,7 +555,8 @@ async def _activate_bracket(handle: InvocationHandle, bracket_id: str) -> None:
     """Flip a PENDING_ENTRY bracket to ACTIVE with all legs ACTIVE."""
     bracket_row = await handle.session.get(BracketRow, bracket_id)
     if bracket_row is None:
-        return
+        msg = f"position references bracket {bracket_id!r}, but bracket row is missing"
+        raise StateInconsistencyError(msg)
     bracket_row.status = BracketStatus.ACTIVE.value
     for leg_row in await _read_bracket_legs(handle, bracket_id):
         leg_row.leg_status = BracketLegStatus.ACTIVE.value
@@ -550,7 +566,8 @@ async def _dissolve_bracket(handle: InvocationHandle, bracket_id: str) -> None:
     """Flip an ACTIVE bracket to DISSOLVED with all legs CANCELLED."""
     bracket_row = await handle.session.get(BracketRow, bracket_id)
     if bracket_row is None:
-        return
+        msg = f"position references bracket {bracket_id!r}, but bracket row is missing"
+        raise StateInconsistencyError(msg)
     bracket_row.status = BracketStatus.DISSOLVED.value
     for leg_row in await _read_bracket_legs(handle, bracket_id):
         leg_row.leg_status = BracketLegStatus.CANCELLED.value
@@ -598,7 +615,11 @@ async def _maybe_resolve_thesis(
         return False
     thesis_row = await handle.session.get(ThesisRow, thesis_id)
     if thesis_row is None:
-        return False
+        msg = (
+            f"position {position_after.position_id!r} references thesis "
+            f"{thesis_id!r}, but thesis row is missing"
+        )
+        raise StateInconsistencyError(msg)
     thesis_row.status = ThesisRecordStatus.RESOLVED.value
     thesis_row.resolution_timestamp = fill.fill_timestamp.isoformat().replace("+00:00", "Z")
     return True
@@ -945,7 +966,11 @@ async def _cancel_bracket_for_corporate_action(
         return
     bracket_row = await handle.session.get(BracketRow, bracket_id)
     if bracket_row is None:
-        return
+        msg = (
+            f"position {activity.position_id!r} references bracket {bracket_id!r}, "
+            "but bracket row is missing"
+        )
+        raise StateInconsistencyError(msg)
     cancellation_reason = f"corporate_action_{activity.action_type.value.lower()}"
     bracket_row.status = BracketStatus.DISSOLVED.value
     bracket_row.corporate_action_cancellation_reason = cancellation_reason
@@ -1004,5 +1029,6 @@ async def _emit_corporate_action_applied(
 __all__ = [
     "CorporateActionActivity",
     "Phase1Summary",
+    "StateInconsistencyError",
     "process_unprocessed_fills",
 ]
