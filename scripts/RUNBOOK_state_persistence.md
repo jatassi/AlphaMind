@@ -148,11 +148,20 @@ The `--output json` mode emits:
 ## Operational caveats
 
 **Fill-integration path scope.** Per ALP-365's narrowing, only the
-equity-position + stock-split paths are wired in Phase 1. Options-strategy
-fills and other corporate-action types raise `NotImplementedError` from
-`process_unprocessed_fills` if an unprocessed fill of the unsupported kind is
-seen. This is by design at the v1 substrate; production callers must filter
-the fill stream upstream of Phase 1 until the follow-up stories land.
+long-equity + stock-split paths are wired in Phase 1. Options-strategy fills,
+SHORT-side entry fills, and other corporate-action types raise
+`NotImplementedError` from `process_unprocessed_fills` if an unprocessed fill
+of the unsupported kind is seen. This is by design at the v1 substrate;
+production callers must filter the fill stream upstream of Phase 1 until the
+follow-up stories land.
+
+**`persist_command_abandoned` is engine-side only.** The function exists,
+is exported, and is unit-tested for its post-rollback emission contract,
+but the engine-stub `_handle_submit_envelope` does not call it — the stub
+assumes broker success. The live broker-failure wire belongs to ALP-120
+(the real OMS submission engine). Phase D / Phase E exercise the
+already-wired persistence paths; do not extend them to assert against
+`COMMAND_ABANDONED` until the engine wire lands.
 
 **`get_recent_thesis_resolutions` lookback parameter.** Per ALP-364's note,
 `SqlPortfolioStateRepository.get_recent_thesis_resolutions(lookback_trading_days=...)`

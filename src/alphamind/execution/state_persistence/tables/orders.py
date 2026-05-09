@@ -12,9 +12,12 @@ the typed record validates, so a future direct-SQL writer faces fail-closed
 guarantees. Indexes cover the four hot read paths: status (pending-orders
 sweep), position lookup, bracket lookup, Alpaca-side reconciliation.
 
-``position_id`` and ``bracket_id`` are plain TEXT here; the FKs to
-``positions`` / ``brackets`` land in a follow-up integration migration once
-those tables ship.
+``position_id`` and ``bracket_id`` are plain TEXT on this mapper; the FKs
+to ``positions`` / ``brackets`` are enforced at the schema level by
+migration ``e9d2c4f7b3a1_tighten_state_persistence_fks``
+(DEFERRABLE INITIALLY DEFERRED, ``ON DELETE RESTRICT``). They are not
+declared on this mapper — see ALP-369 for the follow-up that adds
+mapper-level declarations.
 """
 
 from __future__ import annotations

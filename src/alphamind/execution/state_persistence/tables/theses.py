@@ -7,11 +7,14 @@ metadata-only granularity. The component bodies live in the sibling
 ``thesis_components`` table; ``narrative_json`` carries the parent
 record's non-component fields preserved as JSON for faithful round-trip.
 
-``position_id`` is a plain TEXT column at this story; the FK to
-``positions`` lands in the integration migration once story 04a (the
-positions table) ships. The CHECK constraints encode the same enum
-vocabularies the typed ``ThesisRecord`` enforces, so a future direct-SQL
-writer faces the same fail-closed guarantees.
+``position_id`` is a plain TEXT column on this mapper; the FK to
+``positions`` is enforced at the schema level by migration
+``e9d2c4f7b3a1_tighten_state_persistence_fks`` (DEFERRABLE INITIALLY
+DEFERRED, ``ON DELETE RESTRICT``). It is not declared on this mapper —
+see ALP-369 for the follow-up that adds mapper-level declarations.
+The CHECK constraints encode the same enum vocabularies the typed
+``ThesisRecord`` enforces, so a future direct-SQL writer faces the
+same fail-closed guarantees.
 """
 
 from __future__ import annotations

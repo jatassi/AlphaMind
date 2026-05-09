@@ -28,6 +28,7 @@ from alphamind.decision.portfolio_manager.models import (
     OpenCommand,
     PMEnvelope,
 )
+from alphamind.decision.portfolio_manager.validation import ValidationError as PMValidationError
 from alphamind.execution.oms.submit_envelope_mcp import (
     FailedSubmissionEntry,
     SubmissionResult,
@@ -78,6 +79,7 @@ from alphamind.portfolio_state.events.activity_log import (
     EnvelopeParseFailedDetail,
     EventSource,
     EventType,
+    GuardrailRejectionDetail,
     OrderCancelledDetail,
     OrderSubmittedDetail,
     PMDecisionDetail,
@@ -150,7 +152,7 @@ async def persist_envelope_outcome(
     del config  # No knobs consumed at this story; signature is forward-shaped.
 
     accepted_command_ids: list[str] = []
-    for result, command in zip(submission_results, envelope.commands, strict=False):
+    for result, command in zip(submission_results, envelope.commands, strict=True):
         if result.status != "accepted":
             continue
         await _dispatch_command_writeback(handle, command=command, result=result)
@@ -186,6 +188,61 @@ async def persist_envelope_parse_failure(
         timestamp=datetime.now(UTC),
         detail=detail,
         source=EventSource.COMMAND_EXECUTOR,
+    )
+
+
+async def persist_guardrail_rejection(
+    handle: InvocationHandle,
+    envelope: PMEnvelope,
+    errors: tuple[PMValidationError, ...],
+    *,
+    config: StatePersistenceConfig,
+) -> None:
+    """Persist a Layer-2/3 envelope-level rejection as one ``guardrail_rejection`` entry.
+
+    Symmetric with ``persist_envelope_parse_failure`` — the envelope parsed
+    cleanly at Layer-1 but failed an invariant or cross-command coherence
+    check (per ``validate_pm_envelope``). The first error's message becomes
+    ``suggested_modification``; every error's ``criterion`` (when set) feeds
+    ``blocking_rule_ids`` so a feedback-loop query can correlate envelope
+    rejections back to their failing rules.
+
+    The envelope's ``position_id`` is *not* forwarded into the activity_log
+    row's ``position_id`` column. A common Layer-3 rejection criterion is
+    ``position_id_resolves`` — the envelope's ``position_id`` is precisely
+    the orphan id that has no row in ``positions``, and the FK constraint
+    on ``activity_log.position_id`` (DEFERRABLE INITIALLY DEFERRED, validated
+    at COMMIT) would roll back the entire invocation transaction. The
+    envelope id and any referenced position id are preserved verbatim in the
+    JSON ``command_summary`` for operator forensics; an orphan position_id
+    is unqueryable against ``positions`` anyway, which is what that column
+    is for.
+    """
+    del config  # No knobs consumed at this story; signature is forward-shaped.
+
+    if not errors:
+        msg = "persist_guardrail_rejection requires at least one ValidationError"
+        raise ValueError(msg)
+
+    summary = f"envelope {envelope.envelope_id} failed Layer-2/3 validation"
+    if envelope.position_id is not None:
+        summary += f" (referenced position_id={envelope.position_id!r})"
+    detail = GuardrailRejectionDetail(
+        command_summary=summary,
+        blocking_rule_ids=tuple(e.criterion for e in errors if e.criterion is not None),
+        current_limit_values_json={},
+        headroom_json={},
+        suggested_modification=errors[0].message,
+    )
+    await _emit(
+        handle,
+        event_type=EventType.GUARDRAIL_REJECTION,
+        order_id=None,
+        position_id=None,
+        thesis_id=None,
+        timestamp=datetime.now(UTC),
+        detail=detail,
+        source=EventSource.GUARDRAIL_LAYER,
     )
 
 
@@ -1116,7 +1173,7 @@ def _build_pending_bracket(
 
 
 def _new_open_ids(ticker: str, *, command_id: str) -> dict[str, str]:
-    suffix = _short_token(command_id)
+    suffix = _id_suffix(command_id)
     return {
         "position_id": f"POS-{ticker}-{suffix}",
         "thesis_id": f"THE-{ticker}-{suffix}",
@@ -1127,24 +1184,29 @@ def _new_open_ids(ticker: str, *, command_id: str) -> dict[str, str]:
 
 
 def _close_order_id(position_id: str, command_id: str) -> str:
-    return f"ORD-CLOSE-{position_id}-{_short_token(command_id)}"
+    return f"ORD-CLOSE-{position_id}-{_id_suffix(command_id)}"
 
 
 def _adjust_replacement_order_id(position_id: str, command_id: str) -> str:
-    return f"ORD-ADJUST-{position_id}-{_short_token(command_id)}"
+    return f"ORD-ADJUST-{position_id}-{_id_suffix(command_id)}"
 
 
 def _add_order_id(position_id: str, command_id: str) -> str:
-    return f"ORD-ADD-{position_id}-{_short_token(command_id)}"
+    return f"ORD-ADD-{position_id}-{_id_suffix(command_id)}"
 
 
 def _new_component_id(thesis_id: str, command_id: str) -> str:
-    return f"{thesis_id}-add-{_short_token(command_id)}"
+    return f"{thesis_id}-add-{_id_suffix(command_id)}"
 
 
-def _short_token(command_id: str) -> str:
-    """Stable short suffix derived from the synthetic command id."""
-    return uuid.uuid5(uuid.NAMESPACE_OID, command_id).hex[:8]
+def _id_suffix(command_id: str) -> str:
+    """Stable suffix derived from the synthetic command id.
+
+    Uses the full 32-hex UUID — collision-resistant under any realistic
+    invocation volume; truncation buys nothing operationally and risks
+    overlap as the corpus grows.
+    """
+    return uuid.uuid5(uuid.NAMESPACE_OID, command_id).hex
 
 
 def _position_ticker(position: PositionRecord) -> str:
@@ -1242,4 +1304,5 @@ __all__ = [
     "persist_command_abandoned",
     "persist_envelope_outcome",
     "persist_envelope_parse_failure",
+    "persist_guardrail_rejection",
 ]

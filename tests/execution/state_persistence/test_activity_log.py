@@ -893,3 +893,84 @@ class TestReadMostRecentConfigChangeNewHash:
                 sess, "config/distillation.yaml"
             )
         assert new_hash is None
+
+    async def test_sql_side_filter_skips_unrelated_config_files(
+        self,
+        async_engine_and_factory: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    ) -> None:
+        """The query must filter by ``config_file`` at the SQL layer rather
+        than decoding every history row in Python.
+
+        Builds a 100-entry history dominated by one unrelated ``config_file``
+        with a single matching row near the head and one near the tail; the
+        query must surface the most-recent matching entry without scanning
+        and decoding every other row.
+        """
+        _, factory = async_engine_and_factory
+        rec = _make_invocation_record(invocation_id="inv-bulk", start_at="2026-05-07T13:00:00Z")
+
+        async with InvocationContext(session_factory=factory, record=rec) as h:
+            # Earliest matching entry (will be shadowed by the later one).
+            await append_activity_log_entry(
+                h,
+                _entry(
+                    entry_id="cfg-target-early",
+                    invocation_id=rec.invocation_id,
+                    timestamp=datetime(2026, 5, 7, 13, 0, 0, tzinfo=UTC),
+                    event_type=EventType.DISTILLATION_CONFIG_CHANGE,
+                    event_group=EventGroup.CONFIGURATION,
+                    detail=DistillationConfigChangeDetail(
+                        config_file="config/distillation.yaml",
+                        prior_hash=None,
+                        new_hash="target-early",
+                        changes=(),
+                        git_sha="a" * 40,
+                    ),
+                    source=EventSource.CONFIG_RELOAD,
+                ),
+            )
+            # 100 unrelated entries with a different config_file.
+            for i in range(100):
+                await append_activity_log_entry(
+                    h,
+                    _entry(
+                        entry_id=f"cfg-other-{i:03d}",
+                        invocation_id=rec.invocation_id,
+                        timestamp=datetime(2026, 5, 7, 13, 1 + i // 60, i % 60, tzinfo=UTC),
+                        event_type=EventType.DISTILLATION_CONFIG_CHANGE,
+                        event_group=EventGroup.CONFIGURATION,
+                        detail=DistillationConfigChangeDetail(
+                            config_file="config/other.yaml",
+                            prior_hash=None,
+                            new_hash=f"other-{i:03d}",
+                            changes=(),
+                            git_sha="b" * 40,
+                        ),
+                        source=EventSource.CONFIG_RELOAD,
+                    ),
+                )
+            # Most-recent matching entry — the one the query should return.
+            await append_activity_log_entry(
+                h,
+                _entry(
+                    entry_id="cfg-target-late",
+                    invocation_id=rec.invocation_id,
+                    timestamp=datetime(2026, 5, 7, 14, 0, 0, tzinfo=UTC),
+                    event_type=EventType.DISTILLATION_CONFIG_CHANGE,
+                    event_group=EventGroup.CONFIGURATION,
+                    detail=DistillationConfigChangeDetail(
+                        config_file="config/distillation.yaml",
+                        prior_hash="target-early",
+                        new_hash="target-late",
+                        changes=(),
+                        git_sha="c" * 40,
+                    ),
+                    source=EventSource.CONFIG_RELOAD,
+                ),
+            )
+
+        async with factory() as sess:
+            new_hash = await read_most_recent_config_change_new_hash(
+                sess, "config/distillation.yaml"
+            )
+        assert new_hash == "target-late"

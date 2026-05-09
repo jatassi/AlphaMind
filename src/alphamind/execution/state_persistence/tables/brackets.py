@@ -8,10 +8,13 @@ implement the conditions mechanically).
 events (``BracketLegModification`` Pydantic instances) serialized via
 ``model_dump_json()``.
 
-``position_id`` and ``entry_order_id`` are FK targets only at this story —
-the constraint to ``positions`` / ``orders`` is wired during integration
-when those tables ship. The 1:1 invariant with positions is encoded via a
-UNIQUE index on ``position_id``.
+``position_id`` and ``entry_order_id`` are plain TEXT on this mapper; the
+FKs to ``positions`` / ``orders`` are enforced at the schema level by
+migration ``e9d2c4f7b3a1_tighten_state_persistence_fks``
+(DEFERRABLE INITIALLY DEFERRED, ``ON DELETE RESTRICT``). They are not
+declared on this mapper — see ALP-369 for the follow-up that adds
+mapper-level declarations. The 1:1 invariant with positions is encoded
+via a UNIQUE index on ``position_id``.
 """
 
 from __future__ import annotations

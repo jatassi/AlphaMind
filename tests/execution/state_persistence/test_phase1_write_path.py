@@ -1210,6 +1210,209 @@ async def test_buy_fill_clamps_reserved_capital_decrement_at_zero(
         assert cash.reserved_capital_usd == pytest.approx(0.0)
 
 
+async def test_entry_fill_with_missing_bracket_row_raises_state_inconsistency(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A position carrying ``bracket_id=brk-1`` must have a brk-1 row;
+    ``_activate_bracket`` returning silently on the missing row would mask
+    state corruption. Surface a typed StateInconsistencyError instead.
+
+    Pin ``order.position_id`` so the entry-resolution short-circuit doesn't
+    fire first (that path also needs the bracket row to look up the
+    position; pinning lets the dispatcher reach ``_activate_bracket``).
+    """
+    from alphamind.execution.state_persistence.write_paths.phase1 import (
+        StateInconsistencyError,
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_order(factory, _make_pending_entry_order(position_id="pos-1"))
+    await _seed_position(factory, _make_pending_position())
+    # Intentionally skip _seed_bracket — _activate_bracket will see the gap.
+    await _seed_thesis(factory, _make_active_thesis())
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+    await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-1"))
+
+    ctx, handle = await _open_handle(factory)
+    try:
+        with pytest.raises(StateInconsistencyError, match="bracket"):
+            await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    finally:
+        await ctx.__aexit__(StateInconsistencyError, StateInconsistencyError("forced"), None)
+
+
+async def test_exit_fill_with_missing_bracket_row_raises_state_inconsistency(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """An OPEN position pointing at a missing bracket row on close fill must
+    raise; silent return masks FK corruption."""
+    from alphamind.execution.state_persistence.write_paths.phase1 import (
+        StateInconsistencyError,
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_order(
+        factory,
+        _make_pending_entry_order(
+            order_id="ord-close-1",
+            role=OrderRole.CLOSE,
+            direction=OrderDirection.SELL,
+            position_id="pos-1",
+        ),
+    )
+    await _seed_position(factory, _make_open_position())
+    await _seed_thesis(factory, _make_thesis_with_resolved_components())
+    await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=98_500.0))
+    await _seed_drawdown_state(factory)
+    # bracket NOT seeded — _dissolve_bracket sees missing row.
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(
+            fill_id="fill-close-1",
+            order_id="ord-close-1",
+            fill_price=160.0,
+            fill_quantity=10.0,
+        ),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    try:
+        with pytest.raises(StateInconsistencyError, match="bracket"):
+            await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    finally:
+        await ctx.__aexit__(StateInconsistencyError, StateInconsistencyError("forced"), None)
+
+
+async def test_exit_fill_with_missing_thesis_row_raises_state_inconsistency(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """An OPEN position pointing at a missing thesis row on close fill must
+    raise once the bracket dissolves — silent return masks FK corruption."""
+    from alphamind.execution.state_persistence.write_paths.phase1 import (
+        StateInconsistencyError,
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_order(
+        factory,
+        _make_pending_entry_order(
+            order_id="ord-close-1",
+            role=OrderRole.CLOSE,
+            direction=OrderDirection.SELL,
+            position_id="pos-1",
+        ),
+    )
+    await _seed_position(factory, _make_open_position())
+    await _seed_bracket(factory, _make_active_bracket())
+    # thesis NOT seeded — _maybe_resolve_thesis sees missing row.
+    await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=98_500.0))
+    await _seed_drawdown_state(factory)
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(
+            fill_id="fill-close-1",
+            order_id="ord-close-1",
+            fill_price=160.0,
+            fill_quantity=10.0,
+        ),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    try:
+        with pytest.raises(StateInconsistencyError, match="thesis"):
+            await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    finally:
+        await ctx.__aexit__(StateInconsistencyError, StateInconsistencyError("forced"), None)
+
+
+async def test_corporate_action_with_missing_bracket_row_raises_state_inconsistency(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A corporate action against a position whose bracket FK target is missing
+    must raise — ``_cancel_bracket_for_corporate_action`` returning silently
+    masks state corruption."""
+    from alphamind.execution.state_persistence.write_paths.phase1 import (
+        CorporateActionActivity,
+        StateInconsistencyError,
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position(factory, _make_open_position(share_count=10.0))
+    # bracket NOT seeded — _cancel_bracket_for_corporate_action sees missing row.
+    await _seed_thesis(factory, _make_active_thesis())
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+
+    ca = CorporateActionActivity(
+        alpaca_activity_id="ca-split-1",
+        action_type=CorporateActionType.SPLIT,
+        ticker="AAPL",
+        new_ticker=None,
+        ratio_or_amount=4.0,
+        position_id="pos-1",
+        signed_cash_impact_usd=0.0,
+        transaction_time=_NOW - timedelta(minutes=5),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    try:
+        with pytest.raises(StateInconsistencyError, match="bracket"):
+            await process_unprocessed_fills(
+                handle, config=_make_state_persistence_config(), ca_activities=(ca,)
+            )
+    finally:
+        await ctx.__aexit__(StateInconsistencyError, StateInconsistencyError("forced"), None)
+
+
+async def test_short_entry_fill_raises_explicit_not_implemented(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A SELL-side fill against a PENDING position represents a short-open
+    entry — narrowed out of Phase 1 v1. The dispatcher must surface a clear
+    NotImplementedError naming the missing capability, not the cryptic
+    "exit fill quantity exceeds open share count" leak from ``_apply_exit_fill``.
+    """
+    from alphamind.execution.state_persistence.write_paths.phase1 import (
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_order(
+        factory,
+        _make_pending_entry_order(
+            order_id="ord-short-entry",
+            direction=OrderDirection.SELL_TO_OPEN,
+            position_id="pos-1",
+        ),
+    )
+    await _seed_position(factory, _make_pending_position())
+    await _seed_bracket(factory, _make_pending_bracket())
+    await _seed_thesis(factory, _make_active_thesis())
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(fill_id="fill-short-1", order_id="ord-short-entry"),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    try:
+        with pytest.raises(NotImplementedError, match="SHORT entry"):
+            await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    finally:
+        await ctx.__aexit__(NotImplementedError, NotImplementedError("forced"), None)
+
+
 async def test_phase1_stamps_completion_timestamp_on_invocation_row(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:

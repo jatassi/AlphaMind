@@ -11,7 +11,7 @@ isomorphic with the writes the emission helper performs.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from alphamind.execution.state_persistence.invocation_context.activity_log import (
@@ -105,21 +105,22 @@ async def read_most_recent_config_change_new_hash(
 ) -> str | None:
     """The ``new_hash`` from the most recent ``DISTILLATION_CONFIG_CHANGE``.
 
-    Filters by ``config_file`` (matched against the
-    ``DistillationConfigChangeDetail.config_file`` field carried in
-    ``detail_json``). Returns ``None`` when no entry matches. Consumed by
-    ALP-100 — the configuration loader needs to know whether the prior
-    reload's resolved hash matches the current one to suppress a no-op
-    activity-log entry.
+    Filters by ``config_file`` at the SQL layer via ``json_extract`` so
+    unrelated history rows never reach Python decoding. Returns ``None``
+    when no entry matches. Consumed by ALP-100 — the configuration loader
+    needs to know whether the prior reload's resolved hash matches the
+    current one to suppress a no-op activity-log entry.
     """
     stmt = (
         select(ActivityLogRow)
-        .where(ActivityLogRow.event_type == EventType.DISTILLATION_CONFIG_CHANGE.value)
+        .where(
+            ActivityLogRow.event_type == EventType.DISTILLATION_CONFIG_CHANGE.value,
+            func.json_extract(ActivityLogRow.detail_json, "$.config_file") == config_file,
+        )
         .order_by(ActivityLogRow.entry_at.desc(), ActivityLogRow.entry_id.desc())
+        .limit(1)
     )
-    result = await session.execute(stmt)
-    for row in result.scalars():
-        entry = activity_log_entry_from_row(row)
-        if entry.detail.config_file == config_file:
-            return str(entry.detail.new_hash)
-    return None
+    row = (await session.execute(stmt)).scalar_one_or_none()
+    if row is None:
+        return None
+    return str(activity_log_entry_from_row(row).detail.new_hash)

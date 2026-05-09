@@ -573,6 +573,167 @@ async def test_envelope_parse_failure_writes_one_log_entry(
 
 
 # ===========================================================================
+# Tests — persist_guardrail_rejection (Layer-2/3 envelope-level rejection)
+# ===========================================================================
+
+
+async def test_persist_guardrail_rejection_writes_one_log_entry(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A Layer-2/3 envelope-level rejection (e.g. halt-mode invariant
+    violation) appends one GUARDRAIL_REJECTION activity log entry capturing
+    the envelope id and the criterion ids of every blocking ValidationError.
+    """
+    from alphamind.decision.portfolio_manager.validation import ValidationError as PMValError
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_guardrail_rejection,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+
+    envelope = _make_analyst_envelope(envelope_id="ENV-REC-2")
+    errors = (
+        PMValError(
+            field_path="commands[0]",
+            message="halt_mode forbids OPEN commands",
+            criterion="halt_mode_invariant",
+        ),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await persist_guardrail_rejection(
+        handle, envelope, errors, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.event_type == EventType.GUARDRAIL_REJECTION.value
+    detail = json.loads(row.detail_json)
+    assert "ENV-REC-2" in detail["command_summary"]
+    assert detail["blocking_rule_ids"] == ["halt_mode_invariant"]
+    assert detail["suggested_modification"] == "halt_mode forbids OPEN commands"
+
+
+async def test_persist_guardrail_rejection_nullifies_orphan_position_id_on_fk_schema(
+    tmp_path: Path,
+) -> None:
+    """A strategist envelope referencing an unknown ``position_id`` rejects
+    cleanly without rolling back the surrounding invocation transaction.
+
+    The FK on ``activity_log.position_id`` (DEFERRABLE INITIALLY DEFERRED) is
+    validated at COMMIT — if ``persist_guardrail_rejection`` were to forward
+    the envelope's orphan position_id into the activity_log row verbatim, the
+    invocation commit would raise ``IntegrityError`` and lose the entire
+    rejection record (along with any earlier work in the same handle).
+
+    Contract: the activity_log row commits with ``position_id IS NULL`` and
+    the orphan envelope position_id preserved in the JSON detail (via
+    ``command_summary``) so operator forensics still get full context.
+    """
+    from argparse import Namespace
+
+    from alembic import command
+    from alembic.config import Config
+
+    from alphamind.decision.portfolio_manager.validation import ValidationError as PMValError
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_guardrail_rejection,
+    )
+
+    db_path = tmp_path / "alphamind.db"
+    repo_root = Path(__file__).parents[3]
+    cfg = Config(repo_root / "alembic.ini", cmd_opts=Namespace(x=[f"db={db_path}"]))
+    command.upgrade(cfg, "head")
+
+    async_engine = make_async_engine(str(db_path))
+    factory = make_async_session_factory(async_engine)
+    try:
+        await _seed_invocation_substrate(factory)
+
+        envelope = _make_strategist_envelope(envelope_id="ENV-SA-99", position_id="POS-NONEXISTENT")
+        errors = (
+            PMValError(
+                field_path="position_id",
+                message=(
+                    "position_id='POS-NONEXISTENT' does not match any open "
+                    "position in pm_view.positions"
+                ),
+                criterion="position_id_resolves",
+            ),
+        )
+
+        ctx, handle = await _open_handle(factory)
+        await persist_guardrail_rejection(
+            handle, envelope, errors, config=_make_state_persistence_config()
+        )
+        # Commit must succeed — the FK at COMMIT must not reject the row.
+        await ctx.__aexit__(None, None, None)
+
+        rows = await _read_activity_log_for(factory, handle.invocation_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.event_type == EventType.GUARDRAIL_REJECTION.value
+        assert row.position_id is None  # nullified to satisfy the FK
+        detail = json.loads(row.detail_json)
+        # Envelope context preserved for operator forensics.
+        assert "ENV-SA-99" in detail["command_summary"]
+        assert "POS-NONEXISTENT" in detail["command_summary"]
+        assert detail["blocking_rule_ids"] == ["position_id_resolves"]
+    finally:
+        await async_engine.dispose()
+
+
+async def test_handle_submit_envelope_writes_guardrail_rejection_on_layer23_failure(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """When the engine-stub passes Layer-1 but fails Layer-2/3, both surfaces
+    populate: in-memory submission_log AND SQL guardrail_rejection entry."""
+    from alphamind.execution.oms.submit_envelope_mcp import (
+        _handle_submit_envelope,
+        build_initial_submit_envelope_state,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+
+    state = build_initial_submit_envelope_state(
+        invocation_id=_INV_ID,
+        starting_validation_state=_minimal_validation_state(),
+    )
+
+    envelope = _make_analyst_envelope()
+    bundle = _bundle_with_recommendation("REC-1")
+
+    ctx, handle = await _open_handle(factory)
+    response = await _handle_submit_envelope(
+        envelope.model_dump(mode="json"),
+        state=state,
+        retrieval_store=_minimal_retrieval_store(),
+        pre_processor_bundle=bundle,
+        pm_view=_minimal_pm_view(),
+        active_sectors=frozenset({"tech", "semis", "financials", "energy"}),
+        halt_mode=True,  # forces Layer-2/3 failure on the OPEN command
+        sector_resolver=lambda _: "semis",
+        invocation_handle=handle,
+    )
+    await ctx.__aexit__(None, None, None)
+
+    payload = json.loads(response["content"][0]["text"])
+    assert payload["submission_results"][0]["status"] == "rejected"
+    # Both surfaces populated: in-memory log AND SQL writeback.
+    assert len(state.submission_log) == 1
+    assert state.submission_log[0].envelope.envelope_id == envelope.envelope_id
+
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    types = {r.event_type for r in rows}
+    assert EventType.GUARDRAIL_REJECTION.value in types
+
+
+# ===========================================================================
 # Tests — persist_envelope_outcome
 # ===========================================================================
 

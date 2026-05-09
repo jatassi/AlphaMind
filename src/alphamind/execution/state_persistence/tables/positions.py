@@ -7,8 +7,12 @@ entity references. Polymorphic over instrument type via the
 
 The status state machine (``PENDING`` → ``OPEN`` → ``CLOSED``) is encoded as
 a CHECK constraint. ``thesis_id`` and ``bracket_id`` are nullable plain TEXT
-columns at this story; the FKs to ``theses`` / ``brackets`` land in a
-follow-up integration migration once those tables ship.
+columns on this mapper; the FKs to ``theses`` / ``brackets`` (and
+``parent_position_id`` to ``positions``) are enforced at the schema level by
+migration ``e9d2c4f7b3a1_tighten_state_persistence_fks``
+(DEFERRABLE INITIALLY DEFERRED, ``ON DELETE RESTRICT``). They are not
+declared on this mapper — see ALP-369 for the follow-up that adds
+mapper-level declarations.
 """
 
 from __future__ import annotations
