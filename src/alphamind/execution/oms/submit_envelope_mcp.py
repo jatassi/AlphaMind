@@ -295,6 +295,8 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     sector_resolver: Callable[[str], str],
     library_config: LibraryConfig,
     library_market: MarketInputs,
+    invocation_handle: Any | None = None,
+    state_persistence_config: Any | None = None,
 ) -> tuple[Mapping[str, McpSdkServerConfig], tuple[str, ...]]:
     """Build a per-invocation SDK MCP server bound to *state*.
 
@@ -314,6 +316,13 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     They are accepted here so the runner passes one canonical bundle of
     library plumbing through both surfaces uniformly; the engine-stub does
     not consult them directly.
+
+    When ``invocation_handle`` is supplied, the engine-stub additionally
+    writes through every accepted envelope to SQL via the Phase 2 write
+    path (ALP-366) and persists Layer-1 parse failures as
+    ``envelope_parse_failed`` activity log entries. Composition pipelines
+    (ALP-310) inject the handle obtained from the surrounding
+    ``InvocationContext``.
     """
     _ = (library_config, library_market)  # accepted for runner-signature parity
 
@@ -336,6 +345,8 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
             active_sectors=active_sectors,
             halt_mode=halt_mode,
             sector_resolver=sector_resolver,
+            invocation_handle=invocation_handle,
+            state_persistence_config=state_persistence_config,
         )
 
     server = create_sdk_mcp_server(name=_SERVER_NAME, tools=[_submit_envelope])
@@ -348,7 +359,7 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
 # ---------------------------------------------------------------------------
 
 
-async def _handle_submit_envelope(
+async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator threads every per-invocation parameter once.
     args: dict[str, Any],
     *,
     state: SubmitEnvelopeState,
@@ -358,8 +369,18 @@ async def _handle_submit_envelope(
     active_sectors: frozenset[str],
     halt_mode: bool,
     sector_resolver: Callable[[str], str],
+    invocation_handle: Any | None = None,
+    state_persistence_config: Any | None = None,
 ) -> dict[str, Any]:
-    """Coerce input → run validators → process commands → log + respond."""
+    """Coerce input → run validators → process commands → log + respond.
+
+    When ``invocation_handle`` is supplied (production composition path,
+    ALP-310), every accepted envelope writes through to SQL via the Phase 2
+    ``persist_envelope_outcome`` and every Layer-1 parse failure additionally
+    writes one ``envelope_parse_failed`` activity log entry. When the handle
+    is ``None`` (legacy fixture-only path), only the in-memory state-cell
+    surfaces are mutated — preserves the engine-stub's pre-ALP-366 behavior.
+    """
     # Step 1: Layer-1 — coerce to PMEnvelope.
     try:
         envelope = _validate_envelope_payload(args)
@@ -371,14 +392,16 @@ async def _handle_submit_envelope(
             command_ordinal=0,
             attempt_seq=0,
         )
-        state.failed_submission_log = (
-            *state.failed_submission_log,
-            FailedSubmissionEntry(
-                raw_args=dict(args),
-                validation_error_repr=str(exc),
-                command_id=synthetic_command_id,
-            ),
+        failed_entry = FailedSubmissionEntry(
+            raw_args=dict(args),
+            validation_error_repr=str(exc),
+            command_id=synthetic_command_id,
         )
+        state.failed_submission_log = (*state.failed_submission_log, failed_entry)
+        if invocation_handle is not None:
+            await _persist_envelope_parse_failure_via_phase2(
+                invocation_handle, failed_entry, state_persistence_config
+            )
         return _build_envelope_level_rejection(
             envelope_id=envelope_id,
             invocation_id=state.invocation_id,
@@ -419,7 +442,13 @@ async def _handle_submit_envelope(
         SubmissionLogEntry(envelope=envelope, submission_results=submission_results),
     )
 
-    # Step 5: serialize.
+    # Step 5: SQL writeback (opt-in via invocation_handle).
+    if invocation_handle is not None:
+        await _persist_envelope_outcome_via_phase2(
+            invocation_handle, envelope, submission_results, state_persistence_config
+        )
+
+    # Step 6: serialize.
     return {
         "content": [
             {
@@ -428,6 +457,55 @@ async def _handle_submit_envelope(
             }
         ],
     }
+
+
+async def _persist_envelope_outcome_via_phase2(
+    invocation_handle: Any,
+    envelope: PMEnvelope,
+    submission_results: tuple[SubmissionResult, ...],
+    state_persistence_config: Any | None,
+) -> None:
+    """Lazy import + dispatch to break the import cycle Phase 2 has on us."""
+    # Import lazily so submit_envelope_mcp itself stays importable from
+    # phase2.py at module-load time (phase2 imports FailedSubmissionEntry).
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    config = state_persistence_config or _stub_state_persistence_config()
+    await persist_envelope_outcome(invocation_handle, envelope, submission_results, config=config)
+
+
+async def _persist_envelope_parse_failure_via_phase2(
+    invocation_handle: Any,
+    failed_entry: FailedSubmissionEntry,
+    state_persistence_config: Any | None,
+) -> None:
+    """Lazy import + dispatch — symmetric with the accepted-envelope helper."""
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_envelope_parse_failure,
+    )
+
+    config = state_persistence_config or _stub_state_persistence_config()
+    await persist_envelope_parse_failure(invocation_handle, failed_entry, config=config)
+
+
+def _stub_state_persistence_config() -> Any:
+    """Construct a no-op StatePersistenceConfig for callers that didn't supply one.
+
+    Phase 2 doesn't read any knob in this story; the config is part of the
+    forward-shaped signature only.
+    """
+    from alphamind.execution.state_persistence.config import StatePersistenceConfig
+
+    return StatePersistenceConfig.model_validate(
+        {
+            "pm_decision_log_sliding_window_invocations": 1,
+            "snapshot_read_timeout_seconds": 1.0,
+            "pip_freeze_snapshot_root": "/tmp",
+            "invocation_provenance_root": "/tmp",
+        }
+    )
 
 
 def _validate_envelope_payload(args: dict[str, Any]) -> PMEnvelope:

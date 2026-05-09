@@ -1043,3 +1043,295 @@ async def test_layer_1_failure_uses_fallback_envelope_id_when_missing() -> None:
     assert len(failed_log) == 1
     assert failed_log[0].raw_args == bogus_args
     assert failed_log[0].command_id.endswith(".ENV-REC-INVALID.0.0")
+
+
+# ---------------------------------------------------------------------------
+# 12. SQL writeback — opt-in via injected InvocationHandle (ALP-366)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_handle_submit_envelope_persists_layer1_failure_via_phase2(
+    tmp_path: Any,
+) -> None:
+    """When ``invocation_handle`` is supplied AND Layer-1 fails, the
+    in-memory failed_submission_log AND an envelope_parse_failed activity log
+    entry are both written. Mirrors the phase2 write-path test surface so
+    an OMS-tree change touching the wrapper trips here too."""
+    from sqlalchemy import select as _select
+
+    import alphamind.execution.state_persistence.tables  # noqa: F401
+    from alphamind.execution.oms.submit_envelope_mcp import (
+        _handle_submit_envelope,
+        build_initial_submit_envelope_state,
+    )
+    from alphamind.execution.state_persistence.invocation_context.context import (
+        InvocationContext,
+    )
+    from alphamind.execution.state_persistence.invocation_context.records import (
+        InvocationRecord,
+        ProcessLifetimeRecord,
+        process_lifetime_record_to_row,
+    )
+    from alphamind.execution.state_persistence.tables.activity_log import (
+        ActivityLogRow,
+    )
+    from alphamind.persistence.models import Base
+    from alphamind.persistence.session import (
+        make_async_engine,
+        make_async_session_factory,
+        make_engine,
+    )
+    from alphamind.portfolio_state.events.activity_log import EventType
+
+    db_path = tmp_path / "test.db"
+    sync_engine = make_engine(str(db_path))
+    Base.metadata.create_all(sync_engine)
+    sync_engine.dispose()
+
+    async_engine = make_async_engine(str(db_path))
+    factory = make_async_session_factory(async_engine)
+    try:
+        # Seed substrate (process + invocation row).
+        proc = ProcessLifetimeRecord(
+            process_lifetime_id="proc-1",
+            process_role="pipeline",
+            process_start_at=_NOW.isoformat().replace("+00:00", "Z"),
+            process_pid=123,
+            hostname="host",
+            git_sha="a" * 40,
+            git_branch="main",
+            git_dirty=False,
+            python_version="3.13.1",
+            pip_freeze_hash="0" * 64,
+            pip_freeze_snapshot_path="/tmp/p.txt",
+            anthropic_sdk_version="0.40.0",
+            claude_agent_sdk_version="0.1.69",
+            os_release="Linux-6.5.0",
+        )
+        async with factory() as sess:
+            sess.add(process_lifetime_record_to_row(proc))
+            await sess.commit()
+
+        # Open an InvocationContext so the handle has a transaction.
+        inv_record = InvocationRecord(
+            invocation_id="inv-alp366-fail",
+            process_lifetime_id="proc-1",
+            start_at=_NOW.isoformat().replace("+00:00", "Z"),
+            phase1_completed_at=None,
+            phase2_completed_at=None,
+            trigger_type="scheduled",
+            trigger_source="cron",
+            trigger_reason="0 9 * * 1-5",
+            git_sha_at_invocation="a" * 40,
+            active_profile="medium",
+            active_regime="normal",
+            active_mode="normal",
+            active_overlays_json="[]",
+            resolved_config_hash="0" * 64,
+            resolved_config_snapshot_path="/tmp/r.json",
+            feature_flags_snapshot_json="{}",
+            data_calibration_state_snapshot_path="/tmp/c.json",
+            data_source_freshness_json="{}",
+            fill_collection_summary_json=None,
+            command_execution_summary_json=None,
+            staleness_flag=None,
+            snapshot_metadata_json=None,
+        )
+        ctx = InvocationContext(session_factory=factory, record=inv_record)
+        handle = await ctx.__aenter__()
+
+        validation_state = _make_validation_state()
+        state = build_initial_submit_envelope_state(
+            invocation_id="inv-alp366-fail",
+            starting_validation_state=validation_state,
+        )
+
+        bogus_args: dict[str, Any] = {"envelope_id": "ENV-REC-99", "garbage": "value"}
+        await _handle_submit_envelope(
+            bogus_args,
+            state=state,
+            retrieval_store=_retrieval_store(),
+            pre_processor_bundle=_make_bundle(),
+            pm_view=_make_pm_view(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            halt_mode=False,
+            sector_resolver=_sector_resolver,
+            invocation_handle=handle,
+        )
+        await ctx.__aexit__(None, None, None)
+
+        assert len(state.failed_submission_log) == 1
+        async with factory() as sess:
+            log_rows = (
+                (
+                    await sess.execute(
+                        _select(ActivityLogRow).where(
+                            ActivityLogRow.invocation_id == "inv-alp366-fail"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert any(r.event_type == EventType.ENVELOPE_PARSE_FAILED.value for r in log_rows)
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
+    tmp_path: Any,
+) -> None:
+    """When ``invocation_handle`` is supplied AND the envelope is accepted,
+    the Phase 2 writeback runs alongside the in-memory state-cell advance."""
+    from sqlalchemy import select as _select
+
+    import alphamind.execution.state_persistence.tables  # noqa: F401
+    from alphamind.execution.oms.submit_envelope_mcp import (
+        _handle_submit_envelope,
+        build_initial_submit_envelope_state,
+    )
+    from alphamind.execution.state_persistence.invocation_context.context import (
+        InvocationContext,
+    )
+    from alphamind.execution.state_persistence.invocation_context.records import (
+        InvocationRecord,
+        ProcessLifetimeRecord,
+        process_lifetime_record_to_row,
+    )
+    from alphamind.execution.state_persistence.tables.activity_log import (
+        ActivityLogRow,
+    )
+    from alphamind.execution.state_persistence.tables.cash_ledger import (
+        CASH_LEDGER_SINGLETON_ID,
+        CashLedgerRow,
+    )
+    from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
+        cash_ledger_record_to_row,
+    )
+    from alphamind.persistence.models import Base
+    from alphamind.persistence.session import (
+        make_async_engine,
+        make_async_session_factory,
+        make_engine,
+    )
+    from alphamind.portfolio_state.events.activity_log import EventType
+    from alphamind.portfolio_state.records.cash import CashLedger
+
+    db_path = tmp_path / "test.db"
+    sync_engine = make_engine(str(db_path))
+    Base.metadata.create_all(sync_engine)
+    sync_engine.dispose()
+
+    async_engine = make_async_engine(str(db_path))
+    factory = make_async_session_factory(async_engine)
+    try:
+        # Seed process lifetime + cash ledger.
+        proc = ProcessLifetimeRecord(
+            process_lifetime_id="proc-1",
+            process_role="pipeline",
+            process_start_at=_NOW.isoformat().replace("+00:00", "Z"),
+            process_pid=123,
+            hostname="host",
+            git_sha="a" * 40,
+            git_branch="main",
+            git_dirty=False,
+            python_version="3.13.1",
+            pip_freeze_hash="0" * 64,
+            pip_freeze_snapshot_path="/tmp/p.txt",
+            anthropic_sdk_version="0.40.0",
+            claude_agent_sdk_version="0.1.69",
+            os_release="Linux-6.5.0",
+        )
+        cash = CashLedger.model_validate(
+            {
+                "current_cash_usd": 100_000.0,
+                "settled_cash_usd": 100_000.0,
+                "reserved_capital_usd": 0.0,
+                "available_buying_power_usd": 100_000.0,
+                "margin_held_usd": 0.0,
+                "unsettled_proceeds": (),
+                "cash_pct_of_portfolio": 0.0,
+                "true_deployable_capital_usd": 0.0,
+                "regt_excess_trailing_30d_usd": 0.0,
+                "regt_excess_trailing_90d_usd": 0.0,
+                "regt_excess_lifetime_usd": 0.0,
+            }
+        )
+        async with factory() as sess:
+            sess.add(process_lifetime_record_to_row(proc))
+            await sess.flush()
+            sess.add(cash_ledger_record_to_row(cash, last_updated_at=_NOW))
+            await sess.commit()
+
+        inv_record = InvocationRecord(
+            invocation_id="inv-alp366-ok",
+            process_lifetime_id="proc-1",
+            start_at=_NOW.isoformat().replace("+00:00", "Z"),
+            phase1_completed_at=None,
+            phase2_completed_at=None,
+            trigger_type="scheduled",
+            trigger_source="cron",
+            trigger_reason="0 9 * * 1-5",
+            git_sha_at_invocation="a" * 40,
+            active_profile="medium",
+            active_regime="normal",
+            active_mode="normal",
+            active_overlays_json="[]",
+            resolved_config_hash="0" * 64,
+            resolved_config_snapshot_path="/tmp/r.json",
+            feature_flags_snapshot_json="{}",
+            data_calibration_state_snapshot_path="/tmp/c.json",
+            data_source_freshness_json="{}",
+            fill_collection_summary_json=None,
+            command_execution_summary_json=None,
+            staleness_flag=None,
+            snapshot_metadata_json=None,
+        )
+        ctx = InvocationContext(session_factory=factory, record=inv_record)
+        handle = await ctx.__aenter__()
+
+        envelope = _make_analyst_envelope()
+        validation_state = _make_validation_state()
+        state = build_initial_submit_envelope_state(
+            invocation_id=validation_state.invocation_id,
+            starting_validation_state=validation_state,
+        )
+        bundle = _make_bundle(recommendations=(_recommendation_stub("REC-1"),))
+
+        await _handle_submit_envelope(
+            envelope.model_dump(mode="json"),
+            state=state,
+            retrieval_store=_retrieval_store(),
+            pre_processor_bundle=bundle,
+            pm_view=_make_pm_view(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            halt_mode=False,
+            sector_resolver=_sector_resolver,
+            invocation_handle=handle,
+        )
+        await ctx.__aexit__(None, None, None)
+
+        async with factory() as sess:
+            log_rows = (
+                (
+                    await sess.execute(
+                        _select(ActivityLogRow).where(
+                            ActivityLogRow.invocation_id == "inv-alp366-ok"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        types = {r.event_type for r in log_rows}
+        assert EventType.PM_DECISION.value in types
+        assert EventType.ORDER_SUBMITTED.value in types
+        assert EventType.THESIS_CREATED.value in types
+        assert EventType.CAPITAL_RESERVED.value in types
+        assert cash_row is not None
+        assert cash_row.reserved_capital_usd > 0.0
+    finally:
+        await async_engine.dispose()
