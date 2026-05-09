@@ -19,6 +19,7 @@ Story 02c (ALP-381) — single-leg options POST translation + OCC builder.
 Story 02d (ALP-382) — multi-leg mleg order POST translation.
 Story 02e (ALP-383) — order PATCH + DELETE translation.
 Story 02f (ALP-384) — fill-stream subscriber + translator.
+Story 03d (ALP-389) — disconnect-recovery primitive.
 
 Subsequent wave-3 stories ship in parallel; see the parent issue
 (`ALP-121 <https://linear.app/alphamind-jatassi/issue/ALP-121>`_).
@@ -79,6 +80,10 @@ from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
 )
+from alphamind.execution.broker_adapter.recovery import (
+    order_snapshot_to_fill_reports,
+    recover_missed_fills_since,
+)
 from alphamind.execution.broker_adapter.retry import (
     GatewaySubmissionFailed,
     SubmissionOutcome,
@@ -116,6 +121,8 @@ __all__ = [
     "build_occ_symbol",
     "classify_alpaca_error",
     "is_transient",
+    "order_snapshot_to_fill_reports",
+    "recover_missed_fills_since",
     "submit_cancel",
     "submit_equity_add",
     "submit_equity_close",

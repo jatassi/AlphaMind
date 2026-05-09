@@ -92,6 +92,7 @@ class OrderLegSnapshot(BaseModel):
     symbol: str
     qty: float
     filled_qty: float
+    filled_avg_price: float | None = None
     side: str
     position_intent: str
     status: str
@@ -108,6 +109,7 @@ class OrderSnapshot(BaseModel):
     asset_class: str
     qty: float
     filled_qty: float
+    filled_avg_price: float | None = None
     side: str
     order_type: str
     time_in_force: str
@@ -115,6 +117,8 @@ class OrderSnapshot(BaseModel):
     status: str
     submitted_at: dt.datetime
     filled_at: dt.datetime | None
+    canceled_at: dt.datetime | None = None
+    expired_at: dt.datetime | None = None
     replaced_by: str | None
     replaces: str | None
     legs: tuple[OrderLegSnapshot, ...] | None
@@ -216,6 +220,7 @@ def _convert_order(order: Order) -> OrderSnapshot:
                 symbol=str(leg.symbol),
                 qty=float(leg.qty or 0),
                 filled_qty=float(leg.filled_qty or 0),
+                filled_avg_price=_optional_float(leg.filled_avg_price),
                 side=_enum_str(leg.side),
                 position_intent=_enum_str(leg.position_intent) if leg.position_intent else "",
                 status=_enum_str(leg.status),
@@ -231,6 +236,7 @@ def _convert_order(order: Order) -> OrderSnapshot:
         asset_class=_enum_str(order.asset_class),
         qty=float(order.qty or 0),
         filled_qty=float(order.filled_qty or 0),
+        filled_avg_price=_optional_float(order.filled_avg_price),
         side=_enum_str(order.side),
         order_type=_enum_str(order_type),
         time_in_force=_enum_str(order.time_in_force),
@@ -238,10 +244,19 @@ def _convert_order(order: Order) -> OrderSnapshot:
         status=_enum_str(order.status),
         submitted_at=_to_aware(order.submitted_at),  # type: ignore[arg-type]
         filled_at=_to_aware(order.filled_at),
+        canceled_at=_to_aware(order.canceled_at),
+        expired_at=_to_aware(order.expired_at),
         replaced_by=(str(order.replaced_by) if order.replaced_by is not None else None),
         replaces=(str(order.replaces) if order.replaces is not None else None),
         legs=legs,
     )
+
+
+def _optional_float(value: str | float | None) -> float | None:
+    """Coerce alpaca-py's ``str | float | None`` price field to ``float | None``."""
+    if value is None:
+        return None
+    return float(value)
 
 
 def _convert_activity(activity: TradeActivity | NonTradeActivity) -> ActivitySnapshot:

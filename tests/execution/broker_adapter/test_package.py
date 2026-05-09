@@ -85,6 +85,13 @@ _MODIFY_SYMBOLS: frozenset[str] = frozenset(
     }
 )
 
+_RECOVERY_SYMBOLS: frozenset[str] = frozenset(
+    {
+        "order_snapshot_to_fill_reports",
+        "recover_missed_fills_since",
+    }
+)
+
 _REQUIRED_SYMBOLS: frozenset[str] = (
     _SUBSTRATE_SYMBOLS
     | _QUERIES_SYMBOLS
@@ -93,6 +100,7 @@ _REQUIRED_SYMBOLS: frozenset[str] = (
     | _OPTIONS_SYMBOLS
     | _MLEG_SYMBOLS
     | _MODIFY_SYMBOLS
+    | _RECOVERY_SYMBOLS
 )
 
 
@@ -225,3 +233,12 @@ def test_modify_symbols_directly_importable() -> None:
     )
 
     _ = (CancellationAck, ReplaceFields, ReplacementAck, submit_cancel, submit_replace)
+
+
+def test_recovery_symbols_directly_importable() -> None:
+    from alphamind.execution.broker_adapter import (
+        order_snapshot_to_fill_reports,
+        recover_missed_fills_since,
+    )
+
+    _ = (order_snapshot_to_fill_reports, recover_missed_fills_since)
