@@ -342,6 +342,18 @@ Each entry: **what to grep for**, **why it's wrong**, **fix in one line**, **pri
 
 ---
 
+## L29. Pure helpers extracted only for testability
+
+**Grep for.** Modules of single-line or single-expression pure functions where each helper is called from exactly one site. Test files that exhaustively cover every helper but no test that exercises the orchestrating call site. Helper names that read like "the smallest pure thing the author could carve out of an impure function".
+
+**Why wrong.** The helpers are scaffolding, not modelling — they were extracted because pure functions are easy to test, not because they represent reusable concepts. Their tests pass; the call site that threads them together has no tests; the bugs accumulate in the seam. The refactor that "improved testability" actually moved the bug surface to the only place that wasn't tested.
+
+**Fix.** Deepen. Collapse the helpers into their caller (or into a small private surface inside the caller's module), expose the result as one or two public entry points, and test at that boundary. Delete the now-redundant per-helper tests (`testing.md §J1` "replace, don't layer"). Keep the helpers separate only when they're genuinely reused by ≥2 unrelated callers or model a concept with a name worth defending.
+
+**Principle.** §A5 (deep modules), §A1 (functional core — purity is necessary but not sufficient).
+
+---
+
 ## How to use this list
 
 In audit mode, run `scripts/antipattern_scan.py` to surface the deterministic ones (L3, L4, L5, L8, L11, L12, L17, L19, L20, L26 are detectable by static analysis). Use this list as the manual sweep for the heuristic ones — every codebase that has any of these has them in many places, so finding one example usually means there are more.

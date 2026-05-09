@@ -4,6 +4,25 @@ How tests are organised, what they exercise, what they substitute. Test architec
 
 ---
 
+## §J0. Classify dependencies before choosing a test strategy
+
+**Claim.** Before deciding how to test a module, classify each of its dependencies into one of four categories. The category dictates the strategy. Skipping this step is how audits end up recommending "use a mock" or "use a Protocol" without a defensible reason for choosing one over the other.
+
+**The four categories.**
+
+1. **In-process.** Pure computation, in-memory state, no I/O. The dependency is just code in your address space. Strategy: don't substitute anything — call it directly. If the dependency is a separate module purely for organisation, consider whether merging it into the module under test produces a deeper (§A5) result.
+2. **Local-substitutable.** Dependencies that have credible local stand-ins running inside the test process: real Postgres via testcontainers, SQLite-on-disk, a tmpfile, an in-memory filesystem, an embedded HTTP server (`responses`, `respx`, `httpx.MockTransport`). Strategy: run the real thing — or its production-equivalent stand-in — in the test. Don't define a Protocol; the substitute *is* the seam.
+3. **Remote but owned.** Your own services across a network or process boundary (microservices, internal APIs, an internal queue). Strategy: define a Protocol at the consumer's boundary. Production gets the HTTP / gRPC / queue adapter; tests get an in-memory adapter. The deep module owns the logic; the transport is injected. This is the case where "ports and adapters" earns its keep — it lets logic split across a network boundary be tested as one deep unit.
+4. **True external.** Third-party services you don't control (Stripe, Twilio, Slack, vendor APIs, the LLM). Strategy: wrap behind a Protocol *you own*, then provide a fake. Don't `mock.patch` the third-party library — that re-implements your assumptions about how it behaves and rots when the library changes (§J2).
+
+**Rationale.** Each row demands a different test substitute, and the wrong choice is expensive. Local-substitutable code that's gated through a Protocol is ceremony — testing against the real Postgres is faster, more accurate, and simpler than maintaining a Protocol + two adapters. In-process code wrapped in a Protocol is even worse — you've added an indirection that exists only for tests that didn't need it. Conversely, a true-external dependency without a Protocol means tests that mock the third-party library, which is the brittlest test shape there is.
+
+**Audit signal.** A Protocol + two adapters wrapping a database when the test suite is happy with testcontainers — over-application, ceremony for nothing. `mock.patch("stripe.Charge.create")` — under-application of the framework for a true-external dependency. A "service" that tests in-process pure logic via a Protocol — pointless indirection.
+
+**Design signal.** When sketching a new module, list its dependencies and tag each with a category before writing any code. The categories drive the seam shape: nothing for (1), real-thing-in-test for (2), Protocol for (3) and (4). The list also exposes whether the module's coupling profile is healthy — a module that pulls dependencies from all four categories is probably doing too many things.
+
+---
+
 ## §J1. Sociable unit tests at module / package scope
 
 **Claim.** Test the public surface of a unit, with its real internal collaborators, against in-memory or trivial-fake substitutes for I/O. The Detroit / classicist / Cosmic Python style. Mockist tests (mock every collaborator) couple to implementation and rot during refactors.
@@ -17,6 +36,8 @@ How tests are organised, what they exercise, what they substitute. Test architec
 **Audit signal.** Tests that mock every collaborator of the unit under test. Tests that break on internal refactors that don't change observable behaviour. Tests that assert on the *order* of internal calls rather than the result.
 
 **Design signal.** Define "unit" at the module or package level, not the function level. Substitute I/O at the seam (a Protocol you own); use real internal collaborators.
+
+**Replace, don't layer.** When deepening a module (§A5) or otherwise widening the test boundary, the old per-helper unit tests become redundant once the boundary tests cover the same behaviour. Delete them — don't keep both. Layered tests at every level of internal granularity ossify the current decomposition: future refactors that change internal structure now have to update tests at every layer, which is exactly what sociable testing was supposed to prevent. The rule: tests live at the deepest module's public boundary, asserting on observable outcomes. Internal helpers may exist; tests of internal helpers should not, unless the helper is itself a deep module that other code consumes.
 
 ---
 

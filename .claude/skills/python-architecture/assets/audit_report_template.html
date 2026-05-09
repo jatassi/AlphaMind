@@ -1,0 +1,1181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit — <!-- FILL: package or scope --></title>
+<!--
+  Template scaffold. Use as a starting point; deviate where the actual
+  findings demand a different shape.
+
+  Filename convention when saved: audit-<package>-<YYYY-MM-DD>.html
+
+  Placeholders are written in three styles:
+    - "FILL:" HTML comments mark sections the agent must replace.
+    - <code>&lt;placeholder&gt;</code> marks short inline values.
+    - Sample content is provided as illustrative scaffolding. Replace it.
+
+  Strip "FILL:" comments and unused OPTIONAL sections before delivering.
+
+  Section ordering principle: lead with the visuals that frame the system
+  (architecture overview, layout before/after) so the reader has a mental
+  picture before per-finding detail. Detail follows. Punch list closes.
+-->
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prism-themes@1.9.0/themes/prism-one-dark.min.css">
+
+<style>
+  :root {
+    --bg: #0e0e10;
+    --surface: #18181b;
+    --surface-2: #09090b;
+    --fg: #f4f4f5;
+    --fg-muted: #a1a1aa;
+    --fg-faint: #71717a;
+    --border: #27272a;
+    --border-strong: #3f3f46;
+    --accent: #fb7185;
+
+    --sev-lb-fg: #fda4af;
+    --sev-lb-bg: rgba(159, 18, 57, 0.18);
+    --sev-lb-border: rgba(251, 113, 133, 0.45);
+
+    --sev-hy-fg: #fdba74;
+    --sev-hy-bg: rgba(154, 52, 18, 0.20);
+    --sev-hy-border: rgba(251, 146, 60, 0.45);
+
+    --sev-wk-fg: #93c5fd;
+    --sev-wk-bg: rgba(30, 58, 138, 0.22);
+    --sev-wk-border: rgba(96, 165, 250, 0.45);
+
+    --sev-gd-fg: #86efac;
+    --sev-gd-bg: rgba(20, 83, 45, 0.22);
+    --sev-gd-border: rgba(74, 222, 128, 0.45);
+
+    --diff-add-fg: #86efac;
+    --diff-add-bg: rgba(20, 83, 45, 0.30);
+    --diff-rem-fg: #fca5a5;
+    --diff-rem-bg: rgba(127, 29, 29, 0.30);
+    --diff-ren-fg: #fde047;
+    --diff-ren-bg: rgba(133, 77, 14, 0.30);
+
+    --code-bg: #09090b;
+    --principle-bg: #27272a;
+    --principle-fg: #d4d4d8;
+
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.6;
+    font-feature-settings: "ss01", "cv11";
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 2rem;
+  }
+  @media (min-width: 1024px) {
+    .layout { grid-template-columns: 240px minmax(0, 1fr); gap: 3rem; }
+  }
+
+  /* Header */
+  header.report-header {
+    grid-column: 1 / -1;
+    padding: 4rem 0 2rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 0.72rem;
+    color: var(--fg-faint);
+    font-weight: 600;
+  }
+  h1 {
+    font-size: 2.6rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0.5rem 0 1.5rem;
+    line-height: 1.1;
+  }
+  h1 code { font-family: var(--font-mono); font-size: 0.85em; background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 4px; font-weight: 600; }
+  .meta-grid {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.4rem 1.5rem;
+    margin: 0;
+    font-size: 0.92rem;
+  }
+  .meta-grid dt { color: var(--fg-faint); font-weight: 500; }
+  .meta-grid dd { margin: 0; color: var(--fg); }
+
+  /* TOC */
+  nav.toc {
+    display: none;
+    position: sticky;
+    top: 2rem;
+    align-self: start;
+    padding-top: 4rem;
+    font-size: 0.86rem;
+  }
+  @media (min-width: 1024px) { nav.toc { display: block; } }
+  nav.toc ol { list-style: none; padding: 0; margin: 0; border-left: 1px solid var(--border); }
+  nav.toc li { margin: 0; }
+  nav.toc a {
+    display: block;
+    padding: 0.4rem 0 0.4rem 1rem;
+    color: var(--fg-muted);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    margin-left: -1px;
+    transition: color 120ms, border-color 120ms;
+  }
+  nav.toc a:hover { color: var(--fg); border-left-color: var(--border-strong); }
+  nav.toc a.current { color: var(--accent); border-left-color: var(--accent); font-weight: 500; }
+
+  /* Main */
+  main { padding: 3rem 0 6rem; min-width: 0; }
+  section { margin-bottom: 4rem; scroll-margin-top: 2rem; }
+  section h2 {
+    font-size: 1.6rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 0 0 1.5rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+  section h2 .num { color: var(--fg-faint); font-weight: 500; margin-right: 0.6rem; }
+  section h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 1.5rem 0 0.6rem;
+  }
+  p { margin: 0 0 1rem; max-width: 70ch; }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; }
+  a:hover { border-bottom-color: var(--accent); }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    background: var(--code-bg);
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+  }
+  pre {
+    font-family: var(--font-mono);
+    font-size: 0.84rem;
+    line-height: 1.55;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 1rem 1.2rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 0 0 1rem;
+  }
+  pre code { background: transparent; padding: 0; font-size: 1em; }
+
+  /* Script summary */
+  .script-summary { list-style: none; padding: 0; display: grid; gap: 0.8rem; }
+  .script-summary li {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.4rem 1rem;
+    padding: 0.9rem 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .script-summary .name {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .script-summary .summary { font-size: 0.94rem; color: var(--fg); }
+
+  /* Visual sections */
+  .visual { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.6rem 1.8rem; }
+  .visual h2 { border-bottom: 1px solid var(--border); padding-bottom: 0.6rem; }
+  .visual .caption { font-size: 0.88rem; color: var(--fg-muted); margin-bottom: 1.2rem; max-width: 70ch; }
+
+  .before-after {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+    margin-top: 1rem;
+  }
+  @media (min-width: 768px) {
+    .before-after { grid-template-columns: 1fr 1fr; }
+  }
+  .before-after figure {
+    margin: 0;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1.2rem;
+    overflow: hidden;
+  }
+  .before-after figcaption {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-faint);
+    margin-bottom: 0.8rem;
+    font-weight: 600;
+  }
+  .before-after figure.before { border-top: 3px solid var(--diff-rem-fg); }
+  .before-after figure.after { border-top: 3px solid var(--diff-add-fg); }
+
+  /* Mermaid containers */
+  .mermaid {
+    background: var(--surface);
+    text-align: center;
+    overflow-x: auto;
+  }
+  .mermaid svg { max-width: 100%; height: auto; }
+
+  /* File tree */
+  .tree {
+    font-family: var(--font-mono);
+    font-size: 0.83rem;
+    line-height: 1.55;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+    white-space: pre;
+  }
+  .tree .add  { background: var(--diff-add-bg); color: var(--diff-add-fg); display: inline-block; padding: 0 0.3em; border-radius: 2px; }
+  .tree .rem  { background: var(--diff-rem-bg); color: var(--diff-rem-fg); display: inline-block; padding: 0 0.3em; border-radius: 2px; text-decoration: line-through; }
+  .tree .ren  { background: var(--diff-ren-bg); color: var(--diff-ren-fg); display: inline-block; padding: 0 0.3em; border-radius: 2px; }
+  .tree .new  { background: var(--diff-add-bg); color: var(--diff-add-fg); display: inline-block; padding: 0 0.3em; border-radius: 2px; font-weight: 600; }
+  .tree .note { color: var(--fg-faint); font-style: italic; }
+
+  /* Findings */
+  .findings { display: grid; gap: 1.2rem; }
+  .finding {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 1.4rem 1.6rem;
+  }
+  .finding.load-bearing  { border-left-color: var(--sev-lb-fg); }
+  .finding.high-yield    { border-left-color: var(--sev-hy-fg); }
+  .finding.worth-knowing { border-left-color: var(--sev-wk-fg); }
+  .finding.good          { border-left-color: var(--sev-gd-fg); }
+
+  .finding-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.8rem;
+  }
+  .finding-head h3 { margin: 0; flex: 1 1 100%; font-size: 1.05rem; line-height: 1.4; }
+  @media (min-width: 640px) { .finding-head h3 { flex: 1 1 auto; order: 99; padding-left: 0.5rem; } }
+
+  .badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0.18rem 0.55rem;
+    border-radius: 3px;
+    border: 1px solid;
+    line-height: 1.3;
+  }
+  .badge.load-bearing  { background: var(--sev-lb-bg); color: var(--sev-lb-fg); border-color: var(--sev-lb-border); }
+  .badge.high-yield    { background: var(--sev-hy-bg); color: var(--sev-hy-fg); border-color: var(--sev-hy-border); }
+  .badge.worth-knowing { background: var(--sev-wk-bg); color: var(--sev-wk-fg); border-color: var(--sev-wk-border); }
+  .badge.good          { background: var(--sev-gd-bg); color: var(--sev-gd-fg); border-color: var(--sev-gd-border); }
+
+  .badge.principle {
+    background: var(--principle-bg);
+    color: var(--principle-fg);
+    border-color: var(--border-strong);
+    font-family: var(--font-mono);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+
+  .finding dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.5rem 1.2rem;
+    margin: 0;
+    font-size: 0.94rem;
+  }
+  .finding dt {
+    color: var(--fg-faint);
+    font-weight: 600;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding-top: 0.2rem;
+  }
+  .finding dd { margin: 0; color: var(--fg); }
+  .finding dd code { font-size: 0.85em; }
+  .finding .embed { margin-top: 1rem; padding-top: 1rem; border-top: 1px dashed var(--border); }
+
+  /* High-yield grouped table */
+  .antipatterns {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    font-size: 0.92rem;
+  }
+  .antipatterns th, .antipatterns td {
+    text-align: left;
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .antipatterns th {
+    background: var(--surface-2);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-faint);
+    font-weight: 600;
+  }
+  .antipatterns tr:last-child td { border-bottom: none; }
+  .antipatterns .id { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
+  .antipatterns .count {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+    font-weight: 600;
+  }
+  .antipatterns .examples { color: var(--fg-muted); font-size: 0.86rem; }
+  .antipatterns .examples code { font-size: 0.92em; }
+
+  /* Module-depth bars */
+  .depth-chart { display: grid; gap: 0.5rem; margin-top: 1rem; }
+  .depth-row { display: grid; grid-template-columns: 200px 1fr 60px; gap: 1rem; align-items: center; font-size: 0.88rem; }
+  .depth-row .name { font-family: var(--font-mono); }
+  .depth-row .bar {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    height: 18px;
+    position: relative;
+    overflow: hidden;
+  }
+  .depth-row .interface {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    background: var(--sev-lb-fg);
+    opacity: 0.9;
+  }
+  .depth-row .impl {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    background: var(--sev-gd-fg);
+    opacity: 0.45;
+  }
+  .depth-row .ratio { font-variant-numeric: tabular-nums; color: var(--fg-muted); text-align: right; }
+
+  /* Punch list */
+  .punch-list { list-style: none; padding: 0; counter-reset: punch; display: grid; gap: 0.8rem; }
+  .punch-list li {
+    counter-increment: punch;
+    display: grid;
+    grid-template-columns: 2.5rem 1fr max-content;
+    gap: 1rem;
+    align-items: baseline;
+    padding: 1rem 1.2rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .punch-list li::before {
+    content: counter(punch);
+    font-family: var(--font-mono);
+    font-size: 1.1rem;
+    color: var(--fg-faint);
+    font-weight: 700;
+    text-align: right;
+  }
+  .punch-list .desc { color: var(--fg); }
+  .punch-list .dims {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    white-space: nowrap;
+  }
+
+  /* Five-step intensity ramp shared by complexity and blast-radius badges */
+  .badge.tier {
+    font-family: var(--font-mono);
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 0.7rem;
+  }
+  .badge.tier .dim {
+    opacity: 0.6;
+    margin-right: 0.35em;
+    font-size: 0.85em;
+  }
+  .badge.t1 { background: rgba(115, 115, 115, 0.18); color: #d4d4d8; border-color: rgba(115, 115, 115, 0.40); }
+  .badge.t2 { background: rgba(96, 165, 250, 0.16); color: #93c5fd; border-color: rgba(96, 165, 250, 0.40); }
+  .badge.t3 { background: rgba(251, 191, 36, 0.16); color: #fcd34d; border-color: rgba(251, 191, 36, 0.45); }
+  .badge.t4 { background: rgba(251, 146, 60, 0.20); color: #fdba74; border-color: rgba(251, 146, 60, 0.50); }
+  .badge.t5 { background: rgba(251, 113, 133, 0.20); color: #fda4af; border-color: rgba(251, 113, 133, 0.55); }
+
+  /* Tier legend */
+  .tier-legend {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    margin: 0 0 1.5rem;
+    padding: 1rem 1.2rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.84rem;
+  }
+  @media (min-width: 768px) {
+    .tier-legend { grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  }
+  .tier-legend h4 {
+    margin: 0 0 0.6rem;
+    font-size: 0.74rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-faint);
+    font-weight: 600;
+  }
+  .tier-legend ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.3rem; }
+  .tier-legend li {
+    display: grid;
+    grid-template-columns: 6.5rem 1fr;
+    gap: 0.8rem;
+    align-items: baseline;
+    color: var(--fg-muted);
+  }
+  .tier-legend .label {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 3px;
+    border: 1px solid;
+    text-align: center;
+    line-height: 1.4;
+  }
+
+  /* Open questions / good */
+  .questions, .good-list { list-style: none; padding: 0; display: grid; gap: 0.8rem; }
+  .questions li, .good-list li {
+    padding: 0.9rem 1.1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    border-left: 3px solid var(--sev-wk-fg);
+  }
+  .good-list li { border-left-color: var(--sev-gd-fg); }
+
+  /* Footer */
+  footer.report-footer {
+    grid-column: 1 / -1;
+    padding: 2rem 0 4rem;
+    border-top: 1px solid var(--border);
+    color: var(--fg-faint);
+    font-size: 0.84rem;
+  }
+
+  /* Print — keep the dark palette so light text remains legible. */
+  @media print {
+    nav.toc { display: none; }
+    .visual, .finding, .punch-list li, .script-summary li { break-inside: avoid; }
+    section { break-after: auto; }
+  }
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+<header class="report-header">
+  <div class="eyebrow">Python Architecture Audit</div>
+  <h1>Audit — <code>src/myproject/</code></h1>
+  <dl class="meta-grid">
+    <dt>Date</dt>          <dd>2026-05-08</dd>
+    <dt>Scope</dt>         <dd>Full-depth audit of <code>src/myproject/</code>, focused on layering, data types, and testability</dd>
+    <dt>Constraints</dt>   <dd>FastAPI and SQLAlchemy 2.x are fixed; Python 3.12 baseline; no plans to migrate ORM</dd>
+    <dt>Auditor</dt>       <dd>python-architecture skill</dd>
+  </dl>
+</header>
+
+<nav class="toc" aria-label="Table of contents">
+  <ol>
+    <li><a href="#calibration">1 · Calibration</a></li>
+    <li><a href="#scripts">2 · Scripts run</a></li>
+    <li><a href="#architecture">3 · Architecture overview</a></li>
+    <li><a href="#layout">4 · Package layout</a></li>
+    <li><a href="#load-bearing">5 · Load-bearing findings</a></li>
+    <li><a href="#high-yield">6 · High-yield findings</a></li>
+    <li><a href="#worth-knowing">7 · Worth knowing</a></li>
+    <!-- OPTIONAL — keep only if section retained -->
+    <li><a href="#data-model">8 · Data model</a></li>
+    <li><a href="#data-flow">9 · Data flow</a></li>
+    <li><a href="#good">10 · What looked good</a></li>
+    <li><a href="#punch-list">11 · Punch list</a></li>
+    <li><a href="#open-questions">12 · Open questions</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<!--
+  =====================================================================
+  1. CALIBRATION
+  =====================================================================
+  2-4 paragraphs of plain prose. Tell the user:
+    - What you read (pyproject.toml, README, docs/architecture/, top-level layout)
+    - The headline shape: monorepo? src/ layout? framework? Python version?
+    - What the code claims to be vs. what it actually is — any obvious gap
+
+  Keep it short. The reader knows their codebase; this is to confirm you do too.
+-->
+<section id="calibration">
+  <h2><span class="num">1</span>Calibration</h2>
+  <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Read <code>pyproject.toml</code>, the top-level <code>README.md</code>, and the contents of <code>docs/architecture/</code> to ground the surface — Python 3.12 with a <code>src/</code>-layout, FastAPI for the HTTP boundary, SQLAlchemy 2.x for persistence, and pytest with hypothesis for the test suite. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+  <p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. The <code>README.md</code> claims a hexagonal-ish layout — <code>domain</code>, <code>persistence</code>, <code>api</code> — but the actual import graph shows several layer violations the docs don't acknowledge, and a sprawling <code>utils.py</code> module that imports broadly across the tree. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.</p>
+</section>
+
+<!--
+  =====================================================================
+  2. SCRIPTS RUN
+  =====================================================================
+  Synthesise, don't dump JSON. One line per script summarising what it
+  found. Detailed JSON informs the rest of the report; doesn't need to
+  appear here.
+-->
+<section id="scripts">
+  <h2><span class="num">2</span>Scripts run</h2>
+  <ul class="script-summary">
+    <li>
+      <span class="name">package_overview</span>
+      <span class="summary">373 modules; 27 god-module candidates (top: <code>utils.py</code> at 600 lines); 222 modules without <code>__all__</code>.</span>
+    </li>
+    <li>
+      <span class="name">analyze_imports</span>
+      <span class="summary">1,137 edges; 4 cycles, one cross-feature (<code>portfolio_state</code> ↔ <code>risk_guardrails</code> ↔ <code>distillation</code>).</span>
+    </li>
+    <li>
+      <span class="name">antipattern_scan</span>
+      <span class="summary">225 findings dominated by L12 (88 float-for-money), L19 (55 async-no-await), L25 (43 print in non-CLI).</span>
+    </li>
+  </ul>
+</section>
+
+<!--
+  =====================================================================
+  3. ARCHITECTURE OVERVIEW (mandatory — every audit produces this)
+  =====================================================================
+  Module / package dependency graph. Show the current state with the
+  violations highlighted (red edges for cycles, dashed for layer
+  violations), and the proposed shape next to it.
+
+  Mermaid syntax. Keep node count manageable (<= ~15 per side); group
+  with subgraphs when the system has more.
+
+  Style hints used below (tuned for the dark theme):
+    classDef violation fill:#3f1a23,stroke:#fb7185,stroke-width:2px,color:#fda4af;
+    classDef target    fill:#0f2818,stroke:#86efac,stroke-width:1.5px,color:#86efac;
+    classDef boundary  fill:#0f1c3a,stroke:#93c5fd,stroke-width:1.5px,color:#93c5fd;
+
+  Edge styles (use the matching Mermaid arrow tokens in the diagram body):
+    default arrow         standard dependency
+    dashed arrow          layer violation or conditional
+    thick arrow           load-bearing dependency
+-->
+<section id="architecture" class="visual">
+  <h2><span class="num">3</span>Architecture overview</h2>
+  <p class="caption">Module dependency graph — current shape and proposed shape after the load-bearing findings are addressed. Cycles and layer violations are marked.</p>
+  <div class="before-after">
+    <figure class="before">
+      <figcaption>Current</figcaption>
+      <div class="mermaid">
+flowchart LR
+    %% FILL: replace with the audited system
+    classDef violation fill:#3f1a23,stroke:#fb7185,stroke-width:2px,color:#fda4af;
+    classDef target    fill:#0f2818,stroke:#86efac,stroke-width:1.5px,color:#86efac;
+    classDef boundary  fill:#0f1c3a,stroke:#93c5fd,stroke-width:1.5px,color:#93c5fd;
+
+    api[api]
+    domain[domain]
+    services[services]
+    persistence[persistence]
+    utils[utils]:::violation
+
+    api --> services
+    services --> domain
+    services --> persistence
+    domain -.-> persistence
+    domain -.-> utils
+    persistence --> utils
+      </div>
+    </figure>
+    <figure class="after">
+      <figcaption>Proposed</figcaption>
+      <div class="mermaid">
+flowchart LR
+    %% FILL: replace with the proposed shape
+    classDef target   fill:#0f2818,stroke:#86efac,stroke-width:1.5px,color:#86efac;
+    classDef boundary fill:#0f1c3a,stroke:#93c5fd,stroke-width:1.5px,color:#93c5fd;
+
+    api[api]:::boundary
+    domain[domain]:::target
+    services[services]:::target
+    persistence[persistence]:::boundary
+
+    api --> services
+    services --> domain
+    services --> persistence
+      </div>
+    </figure>
+  </div>
+</section>
+
+<!--
+  =====================================================================
+  4. PACKAGE LAYOUT — current vs proposed (mandatory)
+  =====================================================================
+  Side-by-side text trees with diff styling. Use Unicode box-drawing
+  characters. Wrap nodes in <span class="add|rem|ren|new">...</span>
+  to colour them. The .new class is for genuinely new files; .add for
+  files moved into a new location; .rem for deletions; .ren for renames
+  or moves with structural change.
+
+  Add inline notes with class="note" to explain non-obvious moves.
+-->
+<section id="layout" class="visual">
+  <h2><span class="num">4</span>Package layout</h2>
+  <p class="caption">Current and proposed file trees. Removed entries are struck-through; new entries are highlighted; renames are marked.</p>
+  <div class="before-after">
+    <figure class="before">
+      <figcaption>Current</figcaption>
+<pre class="tree">
+src/myproject/
+├── api/
+│   ├── __init__.py
+│   └── routes.py
+├── domain/
+│   ├── __init__.py
+│   ├── order.py
+│   └── pricing.py
+├── persistence/
+│   ├── __init__.py
+│   └── models.py
+├── <span class="rem">utils.py</span>          <span class="note"># god module — 600 lines</span>
+├── <span class="rem">helpers.py</span>        <span class="note"># 12 single-line pure helpers</span>
+└── main.py
+</pre>
+    </figure>
+    <figure class="after">
+      <figcaption>Proposed</figcaption>
+<pre class="tree">
+src/myproject/
+├── api/
+│   ├── __init__.py
+│   └── routes.py
+├── domain/
+│   ├── __init__.py
+│   ├── order.py
+│   ├── pricing.py
+│   └── <span class="new">money.py</span>           <span class="note"># Decimal-based primitives extracted from utils</span>
+├── persistence/
+│   ├── __init__.py
+│   ├── models.py
+│   └── <span class="new">repository.py</span>      <span class="note"># aggregate-shaped boundary</span>
+├── <span class="ren">retry.py</span>            <span class="note"># renamed from utils.retry_*</span>
+└── main.py
+</pre>
+    </figure>
+  </div>
+</section>
+
+<!--
+  =====================================================================
+  5. FINDINGS — LOAD-BEARING
+  =====================================================================
+  3-7 findings violating P1-P9 or surfacing structural pathology
+  (cycle, layer violation, god module, primitive obsession).
+
+  Sort by impact, not severity. The first finding should be the one
+  the user benefits most from acting on.
+
+  Each finding card carries:
+    - severity badge
+    - one or more principle badges (P1-P9) referencing SKILL.md §2
+    - title
+    - Where / Why it matters / Fix structure
+    - optional embedded diagram or code snippet inside .embed
+
+  Embed a small Mermaid diagram or code block inside .embed when it
+  makes the issue clearer than prose.
+-->
+<section id="load-bearing">
+  <h2><span class="num">5</span>Findings — load-bearing</h2>
+  <div class="findings">
+
+    <article class="finding load-bearing">
+      <div class="finding-head">
+        <span class="badge load-bearing">load-bearing</span>
+        <span class="badge principle">P5</span>
+        <span class="badge principle">P3</span>
+        <h3>Float used for monetary fields across the domain and persistence layers</h3>
+      </div>
+      <dl>
+        <dt>Where</dt>
+        <dd><code>src/myproject/domain/order.py:42</code>, <code>src/myproject/domain/pricing.py:15-30</code>, <code>src/myproject/persistence/models.py:88</code></dd>
+        <dt>Why it matters</dt>
+        <dd>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Float arithmetic accumulates rounding error that surfaces at end-of-day reconciliation, and a primitive <code>float</code> field carries no currency, no scale, and no rounding contract. Violates P3 (illegal states unrepresentable) and P5 (frozen-dataclass internals): money should not be a primitive crossing every layer.</dd>
+        <dt>Fix</dt>
+        <dd>Introduce a <code>Money</code> value object backed by <code>Decimal</code> with explicit currency. Replace <code>float</code> at the boundary; convert once at ingest. See <code>references/data-and-types.md §D3</code>.</dd>
+      </dl>
+      <div class="embed">
+        <pre><code class="language-python"># Current
+def calculate_total(price: float, qty: int) -&gt; float:
+    return price * qty
+
+# Proposed
+def calculate_total(price: Money, qty: Quantity) -&gt; Money:
+    return price * qty</code></pre>
+      </div>
+    </article>
+
+    <article class="finding load-bearing">
+      <div class="finding-head">
+        <span class="badge load-bearing">load-bearing</span>
+        <span class="badge principle">P9</span>
+        <span class="badge principle">A5</span>
+        <h3>Pure helpers in <code>utils.py</code> extracted only for testability — bugs displaced into call sites</h3>
+      </div>
+      <dl>
+        <dt>Where</dt>
+        <dd><code>src/myproject/utils.py:1-600</code>, <code>src/myproject/helpers.py:1-180</code></dd>
+        <dt>Why it matters</dt>
+        <dd>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt. Twelve single-line pure helpers are individually well-tested, but the call sites that orchestrate them (in <code>services/order.py</code> and <code>services/billing.py</code>) are uncovered. The bug surface migrated; the test coverage didn't follow. Violates P9 — the modules are shallow and the seam between them is the real bug surface.</dd>
+        <dt>Fix</dt>
+        <dd>Collapse the helpers into the calling module, expose one or two well-named entry points, and test at the boundary. Delete the now-redundant per-helper tests (<code>references/testing.md §J1</code> "replace, don't layer").</dd>
+      </dl>
+    </article>
+
+  </div>
+</section>
+
+<!--
+  =====================================================================
+  6. FINDINGS — HIGH-YIELD
+  =====================================================================
+  Local antipatterns easy to fix with immediate payoff. Group by
+  antipattern ID. Show counts. Cite a couple of file:line examples;
+  don't list every instance unless asked.
+-->
+<section id="high-yield">
+  <h2><span class="num">6</span>Findings — high-yield</h2>
+  <table class="antipatterns">
+    <thead>
+      <tr>
+        <th style="width: 6rem">ID</th>
+        <th>Antipattern</th>
+        <th class="count">Count</th>
+        <th>Examples & fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="id">L11</span></td>
+        <td>Naive <code>datetime.now()</code></td>
+        <td class="count">12</td>
+        <td class="examples">
+          <code>collector/poll.py:88</code>, <code>oms/clock.py:14</code>.
+          Replace with <code>datetime.now(tz=UTC)</code> or inject a <code>Clock</code>.
+        </td>
+      </tr>
+      <tr>
+        <td><span class="id">L12</span></td>
+        <td>Float for monetary fields</td>
+        <td class="count">88</td>
+        <td class="examples">
+          Pervasive across <code>domain/</code> and <code>persistence/</code>. Resolved by the load-bearing <code>Money</code> migration above; no separate fix needed.
+        </td>
+      </tr>
+      <tr>
+        <td><span class="id">L19</span></td>
+        <td>Async function with no <code>await</code></td>
+        <td class="count">22</td>
+        <td class="examples">
+          <code>api/routes.py:88</code>, <code>services/billing.py:140</code>. Either await the inner call or remove the <code>async</code> qualifier.
+        </td>
+      </tr>
+      <tr>
+        <td><span class="id">L25</span></td>
+        <td><code>print()</code> in non-CLI module</td>
+        <td class="count">43</td>
+        <td class="examples">
+          Concentrated in <code>analysis/</code>. Replace with <code>structlog</code> calls; route to the existing log handler.
+        </td>
+      </tr>
+      <!-- Repeat rows per antipattern. -->
+    </tbody>
+  </table>
+</section>
+
+<!--
+  =====================================================================
+  7. FINDINGS — WORTH KNOWING (OPTIONAL)
+  =====================================================================
+  Forward-looking observations. Not problems today, will become
+  problems on a particular growth trajectory.
+
+  Skip the section if there's nothing forward-looking to say.
+-->
+<section id="worth-knowing">
+  <h2><span class="num">7</span>Worth knowing</h2>
+  <div class="findings">
+    <article class="finding worth-knowing">
+      <div class="finding-head">
+        <span class="badge worth-knowing">forward-looking</span>
+        <span class="badge principle">P2</span>
+        <h3>No <code>import-linter</code> configuration; layer rules are aspirational</h3>
+      </div>
+      <dl>
+        <dt>Observation</dt> <dd>Lorem ipsum dolor sit amet, consectetur adipiscing elit. The <code>README.md</code> documents a layered architecture but enforces no constraints in CI. The four cycles surfaced by <code>analyze_imports</code> slipped through code review precisely because nothing fails when a layer rule is broken.</dd>
+        <dt>When it bites</dt> <dd>When the team grows past three contributors or the codebase crosses ~75 modules, layer drift becomes invisible without static enforcement and the cost of unwinding it grows superlinearly.</dd>
+      </dl>
+    </article>
+  </div>
+</section>
+
+<!--
+  =====================================================================
+  8. DATA MODEL (OPTIONAL)
+  =====================================================================
+  Include only if data-model findings are central. Mermaid erDiagram
+  for entities and relationships. Show before/after if the audit
+  recommends schema changes; otherwise just current.
+
+  Remove entire section + TOC entry if not relevant.
+-->
+<section id="data-model" class="visual">
+  <h2><span class="num">8</span>Data model</h2>
+  <p class="caption">Lorem ipsum dolor sit amet, consectetur adipiscing elit. <code>Order</code> and <code>OrderLine</code> currently model fields as primitives; the proposed shape replaces every reference with a named domain type so the type checker enforces the invariants currently scattered across runtime <code>if</code>-checks.</p>
+  <div class="before-after">
+    <figure class="before">
+      <figcaption>Current</figcaption>
+      <div class="mermaid">
+erDiagram
+    ORDER {
+        uuid id PK
+        string status
+        float total
+        datetime created_at
+    }
+    ORDER_LINE {
+        uuid id PK
+        uuid order_id FK
+        string sku
+        int qty
+        float unit_price
+    }
+    ORDER ||--o{ ORDER_LINE : has
+      </div>
+    </figure>
+    <figure class="after">
+      <figcaption>Proposed</figcaption>
+      <div class="mermaid">
+erDiagram
+    ORDER {
+        OrderId id PK
+        OrderStatus status
+        Money total
+        datetime_aware created_at
+    }
+    ORDER_LINE {
+        OrderLineId id PK
+        OrderId order_id FK
+        Sku sku
+        Quantity qty
+        Money unit_price
+    }
+    ORDER ||--|{ ORDER_LINE : aggregate
+      </div>
+    </figure>
+  </div>
+</section>
+
+<!--
+  =====================================================================
+  9. DATA FLOW (OPTIONAL)
+  =====================================================================
+  Include for pipeline-shaped systems or when the audit surfaces
+  flow-related findings (boundary leaks, mid-pipeline I/O, etc.).
+  Mermaid flowchart with subgraphs for stages.
+
+  Remove entire section + TOC entry if not relevant.
+-->
+<section id="data-flow" class="visual">
+  <h2><span class="num">9</span>Data flow</h2>
+  <p class="caption">Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt. Typical request lifecycle through ingest, the pure domain core, and the egress shells. Boundary-crossing nodes are blue; pure core nodes are green; any I/O leak into the core would be marked rose.</p>
+  <div class="mermaid">
+flowchart LR
+    classDef boundary fill:#0f1c3a,stroke:#93c5fd,stroke-width:1.5px,color:#93c5fd;
+    classDef core     fill:#0f2818,stroke:#86efac,stroke-width:1.5px,color:#86efac;
+    classDef leak     fill:#3f1a23,stroke:#fb7185,stroke-width:2px,color:#fda4af;
+
+    subgraph Ingest["Ingest (shell)"]
+        A[Vendor JSON]:::boundary --> B[Parse]:::boundary
+    end
+    subgraph Core["Domain (pure)"]
+        B --> C[Normalise]:::core
+        C --> D[Allocate]:::core
+        D --> E[Decide]:::core
+    end
+    subgraph Egress["Egress (shell)"]
+        E --> F[Persist]:::boundary
+        E --> G[Publish]:::boundary
+    end
+
+    %% FILL: mark any I/O leaks into Core with :::leak class
+  </div>
+</section>
+
+<!--
+  =====================================================================
+  10. WHAT LOOKED GOOD (OPTIONAL)
+  =====================================================================
+  Specific, anchored observations. "Type hints are present and
+  consistent across the entire distillation layer; mypy strict passes
+  there" — not "good use of type hints".
+
+  Skip if there's nothing specific to say.
+-->
+<section id="good">
+  <h2><span class="num">10</span>What looked good</h2>
+  <ul class="good-list">
+    <li>Type hints are present and consistent across <code>distillation/</code>; <code>mypy --strict</code> passes for the entire subtree without suppressions.</li>
+    <li>Tests under <code>tests/integration/</code> use real Postgres via testcontainers with rolled-back transactions per test — exemplary application of <code>references/testing.md §J4</code>.</li>
+    <li>The HTTP boundary in <code>api/routes.py</code> uses Pydantic models for request/response and immediately converts to frozen dataclasses for internal use — a textbook §D2 boundary.</li>
+  </ul>
+</section>
+
+<!--
+  =====================================================================
+  11. PUNCH LIST (mandatory)
+  =====================================================================
+  Suggested ordering balancing load-bearing-ness against ease of fix.
+  The user wants a list they can start working from tomorrow.
+
+  Each item carries two cost dimensions:
+
+    Complexity  (qualitative — structural property of the change):
+      Trivial   — no design knowledge; mechanical change verifiable by syntax
+      Low       — requires understanding one module's contract
+      Medium    — requires understanding one subsystem's design
+      High      — requires understanding two+ subsystems' interactions,
+                  or a cross-cutting concern (type system, layer rules)
+      Extreme   — requires re-deriving the architecture; multiple
+                  subsystems must be redesigned in concert
+
+    Blast radius (quantitative — files touched):
+      Surgical    — 1 file
+      Local       — 2-5 files
+      Module      — 6-20 files
+      Subsystem   — 21-100 files
+      System-wide — >100 files
+
+  Both dimensions share a 5-step intensity ramp (t1 neutral - t5 rose).
+  Tier classes:
+    Trivial / Surgical    -> t1
+    Low     / Local       -> t2
+    Medium  / Module      -> t3
+    High    / Subsystem   -> t4
+    Extreme / System-wide -> t5
+
+  Do NOT add hour/day/week estimates — agents systematically misestimate
+  durations. Complexity + blast describes the work without that hazard.
+-->
+<section id="punch-list">
+  <h2><span class="num">11</span>Punch list</h2>
+
+  <div class="tier-legend" aria-label="Tier legend">
+    <div>
+      <h4>Complexity</h4>
+      <ul>
+        <li><span class="label badge t1">Trivial</span><span>No design knowledge; mechanical change verifiable by syntax.</span></li>
+        <li><span class="label badge t2">Low</span><span>Requires understanding one module's contract.</span></li>
+        <li><span class="label badge t3">Medium</span><span>Requires understanding one subsystem's design.</span></li>
+        <li><span class="label badge t4">High</span><span>Requires understanding two or more subsystems' interactions, or a cross-cutting concern.</span></li>
+        <li><span class="label badge t5">Extreme</span><span>Requires re-deriving the architecture; multiple subsystems redesigned in concert.</span></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Blast radius (files touched)</h4>
+      <ul>
+        <li><span class="label badge t1">Surgical</span><span>1 file.</span></li>
+        <li><span class="label badge t2">Local</span><span>2–5 files.</span></li>
+        <li><span class="label badge t3">Module</span><span>6–20 files.</span></li>
+        <li><span class="label badge t4">Subsystem</span><span>21–100 files.</span></li>
+        <li><span class="label badge t5">System-wide</span><span>More than 100 files.</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <ol class="punch-list">
+    <li>
+      <span class="desc">Fix L11 naive-datetime instances across <code>collector/</code> and <code>oms/</code> (12 cases).</span>
+      <span class="dims">
+        <span class="badge tier t1"><span class="dim">cx</span>Trivial</span>
+        <span class="badge tier t3"><span class="dim">br</span>Module</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc">Add timeouts to every <code>httpx</code> call in <code>collector/</code> (8 cases).</span>
+      <span class="dims">
+        <span class="badge tier t1"><span class="dim">cx</span>Trivial</span>
+        <span class="badge tier t2"><span class="dim">br</span>Local</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc">Replace <code>float</code> with a <code>Money</code> value object across pricing, order, and persistence; convert at the boundary.</span>
+      <span class="dims">
+        <span class="badge tier t4"><span class="dim">cx</span>High</span>
+        <span class="badge tier t4"><span class="dim">br</span>Subsystem</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc">Collapse <code>utils.py</code> and <code>helpers.py</code> into the calling modules; delete redundant per-helper tests.</span>
+      <span class="dims">
+        <span class="badge tier t3"><span class="dim">cx</span>Medium</span>
+        <span class="badge tier t3"><span class="dim">br</span>Module</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc">Resolve the cross-feature cycle between <code>portfolio_state</code>, <code>risk_guardrails</code>, and <code>distillation</code>.</span>
+      <span class="dims">
+        <span class="badge tier t4"><span class="dim">cx</span>High</span>
+        <span class="badge tier t3"><span class="dim">br</span>Module</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc">Add <code>import-linter</code> contracts encoding the layer rules before the next layer is added.</span>
+      <span class="dims">
+        <span class="badge tier t2"><span class="dim">cx</span>Low</span>
+        <span class="badge tier t1"><span class="dim">br</span>Surgical</span>
+      </span>
+    </li>
+  </ol>
+</section>
+
+<!--
+  =====================================================================
+  12. OPEN QUESTIONS (OPTIONAL)
+  =====================================================================
+  Things flagged that depend on context the audit doesn't have. Use
+  sparingly — the audit's job is opinionated answers, not bouncing
+  questions back. But where context genuinely affects the
+  recommendation, naming the question is honest.
+-->
+<section id="open-questions">
+  <h2><span class="num">12</span>Open questions</h2>
+  <ul class="questions">
+    <li>The pipeline orchestrator in <code>main.py</code> catches <code>Exception</code> broadly at the top level. Lorem ipsum dolor sit amet — confirm this is the intentional supervisor pattern (per <code>references/runtime.md §F</code>) rather than something to tighten.</li>
+    <li>Several modules in <code>analysis/</code> use Pydantic <code>BaseModel</code> for what looks like internal types. Is this a deliberate exception (e.g., serialization needs) or accidental drift from the §D1 boundary discipline?</li>
+  </ul>
+</section>
+
+</main>
+
+<footer class="report-footer">
+  Generated by the python-architecture skill. Findings cite principles P1–P9 (SKILL.md §2) and theses in <code>references/</code>.
+  Diagrams render via Mermaid; code blocks via Prism. Both load from CDN — when offline, the diagram source remains readable.
+</footer>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      fontFamily: "'Inter', system-ui, sans-serif",
+      fontSize: '14px',
+      background: '#18181b',
+      primaryColor: '#27272a',
+      primaryTextColor: '#f4f4f5',
+      primaryBorderColor: '#a1a1aa',
+      lineColor: '#a1a1aa',
+      secondaryColor: '#18181b',
+      tertiaryColor: '#0e0e10',
+      mainBkg: '#27272a',
+      nodeBorder: '#a1a1aa',
+      clusterBkg: '#18181b',
+      clusterBorder: '#3f3f46',
+      titleColor: '#f4f4f5',
+      edgeLabelBackground: '#18181b',
+      attributeBackgroundColorOdd: '#18181b',
+      attributeBackgroundColorEven: '#27272a',
+      textColor: '#f4f4f5'
+    },
+    flowchart: { curve: 'basis', padding: 16 },
+    er: { useMaxWidth: true }
+  });
+
+  // TOC scrollspy
+  const sections = Array.from(document.querySelectorAll('main section[id]'));
+  const links = new Map(Array.from(document.querySelectorAll('nav.toc a')).map(a => [a.getAttribute('href').slice(1), a]));
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      const link = links.get(entry.target.id);
+      if (!link) return;
+      if (entry.isIntersecting) {
+        links.forEach(l => l.classList.remove('current'));
+        link.classList.add('current');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  sections.forEach(s => observer.observe(s));
+</script>
+
+<!--
+  =====================================================================
+  Pre-deliverable checklist (from SKILL.md §7) — strip before delivering:
+
+    [ ] Every finding cites a principle (P1-P9) or specific reference thesis.
+    [ ] Every "don't" has a paired concrete "do this instead".
+    [ ] Severity is encoded both as text badge AND as visual cue (left border).
+    [ ] No generic Python advice; every finding is specific to this codebase.
+    [ ] No findings drawn from memory; each anchored in a thesis.
+    [ ] Mandatory visualisations present: architecture overview, package layout.
+    [ ] Optional visualisations (ERD, DFD, depth chart) included only when findings demand them; otherwise removed entirely (section + TOC entry).
+    [ ] All Mermaid diagrams have valid syntax (paste into mermaid.live to verify).
+    [ ] If a dimension found nothing, that's stated in one sentence — not padded.
+    [ ] Final punch list is the action item the user can start on.
+    [ ] All "FILL:" comments removed.
+-->
+
+</body>
+</html>

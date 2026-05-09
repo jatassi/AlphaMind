@@ -7,6 +7,8 @@ description: Opinionated audit and design guidance for Python systems. Use when 
 
 For audits and designs at the package / system level. Not for line-level style (use a linter), library selection, security, deployment, or micro-optimisation. The skill bundles three scripts that produce structural facts (`scripts/`), eight reference files of opinionated theses (`references/`), and two output templates (`assets/`). Read this file end-to-end on first use; consult references on demand.
 
+The skill optimises for three goals at once: **testability** (good seams, sociable tests, faked owned dependencies), **maintainability** (small interfaces, clear layer boundaries, types that catch bugs at the boundary), and **AI- and human-navigability** (deep modules whose implementation lives near its interface, so understanding one concept doesn't require chasing imports across the tree). When recommendations conflict, the deepest principle wins; otherwise prefer the option that improves all three.
+
 ## 1. Pick a mode
 
 **Audit** — an existing codebase or package. Triggers: "review this code", "what should I clean up", "is this Pythonic", "refactor this", "audit my project". Goes to §3.
@@ -17,7 +19,7 @@ If the request is too small for either (a single file, a few hundred lines, no p
 
 ## 2. Load-bearing principles
 
-These eight govern everything else. Each has a one-paragraph summary here and a deeper reference. When a finding or recommendation rests on one of them, name it explicitly so the user can disagree with the principle and see the downstream change.
+These nine govern everything else. Each has a one-paragraph summary here and a deeper reference. When a finding or recommendation rests on one of them, name it explicitly so the user can disagree with the principle and see the downstream change.
 
 **P1. Functional core, imperative shell.** Business logic lives in pure functions over plain values. I/O — DB, HTTP, time, randomness, the LLM, the broker — lives in a thin shell that loads inputs, calls the core, and writes outputs (Bernhardt; the spine of Cosmic Python under different names). The most common architectural failure in real Python codebases is leaking I/O into what should be pure code: `requests.get` inside a domain method, `datetime.now()` inside a calculation, an ORM query buried four calls deep. → `references/foundations.md §A1`.
 
@@ -34,6 +36,8 @@ These eight govern everything else. Each has a one-paragraph summary here and a 
 **P7. Async only at the I/O boundary; structured concurrency or none.** Async earns its keep when there are concurrent I/O operations and nowhere else (Glyph: "async is not for you"). CPU-bound code gets nothing from async; sequential code gets nothing. And once async, structured concurrency is mandatory: every `create_task` lives inside an `asyncio.TaskGroup` (Nathaniel J. Smith). Fire-and-forget is a guaranteed silent bug. → `references/runtime.md §G`.
 
 **P8. Sociable unit tests; fakes over mocks.** Test the public surface of a unit with its real internal collaborators, against in-memory or trivial-fake substitutes for I/O — the Detroit / classicist / Cosmic Python style. Mockist tests (mock every collaborator) couple to implementation and rot during refactors. **Don't mock what you don't own** (Freeman & Pryce): wrap third-party libs behind a Protocol you own, then fake the Protocol. → `references/testing.md §J1, §J2`.
+
+**P9. Deep modules: small interface, large implementation.** A module is *deep* when its public surface is small relative to the complexity it hides; *shallow* when the interface area approaches the implementation (Ousterhout, *A Philosophy of Software Design*). Shallow modules are the dual failure mode of P1's functional-core enthusiasm: a swarm of pure helper functions extracted "for testability" can leave the real bugs in the call sites that thread them together. Optimise for the smallest interface that still expresses the contract; let depth absorb complexity that doesn't need to be visible. Deep modules are also more navigable for both humans and LLM agents — fewer files to bounce between to understand one concept. → `references/foundations.md §A5`.
 
 ## 3. Audit workflow
 
@@ -79,30 +83,69 @@ The scripts produce **data**. The findings come from interpreting the data again
 
 ### 3.4 Walk the audit dimensions
 
-For each top-level package, walk through these dimensions in this order. Earlier dimensions surface findings that change later dimensions, so don't shuffle.
+The structural scripts produce a frame, but they don't catch everything. Two complementary modes:
 
-1. **Layout & boundaries** (`references/packaging-and-layout.md`, `references/foundations.md §C`). Feature vs. layer organisation? `__init__.py` policy? Visible boundary between domain and adapters? Cycles in the import graph?
+- **Dimensional walk (default).** Walk the dimensions below in order. Each one is anchored to a reference and produces specific findings. Use when scripts have run, the codebase is medium-to-large, and you want coverage.
+- **Friction walk (alternative or supplement).** Read the codebase like a new contributor — pick a feature and follow its execution path from entrypoint to outcome. Note where comprehension stalls: where understanding one concept requires bouncing between many small files, where module boundaries seem to fight you, where the test suite doesn't cover the path you're reading. The friction *is* the signal. Use when scripts haven't been run yet, the codebase is small enough to walk, or as a sanity-check pass after the dimensional walk has produced its list — friction often surfaces shallow-module / over-decomposition findings (§A5) that the structural scripts can't see.
+
+Either way, work the dimensions in this order. Earlier dimensions surface findings that change later dimensions, so don't shuffle.
+
+1. **Layout & boundaries** (`references/packaging-and-layout.md`, `references/foundations.md §C`). Feature vs. layer organisation? `__init__.py` policy? Visible boundary between domain and adapters? Cycles in the import graph? Module depth — interfaces small relative to implementations, or shallow swarms of single-purpose helpers (§A5)?
 2. **Data & types** (`references/data-and-types.md`). Frozen dataclasses internally? Pydantic only at boundaries? Domain primitives over bare ints/strs? `StrEnum`/`Literal` for closed sets? Aware datetimes? `Decimal` for money? `mypy --strict`?
 3. **Runtime** (`references/runtime.md`). Errors caught narrowly with `from`-chained re-raises? Domain exceptions for expected failures? Every external call has a timeout? Async only at the boundary, with `TaskGroup`? Structured logging? Config via `pydantic-settings`?
-4. **Testing** (`references/testing.md`). Sociable unit tests at module scope? Fakes for owned Protocols, not patches on third-party libs? Real DB for integration tests? `Clock` injected, randomness seeded? Hypothesis where invariants exist?
+4. **Testing** (`references/testing.md`). For each module's dependencies, the right strategy per category — in-process / local-substitutable / remote-but-owned / true-external (§J0)? Sociable unit tests at module scope? Fakes for owned Protocols, not patches on third-party libs? Real DB for integration tests? `Clock` injected, randomness seeded? Hypothesis where invariants exist?
 5. **Application shape** (`references/app-shapes.md`). Identify the system's shape (CLI, web API, data pipeline, long-running daemon, agentic/LLM, numerical) and consult the shape-specific section. Some antipatterns are only antipatterns in a particular shape.
 
 ### 3.5 Produce the report
 
-Use `assets/audit_report_template.md` as the scaffold; deviate where the audit's findings demand a different shape. Each finding has:
+Use `assets/audit_report_template.html` as the scaffold; produce a single self-contained HTML file. Save as `audit-<package>-<YYYY-MM-DD>.html` in the working directory unless the user specifies otherwise. Deviate from the template where the audit's findings demand a different shape — but keep the section ordering, since it leads with visuals to frame the system before per-finding detail.
 
-- **What** — the issue, in one sentence.
+Each finding has:
+
+- **What** — the issue, in one sentence (the card heading).
 - **Where** — file path(s) and line numbers, or "package-wide".
-- **Why it matters** — one or two sentences citing the principle (P1–P8) or reference thesis.
+- **Why it matters** — one or two sentences citing the principle (P1–P9) or reference thesis.
 - **Fix** — one-line concrete change. If non-trivial, point to a reference section that explains how.
+
+Each finding card carries badges: a **severity badge** (load-bearing / high-yield / worth-knowing) and one or more **principle badges** (P1–P9 or the reference thesis ID like A5, J0). When a small Mermaid diagram or code snippet makes the issue clearer than prose, embed it inside the card's `.embed` block.
 
 Group findings by severity:
 
-- **Load-bearing** — a violation of P1–P8 or a structural pathology (cycle, layer violation, god module, primitive obsession spanning the system). Worth scheduling deliberate work.
-- **High-yield** — local antipatterns that are easy to fix and pay off immediately (mutable defaults, naive datetimes, missing timeouts).
-- **Worth knowing** — observations that aren't problems today but will become problems if the system grows in a particular direction.
+- **Load-bearing** — a violation of P1–P9 or a structural pathology (cycle, layer violation, god module, primitive obsession spanning the system, shallow-module swarm). Worth scheduling deliberate work. Rendered as full finding cards.
+- **High-yield** — local antipatterns that are easy to fix and pay off immediately (mutable defaults, naive datetimes, missing timeouts). Rendered as a grouped table with counts and example file:line refs — too many for cards to add value.
+- **Worth knowing** — observations that aren't problems today but will become problems if the system grows in a particular direction. Rendered as compact cards.
 
-End the report with a **suggested ordering**: which findings to tackle first, balancing load-bearing-ness against ease of fix. The user wants a punch list, not an inventory.
+End the report with a **punch list**: ordered items, each tagged with two cost dimensions, balancing load-bearing-ness against ease of fix. The user wants a list they can start working from, not an inventory.
+
+The two dimensions:
+
+- **Complexity** (qualitative — a structural property of the change, verifiable by inspection):
+  - `Trivial` — no design knowledge required; mechanical change verifiable by syntax (lint autofix, regex replace, type annotation).
+  - `Low` — requires understanding one module's contract.
+  - `Medium` — requires understanding one subsystem's design.
+  - `High` — requires understanding two or more subsystems' interactions, or a cross-cutting concern (type system, layer responsibilities).
+  - `Extreme` — requires re-deriving the system's architecture; multiple subsystems must be redesigned in concert.
+- **Blast radius** (quantitative — files touched):
+  - `Surgical` — 1 file
+  - `Local` — 2–5 files
+  - `Module` — 6–20 files
+  - `Subsystem` — 21–100 files
+  - `System-wide` — >100 files
+
+**Do not anchor on time-based estimates** (hours, days, weeks). Agents systematically misestimate durations because LLM-driven work compresses time non-linearly relative to human work, and time estimates rot the moment a fix turns out harder than expected. Complexity + blast radius describes the work without that hazard, and both dimensions are verifiable from the change itself rather than from prediction.
+
+**Mandatory visualisations** (every audit produces these, near the top of the report):
+
+- **Architecture overview** — Mermaid `flowchart` of the module / package dependency graph, current vs proposed. Mark cycles and layer violations on the current side with the `violation` class; mark targets and boundaries on the proposed side. Keep node count manageable (~15 per side); use subgraphs to group when larger.
+- **Package layout** — side-by-side text trees with diff styling (`add` / `rem` / `ren` / `new` spans). Inline `note` spans annotate non-obvious moves.
+
+**Optional visualisations** (include only when the audit surfaces relevant findings; otherwise remove the entire section *and* its TOC entry):
+
+- **Data model** — Mermaid `erDiagram`, current vs proposed, when domain-type or schema findings are central.
+- **Data flow** — Mermaid `flowchart` with subgraphs for stages (ingest / core / egress), when the system is pipeline-shaped or has boundary-leak findings worth showing.
+- **Module-depth chart** — horizontal bars showing public-symbol-vs-implementation ratio per module, when over-decomposition / shallow-module findings (§A5) are central. The template provides the `.depth-chart` markup; populate one row per module under audit.
+
+The template uses Mermaid (CDN) for diagrams and Prism (CDN) for code highlighting. The file degrades gracefully offline — diagram source remains readable as plain text. Verify Mermaid syntax by pasting each diagram into mermaid.live before delivering.
 
 ### 3.6 What the audit is NOT
 
@@ -130,7 +173,7 @@ Don't ask all five every time. Ask what's load-bearing for *this* design.
 
 ### 4.2 Pick the load-bearing principles
 
-Not every principle from §2 applies to every design. Decide which two or three are central. For most systems, P1 (functional core / imperative shell) and P3 (illegal states unrepresentable) are central. P4 (hexagonal) is central only for systems with non-trivial domain rules. P7 (async/structured concurrency) is central only for I/O-concurrent systems. State which ones you're designing around so the user can push back if they want to optimise for something else.
+Not every principle from §2 applies to every design. Decide which two or three are central. For most systems, P1 (functional core / imperative shell), P3 (illegal states unrepresentable), and P9 (deep modules) are central. P4 (hexagonal) is central only for systems with non-trivial domain rules. P7 (async/structured concurrency) is central only for I/O-concurrent systems. State which ones you're designing around so the user can push back if they want to optimise for something else.
 
 ### 4.3 Sketch the package layout
 
@@ -176,7 +219,7 @@ Cover at minimum:
 
 ### 4.5 Specify the testing seam
 
-For each I/O-bearing Protocol the design introduces, name what the test substitutes. "Fake the `OrderRepository` Protocol with an in-memory implementation" is a seam; "use mocks" is not. Include one example fake skeleton if useful.
+Classify each external dependency into one of the four categories from `references/testing.md §J0` — in-process / local-substitutable / remote-but-owned / true-external — and name the substitute that follows from the category. For local-substitutable dependencies (Postgres, SQLite, filesystem) name the stand-in directly; don't introduce a Protocol if testcontainers or an embedded server already gives you the seam. For remote-owned and true-external dependencies, name the Protocol and the in-memory fake: "Fake the `OrderRepository` Protocol with an in-memory implementation" is a seam; "use mocks" is not. Include one example fake skeleton if useful.
 
 ### 4.6 Surface the hardest-to-reverse decisions
 
@@ -203,14 +246,27 @@ References are the authoritative source for the theses; this file is navigation.
 
 Before handing back the audit report or design brief:
 
-- [ ] Every finding or recommendation cites a principle (P1–P8) or a specific reference thesis.
+**Content:**
+
+- [ ] Every finding or recommendation cites a principle (P1–P9) or a specific reference thesis.
 - [ ] Every "don't" has a paired concrete "do this instead". No bare prohibitions.
 - [ ] Severity / priority is explicit. The user shouldn't have to infer what to do first.
 - [ ] No generic Python advice that isn't specific to this codebase or design.
 - [ ] No findings drawn from memory of "best practice" without a thesis to anchor them.
-- [ ] The output uses the relevant template from `assets/` as scaffolding, with deviations explicit.
 - [ ] If the audit found nothing significant in a dimension, that's stated in one sentence — not padded.
 - [ ] The final ordering / next-action recommendation is the punch list the user can start working from.
+
+**Audit HTML deliverable:**
+
+- [ ] Architecture overview (Mermaid current-vs-proposed) is present.
+- [ ] Package layout (current-vs-proposed file tree with diff styling) is present.
+- [ ] Optional visualisations (data model / data flow / module-depth chart) are included only when findings demand them; otherwise the section *and* its TOC entry are removed.
+- [ ] Every Mermaid block has valid syntax (paste into mermaid.live to verify before delivery).
+- [ ] Severity is encoded as both a text badge and a visual cue (left-border colour on the finding card).
+- [ ] Principle citations appear as `.badge.principle` badges on each finding, not just inline references.
+- [ ] Each punch-list item carries a **complexity** badge (`Trivial`/`Low`/`Medium`/`High`/`Extreme`) and a **blast-radius** badge (`Surgical`/`Local`/`Module`/`Subsystem`/`System-wide`); no item carries a time-based estimate.
+- [ ] All `FILL:` comments and unused OPTIONAL section scaffolding are stripped.
+- [ ] Saved as `audit-<package>-<YYYY-MM-DD>.html`.
 
 ## 8. Sources
 
