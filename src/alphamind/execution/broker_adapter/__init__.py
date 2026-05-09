@@ -15,6 +15,7 @@ Story 01 (ALP-378) ships the foundational substrate:
 
 Story 02a (ALP-379) — :class:`AccountStateQueries` wrappers.
 Story 02b (ALP-380) — equity order POST translation.
+Story 02e (ALP-383) — order PATCH + DELETE translation.
 Story 02f (ALP-384) — fill-stream subscriber + translator.
 
 Subsequent wave-2 stories ship in parallel; see the parent issue
@@ -44,6 +45,13 @@ from alphamind.execution.broker_adapter.order_equity import (
     submit_equity_close,
     submit_equity_open,
 )
+from alphamind.execution.broker_adapter.order_modify import (
+    CancellationAck,
+    ReplaceFields,
+    ReplacementAck,
+    submit_cancel,
+    submit_replace,
+)
 from alphamind.execution.broker_adapter.queries import (
     AccountStateQueries,
     ActivitySnapshot,
@@ -68,6 +76,7 @@ __all__ = [
     "AlpacaClientFactory",
     "AssetSnapshot",
     "CalendarDay",
+    "CancellationAck",
     "EquitySubmission",
     "ExecutionMode",
     "FillReport",
@@ -79,15 +88,19 @@ __all__ = [
     "PermanentRejection",
     "PermanentRejectionCode",
     "PositionSnapshot",
+    "ReplaceFields",
+    "ReplacementAck",
     "ResolvedCredentials",
     "SubmissionOutcome",
     "Submitted",
     "TradeAccountSnapshot",
     "classify_alpaca_error",
     "is_transient",
+    "submit_cancel",
     "submit_equity_add",
     "submit_equity_close",
     "submit_equity_open",
+    "submit_replace",
     "submit_with_retry",
     "subscribe_trade_updates",
     "translate_trade_update",

@@ -55,11 +55,22 @@ _EQUITY_SYMBOLS: frozenset[str] = frozenset(
     }
 )
 
+_MODIFY_SYMBOLS: frozenset[str] = frozenset(
+    {
+        "CancellationAck",
+        "ReplaceFields",
+        "ReplacementAck",
+        "submit_cancel",
+        "submit_replace",
+    }
+)
+
 _REQUIRED_SYMBOLS: frozenset[str] = (
     _SUBSTRATE_SYMBOLS
     | _QUERIES_SYMBOLS
     | _FILL_STREAM_SYMBOLS
     | _EQUITY_SYMBOLS
+    | _MODIFY_SYMBOLS
 )
 
 
@@ -150,3 +161,15 @@ def test_equity_symbols_directly_importable() -> None:
     )
 
     _ = (EquitySubmission, submit_equity_add, submit_equity_close, submit_equity_open)
+
+
+def test_modify_symbols_directly_importable() -> None:
+    from alphamind.execution.broker_adapter import (
+        CancellationAck,
+        ReplaceFields,
+        ReplacementAck,
+        submit_cancel,
+        submit_replace,
+    )
+
+    _ = (CancellationAck, ReplaceFields, ReplacementAck, submit_cancel, submit_replace)
