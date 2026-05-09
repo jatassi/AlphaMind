@@ -1288,6 +1288,53 @@ async def test_close_command_with_partial_quantity_uses_command_quantity(
         assert close_orders[0].quantity == pytest.approx(3.0)
 
 
+async def test_close_all_against_pending_position_raises(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """CLOSE-all against a PENDING (zero-fill) position must raise rather than
+    fabricate a phantom 1-share close order — closing-before-fill is a
+    structural contract violation per oms-commands.md § Command origins."""
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+    # PENDING position has zero fills; share_count=0 so close-all → close_qty=0.
+    pending_position = PositionRecord.model_validate(
+        {
+            "position_id": "POS-NVDA-001",
+            "thesis_id": "THE-NVDA-1",
+            "bracket_id": "BRK-NVDA-1",
+            "status": PositionStatus.PENDING,
+            "direction": Direction.LONG,
+            "entry_timestamp": None,
+            "details": EquityPositionDetails(
+                ticker="NVDA",
+                share_count=0.0,
+                average_cost_basis_per_share=0.0,
+            ),
+            "execution_history": (),
+            "realized_pnl_to_date_usd": None,
+            "corporate_action_adjustment_needed": False,
+            "parent_position_id": None,
+            "origin": None,
+        }
+    )
+    await _seed_position_cluster(factory, pending_position, _active_thesis(), _active_bracket())
+
+    envelope = _make_strategist_envelope(commands=(_close_command(position_id="POS-NVDA-001"),))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    with pytest.raises(ValueError, match="PENDING"):
+        await persist_envelope_outcome(
+            handle, envelope, results, config=_make_state_persistence_config()
+        )
+    await ctx.__aexit__(None, None, None)
+
+
 async def test_adjust_command_dispatches_on_thesis_only(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
@@ -1396,6 +1443,101 @@ async def test_cancel_command_releases_capital_from_order_notional(
         assert cash_row is not None
         # 5000 reserved - 5000 released = 0 remaining.
         assert cash_row.reserved_capital_usd == pytest.approx(0.0)
+
+
+async def test_cancel_command_on_protective_leg_does_not_release_capital(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """CANCEL of a protective leg (PRICE_STOP / TAKE_PROFIT / TIME_STOP) must
+    NOT release capital — those legs never reserved any (only the entry order
+    reserves at OPEN time). Releasing for a protective leg would shift the
+    cash ledger off by the leg's notional for the remainder of the cell's
+    life; the ``max(... - amount_usd, 0.0)`` floor in ``_release_capital``
+    would mask the symptom.
+    """
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+    from alphamind.portfolio_state.records.orders import (
+        EquityInstrumentSpec,
+        OrderClass,
+        OrderDirection,
+        OrderDuration,
+        OrderRecord,
+        OrderRole,
+        OrderStatus,
+        OrderType,
+        PriceParameters,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    # Seed the entry's reservation (1000 USD) so a phantom release would be
+    # observable in cash_ledger.reserved_capital_usd.
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    # Protective leg: PRICE_STOP with stop_trigger=140 x 10 shares = 1400 USD
+    # notional. If the writeback wrongly called _release_capital with this
+    # amount, reserved_capital_usd would clamp to 0 (1000 - 1400 floored at
+    # 0); we'd lose the 1000 USD entry reservation invisibly.
+    stop_leg_rec = OrderRecord(
+        order_id="ord-protective-stop",
+        position_id="POS-NVDA-001",
+        bracket_id="BRK-NVDA-1",
+        role=OrderRole.PRICE_STOP,
+        instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        order_class=OrderClass.OTO,
+        price_parameters=PriceParameters(stop_trigger_price=140.0),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id="alp-ord-protective-stop",
+        alpaca_order_id_chain=("alp-ord-protective-stop",),
+        submission_timestamp=_NOW - timedelta(hours=1),
+        last_update_timestamp=_NOW - timedelta(hours=1),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id="THE-NVDA-1",
+        originating_pm_command_id=None,
+        age_hours=1.0,
+    )
+    await _seed_position_cluster(
+        factory,
+        _open_position(),
+        _active_thesis(),
+        _active_bracket(),
+        stop_leg_rec,
+    )
+
+    envelope = _make_strategist_envelope(
+        commands=(_cancel_command(order_id="ord-protective-stop"),)
+    )
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash_row is not None
+        # Entry's reservation must remain intact — protective-leg CANCEL is a
+        # no-op for capital accounting.
+        assert cash_row.reserved_capital_usd == pytest.approx(1_000.0)
+        # The leg row itself transitioned to CANCELLED.
+        leg = await sess.get(OrderRow, "ord-protective-stop")
+        assert leg is not None
+        assert leg.status == "CANCELLED"
+
+    # No capital_released entry should have been emitted for the protective leg.
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    cap_released = [r for r in rows if r.event_type == EventType.CAPITAL_RELEASED.value]
+    assert cap_released == []
 
 
 async def test_add_command_persists_real_quantity_and_dollar_value(

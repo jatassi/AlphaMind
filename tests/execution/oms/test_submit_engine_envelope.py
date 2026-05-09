@@ -59,7 +59,7 @@ from alphamind.persistence.session import (
     make_async_session_factory,
     make_engine,
 )
-from alphamind.portfolio_state.events.activity_log import EventType
+from alphamind.portfolio_state.events.activity_log import EventSource, EventType
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
@@ -508,6 +508,10 @@ async def test_happy_path_persists_close_order_and_emits_activity_log(
     rows = await _read_activity_log_for(factory, handle.invocation_id)
     submitted_rows = [r for r in rows if r.event_type == EventType.ORDER_SUBMITTED.value]
     assert len(submitted_rows) == 1
+    # Engine envelopes tag activity-log entries with BRACKET_MANAGER per
+    # ``oms-commands.md § Command origins`` — guard against a regression that
+    # silently flips this to COMMAND_EXECUTOR (the PM-side default).
+    assert submitted_rows[0].source == EventSource.BRACKET_MANAGER.value
     detail = json.loads(submitted_rows[0].detail_json)
     params = detail["order_parameters_json"]
     assert params["risk_management_subtype"] == "engine_guardrail"

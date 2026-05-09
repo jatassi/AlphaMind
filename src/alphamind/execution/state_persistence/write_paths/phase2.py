@@ -129,8 +129,10 @@ from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
     LocateStatus,
+    OptionsPositionDetails,
     PositionRecord,
     PositionStatus,
+    StrategyPositionDetails,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -587,11 +589,18 @@ async def _writeback_close(
             close_qty = getattr(position.details, "contract_count", 0.0)
     else:
         close_qty = float(command.quantity)
-    # The OrderRecord validator forbids quantity <= 0; partial closes that
-    # somehow round to zero get a minimum-of-one fallback so the persisted
-    # row stays valid (the actual fill quantity is set in Phase 1).
+    # ``close_qty <= 0`` after the union resolution above can only occur on a
+    # CLOSE-all against a PENDING (zero-fill) position — closing-before-fill
+    # is a structural contract violation per oms-commands.md § Command origins.
+    # Raise rather than fabricate a phantom 1-share order; mirrors the
+    # missing-position branch above.
     if close_qty <= 0:
-        close_qty = 1.0
+        msg = (
+            f"CLOSE references PENDING position_id={command.position_id!r} "
+            f"with no fills; cannot resolve close quantity. The PM must wait "
+            "for the entry to fill before issuing a CLOSE."
+        )
+        raise ValueError(msg)
 
     if command.order_type == "limit":
         order_type = OrderType.LIMIT
@@ -936,20 +945,28 @@ async def _writeback_cancel(
         cancel_reason=command.cancel_reason,
         timestamp=timestamp,
     )
-    # Capital release amount derived from the cancelled order's notional
-    # (quantity * limit/stop price for non-market orders, or zero for market
-    # orders without price parameters — those have no capital reservation
-    # because a market order is filled immediately on submission and the
-    # reservation flowed through Phase 1 already).
-    release_amount = _order_notional_estimate(target)
-    await _release_capital(
-        handle,
-        order_id=target.order_id,
-        position_id=target.position_id,
-        thesis_id=target.originating_thesis_id,
-        amount_usd=release_amount,
-        timestamp=timestamp,
-    )
+    # Capital release is only valid for entry-class orders (ENTRY / ADD_ENTRY).
+    # Those are the only roles that reserve capital on submission via
+    # ``_reserve_capital``; protective legs (TAKE_PROFIT / PRICE_STOP /
+    # TIME_STOP) never reserved any. CANCELling a protective leg must NOT
+    # release a phantom amount — the ``max(... - amount_usd, 0.0)`` floor in
+    # ``_release_capital`` would mask the symptom but leave the ledger off by
+    # the protective leg's notional for the remainder of the cell's life.
+    if target.role in (OrderRole.ENTRY, OrderRole.ADD_ENTRY):
+        # Capital release amount derived from the cancelled order's notional
+        # (quantity * limit/stop price for non-market orders, or zero for
+        # market orders without price parameters — those have no capital
+        # reservation because a market order is filled immediately on
+        # submission and the reservation flowed through Phase 1 already).
+        release_amount = _order_notional_estimate(target)
+        await _release_capital(
+            handle,
+            order_id=target.order_id,
+            position_id=target.position_id,
+            thesis_id=target.originating_thesis_id,
+            amount_usd=release_amount,
+            timestamp=timestamp,
+        )
 
     if target.role != OrderRole.ENTRY:
         return
@@ -1961,9 +1978,30 @@ def _id_suffix(command_id: str) -> str:
 
 
 def _position_ticker(position: PositionRecord) -> str:
+    """Return the ticker / underlying for the typed position-details payload.
+
+    Mirrors :func:`_instrument_ticker_key` for the OMS instrument union — a
+    discriminated dispatch over the position-detail variants in
+    :mod:`alphamind.portfolio_state.records.positions`. Raises on an
+    unsupported variant (rather than fabricating a sentinel string) so a new
+    ``InstrumentType`` flag must update this helper before persistence
+    silently writes an unrouteable broker order shape.
+    """
     if isinstance(position.details, EquityPositionDetails):
         return position.details.ticker
-    return getattr(position.details, "underlying_ticker", "STUB")
+    if isinstance(position.details, OptionsPositionDetails):
+        return position.details.underlying_ticker
+    if isinstance(position.details, StrategyPositionDetails):
+        # Strategy positions don't carry a single underlying — every leg's
+        # underlying must agree per the typed-record invariants. The legs are
+        # all OptionsPositionDetails with an ``underlying_ticker`` field.
+        return position.details.legs[0].options.underlying_ticker
+    msg = (
+        f"_position_ticker: unsupported position details variant "
+        f"{type(position.details).__name__!r}; extend the dispatch when adding "
+        "a new InstrumentType."
+    )
+    raise ValueError(msg)
 
 
 # ---------------------------------------------------------------------------

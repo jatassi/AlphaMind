@@ -214,8 +214,12 @@ async def submit_engine_envelope(
         persist_engine_envelope_outcome,
     )
 
+    # ``source_provenance`` is intentionally NOT threaded into extra_metadata:
+    # ``_writeback_close`` already records ``risk_management_subtype="engine_guardrail"``
+    # from ``command.risk_management_subtype`` (see phase2.py rationale_metadata
+    # build), so adding ``source_provenance="engine_guardrail"`` would duplicate
+    # the same fact under a second key on the activity-log detail.
     extra_metadata: dict[str, Any] = {
-        "source_provenance": "engine_guardrail",
         "envelope_id": envelope.envelope_id,
         "rule_breached": envelope.guardrail_trigger_record.rule_breached,
         "position_selection_rationale": (

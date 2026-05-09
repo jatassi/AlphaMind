@@ -1341,6 +1341,75 @@ async def _phase_4_resolve_position_id(
         return row.position_id if row is not None else None
 
 
+async def _phase_4_simulate_phase_1_fill(
+    factory: async_sessionmaker[AsyncSession], position_id: str
+) -> None:
+    """Transition Phase 3's PENDING position to OPEN with one synthetic fill.
+
+    Phase 3 OPENs a position; the Phase 2 writeback leaves it in PENDING with
+    ``execution_history=()`` (post-Phase-1 state transitions are out of scope
+    for the OMS-commands story). Phase 4's CLOSE-all needs an OPEN position
+    (PENDING + share_count=0 raises in ``_writeback_close``). We simulate the
+    Phase 1 effect inline — one fill at the entry price for the requested
+    share count — so the verify script's Phase 4 can exercise the engine
+    envelope path end-to-end.
+    """
+    from alphamind.execution.state_persistence.tables.positions import PositionRow
+    from alphamind.execution.state_persistence.tables.positions_codec import (
+        record_to_row as position_record_to_row,
+    )
+    from alphamind.execution.state_persistence.tables.positions_codec import (
+        row_to_record as position_row_to_record,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        EquityPositionDetails,
+        PositionFill,
+        PositionStatus,
+    )
+
+    async with factory() as sess:
+        row = await sess.get(PositionRow, position_id)
+        if row is None:
+            msg = f"_phase_4_simulate_phase_1_fill: position {position_id!r} not found"
+            raise RuntimeError(msg)
+        record = position_row_to_record(row)
+
+        if not isinstance(record.details, EquityPositionDetails):
+            msg = (
+                f"_phase_4_simulate_phase_1_fill: expected EquityPositionDetails, "
+                f"got {type(record.details).__name__}"
+            )
+            raise TypeError(msg)
+
+        # Synthesize one fill at the average cost basis x the configured quantity.
+        fill = PositionFill(
+            fill_timestamp=_NOW,
+            fill_price=record.details.average_cost_basis_per_share or 800.0,
+            fill_quantity=_PHASE_3_QUANTITY,
+            slippage=0.0,
+            fees=0.0,
+        )
+        opened_details = record.details.model_copy(update={"share_count": _PHASE_3_QUANTITY})
+        opened_record = record.model_copy(
+            update={
+                "status": PositionStatus.OPEN,
+                "details": opened_details,
+                "entry_timestamp": _NOW,
+                "execution_history": (fill,),
+            }
+        )
+
+        # Project the rehydrated record back to a row and propagate the
+        # mutated columns. Replacing the row instance via merge keeps the
+        # primary-key identity stable.
+        new_row = position_record_to_row(opened_record)
+        row.status = new_row.status
+        row.details_json = new_row.details_json
+        row.execution_history_json = new_row.execution_history_json
+        row.entry_timestamp = new_row.entry_timestamp
+        await sess.commit()
+
+
 async def run_phase_4_engine_envelope_path(db_path: Path) -> PhaseResult:
     """Construct an :class:`EngineEnvelope` carrying one CLOSE for the
     Phase-3-opened position, drive it through ``submit_engine_envelope``,
@@ -1364,6 +1433,13 @@ async def run_phase_4_engine_envelope_path(db_path: Path) -> PhaseResult:
                 ok=False,
                 detail="no position found to close (run Phase 3 first)",
             )
+
+        # Simulate Phase 1's fill effect — Phase 3 leaves the position PENDING
+        # (state transitions from fills happen in Phase 1, out of scope here),
+        # but the OMS-commands writeback refuses CLOSE-all against a PENDING
+        # position. Synthesize one fill at the entry price so Phase 4 can
+        # exercise the engine-envelope path against an OPEN position.
+        await _phase_4_simulate_phase_1_fill(factory, position_id)
 
         envelope = _phase_4_engine_envelope(position_id=position_id)
         state = build_initial_submit_engine_envelope_state(
@@ -1454,12 +1530,13 @@ async def _phase_4_validate_activity_log(
     factory: async_sessionmaker[AsyncSession],
 ) -> str | None:
     """Confirm one ``order_submitted`` row landed for the Phase-4 invocation,
-    whose detail carries the engine-guardrail provenance + the trigger
-    record's ``position_selection_rationale``."""
+    whose ``source`` column is ``BRACKET_MANAGER`` and whose detail carries the
+    engine-guardrail provenance + the trigger record's
+    ``position_selection_rationale``."""
     from alphamind.execution.state_persistence.tables.activity_log import (
         ActivityLogRow,
     )
-    from alphamind.portfolio_state.events.activity_log import EventType
+    from alphamind.portfolio_state.events.activity_log import EventSource, EventType
 
     async with factory() as sess:
         rows = (
@@ -1477,6 +1554,12 @@ async def _phase_4_validate_activity_log(
 
     if len(rows) != 1:
         return f"expected exactly 1 order_submitted row, got {len(rows)}"
+    if rows[0].source != EventSource.BRACKET_MANAGER.value:
+        return (
+            f"order_submitted.source={rows[0].source!r}, "
+            f"expected {EventSource.BRACKET_MANAGER.value!r} per "
+            "oms-commands.md § Command origins (engine envelopes tag entries with BRACKET_MANAGER)"
+        )
     detail = json.loads(rows[0].detail_json)
     params = detail.get("order_parameters_json", {})
     if params.get("risk_management_subtype") != "engine_guardrail":
