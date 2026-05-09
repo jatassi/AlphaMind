@@ -22,6 +22,7 @@ from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import inspect
+from sqlalchemy.engine.interfaces import ReflectedForeignKeyConstraint
 
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine
@@ -65,7 +66,7 @@ def _alembic_config(db_path: Path) -> Config:
     )
 
 
-def _column_to_target(fk: dict) -> tuple[str, str]:
+def _column_to_target(fk: ReflectedForeignKeyConstraint) -> tuple[str, str]:
     """Render a SQLAlchemy inspector FK record as ``(column, "table.column")``."""
     column = fk["constrained_columns"][0]
     target = f"{fk['referred_table']}.{fk['referred_columns'][0]}"

@@ -1304,7 +1304,7 @@ async def test_buy_fill_clamps_reserved_capital_decrement_at_zero(
         assert cash.reserved_capital_usd == pytest.approx(0.0)
 
 
-async def test_entry_fill_with_missing_bracket_row_raises_state_inconsistency(
+async def test_pending_position_with_missing_bracket_row_rejected_at_commit(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """FK enforcement prevents committing a position that references a non-existent
@@ -1327,7 +1327,7 @@ async def test_entry_fill_with_missing_bracket_row_raises_state_inconsistency(
             await sess.commit()
 
 
-async def test_exit_fill_with_missing_bracket_row_raises_state_inconsistency(
+async def test_open_position_with_missing_bracket_row_rejected_at_commit(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """FK enforcement prevents committing an OPEN position that references a
@@ -1349,7 +1349,7 @@ async def test_exit_fill_with_missing_bracket_row_raises_state_inconsistency(
             await sess.commit()
 
 
-async def test_exit_fill_with_missing_thesis_row_raises_state_inconsistency(
+async def test_open_position_with_missing_thesis_row_rejected_at_commit(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """FK enforcement prevents committing a position that references a non-existent
@@ -1370,7 +1370,7 @@ async def test_exit_fill_with_missing_thesis_row_raises_state_inconsistency(
             await sess.commit()
 
 
-async def test_corporate_action_with_missing_bracket_row_raises_state_inconsistency(
+async def test_corporate_action_position_with_missing_bracket_row_rejected_at_commit(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """FK enforcement prevents committing a position that references a non-existent
