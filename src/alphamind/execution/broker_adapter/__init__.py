@@ -29,6 +29,12 @@ from alphamind.execution.broker_adapter.errors import (
     classify_alpaca_error,
     is_transient,
 )
+from alphamind.execution.broker_adapter.fill_stream import (
+    FillReport,
+    OrderStatus,
+    subscribe_trade_updates,
+    translate_trade_update,
+)
 from alphamind.execution.broker_adapter.retry import (
     GatewaySubmissionFailed,
     SubmissionOutcome,
@@ -39,7 +45,9 @@ from alphamind.execution.broker_adapter.retry import (
 __all__ = [
     "AlpacaClientFactory",
     "ExecutionMode",
+    "FillReport",
     "GatewaySubmissionFailed",
+    "OrderStatus",
     "PermanentRejection",
     "PermanentRejectionCode",
     "ResolvedCredentials",
@@ -48,4 +56,6 @@ __all__ = [
     "classify_alpaca_error",
     "is_transient",
     "submit_with_retry",
+    "subscribe_trade_updates",
+    "translate_trade_update",
 ]
