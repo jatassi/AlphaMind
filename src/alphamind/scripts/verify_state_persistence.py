@@ -293,6 +293,43 @@ def _pending_entry_order() -> OrderRecord:
     )
 
 
+def _pending_protective_stop_order() -> OrderRecord:
+    """Stop-loss order linked to the bracket's PRICE_STOP leg.
+
+    Phase 2's OPEN writeback creates protective leg orders alongside the entry
+    order, both in PENDING state. The bracket leg's ``order_id`` references the
+    protective order; the FK migration enforces that reference at COMMIT.
+    """
+    stop_order_id = f"{_BRACKET_ID}-ord-stop"
+    return OrderRecord.model_validate(
+        {
+            "order_id": stop_order_id,
+            "position_id": None,
+            "bracket_id": _BRACKET_ID,
+            "role": OrderRole.PRICE_STOP,
+            "instrument_spec": EquityInstrumentSpec(ticker=_TICKER),
+            "direction": OrderDirection.SELL,
+            "order_type": OrderType.STOP,
+            "order_class": OrderClass.SIMPLE,
+            "price_parameters": PriceParameters(stop_trigger_price=140.0),
+            "quantity": 10.0,
+            "duration": OrderDuration.GTC,
+            "status": OrderStatus.PENDING,
+            "alpaca_order_id": f"alp-{stop_order_id}",
+            "alpaca_order_id_chain": (f"alp-{stop_order_id}",),
+            "submission_timestamp": _NOW - timedelta(minutes=15),
+            "last_update_timestamp": _NOW - timedelta(minutes=15),
+            "filled_quantity": 0.0,
+            "avg_fill_price": None,
+            "remaining_quantity": 10.0,
+            "modification_count": 0,
+            "originating_thesis_id": _THESIS_ID,
+            "originating_pm_command_id": None,
+            "age_hours": 0.25,
+        }
+    )
+
+
 def _pending_position() -> PositionRecord:
     return PositionRecord.model_validate(
         {
@@ -536,18 +573,21 @@ async def _seed_phase_c_state(factory: async_sessionmaker[AsyncSession]) -> None
     thesis_parent, component_rows = thesis_record_to_rows(_active_thesis())
 
     async with factory() as sess:
+        # Deferred FKs (per the FK-tightening migration) defer all parent ↔ child
+        # checks to COMMIT, so add-order doesn't matter for correctness; we still
+        # add parents before children for readability.
         sess.add(order_record_to_row(_pending_entry_order()))
+        sess.add(order_record_to_row(_pending_protective_stop_order()))
         sess.add(position_record_to_row(_pending_position()))
         sess.add(bracket_parent)
+        sess.add(thesis_parent)
+        sess.add(cash_ledger_record_to_row(_cash_ledger(), last_updated_at=_NOW))
+        sess.add(drawdown_state_record_to_row(_drawdown_state(), last_updated_at=_NOW))
         await sess.flush()
         for lrow in leg_rows:
             sess.add(lrow)
-        sess.add(thesis_parent)
-        await sess.flush()
         for crow in component_rows:
             sess.add(crow)
-        sess.add(cash_ledger_record_to_row(_cash_ledger(), last_updated_at=_NOW))
-        sess.add(drawdown_state_record_to_row(_drawdown_state(), last_updated_at=_NOW))
         await sess.commit()
 
     async with factory() as sess:

@@ -75,63 +75,69 @@ class TestFkTighteningMigration:
             eng.dispose()
 
     def test_positions_thesis_id_fk_rejects_orphan(self, tmp_path: Path) -> None:
-        """After upgrade, inserting a position with a thesis_id that has no
-        corresponding theses row is rejected."""
+        """After upgrade, committing a position with an orphan thesis_id is rejected.
+
+        The FK is DEFERRABLE INITIALLY DEFERRED — the per-INSERT check passes,
+        but COMMIT fails the constraint check. The semantic invariant (no orphan
+        rows reach the durable schema) holds regardless of when the check fires.
+        """
         db_path = tmp_path / "alembic.db"
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, "head")
 
         eng = make_engine(str(db_path))
         try:
-            with eng.begin() as conn:
+            with pytest.raises(IntegrityError), eng.begin() as conn:
                 conn.execute(text("PRAGMA foreign_keys = ON"))
-                with pytest.raises(IntegrityError):
-                    conn.execute(
-                        text(
-                            "INSERT INTO positions "
-                            "(position_id, thesis_id, bracket_id, status, direction, "
-                            " entry_timestamp, instrument_type, details_json, "
-                            " execution_history_json, realized_pnl_to_date_usd, "
-                            " corporate_action_adjustment_needed, parent_position_id, "
-                            " origin) "
-                            "VALUES "
-                            "('pos-orphan', 'no-such-thesis', NULL, 'OPEN', 'LONG', "
-                            " '2026-05-08T12:00:00Z', 'EQUITY', '{}', '[]', NULL, "
-                            " 0, NULL, NULL)"
-                        )
+                conn.execute(
+                    text(
+                        "INSERT INTO positions "
+                        "(position_id, thesis_id, bracket_id, status, direction, "
+                        " entry_timestamp, instrument_type, details_json, "
+                        " execution_history_json, realized_pnl_to_date_usd, "
+                        " corporate_action_adjustment_needed, parent_position_id, "
+                        " origin) "
+                        "VALUES "
+                        "('pos-orphan', 'no-such-thesis', NULL, 'OPEN', 'LONG', "
+                        " '2026-05-08T12:00:00Z', 'EQUITY', '{}', '[]', NULL, "
+                        " 0, NULL, NULL)"
                     )
+                )
         finally:
             eng.dispose()
 
     def test_orders_bracket_id_fk_rejects_orphan(self, tmp_path: Path) -> None:
-        """After upgrade, inserting an order with a bracket_id that has no
-        corresponding brackets row is rejected."""
+        """After upgrade, committing an order with an orphan bracket_id is rejected.
+
+        Constraint is DEFERRABLE INITIALLY DEFERRED — the violation surfaces at
+        COMMIT, not at INSERT. The semantic invariant is unchanged: no orphan
+        rows reach the durable schema.
+        """
         db_path = tmp_path / "alembic.db"
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, "head")
 
         eng = make_engine(str(db_path))
         try:
-            with eng.begin() as conn:
+            with pytest.raises(IntegrityError), eng.begin() as conn:
                 conn.execute(text("PRAGMA foreign_keys = ON"))
-                with pytest.raises(IntegrityError):
-                    conn.execute(
-                        text(
-                            "INSERT INTO orders "
-                            "(order_id, position_id, bracket_id, order_role, "
-                            " order_class, instrument_spec_json, direction, order_type, "
-                            " quantity, price_parameters_json, duration, status, "
-                            " alpaca_order_id, alpaca_order_id_chain_json, "
-                            " submission_timestamp, last_update_timestamp, "
-                            " filled_quantity, average_fill_price, remaining_quantity, "
-                            " modification_count, metadata_json) "
-                            "VALUES "
-                            "('ord-orphan', NULL, 'no-such-bracket', 'ENTRY', "
-                            " 'SIMPLE', '{}', 'BUY', 'MARKET', 1.0, '{}', 'DAY', "
-                            " 'PENDING', 'alp-1', '[]', '2026-05-08T12:00:00Z', "
-                            " '2026-05-08T12:00:00Z', 0.0, NULL, 1.0, 0, '{}')"
-                        )
+                conn.execute(
+                    text(
+                        "INSERT INTO orders "
+                        "(order_id, position_id, bracket_id, order_role, "
+                        " order_class, instrument_spec_json, direction, order_type, "
+                        " quantity, price_parameters_json, duration, status, "
+                        " alpaca_order_id, alpaca_order_id_chain_json, "
+                        " submission_timestamp, last_update_timestamp, "
+                        " filled_quantity, average_fill_price, remaining_quantity, "
+                        " modification_count, metadata_json) "
+                        "VALUES "
+                        "('ord-orphan', NULL, 'no-such-bracket', 'ENTRY', "
+                        " 'SIMPLE', '{}', 'BUY', 'MARKET', 1.0, '{}', 'DAY', "
+                        " 'PENDING', 'alp-1', '[]', '2026-05-08T12:00:00Z', "
+                        " '2026-05-08T12:00:00Z', 0.0, NULL, 1.0, 0, '{}')"
                     )
+                )
         finally:
             eng.dispose()
 
@@ -170,7 +176,12 @@ class TestFkTighteningMigration:
 
     def test_activity_log_position_id_fk_rejects_orphan(self, tmp_path: Path) -> None:
         """After upgrade, an activity_log entry with a non-NULL position_id
-        pointing at a missing positions row is rejected. NULL is still allowed."""
+        pointing at a missing positions row is rejected at COMMIT. NULL still allowed.
+
+        Constraint is DEFERRABLE INITIALLY DEFERRED — INSERT succeeds, COMMIT
+        fails. The semantic invariant (no orphan rows reach the durable schema)
+        is preserved.
+        """
         db_path = tmp_path / "alembic.db"
         cfg = _alembic_config(db_path)
         command.upgrade(cfg, "head")
@@ -181,19 +192,20 @@ class TestFkTighteningMigration:
                 conn.execute(text("PRAGMA foreign_keys = ON"))
                 _insert_process_lifetime(conn)
                 _insert_invocation(conn)
-                with pytest.raises(IntegrityError):
-                    conn.execute(
-                        text(
-                            "INSERT INTO activity_log "
-                            "(entry_id, invocation_id, entry_at, event_type, "
-                            " event_group, position_id, order_id, thesis_id, "
-                            " source, detail_json) "
-                            "VALUES "
-                            "('al-orphan', 'inv-1', '2026-05-08T12:00:00Z', "
-                            " 'POSITION_OPENED', 'POSITION_LIFECYCLE', "
-                            " 'no-such-pos', NULL, NULL, 'COMMAND_EXECUTOR', '{}')"
-                        )
+            with pytest.raises(IntegrityError), eng.begin() as conn:
+                conn.execute(text("PRAGMA foreign_keys = ON"))
+                conn.execute(
+                    text(
+                        "INSERT INTO activity_log "
+                        "(entry_id, invocation_id, entry_at, event_type, "
+                        " event_group, position_id, order_id, thesis_id, "
+                        " source, detail_json) "
+                        "VALUES "
+                        "('al-orphan', 'inv-1', '2026-05-08T12:00:00Z', "
+                        " 'POSITION_OPENED', 'POSITION_LIFECYCLE', "
+                        " 'no-such-pos', NULL, NULL, 'COMMAND_EXECUTOR', '{}')"
                     )
+                )
         finally:
             eng.dispose()
 

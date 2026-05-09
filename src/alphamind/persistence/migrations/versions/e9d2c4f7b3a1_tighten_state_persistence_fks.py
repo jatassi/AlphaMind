@@ -39,6 +39,18 @@ depends_on: str | Sequence[str] | None = None
 # the SQLite default — the parent rows of every child write already exist
 # when the child INSERT runs because Phase 1 / Phase 2 always seed the
 # parent first inside the same transaction.
+#
+# DEFERRABLE rationale: every FK below is DEFERRABLE INITIALLY DEFERRED.
+# Phase 2's OPEN writeback creates position + thesis (+ components) + bracket
+# (+ legs) + entry order + protective leg orders + capital reservation + the
+# pm_decision activity-log entry — ALL in a single transaction. The typed
+# records hold cross-references that produce three real entity cycles
+# (positions↔theses, positions↔brackets, orders↔brackets), and the SQLAlchemy
+# mappers don't declare these FKs (only this migration does), so flush order
+# is unpredictable. Deferring every FK to COMMIT eliminates flush-ordering
+# hazards while preserving full referential integrity. Phase 1 fill
+# integration only references rows that already exist, so deferral is a no-op
+# on its hot path.
 _POSITIONS_FKS = (
     ("fk_positions_thesis_id", ["thesis_id"], "theses", ["thesis_id"]),
     ("fk_positions_bracket_id", ["bracket_id"], "brackets", ["bracket_id"]),
@@ -90,6 +102,8 @@ def upgrade() -> None:
                     columns,
                     target_columns,
                     ondelete="RESTRICT",
+                    deferrable=True,
+                    initially="DEFERRED",
                 )
 
 
