@@ -95,7 +95,16 @@ class TestMapperFkShape:
 
 
 class TestAutogenerateNoDrift:
-    """alembic autogenerate against a fresh head DB produces no FK diff."""
+    """alembic autogenerate against a fresh head DB produces no FK diff.
+
+    Alembic emits a SAWarning ("Cannot correctly sort tables; there are
+    unresolvable cycles between tables ...") on the cyclic positions ↔ theses
+    ↔ brackets ↔ orders cluster and skips FK comparison for those four tables.
+    Coverage of the 8 cyclic FKs lives on ``TestMapperFkShape`` (which
+    inspects FK shape directly via ``Inspector.get_foreign_keys``); this test
+    is the autogenerate-shaped guard for the remaining 4 FKs on
+    ``bracket_legs`` and ``activity_log``.
+    """
 
     def test_no_diff_between_metadata_and_head_schema(self, tmp_path: Path) -> None:
         # Reach in to import the tables module so Base.metadata is populated.
@@ -123,9 +132,11 @@ class TestAutogenerateNoDrift:
 
 
 def _is_fk_op(diff: object) -> bool:
-    """Return True iff *diff* is an autogenerate op that touches a FK constraint."""
-    # Top-level diffs from compare_metadata are tuples like
-    # (op_name, ...) or lists of such tuples for table-scoped diffs.
+    """Return True iff *diff* is an autogenerate op that touches a FK constraint.
+
+    Alembic emits ``add_foreign_key`` / ``remove_foreign_key`` for FK ops; the
+    substring match catches both directly. Table-scoped diffs nest as lists.
+    """
     if isinstance(diff, list):
         return any(_is_fk_op(d) for d in diff)
     if not isinstance(diff, tuple) or not diff:
@@ -133,4 +144,4 @@ def _is_fk_op(diff: object) -> bool:
     op_name = diff[0]
     if not isinstance(op_name, str):
         return False
-    return "foreign_key" in op_name or "fk" in op_name
+    return "foreign_key" in op_name

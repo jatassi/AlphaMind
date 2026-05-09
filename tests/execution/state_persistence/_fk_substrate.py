@@ -15,7 +15,15 @@ from alphamind.execution.state_persistence.tables.brackets import BracketRow
 from alphamind.execution.state_persistence.tables.orders import OrderRow
 from alphamind.execution.state_persistence.tables.positions import PositionRow
 from alphamind.execution.state_persistence.tables.theses import ThesisRow
-from alphamind.portfolio_state.records.orders import BracketStatus, OrderDuration, OrderStatus
+from alphamind.portfolio_state.records.orders import (
+    BracketStatus,
+    OrderClass,
+    OrderDirection,
+    OrderDuration,
+    OrderRole,
+    OrderStatus,
+    OrderType,
+)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     InstrumentType,
@@ -43,7 +51,10 @@ def stub_position_row(
         direction=direction,
         entry_timestamp=None,
         instrument_type=InstrumentType.EQUITY.value,
-        details_json='{"instrument_type":"equity","ticker":"STUB","share_count":0,"average_cost_basis_per_share":0}',
+        details_json=(
+            f'{{"instrument_type":"{InstrumentType.EQUITY.value}",'
+            '"ticker":"STUB","share_count":0,"average_cost_basis_per_share":0}'
+        ),
         execution_history_json="[]",
         realized_pnl_to_date_usd=None,
         corporate_action_adjustment_needed=0,
@@ -77,8 +88,8 @@ def stub_order_row(
     bracket_id: str,
     *,
     position_id: str | None = None,
-    role: str = "ENTRY",
-    direction: str = "BUY",
+    role: str = OrderRole.ENTRY.value,
+    direction: str = OrderDirection.BUY.value,
     status: str = OrderStatus.FILLED.value,
 ) -> OrderRow:
     return OrderRow(
@@ -86,10 +97,10 @@ def stub_order_row(
         position_id=position_id,
         bracket_id=bracket_id,
         order_role=role,
-        order_class="SIMPLE",
-        instrument_spec_json='{"instrument_type":"EQUITY","ticker":"STUB"}',
+        order_class=OrderClass.SIMPLE.value,
+        instrument_spec_json=f'{{"instrument_type":"{InstrumentType.EQUITY.value}","ticker":"STUB"}}',
         direction=direction,
-        order_type="MARKET",
+        order_type=OrderType.MARKET.value,
         quantity=1.0,
         price_parameters_json="{}",
         duration=OrderDuration.DAY.value,

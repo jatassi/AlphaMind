@@ -118,6 +118,7 @@ async def async_engine_and_factory(
     resolves at COMMIT.
     """
     from tests.execution.state_persistence._fk_substrate import (
+        stub_bracket_row,
         stub_order_row,
         stub_position_row,
         stub_thesis_row,
@@ -139,20 +140,7 @@ async def async_engine_and_factory(
         sess.add(stub_thesis_row("thesis-1", "pos-1"))
         sess.add(stub_order_row("ord-1", "brk-stub-1"))
         sess.add(stub_order_row("brk-stub-1-entry", "brk-stub-1"))
-        from alphamind.execution.state_persistence.tables.brackets import BracketRow
-        from alphamind.portfolio_state.records.orders import BracketStatus
-
-        sess.add(
-            BracketRow(
-                bracket_id="brk-stub-1",
-                position_id="pos-1",
-                status=BracketStatus.PENDING_ENTRY.value,
-                entry_order_id="brk-stub-1-entry",
-                entry_window_deadline=None,
-                corporate_action_cancellation_reason=None,
-                modification_history_json="[]",
-            )
-        )
+        sess.add(stub_bracket_row("brk-stub-1", "pos-1", "brk-stub-1-entry"))
         sess.commit()
     sync_engine.dispose()
 
