@@ -632,6 +632,137 @@ async def _seed_activity_log_entry(
         await sess.commit()
 
 
+async def _seed_position_cluster(
+    factory: async_sessionmaker[AsyncSession],
+    position: PositionRecord,
+    thesis: ThesisRecord,
+    bracket: BracketRecord,
+    *extra_orders: OrderRecord,
+) -> None:
+    """Seed position + thesis + bracket in one deferred-FK transaction.
+
+    Pass additional OrderRecord objects via *extra_orders to include them in the
+    same atomic commit (needed when the bracket's entry_order_id or leg order_ids
+    reference specific existing order rows rather than stubs).
+    """
+    from tests.execution.state_persistence._fk_substrate import stub_order_row
+
+    thesis_parent, component_rows = thesis_record_to_rows(thesis)
+    bracket_parent, leg_rows = bracket_record_to_rows(bracket)
+
+    extra_order_ids: set[str] = {rec.order_id for rec in extra_orders}
+    stub_ids_needed: list[str] = [bracket_parent.entry_order_id] + [
+        lrow.order_id for lrow in leg_rows if lrow.order_id is not None
+    ]
+
+    async with factory() as sess:
+        sess.add(position_record_to_row(position))
+        sess.add(thesis_parent)
+        for crow in component_rows:
+            sess.add(crow)
+        for rec in extra_orders:
+            sess.add(order_record_to_row(rec))
+        for oid in stub_ids_needed:
+            if oid not in extra_order_ids:
+                sess.add(stub_order_row(oid, bracket.bracket_id))
+                extra_order_ids.add(oid)
+        sess.add(bracket_parent)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        await sess.commit()
+
+
+async def _seed_stub_positions(
+    factory: async_sessionmaker[AsyncSession],
+    *position_ids: str,
+) -> None:
+    """Seed minimal stub position rows so FKs from theses/brackets/activity_log resolve."""
+    from tests.execution.state_persistence._fk_substrate import stub_position_row
+
+    async with factory() as sess:
+        for pid in position_ids:
+            sess.add(stub_position_row(pid))
+        await sess.commit()
+
+
+async def _seed_thesis_with_stub_position(
+    factory: async_sessionmaker[AsyncSession],
+    record: ThesisRecord,
+) -> None:
+    """Seed thesis + minimal stub position in one deferred-FK transaction."""
+    from tests.execution.state_persistence._fk_substrate import stub_position_row
+
+    parent_row, child_rows = thesis_record_to_rows(record)
+    async with factory() as sess:
+        sess.add(stub_position_row(record.position_id))
+        sess.add(parent_row)
+        for crow in child_rows:
+            sess.add(crow)
+        await sess.commit()
+
+
+async def _seed_bracket_cluster(
+    factory: async_sessionmaker[AsyncSession],
+    record: BracketRecord,
+) -> None:
+    """Seed bracket + position stub + entry-order stub in one deferred-FK transaction.
+
+    All three reference each other (bracket.position_id → positions, bracket.entry_order_id
+    → orders, orders.bracket_id → brackets) so they must commit together.
+    bracket_legs.bracket_id is non-deferred — flush bracket before adding legs.
+    """
+    from tests.execution.state_persistence._fk_substrate import (
+        stub_order_row,
+        stub_position_row,
+    )
+
+    parent_row, leg_rows = bracket_record_to_rows(record)
+    stub_ids_needed: list[str] = [parent_row.entry_order_id] + [
+        lrow.order_id for lrow in leg_rows if lrow.order_id is not None
+    ]
+    async with factory() as sess:
+        sess.add(stub_position_row(record.position_id))
+        for oid in stub_ids_needed:
+            sess.add(stub_order_row(oid, record.bracket_id))
+        sess.add(parent_row)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        await sess.commit()
+
+
+async def _seed_order_cluster(
+    factory: async_sessionmaker[AsyncSession],
+    *records: OrderRecord,
+) -> None:
+    """Seed multiple orders + one position stub + one bracket stub per unique bracket_id.
+
+    All orders in a single transaction so deferred FKs (orders.bracket_id → brackets,
+    brackets.position_id → positions, brackets.entry_order_id → orders) resolve at COMMIT.
+    The first order for each bracket_id is used as the entry_order_id on the stub bracket.
+    """
+    from tests.execution.state_persistence._fk_substrate import (
+        stub_bracket_row,
+        stub_position_row,
+    )
+
+    # Group by bracket_id; first order per bracket becomes entry_order_id.
+    bracket_entry: dict[str, str] = {}
+    for rec in records:
+        if rec.bracket_id not in bracket_entry:
+            bracket_entry[rec.bracket_id] = rec.order_id
+
+    async with factory() as sess:
+        for bkt_id, entry_oid in bracket_entry.items():
+            stub_pos_id = f"stub-pos-{bkt_id}"
+            sess.add(stub_position_row(stub_pos_id))
+            sess.add(stub_bracket_row(bkt_id, stub_pos_id, entry_oid))
+        for rec in records:
+            sess.add(order_record_to_row(rec))
+        await sess.commit()
+
+
 # ---------------------------------------------------------------------------
 # Repository factory helper
 # ---------------------------------------------------------------------------
@@ -730,8 +861,8 @@ async def test_get_active_theses_returns_active_with_components(
         resolution_category=ThesisResolutionCategory.VALIDATED,
         resolution_pnl_usd=250.0,
     )
-    await _seed_thesis(factory, active)
-    await _seed_thesis(factory, resolved)
+    await _seed_thesis_with_stub_position(factory, active)
+    await _seed_thesis_with_stub_position(factory, resolved)
 
     repo = await _build_repo(factory)
     result = await repo.get_active_theses()
@@ -756,8 +887,8 @@ async def test_get_recent_thesis_resolutions_projects_resolved(
         resolution_category=ThesisResolutionCategory.VALIDATED,
         resolution_pnl_usd=250.0,
     )
-    await _seed_thesis(factory, active)
-    await _seed_thesis(factory, resolved)
+    await _seed_thesis_with_stub_position(factory, active)
+    await _seed_thesis_with_stub_position(factory, resolved)
 
     repo = await _build_repo(factory)
     result = await repo.get_recent_thesis_resolutions(lookback_trading_days=5)
@@ -814,10 +945,7 @@ async def test_get_pending_orders_returns_pending_and_partially_filled(
     partially = _make_pending_order(order_id="ord-partial", status=OrderStatus.PARTIALLY_FILLED)
     filled = _make_pending_order(order_id="ord-filled", status=OrderStatus.FILLED)
     cancelled = _make_pending_order(order_id="ord-cancelled", status=OrderStatus.CANCELLED)
-    await _seed_order(factory, pending)
-    await _seed_order(factory, partially)
-    await _seed_order(factory, filled)
-    await _seed_order(factory, cancelled)
+    await _seed_order_cluster(factory, pending, partially, filled, cancelled)
 
     repo = await _build_repo(factory)
     result = await repo.get_pending_orders()
@@ -832,8 +960,8 @@ async def test_get_brackets_for_positions_returns_bracket_with_legs(
     await _seed_minimal_invocation(factory)
     bracket = _make_bracket_record(bracket_id="brk-1", position_id="pos-1")
     other = _make_bracket_record(bracket_id="brk-2", position_id="pos-2")
-    await _seed_bracket(factory, bracket)
-    await _seed_bracket(factory, other)
+    await _seed_bracket_cluster(factory, bracket)
+    await _seed_bracket_cluster(factory, other)
 
     repo = await _build_repo(factory)
     result = await repo.get_brackets_for_positions(position_ids=("pos-1",))
@@ -850,7 +978,7 @@ async def test_get_brackets_for_positions_empty_input_returns_empty(
     _, factory = db
     await _seed_minimal_invocation(factory)
     bracket = _make_bracket_record()
-    await _seed_bracket(factory, bracket)
+    await _seed_bracket_cluster(factory, bracket)
 
     repo = await _build_repo(factory)
     result = await repo.get_brackets_for_positions(position_ids=())
@@ -890,6 +1018,7 @@ async def test_get_recent_pm_decision_log_returns_pm_decisions_in_window(
     await _seed_minimal_invocation(factory)
     other_inv = _make_invocation_record(invocation_id=_PRIOR_INV_ID, start_at=_PRIOR_START)
     await _seed_minimal_invocation_extra(factory, other_inv)
+    await _seed_stub_positions(factory, "pos-1")
     pm_current = _make_pm_decision_entry(entry_id="pm-current")
     pm_prior = _make_pm_decision_entry(
         entry_id="pm-prior", invocation_id=_PRIOR_INV_ID, timestamp=_PRIOR_START
@@ -910,6 +1039,7 @@ async def test_get_position_modification_trail_groups_by_position(
 ) -> None:
     _, factory = db
     await _seed_minimal_invocation(factory)
+    await _seed_stub_positions(factory, "pos-1", "pos-2")
     e1 = _make_position_opened_entry(entry_id="pos-1-open", position_id="pos-1")
     e2 = _make_position_opened_entry(entry_id="pos-2-open", position_id="pos-2")
     await _seed_activity_log_entry(factory, e1)
@@ -1196,13 +1326,45 @@ async def _seed_parity_fixture(
     factory: async_sessionmaker[AsyncSession],
     fx: _ParityFixture,
 ) -> None:
+    """Seed the parity fixture state into the SQL store.
+
+    Seeding order respects FK dependencies:
+    1. Positions first — thesis_id/bracket_id are NULL, so no cyclic deps.
+    2. Thesis — requires position (committed above).
+    3. Bracket cluster — bracket + entry-order stub committed atomically.
+    4. Additional order (the "pending_order" for queries) — uses the bracket
+       that was just committed; must seed in same tx or after bracket commit.
+    5. Cash, drawdown, activity log — no FK on these (or position already committed).
+    """
     await _seed_minimal_invocation(factory)
+    # Step 1: Positions (thesis_id=None, bracket_id=None → no cyclic FK)
     await _seed_position(factory, fx.open_pos)
     await _seed_position(factory, fx.pending_pos)
     await _seed_position(factory, fx.closed_pos)
+    # Step 2: Thesis (position already committed)
     await _seed_thesis(factory, fx.active_thesis)
-    await _seed_bracket(factory, fx.bracket)
-    await _seed_order(factory, fx.pending_order)
+    # Step 3 + 4: Bracket + the test's pending_order in one transaction.
+    # bracket.position_id=pos-1 (committed), bracket.entry_order_id needs a stub,
+    # pending_order.bracket_id=brk-1 needs bracket (committed in same tx).
+    from tests.execution.state_persistence._fk_substrate import stub_order_row
+
+    bracket_parent, leg_rows = bracket_record_to_rows(fx.bracket)
+    stub_ids_needed: list[str] = [bracket_parent.entry_order_id] + [
+        lrow.order_id for lrow in leg_rows if lrow.order_id is not None
+    ]
+    seeded_order_ids = {fx.pending_order.order_id}
+    async with factory() as sess:
+        for oid in stub_ids_needed:
+            if oid not in seeded_order_ids:
+                sess.add(stub_order_row(oid, fx.bracket.bracket_id))
+                seeded_order_ids.add(oid)
+        sess.add(order_record_to_row(fx.pending_order))
+        sess.add(bracket_parent)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        await sess.commit()
+    # Step 5: Cash, drawdown, activity log
     await _seed_cash_ledger(factory, _make_cash_ledger())
     await _seed_drawdown_state(factory, _make_drawdown_state())
     await _seed_activity_log_entry(factory, fx.pm_entry)
@@ -1313,6 +1475,8 @@ async def test_assemble_snapshot_against_sql_repo_produces_populated_snapshot(
     _, factory = db
 
     # Seed a one-position portfolio with a thesis + bracket + cash + drawdown.
+    # Positions seeded first (thesis_id=None, bracket_id=None → no cyclic FK),
+    # then thesis (position exists), then bracket+order atomically.
     await _seed_minimal_invocation(factory)
     await _seed_position(
         factory,
@@ -1326,11 +1490,28 @@ async def test_assemble_snapshot_against_sql_repo_produces_populated_snapshot(
         factory,
         _make_thesis_record(thesis_id="thesis-1", position_id="pos-1"),
     )
-    await _seed_bracket(
-        factory,
-        _make_bracket_record(bracket_id="brk-1", position_id="pos-1"),
-    )
-    await _seed_order(factory, _make_pending_order(order_id="ord-1"))
+    # Bracket and test order seeded atomically: bracket.entry_order_id and
+    # the test order both reference brk-1, so they must commit together.
+    from tests.execution.state_persistence._fk_substrate import stub_order_row
+
+    bracket = _make_bracket_record(bracket_id="brk-1", position_id="pos-1")
+    test_order = _make_pending_order(order_id="ord-1")
+    bracket_parent, leg_rows = bracket_record_to_rows(bracket)
+    stub_ids_needed = [bracket_parent.entry_order_id] + [
+        lrow.order_id for lrow in leg_rows if lrow.order_id is not None
+    ]
+    seeded_order_ids = {test_order.order_id}
+    async with factory() as sess:
+        for oid in stub_ids_needed:
+            if oid not in seeded_order_ids:
+                sess.add(stub_order_row(oid, bracket.bracket_id))
+                seeded_order_ids.add(oid)
+        sess.add(order_record_to_row(test_order))
+        sess.add(bracket_parent)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        await sess.commit()
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
 

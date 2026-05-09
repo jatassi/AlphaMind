@@ -264,7 +264,9 @@ class TestThesesTable:
 
     def test_resolution_category_accepts_cancelled_never_entered(self, session: Session) -> None:
         from alphamind.execution.state_persistence.tables.theses import ThesisRow
+        from tests.execution.state_persistence._fk_substrate import stub_position_row
 
+        session.add(stub_position_row("pos-1"))
         session.add(
             ThesisRow(
                 thesis_id="t-1",
@@ -341,7 +343,9 @@ class TestThesisComponentsTable:
         from alphamind.execution.state_persistence.tables.thesis_components import (
             ThesisComponentRow,
         )
+        from tests.execution.state_persistence._fk_substrate import stub_position_row
 
+        session.add(stub_position_row("pos-1"))
         session.add(
             ThesisRow(
                 thesis_id="t-1",
@@ -382,7 +386,9 @@ class TestThesisComponentsTable:
         from alphamind.execution.state_persistence.tables.thesis_components import (
             ThesisComponentRow,
         )
+        from tests.execution.state_persistence._fk_substrate import stub_position_row
 
+        session.add(stub_position_row("pos-1"))
         session.add(
             ThesisRow(
                 thesis_id="t-1",
@@ -420,7 +426,9 @@ class TestThesisComponentsTable:
         from alphamind.execution.state_persistence.tables.thesis_components import (
             ThesisComponentRow,
         )
+        from tests.execution.state_persistence._fk_substrate import stub_position_row
 
+        session.add(stub_position_row("pos-1"))
         session.add(
             ThesisRow(
                 thesis_id="t-1",
@@ -547,9 +555,11 @@ class TestThesisCodec:
         from alphamind.execution.state_persistence.tables.thesis_components import (
             ThesisComponentRow,
         )
+        from tests.execution.state_persistence._fk_substrate import stub_position_row
 
         record = _resolved_thesis()
         thesis_row, component_rows = record_to_rows(record)
+        session.add(stub_position_row(record.position_id))
         session.add(thesis_row)
         for crow in component_rows:
             session.add(crow)

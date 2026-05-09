@@ -265,6 +265,55 @@ async def _seed_bracket(factory: async_sessionmaker[AsyncSession], record: Brack
         await sess.commit()
 
 
+async def _seed_position_cluster(
+    factory: async_sessionmaker[AsyncSession],
+    position: PositionRecord,
+    thesis: ThesisRecord,
+    bracket: BracketRecord,
+    *extra_orders: Any,
+) -> None:
+    """Seed position + thesis + bracket in a single deferred-FK transaction.
+
+    All three rows reference each other cyclically, so they must commit
+    together.  bracket_legs.bracket_id is a non-deferred FK — the bracket row
+    is flushed before legs are added.
+
+    Pass additional OrderRecord values (already row-converted) via *extra_orders
+    to include them in the same atomic transaction (e.g. a pre-existing
+    protective order that the bracket's entry_order_id references).
+    """
+    from alphamind.execution.state_persistence.tables.orders_codec import (
+        record_to_row as order_record_to_row,
+    )
+    from tests.execution.state_persistence._fk_substrate import stub_order_row
+
+    thesis_row, component_rows = thesis_record_to_rows(thesis)
+    bracket_parent, leg_rows = bracket_record_to_rows(bracket)
+
+    # Collect order_ids that must already exist: entry_order_id + all leg order_ids.
+    stub_ids_needed: list[str] = [bracket_parent.entry_order_id] + [
+        lrow.order_id for lrow in leg_rows if lrow.order_id is not None
+    ]
+    extra_order_ids: set[str] = {r.order_id for r in extra_orders}
+
+    async with factory() as sess:
+        sess.add(position_record_to_row(position))
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        for rec in extra_orders:
+            sess.add(order_record_to_row(rec))
+        for oid in stub_ids_needed:
+            if oid not in extra_order_ids:
+                sess.add(stub_order_row(oid, bracket.bracket_id))
+                extra_order_ids.add(oid)
+        sess.add(bracket_parent)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        await sess.commit()
+
+
 async def _open_handle(
     factory: async_sessionmaker[AsyncSession],
     *,
@@ -992,9 +1041,7 @@ async def test_close_command_writes_close_order_and_emits_order_submitted(
     _, factory = db
     await _seed_invocation_substrate(factory)
     await _seed_cash_ledger(factory)
-    await _seed_position(factory, _open_position())
-    await _seed_thesis(factory, _active_thesis())
-    await _seed_bracket(factory, _active_bracket())
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
 
     envelope = _make_strategist_envelope(commands=(_close_command(position_id="POS-NVDA-001"),))
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
@@ -1028,19 +1075,48 @@ async def test_adjust_command_cancels_old_protective_order_and_submits_new(
     from alphamind.execution.state_persistence.write_paths.phase2 import (
         persist_envelope_outcome,
     )
+    from alphamind.portfolio_state.records.orders import (
+        EquityInstrumentSpec,
+        OrderClass,
+        OrderDirection,
+        OrderDuration,
+        OrderRecord,
+        OrderRole,
+        OrderStatus,
+        OrderType,
+        PriceParameters,
+    )
 
     _, factory = db
     await _seed_invocation_substrate(factory)
     await _seed_cash_ledger(factory)
-    await _seed_position(factory, _open_position())
-    await _seed_thesis(factory, _active_thesis())
-    await _seed_bracket(factory, _active_bracket())
-    await _seed_pending_protective_order(
-        factory,
+    old_stop = OrderRecord(
         order_id="ord-old-stop",
-        bracket_id="BRK-NVDA-1",
         position_id="POS-NVDA-001",
-        thesis_id="THE-NVDA-1",
+        bracket_id="BRK-NVDA-1",
+        role=OrderRole.PRICE_STOP,
+        instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        order_class=OrderClass.OTO,
+        price_parameters=PriceParameters(stop_trigger_price=140.0),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id="alp-ord-old-stop",
+        alpaca_order_id_chain=("alp-ord-old-stop",),
+        submission_timestamp=_NOW - timedelta(hours=1),
+        last_update_timestamp=_NOW - timedelta(hours=1),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id="THE-NVDA-1",
+        originating_pm_command_id=None,
+        age_hours=1.0,
+    )
+    await _seed_position_cluster(
+        factory, _open_position(), _active_thesis(), _active_bracket(), old_stop
     )
 
     envelope = _make_strategist_envelope(commands=(_adjust_command(position_id="POS-NVDA-001"),))
@@ -1057,12 +1133,16 @@ async def test_adjust_command_cancels_old_protective_order_and_submits_new(
         assert old_order is not None
         assert old_order.status == "CANCELLED"
 
+        # Filter for the newly submitted PRICE_STOP order (excluding the old stop
+        # and any stub orders seeded for FK satisfaction, which use ENTRY role).
         new_protective = (
             (
                 await sess.execute(
                     select(OrderRow).where(
                         OrderRow.order_id != "ord-old-stop",
                         OrderRow.bracket_id == "BRK-NVDA-1",
+                        OrderRow.order_role == "PRICE_STOP",
+                        OrderRow.status == "PENDING",
                     )
                 )
             )
@@ -1096,20 +1176,78 @@ async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(
     from alphamind.execution.state_persistence.write_paths.phase2 import (
         persist_envelope_outcome,
     )
+    from alphamind.portfolio_state.records.orders import (
+        EquityInstrumentSpec,
+        OrderClass,
+        OrderDirection,
+        OrderDuration,
+        OrderRecord,
+        OrderRole,
+        OrderStatus,
+        OrderType,
+        PriceParameters,
+    )
 
     _, factory = db
     await _seed_invocation_substrate(factory)
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
-    await _seed_position(factory, _open_position())
-    await _seed_thesis(factory, _active_thesis())
-    await _seed_bracket(factory, _active_bracket())
-    await _seed_pending_entry_order(factory)
-    await _seed_pending_protective_order(
-        factory,
-        order_id="ord-old-stop",
-        bracket_id="BRK-NVDA-1",
+    entry_order_rec = OrderRecord(
+        order_id="ord-entry-1",
         position_id="POS-NVDA-001",
-        thesis_id="THE-NVDA-1",
+        bracket_id="BRK-NVDA-1",
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.MARKET,
+        order_class=OrderClass.BRACKET,
+        price_parameters=PriceParameters(),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id="alp-ord-entry-1",
+        alpaca_order_id_chain=("alp-ord-entry-1",),
+        submission_timestamp=_NOW - timedelta(hours=1),
+        last_update_timestamp=_NOW - timedelta(hours=1),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id="THE-NVDA-1",
+        originating_pm_command_id=None,
+        age_hours=1.0,
+    )
+    old_stop_rec = OrderRecord(
+        order_id="ord-old-stop",
+        position_id="POS-NVDA-001",
+        bracket_id="BRK-NVDA-1",
+        role=OrderRole.PRICE_STOP,
+        instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+        direction=OrderDirection.SELL,
+        order_type=OrderType.STOP,
+        order_class=OrderClass.OTO,
+        price_parameters=PriceParameters(stop_trigger_price=140.0),
+        quantity=10.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id="alp-ord-old-stop",
+        alpaca_order_id_chain=("alp-ord-old-stop",),
+        submission_timestamp=_NOW - timedelta(hours=1),
+        last_update_timestamp=_NOW - timedelta(hours=1),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=10.0,
+        modification_count=0,
+        originating_thesis_id="THE-NVDA-1",
+        originating_pm_command_id=None,
+        age_hours=1.0,
+    )
+    await _seed_position_cluster(
+        factory,
+        _open_position(),
+        _active_thesis(),
+        _active_bracket(),
+        entry_order_rec,
+        old_stop_rec,
     )
 
     envelope = _make_strategist_envelope(commands=(_cancel_command(order_id="ord-entry-1"),))
@@ -1165,9 +1303,7 @@ async def test_add_command_writes_add_entry_order_thesis_component_capital_reser
     _, factory = db
     await _seed_invocation_substrate(factory)
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
-    await _seed_position(factory, _open_position())
-    await _seed_thesis(factory, _active_thesis())
-    await _seed_bracket(factory, _active_bracket())
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
 
     envelope = _make_strategist_envelope(commands=(_add_command(position_id="POS-NVDA-001"),))
     results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
@@ -1213,9 +1349,7 @@ async def test_multi_command_envelope_emits_single_pm_decision(
     _, factory = db
     await _seed_invocation_substrate(factory)
     await _seed_cash_ledger(factory)
-    await _seed_position(factory, _open_position())
-    await _seed_thesis(factory, _active_thesis())
-    await _seed_bracket(factory, _active_bracket())
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
 
     envelope = _make_strategist_envelope(
         commands=(

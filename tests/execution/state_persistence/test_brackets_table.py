@@ -179,15 +179,31 @@ def _three_leg_bracket(
 def _persist(
     session: Session, record: BracketRecord
 ) -> tuple[BracketRow, tuple[BracketLegRow, ...]]:
-    """Insert a bracket + its legs respecting FK ordering.
+    """Insert a bracket + its legs in one deferred-FK transaction.
 
-    SQLAlchemy's UoW does not topologically sort INSERTs across mappers
-    that share only a foreign-key column (no ORM relationship). Tests
-    therefore commit the parent bracket before adding leg rows.
+    All deferrable FKs (brackets.position_id, brackets.entry_order_id,
+    orders.bracket_id, bracket_legs.order_id) are checked at COMMIT, so all
+    rows — stub parents and the real bracket rows — must land in a single
+    transaction.  The legs are flushed after the bracket parent so the
+    non-deferred brackets.bracket_id FK on bracket_legs is satisfied
+    immediately at flush time.
     """
+    from tests.execution.state_persistence._fk_substrate import (
+        stub_order_row,
+        stub_position_row,
+    )
+
     bracket_row, leg_rows = record_to_rows(record)
+    seeded_order_ids: set[str] = set()
+    session.add(stub_position_row(record.position_id))
+    session.add(stub_order_row(record.entry_order_id, record.bracket_id))
+    seeded_order_ids.add(record.entry_order_id)
     session.add(bracket_row)
-    session.commit()
+    session.flush()
+    for leg in record.protective_legs:
+        if leg.order_id is not None and leg.order_id not in seeded_order_ids:
+            session.add(stub_order_row(leg.order_id, record.bracket_id))
+            seeded_order_ids.add(leg.order_id)
     session.add_all(leg_rows)
     session.commit()
     return bracket_row, leg_rows
@@ -305,8 +321,11 @@ class TestBracketLegsTable:
             session.commit()
 
     def test_unique_constraint_rejects_duplicate_leg_index(self, session: Session) -> None:
+        from tests.execution.state_persistence._fk_substrate import stub_order_row
+
         _persist(session, _three_leg_bracket())
 
+        session.add(stub_order_row("ord-other", "brk1"))
         # Insert a leg duplicating the existing leg_index=0 within the bracket.
         session.add(
             BracketLegRow(
@@ -337,10 +356,13 @@ class TestBracketLegsTable:
     def test_check_rejects_unknown_vocabulary_value(
         self, session: Session, field: str, bad_value: str
     ) -> None:
+        from tests.execution.state_persistence._fk_substrate import stub_order_row
+
         # Seed the parent bracket so the FK is satisfied; the CHECK fires
         # on the child insert below.
         _persist(session, _three_leg_bracket())
 
+        session.add(stub_order_row("ord-x", "brk1"))
         kwargs: dict[str, object] = {
             "bracket_leg_id": "brk1::99",
             "bracket_id": "brk1",

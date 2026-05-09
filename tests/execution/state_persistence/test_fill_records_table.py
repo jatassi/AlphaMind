@@ -212,6 +212,31 @@ def engine() -> Iterator[Engine]:
     eng.dispose()
 
 
+def _seed_order_with_bracket(sess: Session) -> None:
+    """Insert process-lifetime, invocation, and the order record with its bracket FK parent.
+
+    orders.bracket_id references brackets.bracket_id (deferrable).
+    brackets.position_id references positions.position_id (deferrable).
+    brackets.entry_order_id references orders.order_id (deferrable).
+    All land in one transaction so the deferred FKs resolve at COMMIT.
+    """
+    from tests.execution.state_persistence._fk_substrate import (
+        stub_bracket_row,
+        stub_position_row,
+    )
+
+    order_row = order_record_to_row(_order_record())
+    sess.add(stub_position_row("stub-pos-fill"))
+    sess.add(order_row)
+    sess.add(
+        stub_bracket_row(
+            order_row.bracket_id,
+            "stub-pos-fill",
+            order_row.order_id,
+        )
+    )
+
+
 @pytest.fixture()
 def session(engine: Engine) -> Iterator[Session]:
     """Sync session pre-seeded with one process-lifetime, invocation, and order row."""
@@ -221,7 +246,7 @@ def session(engine: Engine) -> Iterator[Session]:
         sess.flush()
         sess.add(invocation_record_to_row(_invocation_record()))
         sess.flush()
-        sess.add(order_record_to_row(_order_record()))
+        _seed_order_with_bracket(sess)
         sess.commit()
         yield sess
 
@@ -241,7 +266,7 @@ async def async_engine_and_factory(
         sess.flush()
         sess.add(invocation_record_to_row(_invocation_record()))
         sess.flush()
-        sess.add(order_record_to_row(_order_record()))
+        _seed_order_with_bracket(sess)
         sess.commit()
     sync_engine.dispose()
 
