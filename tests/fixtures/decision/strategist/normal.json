@@ -1,0 +1,240 @@
+{
+  "invocation_id": "20260509T201237Z-verify-strategist-normal",
+  "timestamp": "2026-05-09T20:14:22Z",
+  "mode": "normal",
+  "position_assessments": [
+    {
+      "assessment_id": "SA-1",
+      "position_id": "POS-NVDA",
+      "thesis_id": "THESIS-POS-NVDA",
+      "underlying": "NVDA",
+      "sector": "semis",
+      "thesis_status": "at-risk",
+      "prior_status": "on-track",
+      "recommended_action": "reduce",
+      "action_parameters": {
+        "action": "reduce",
+        "quantity": 2.0,
+        "order_type": "limit",
+        "limit_price": 860.0
+      },
+      "exposure_impact": {
+        "sector_delta_adjusted_change": -1.72,
+        "net_directional_impact": -1.72
+      },
+      "guardrail_validation_result": null,
+      "remedy_flag": null,
+      "status_rationale": "[SA-TECH-3] confirms no NVDA earnings event scheduled within the 72h window, directly contradicting the entry-thesis catalyst assumption of a Q1 earnings print within 48h — that catalyst is misidentified, not just deferred. The operative replacement near-term catalyst is the Trump-China summit on May 13 [SA-TECH-4, QR-2], with asymmetric downside at the 26% cancellation probability given NVDA's export-control exposure on a name [QR-2] characterizes as pre-loaded for a constructive outcome. Concurrently, AVGO:NVDA at 3.952σ [CR-53] and MRVL:NVDA at 4.60σ [CR-242] document NVDA diverging downward in relative terms — the semis breadth [SA-TECH-1] is real but routing to memory (MU +77.56% per AR-3) and legacy peers, not NVDA. Reclassifying from prior on-track to at-risk: the entry catalyst is falsified, the replacement catalyst is binary-asymmetric to the downside, and peer relative strength has weakened.",
+      "action_rationale": "Reduce 2 shares (1.72% of portfolio) to bring sizing from 4.3% (CRITICAL proximity to per-position cap) to ~2.58%, well clear of the 5.0% limit. Reduce rather than close because the rotation thesis [AR-5] is directionally aligned with the residual long, and the Trump-China summit could resolve constructive at the 74% probability — the residual sizing reflects that asymmetry rather than abandoning the name.",
+      "reduce_rationale": "Quantity (2 shares) chosen to (a) clear the CRITICAL position-proximity flag with buffer and (b) approximately halve catalyst-binary exposure ahead of May 13. Full close would over-correct given the 74% summit-occurs probability and the directional alignment with the AR-5 rotation; 1-share reduction would only nominally address the at-risk classification.",
+      "add_conviction_justification": null,
+      "adjustment_rationale": null,
+      "remedy_rationale": null,
+      "cross_position_observations": "Pending order ORD-POS-NVDA-PEND would add to this position at $853.38 — see SA-ORD-1; cancelling that order is consistent with this reduce.",
+      "component_health": [
+        {
+          "component_id": "entry_rationale",
+          "supporting_signals": [
+            {
+              "name": "sector_momentum_AR-5_rotation_into_AI_growth",
+              "status": "PRESENT"
+            },
+            {
+              "name": "semis_breadth_SA-TECH-1_14-2_advance_decline",
+              "status": "PRESENT"
+            },
+            {
+              "name": "NVDA_peer_relative_strength_CR-53_CR-242",
+              "status": "WEAKENED"
+            },
+            {
+              "name": "Q1_earnings_catalyst_within_48h_SA-TECH-3",
+              "status": "REVERSED"
+            }
+          ]
+        },
+        {
+          "component_id": "invalidation_rationale",
+          "supporting_signals": [
+            {
+              "name": "swing_low_intact_no_current_signal",
+              "status": "PRESENT"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "assessment_id": "SA-2",
+      "position_id": "POS-JPM",
+      "thesis_id": "THESIS-POS-JPM",
+      "underlying": "JPM",
+      "sector": "financials",
+      "thesis_status": "at-risk",
+      "prior_status": "on-track",
+      "recommended_action": "reduce",
+      "action_parameters": {
+        "action": "reduce",
+        "quantity": 7.0,
+        "order_type": "limit",
+        "limit_price": 199.5
+      },
+      "exposure_impact": {
+        "sector_delta_adjusted_change": -1.4,
+        "net_directional_impact": -1.4
+      },
+      "guardrail_validation_result": null,
+      "remedy_flag": null,
+      "status_rationale": "[AR-5] identifies financials as the primary loser leg in a moderate-confidence cross-sector rotation into AI/growth, synthesized from 330+ correlation breakdowns and the [CR-352] narrative-lag flag at 6.30σ. [CR-105] places C:JPM at 6.30σ — the highest-magnitude pair in the entire universe — indicating intra-financials divergence at JPM specifically, not just generalized sector weakness around WFC. [SA-FIN-2] documents 13 declines vs. 4 advances with near-universal bearish MACD across financials. The entry-thesis assumption 'sector momentum persists' is directly contradicted. The CPI binary on May 12 [QR-1, SA-FIN-4] is asymmetric: hot print is partially curing for money-center NIM, soft print is the larger and more disruptive repricing per [QR-1]'s positioning-skew framing. Reclassifying from prior on-track to at-risk: named multi-source rotation falsifier, named correlation-cohort breakdown at the held name specifically, and asymmetric binary risk inside 48h.",
+      "action_rationale": "Reduce 7 shares (1.40% of portfolio) — bringing sizing from 3.0% to ~1.6% — to materially de-risk ahead of the CPI binary while preserving residual exposure to the hot-print scenario where JPM-specific NIM benefit cures the at-risk read. Closing would discard that scenario; holding ignores the named multi-source falsifier.",
+      "reduce_rationale": "Roughly half the position quantity. Sized to the strength of the falsifier (multi-source, includes the highest-sigma correlation break in the universe) tempered by the residual hot-CPI scenario and the modest absolute sizing (3.0%, not a top-of-book position).",
+      "add_conviction_justification": null,
+      "adjustment_rationale": null,
+      "remedy_rationale": null,
+      "cross_position_observations": "JPM is the only financials exposure in the book; this reduction is not redundant with other positions. The XLF→SPY one-day lead-lag [CR-13] means financials-sector deterioration historically leads broad-market moves by a session — relevant context for the broader long book but no specific cross-position remediation required this invocation.",
+      "component_health": [
+        {
+          "component_id": "entry_rationale",
+          "supporting_signals": [
+            {
+              "name": "financials_sector_momentum_AR-5_rotation_loser",
+              "status": "REVERSED"
+            },
+            {
+              "name": "intra_financials_cohesion_CR-105_C_JPM_6.30sigma_break",
+              "status": "REVERSED"
+            },
+            {
+              "name": "WFC_anchored_sector_weakness_SA-FIN-1_SA-FIN-2",
+              "status": "STRENGTHENED"
+            },
+            {
+              "name": "money_center_NIM_under_hot_CPI_SA-FIN-4",
+              "status": "PRESENT"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "assessment_id": "SA-3",
+      "position_id": "POS-AAPL",
+      "thesis_id": "THESIS-POS-AAPL",
+      "underlying": "AAPL",
+      "sector": "tech",
+      "thesis_status": "at-risk",
+      "prior_status": "on-track",
+      "recommended_action": "reduce",
+      "action_parameters": {
+        "action": "reduce",
+        "quantity": 3.0,
+        "order_type": "limit",
+        "limit_price": 174.5
+      },
+      "exposure_impact": {
+        "sector_delta_adjusted_change": -0.53,
+        "net_directional_impact": -0.53
+      },
+      "guardrail_validation_result": null,
+      "remedy_flag": null,
+      "status_rationale": "Entry thesis is services-margin expansion. Current invocation contains no signal directly supporting or refuting that thesis component. The AAPL-specific signals present — divergence from semis peers at AAPL:MCHP 3.828σ [CR-16], AAPL:NXPI 4.156σ [CR-17], AAPL:TXN 3.241σ [CR-20], and the Apple-Intel chip-deal headline flagged as tier-3 single-unconfirmed source [SA-TECH-2, SA-TECH-TC-2] — speak to a different storyline (chip-supplier shift, semis-peer decoupling) and resolve in either direction for margins. Reclassifying from prior on-track to at-risk: the on-track classification required a current supporting signal and none exists for the entry rationale. Defaulting to at-risk on the on-track-vs-at-risk ambiguity per the borderline rule, rather than to invalidated, because no signal contradicts the services thesis either.",
+      "action_rationale": "Reduce 3 shares (~0.53% of portfolio) — light trim from 1.8% to ~1.3% — reflecting the absence of supporting signal rather than active deterioration. The position is small enough that a holding-pattern hold could be defensible, but un-guarded hold on at-risk is disallowed and the right action when the entry thesis is unaddressed by current invocation signals is to right-size rather than carry full conviction.",
+      "reduce_rationale": "Light quantity (3 shares) because the at-risk read is from absence of supporting signal, not from a named falsifier. If the next invocation surfaces either margin signal or chip-deal confirmation, the residual position retains optionality on either resolution direction.",
+      "add_conviction_justification": null,
+      "adjustment_rationale": null,
+      "remedy_rationale": null,
+      "cross_position_observations": null,
+      "component_health": [
+        {
+          "component_id": "entry_rationale",
+          "supporting_signals": [
+            {
+              "name": "services_margin_expansion_no_current_signal",
+              "status": "PRESENT"
+            },
+            {
+              "name": "AAPL_decoupling_from_semis_CR-16_CR-17_CR-20",
+              "status": "PRESENT"
+            },
+            {
+              "name": "Apple_Intel_chip_deal_SA-TECH-2_single_source_unconfirmed",
+              "status": "PRESENT"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "assessment_id": "SA-4",
+      "position_id": "POS-XOM",
+      "thesis_id": "THESIS-POS-XOM",
+      "underlying": "XOM",
+      "sector": "energy",
+      "thesis_status": "partially-realized",
+      "prior_status": "partially-realized",
+      "recommended_action": "reduce",
+      "action_parameters": {
+        "action": "reduce",
+        "quantity": 5.0,
+        "order_type": "limit",
+        "limit_price": 109.5
+      },
+      "exposure_impact": {
+        "sector_delta_adjusted_change": -0.55,
+        "net_directional_impact": -0.55
+      },
+      "guardrail_validation_result": null,
+      "remedy_flag": null,
+      "status_rationale": "Prior status partially-realized carries forward unchanged. Current invocation's energy section [SA-ENERGY-1, SA-ENERGY-3, SA-ENERGY-TC-1] frames an anomalous services (SLB +4.78%, BKR +3.87%) over E&P (OXY −6.3%, APA −5.8%, DVN −2.4%) ordering and the LNG divergence; XOM as integrated major is not directly addressed in the brief. Hormuz risk asymmetry is directionally tailwind for energy with a 17.5% [SA-ENERGY-TC-1] de-escalation tail capping upside. No new signal materially supports or refutes the residual partially-realized thesis at the XOM-specific level.",
+      "action_rationale": "Reduce 5 shares (~0.55% of portfolio) to right-size the residual partially-realized position from 2.2% to ~1.65%. Per partially-realized convention, hold-at-full-size requires explicit rationale for why the residual case warrants full sizing; without an XOM-specific signal in this invocation, the honest action is a partial trim of the residual.",
+      "reduce_rationale": "Quantity sized to the absence of a refreshed supporting signal at the underlying-specific level — modest trim rather than full close because the directional setup (Hormuz tailwind, services-vs-EP inversion suggesting market is pricing disruption probability not realized event) remains constructive for XOM as an integrated name with both upstream and downstream exposure.",
+      "add_conviction_justification": null,
+      "adjustment_rationale": null,
+      "remedy_rationale": null,
+      "cross_position_observations": "All four open-position brackets reference AAPL price thresholds ($150 stop / $200 target) regardless of underlying — see portfolio_level_observations.capital_allocation_observations. This is a data-integrity issue, not a strategist parameter to adjust, but it means the recorded bracket distances are uninformative for the actual positions.",
+      "component_health": [
+        {
+          "component_id": "entry_rationale",
+          "supporting_signals": [
+            {
+              "name": "energy_sector_momentum_mixed_services_vs_EP_SA-ENERGY-1",
+              "status": "PRESENT"
+            },
+            {
+              "name": "Hormuz_directional_tailwind_SA-ENERGY-TC-1",
+              "status": "PRESENT"
+            },
+            {
+              "name": "US_Iran_de_escalation_tail_17.5pct_SA-ENERGY-TC-1",
+              "status": "PRESENT"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "pending_order_assessments": [
+    {
+      "pending_order_assessment_id": "SA-ORD-1",
+      "order_id": "ORD-POS-NVDA-PEND",
+      "position_id": "POS-NVDA",
+      "order_type": "entry_limit",
+      "order_age_hours": 2.0,
+      "current_distance_pct": 1.0,
+      "fill_probability_assessment": "plausible",
+      "recommended_action": "cancel",
+      "modification_parameters": null,
+      "linked_position_assessment_id": "SA-1",
+      "drift_rationale": "Add-entry order placed 2h ago at $853.38, +1.0% above current. The order presupposes adding to NVDA on continued strength. Two current-invocation signals overturn that premise: (1) [SA-TECH-3] documents the entry-thesis Q1 earnings catalyst is misidentified — no NVDA earnings in the 72h window; (2) the operative replacement catalyst, Trump-China summit May 13 [SA-TECH-4, QR-2], carries asymmetric downside at 26% cancellation probability with NVDA-specific export-control exposure. Compounding: the position is already at 4.3% (CRITICAL on per-position-cap proximity), and AVGO:NVDA [CR-53] / MRVL:NVDA [CR-242] document NVDA diverging downward in peer-relative terms. Filling this add would push the position above the 5.0% per-position cap into deteriorating peer-relative strength ahead of binary asymmetric downside risk — the canonical sunk_cost_persistence shape that the PM should see flagged here even though the recommendation is cancel.",
+      "action_rationale": "Cancel. The companion position assessment SA-1 reduces POS-NVDA on at-risk classification; allowing a parallel add fill would directly contradict that action and would push sizing through the 5.0% per-position cap. A modify-to-different-level would constitute a new add thesis the analyst should construct on current grounds, not a parameter change to this order."
+    }
+  ],
+  "portfolio_level_observations": {
+    "aggregate_thesis_health": "Four open positions; the book opens this invocation with prior statuses of three on-track (NVDA, JPM, AAPL) and one partially-realized (XOM). Current invocation's signals reclassify all three priors of on-track to at-risk and confirm XOM at partially-realized. The pattern: prior on-track classifications were generic and did not survive cross-reference with current signals — NVDA's entry catalyst is falsified by [SA-TECH-3], JPM's sector-momentum assumption is contradicted by the [AR-5] rotation framing plus the [CR-105] correlation break at the specific name, and AAPL's services-margin thesis has no current supporting signal. The book is long-biased into a moment with two binary catalysts (CPI May 12, Trump-China May 13) inside 48 hours and an active sector-rotation signal pricing financials as the loser leg.",
+    "sector_balance_shifts": "Recommended reductions trim semis (NVDA −1.72%), tech (AAPL −0.53%), financials (JPM −1.40%), and energy (XOM −0.55%). All sectors remain well below the 25% delta-adjusted sector cap with substantial headroom. Net long exposure declines from 20.0% to ~15.8% of portfolio; gross from 20.0% to ~15.8%. The reduce-across-the-board pattern is deliberate ahead of the binary catalysts rather than a defensive posture (regime is normal, drawdown is 0.0%).",
+    "thesis_dependency_warnings": "Two binary catalysts in 41–48 hours create concentrated resolution risk: (1) CPI May 12 [QR-1, SA-FIN-4] directly affects POS-JPM with asymmetric repricing — soft print is the larger and more disruptive scenario per [QR-1] given current 56%-zero-cuts positioning; (2) Trump-China summit May 13 [SA-TECH-4, QR-2] directly affects POS-NVDA with asymmetric downside at 26% cancellation probability. Neither event has a directional consensus estimate available [QR-1]. The XLF→SPY 1-day lead-lag [CR-13] means financials weakness historically transmits to broad market within a session — relevant context for the surviving long book post-trim. No current shared-catalyst dependency between the held positions beyond the broad-tape transmission risk.",
+    "capital_allocation_observations": "Book is materially undersized at 20.0% gross with $70k available capital ($70k of $100k portfolio); recommended reductions further reduce gross to ~15.8%, freeing ~$4k incrementally. Capital deployment is the analyst's domain — flagging the gap so the feedback loop sees it. Separately, all four positions carry brackets referencing AAPL price thresholds ($150 stop / $200 target) regardless of underlying — recorded distance-to-stop and distance-to-target values for POS-NVDA, POS-JPM, POS-XOM are therefore uninformative for actual position management. This is a data-integrity issue (likely a fixture or seed-data artifact), not a strategist parameter the adjust-bracket action is meant to repair, but downstream consumers reading the position context should be aware that bracket-derived risk-reward computations on this book are not meaningful this invocation.",
+    "regime_transition_summary": null,
+    "defensive_posture_summary": null
+  }
+}
