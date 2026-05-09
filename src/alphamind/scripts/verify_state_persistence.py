@@ -190,18 +190,13 @@ def _invocation_record(
     invocation_id: str,
     *,
     start_at: datetime | None = None,
-    phase1_completed_at: datetime | None = None,
 ) -> InvocationRecord:
     started = start_at if start_at is not None else _NOW
     return InvocationRecord(
         invocation_id=invocation_id,
         process_lifetime_id=_PROCESS_ID,
         start_at=started.isoformat().replace("+00:00", "Z"),
-        phase1_completed_at=(
-            None
-            if phase1_completed_at is None
-            else phase1_completed_at.isoformat().replace("+00:00", "Z")
-        ),
+        phase1_completed_at=None,
         phase2_completed_at=None,
         trigger_type="manual",
         trigger_source="verify_state_persistence.py",
@@ -1129,6 +1124,9 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
     from alphamind.execution.state_persistence.repository import (
         build_sql_portfolio_state_repository,
     )
+    from alphamind.execution.state_persistence.write_paths.phase1 import (
+        process_unprocessed_fills,
+    )
     from alphamind.portfolio_state import PortfolioStateConfig
     from alphamind.portfolio_state.assembler import assemble_snapshot
     from alphamind.portfolio_state.pricing import (
@@ -1142,29 +1140,23 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
     try:
         await _seed_process_lifetime(factory)
 
-        # Use real-time so the assembler's age computations against orders Phase
-        # 2 stamped with real ``datetime.now(UTC)`` come out non-negative.
-        now = datetime.now(UTC)
-
-        # Seed a Phase-1-committed invocation row + a Phase-1-uncommitted one
-        # so both branches of the read can be exercised. ``start_at`` is set
-        # one second beyond ``now`` (== snapshot_assembled_at) to satisfy the
-        # snapshot validator's ``pipeline_invocation_started_at >=
-        # snapshot_assembled_at`` invariant, while ``phase1_completed_at``
-        # stays at-or-before ``now`` so the inverse phase1 invariant holds.
+        # Time anchoring: Phase 1's write path stamps ``phase1_completed_at``
+        # to wall time when it runs. The snapshot validator requires
+        # ``phase1_committed_at`` to be at or before ``snapshot_assembled_at``
+        # AND ``pipeline_invocation_started_at`` to be at or after
+        # ``snapshot_assembled_at``. So ``start_at`` is set to a
+        # wall-time-plus-buffer point in the future; later we sample
+        # ``now`` strictly between Phase 1's stamp and that buffered
+        # ``start_at``.
         committed_inv_id = f"{_INV_ID_BASE}-phase-f-committed"
         uncommitted_inv_id = f"{_INV_ID_BASE}-phase-f-uncommitted"
-        committed_record = _invocation_record(
-            committed_inv_id,
-            start_at=now + timedelta(seconds=1),
-            phase1_completed_at=now,
-        )
-        uncommitted_record = _invocation_record(
-            uncommitted_inv_id, start_at=now + timedelta(seconds=1)
-        )
+        future_start = datetime.now(UTC) + timedelta(seconds=5)
+        committed_record = _invocation_record(committed_inv_id, start_at=future_start)
+        uncommitted_record = _invocation_record(uncommitted_inv_id, start_at=future_start)
 
+        # Insert the uncommitted record directly; the committed record gets
+        # inserted by InvocationContext below and then naturally stamped.
         async with factory() as sess:
-            sess.add(invocation_record_to_row(committed_record))
             sess.add(invocation_record_to_row(uncommitted_record))
             await sess.commit()
 
@@ -1174,6 +1166,18 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
         # so the phase is callable in isolation.
         await _seed_cash_ledger_singleton_idempotent(factory)
         await _seed_drawdown_state_singleton_idempotent(factory)
+
+        # Drive Phase 1's natural completion-timestamp stamp on the
+        # committed invocation — no fills remain after Phase C, but the
+        # write path always touches ``phase1_completed_at`` as its final
+        # step before the surrounding context commits.
+        async with InvocationContext(session_factory=factory, record=committed_record) as handle:
+            await process_unprocessed_fills(handle, config=_state_persistence_config())
+
+        # Sample ``now`` between Phase 1's just-completed stamp and the
+        # buffered ``future_start`` so both invariants hold (phase1_at at
+        # or before now, and now at or before future_start).
+        now = datetime.now(UTC)
 
         async def _provider() -> Any:
             return _phase_f_active_risk_parameters()

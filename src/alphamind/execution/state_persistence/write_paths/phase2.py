@@ -38,6 +38,7 @@ from alphamind.execution.state_persistence.invocation_context.activity_log impor
 )
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationHandle,
+    stamp_phase_completion,
 )
 from alphamind.execution.state_persistence.tables.brackets import BracketRow
 from alphamind.execution.state_persistence.tables.brackets_codec import (
@@ -156,6 +157,9 @@ async def persist_envelope_outcome(
         accepted_command_ids.append(result.command_id)
 
     await _emit_pm_decision(handle, envelope=envelope, command_ids=tuple(accepted_command_ids))
+    # Layer-1 parse rejections deliberately skip this — only an accepted
+    # envelope's full writeback counts as a Phase 2 commit.
+    await stamp_phase_completion(handle, column="phase2_completed_at")
 
 
 async def persist_envelope_parse_failure(
@@ -685,7 +689,6 @@ async def _read_cash_row(handle: InvocationHandle) -> CashLedgerRow:
 async def _reserve_capital(handle: InvocationHandle, *, amount_usd: float) -> None:
     cash_row = await _read_cash_row(handle)
     cash_row.reserved_capital_usd = cash_row.reserved_capital_usd + amount_usd
-    cash_row.available_buying_power_usd = cash_row.current_cash_usd - cash_row.reserved_capital_usd
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
 
 
@@ -720,7 +723,6 @@ async def _release_capital(
 ) -> None:
     cash_row = await _read_cash_row(handle)
     cash_row.reserved_capital_usd = max(cash_row.reserved_capital_usd - amount_usd, 0.0)
-    cash_row.available_buying_power_usd = cash_row.current_cash_usd - cash_row.reserved_capital_usd
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
     await _emit(
         handle,

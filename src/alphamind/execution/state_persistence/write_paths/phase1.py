@@ -27,6 +27,7 @@ from alphamind.execution.state_persistence.invocation_context.activity_log impor
 )
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationHandle,
+    stamp_phase_completion,
 )
 from alphamind.execution.state_persistence.tables.bracket_legs import BracketLegRow
 from alphamind.execution.state_persistence.tables.brackets import BracketRow
@@ -192,6 +193,8 @@ async def process_unprocessed_fills(
 
     for activity in ca_activities:
         await _integrate_one_ca_activity(handle, activity)
+
+    await stamp_phase_completion(handle, column="phase1_completed_at")
 
     return Phase1Summary(
         fills_processed=fills_processed,
@@ -611,6 +614,11 @@ async def _apply_cash_movement(
 ) -> float:
     """Debit / credit the cash ledger by the consideration of this fill.
 
+    Buy-side fills additionally drain the per-order capital reservation
+    Phase 2 staked when the order was submitted; the decrement caps at
+    zero (defensive — partial fills, rounding, or mid-flight adjustments
+    can leave the seeded reservation smaller than the fill consideration).
+
     Returns the *signed cash delta* — positive for credits (sell-side
     proceeds), negative for debits (buy-side consideration).
     """
@@ -620,6 +628,10 @@ async def _apply_cash_movement(
     delta = -(consideration + fees) if is_buy else (consideration - fees)
     cash_row = await _read_cash_row_or_raise(handle)
     cash_row.current_cash_usd = cash_row.current_cash_usd + delta
+    if is_buy:
+        cash_row.reserved_capital_usd = max(
+            cash_row.reserved_capital_usd - (consideration + fees), 0.0
+        )
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
     return delta
 

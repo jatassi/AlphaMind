@@ -599,12 +599,19 @@ async def assemble_snapshot(
     # ------------------------------------------------------------------
     # Step 11 — Enrich CashLedger with computed fields
     # ------------------------------------------------------------------
+    # ``available_buying_power_usd`` is a derived field; the persisted
+    # ``cash_ledger`` row is whatever the seed left there (Phase 1 / Phase 2
+    # write paths no longer maintain it). The assembler is the single
+    # source of truth and computes it here using the same canonical
+    # formula as ``true_deployable_capital_usd``.
+    true_deployable = compute_true_deployable_capital_usd(cash_ledger_raw)
     enriched_cash: CashLedger = cash_ledger_raw.model_copy(
         update={
             "cash_pct_of_portfolio": compute_cash_pct_of_portfolio(
                 cash_ledger_raw.current_cash_usd, total_portfolio_value
             ),
-            "true_deployable_capital_usd": compute_true_deployable_capital_usd(cash_ledger_raw),
+            "true_deployable_capital_usd": true_deployable,
+            "available_buying_power_usd": true_deployable,
         }
     )
 

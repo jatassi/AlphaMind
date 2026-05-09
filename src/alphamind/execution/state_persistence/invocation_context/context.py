@@ -14,7 +14,9 @@ writes) can join the same transaction without re-discovering the session.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from types import TracebackType
+from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -22,6 +24,7 @@ from alphamind.execution.state_persistence.invocation_context.records import (
     InvocationRecord,
     invocation_record_to_row,
 )
+from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 
 
 @dataclass(frozen=True)
@@ -92,3 +95,25 @@ class InvocationContext:
         finally:
             await session.close()
             self._session = None
+
+
+_PhaseColumn = Literal["phase1_completed_at", "phase2_completed_at"]
+
+
+async def stamp_phase_completion(handle: InvocationHandle, *, column: _PhaseColumn) -> None:
+    """Set the bound invocation row's phase-completion column to now (UTC).
+
+    Phase 1 / Phase 2 write paths call this as the final step inside the
+    open ``InvocationContext`` transaction so the surrounding commit
+    flips the row from "in flight" to "committed". The SQL repository's
+    snapshot-isolation guard reads ``phase1_completed_at`` and raises
+    ``RepositoryConsistencyError`` when it remains NULL.
+    """
+    row = await handle.session.get(InvocationRow, handle.invocation_id)
+    if row is None:
+        msg = (
+            f"invocations row {handle.invocation_id!r} disappeared mid-transaction; "
+            "InvocationContext should have inserted it on enter"
+        )
+        raise RuntimeError(msg)
+    setattr(row, column, datetime.now(UTC).isoformat().replace("+00:00", "Z"))

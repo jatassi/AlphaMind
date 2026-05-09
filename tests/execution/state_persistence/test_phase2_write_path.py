@@ -67,6 +67,7 @@ from alphamind.execution.state_persistence.tables.cash_ledger import (
 from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
     cash_ledger_record_to_row,
 )
+from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.execution.state_persistence.tables.orders import OrderRow
 from alphamind.execution.state_persistence.tables.positions import PositionRow
 from alphamind.execution.state_persistence.tables.positions_codec import (
@@ -639,6 +640,73 @@ async def test_open_command_writes_position_thesis_bracket_orders_and_events(
     assert EventType.THESIS_CREATED.value in types
     assert EventType.CAPITAL_RESERVED.value in types
     assert EventType.PM_DECISION.value in types
+
+
+async def test_persist_envelope_outcome_stamps_phase2_completion_on_invocation_row(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """An accepted envelope's writeback must set the bound invocation row's
+    phase2_completed_at as the final step of the open transaction so observers
+    can distinguish "Phase 2 in flight" from "Phase 2 committed".
+    """
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    envelope = _make_analyst_envelope(commands=(_open_command(underlying="NVDA"),))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    invocation_id = handle.invocation_id
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        row = await sess.get(InvocationRow, invocation_id)
+        assert row is not None
+        assert row.phase2_completed_at is not None
+        parsed = datetime.fromisoformat(row.phase2_completed_at)
+        assert parsed.tzinfo is not None
+        assert parsed.utcoffset() == timedelta(0)
+
+
+async def test_persist_envelope_parse_failure_does_not_stamp_phase2_completion(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A Layer-1 parse failure is NOT a Phase 2 commit — the audit-trail
+    activity-log entry persists but phase2_completed_at must remain NULL so
+    observers can tell rejection apart from a real Phase 2 commit.
+    """
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_envelope_parse_failure,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+
+    failed_entry = FailedSubmissionEntry(
+        raw_args={"envelope_id": "ENV-REC-99", "garbage": "value"},
+        validation_error_repr="source_provenance: Field required",
+        command_id="inv-2026-05-08T12:00:00Z-aaaa.ENV-REC-99.0.0",
+    )
+
+    ctx, handle = await _open_handle(factory)
+    invocation_id = handle.invocation_id
+    await persist_envelope_parse_failure(
+        handle, failed_entry, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        row = await sess.get(InvocationRow, invocation_id)
+        assert row is not None
+        assert row.phase2_completed_at is None
 
 
 async def _seed_pending_protective_order(

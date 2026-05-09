@@ -1,15 +1,21 @@
 """SQLAlchemy mapping for the ``cash_ledger`` singleton table (story 04e / ALP-362).
 
 A single mutable row representing the portfolio's current cash state — current
-cash, settled cash, reserved capital, available buying power, margin held,
-unsettled proceeds with per-transaction settlement dates. Historical
-reconstruction comes from the activity log, not from this table.
+cash, settled cash, reserved capital, margin held, unsettled proceeds with
+per-transaction settlement dates. Historical reconstruction comes from the
+activity log, not from this table.
 
 The singleton is enforced by a CHECK constraint pinning ``id = 'current'``.
 The persisted column set mirrors the persistent subset of
 :class:`alphamind.portfolio_state.records.CashLedger`; computed read-time
 fields (``cash_pct_of_portfolio``, ``true_deployable_capital_usd``,
 ``regt_excess_*``) are not stored — they are recomputed at delivery time.
+
+``available_buying_power_usd`` is also a derived field — Phase 1 / Phase 2
+write paths do not maintain it and the persisted column carries whatever
+the seed left there. The snapshot assembler overwrites it on read using
+the canonical formula ``settled_cash - reserved - margin_held`` (the same
+formula ``compute_true_deployable_capital_usd`` uses).
 """
 
 from __future__ import annotations

@@ -52,6 +52,7 @@ from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
     drawdown_state_record_to_row,
 )
 from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
+from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.execution.state_persistence.tables.orders import OrderRow
 from alphamind.execution.state_persistence.tables.orders_codec import (
     record_to_row as order_record_to_row,
@@ -1094,3 +1095,153 @@ async def test_quarantined_fill_excluded_without_aborting_batch(
         ).scalar_one()
         pos = position_row_to_record(pos_row)
         assert pos.status == PositionStatus.OPEN
+
+
+async def test_buy_fill_decrements_reserved_capital_to_zero(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A buy fill consuming the full reservation must decrement
+    reserved_capital_usd by the fill consideration. Without this, Phase 2's
+    OPEN reserve and Phase 1's fill double-count: current_cash drops AND
+    reserved_capital stays — overstating committed capital.
+    """
+    from alphamind.execution.state_persistence.write_paths.phase1 import (
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_order(factory, _make_pending_entry_order(quantity=10.0))
+    await _seed_position(factory, _make_pending_position())
+    await _seed_bracket(factory, _make_pending_bracket())
+    await _seed_thesis(factory, _make_active_thesis())
+    # Seed cash with a $1000 reservation already in place (mirroring Phase 2's OPEN).
+    seeded = CashLedger.model_validate(
+        {
+            "current_cash_usd": 100_000.0,
+            "settled_cash_usd": 100_000.0,
+            "reserved_capital_usd": 1_000.0,
+            "available_buying_power_usd": 99_000.0,
+            "margin_held_usd": 0.0,
+            "unsettled_proceeds": (),
+            "cash_pct_of_portfolio": 0.0,
+            "true_deployable_capital_usd": 0.0,
+            "regt_excess_trailing_30d_usd": 0.0,
+            "regt_excess_trailing_90d_usd": 0.0,
+            "regt_excess_lifetime_usd": 0.0,
+        }
+    )
+    await _seed_cash_ledger(factory, seeded)
+    await _seed_drawdown_state(factory)
+    # Buy fill: 10 shares * $100 = $1000 consideration matches the reservation.
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(
+            fill_id="fill-1",
+            fill_price=100.0,
+            fill_quantity=10.0,
+        ),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        # Reservation drained by the fill.
+        assert cash.reserved_capital_usd == pytest.approx(0.0)
+        # Cash debit applied as before.
+        assert cash.current_cash_usd == pytest.approx(99_000.0)
+
+
+async def test_buy_fill_clamps_reserved_capital_decrement_at_zero(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """When the buy-fill consideration exceeds the seeded reservation
+    (partial reservations, rounding, mid-flight adjustments), the
+    decrement must clamp at zero rather than going negative.
+    """
+    from alphamind.execution.state_persistence.write_paths.phase1 import (
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_order(factory, _make_pending_entry_order(quantity=10.0))
+    await _seed_position(factory, _make_pending_position())
+    await _seed_bracket(factory, _make_pending_bracket())
+    await _seed_thesis(factory, _make_active_thesis())
+    # Seed only $500 reserved while the fill consumes $1000.
+    seeded = CashLedger.model_validate(
+        {
+            "current_cash_usd": 100_000.0,
+            "settled_cash_usd": 100_000.0,
+            "reserved_capital_usd": 500.0,
+            "available_buying_power_usd": 99_500.0,
+            "margin_held_usd": 0.0,
+            "unsettled_proceeds": (),
+            "cash_pct_of_portfolio": 0.0,
+            "true_deployable_capital_usd": 0.0,
+            "regt_excess_trailing_30d_usd": 0.0,
+            "regt_excess_trailing_90d_usd": 0.0,
+            "regt_excess_lifetime_usd": 0.0,
+        }
+    )
+    await _seed_cash_ledger(factory, seeded)
+    await _seed_drawdown_state(factory)
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(
+            fill_id="fill-1",
+            fill_price=100.0,
+            fill_quantity=10.0,
+        ),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cash = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash is not None
+        assert cash.reserved_capital_usd == pytest.approx(0.0)
+
+
+async def test_phase1_stamps_completion_timestamp_on_invocation_row(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """After process_unprocessed_fills commits, the bound invocation row's
+    phase1_completed_at must be a valid ISO-8601 UTC timestamp — the SQL
+    repository's snapshot-isolation guard reads this column and raises
+    RepositoryConsistencyError when it is NULL.
+    """
+    from alphamind.execution.state_persistence.write_paths.phase1 import (
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_order(factory, _make_pending_entry_order())
+    await _seed_position(factory, _make_pending_position())
+    await _seed_bracket(factory, _make_pending_bracket())
+    await _seed_thesis(factory, _make_active_thesis())
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+    await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-1"))
+
+    ctx, handle = await _open_handle(factory)
+    invocation_id = handle.invocation_id
+    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        row = await sess.get(InvocationRow, invocation_id)
+        assert row is not None
+        assert row.phase1_completed_at is not None
+        # Must round-trip through fromisoformat (covers both Z-suffix and +00:00 forms).
+        parsed = datetime.fromisoformat(row.phase1_completed_at)
+        assert parsed.tzinfo is not None
+        assert parsed.utcoffset() == timedelta(0)
