@@ -180,6 +180,11 @@ chain), Phase 2 envelope writeback (new position/thesis/bracket/orders
 read parity (`assemble_snapshot` end-to-end + `RepositoryConsistencyError`
 on pre-Phase-1 reads).
 
+Phase E exercises only the Layer-1 `envelope_parse_failed` surface. The
+Layer-2/3 `EventType.ENVELOPE_REJECTED` surface added in ALP-368 (for
+guardrail/risk rejections post-parse) has no dedicated verify phase yet
+— it's covered indirectly through the Phase 2 envelope-writeback round-trip.
+
 `--db-path` defaults to the standard resolution chain (`DATABASE_PATH` env
 var, then `config/main.yaml` `paths.database` key). For ad-hoc verification
 against a fresh DB, the script's runbook documents an in-process snippet
@@ -211,9 +216,11 @@ uv run python scripts/verify_oms_commands.py \
     --db-path "$DB_PATH"
 ```
 
-Verifies four phases against a freshly-migrated DB: canonical Pydantic
-round-trip across all five command variants (OPEN / CLOSE / ADJUST /
-CANCEL / ADD) plus `EngineEnvelope`; command-ID utility (PM derivation
+Verifies four phases against a freshly-migrated DB (the script's `--help`
+labels the trailing summary line "Phase 5", but only four real phases
+run): canonical Pydantic round-trip across all five command variants
+(OPEN / CLOSE / ADJUST / CANCEL / ADD) plus `EngineEnvelope`; command-ID
+utility (PM derivation
 against the `oms-command-ids.md` worked example, engine derivation, parse
 round-trip, `attempt_seq` computation); PM envelope path
 (`build_submit_envelope_mcp_server` → Phase 2 writeback → activity log,
@@ -540,6 +547,10 @@ uv run python scripts/verify_strategist.py \
     --save-fixtures
 ```
 
+Pass `--scenario {normal,defensive_posture,emergency,all}` to re-run a
+single scenario after a transient failure (default is `all`). Each
+scenario is roughly one third of the phase's wall-clock budget.
+
 Verifies, per scenario: schema-valid `StrategistOutput`, Layer-2/3
 cross-field invariants hold (no `unknown_reference`, no
 `assessment_id` collisions, no orphan `linked_position_assessment_id`,
@@ -594,6 +605,10 @@ strategist outputs are constructed in-code.
 uv run python scripts/verify_proposal_pre_processor.py
 ```
 
+Pass `--scenario {normal,halt,emergency,normal_with_breach,all}` to re-run
+a single scenario (default is `all`). Sub-second total runtime so
+selective re-run is rarely needed.
+
 **Outputs.** Four bundle JSON files at
 `tests/fixtures/decision/proposal_pre_processor/{normal,halt,emergency,normal_with_breach}.json`,
 consumed by the PM phase.
@@ -627,6 +642,11 @@ uv run python scripts/verify_pm.py \
     --synthesizer-invocation-id "$INVOCATION_ID" \
     --save-fixtures
 ```
+
+Pass `--scenario {normal,halt,emergency,synchronous_rejection,all}` to
+re-run a single scenario after a transient failure (default is `all`).
+Each scenario is ~5–7 minutes of Opus wall-clock — selective re-run
+materially shortens recovery from a single-scenario blip.
 
 Verifies, per scenario: schema-valid `PMCompletionRecord`,
 parser-clean completion sentinel,
