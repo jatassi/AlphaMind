@@ -7,6 +7,7 @@ detection blocks.
 from __future__ import annotations
 
 import json
+import math
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -35,6 +36,21 @@ from alphamind.distillation.q7._helpers import (
 )
 from alphamind.persistence.models import NewsArticles, NewsArticleTickers
 
+# Min observations the Fisher-z null variance is defined for: ``1/(N-3)``.
+# Below 4 the variance term is undefined or negative; the block declines to
+# emit rather than report a magnitude on a degenerate denominator.
+_FISHER_Z_MIN_SAMPLES: int = 4
+
+# Degrees-of-freedom correction in the Fisher z-transform null variance
+# (``Var(z) = 1/(N-3)``). A property of the atanh-stabilized correlation
+# distribution — not a Class A threshold.
+_FISHER_Z_DF_CORRECTION: int = 3
+
+# Saturating clip applied before ``atanh`` so a perfect ±1 correlation
+# (e.g., a contrived fixture) doesn't blow up the transform. ``atanh(0.9999)``
+# evaluates to ~4.95, which keeps real signal well-separated from the cap.
+_ATANH_CLIP: float = 0.9999
+
 # Topic-tag set defining "regime-relevant" media coverage. The narrative-lag
 # indicator is gated on news articles whose ``topic_tags`` overlap with this
 # set so routine company news doesn't drown out the silence signal — see the
@@ -56,11 +72,16 @@ class CorrelationRegimeChangeConfig:
     Packs the per-window and per-detection thresholds that the orchestrator
     pulls out of :class:`DistillationConfig` into a single immutable record
     so :func:`compute_correlation_regime_change` keeps a tight signature.
+
+    ``correlation_breakdown_sigma`` gates the Fisher-z breakdown test
+    (multiple-comparison-aware default in ``config/distillation.yaml``);
+    ``dispersion_sigma`` gates the cross-stock dispersion z-test against
+    the trailing 20-day distribution.
     """
 
     short_window_days: int
     long_window_days: int
-    correlation_shift_sigma: float
+    correlation_breakdown_sigma: float
     dispersion_window_days: int
     dispersion_sigma: float
     media_silence_hours: int
@@ -89,73 +110,71 @@ def _select_universe_returns(
     return out
 
 
-def _rolling_pair_correlations(
-    *,
-    a_returns: Sequence[float],
-    b_returns: Sequence[float],
-    window: int,
-) -> list[float]:
-    """Sliding-window pair correlations across a returns history.
+def _fisher_z(correlation: float) -> float:
+    """Fisher z-transform with a saturating ±1 clip.
 
-    The output has length ``len(a_returns) - window + 1``, one correlation
-    per window position. Returns ``[]`` when the input is shorter than
-    ``window``.
+    ``atanh`` is undefined at ±1; clipping keeps the transform well-defined
+    on contrived fixtures (perfect correlation or anti-correlation) while
+    leaving real signal far from the cap.
     """
-    n = min(len(a_returns), len(b_returns))
-    if n < window:
-        return []
-    out: list[float] = []
-    for start in range(n - window + 1):
-        out.append(
-            _pearson_correlation(
-                list(a_returns)[start : start + window],
-                list(b_returns)[start : start + window],
-            )
-        )
-    return out
+    clipped = max(-_ATANH_CLIP, min(_ATANH_CLIP, correlation))
+    return math.atanh(clipped)
 
 
 def _correlation_breakdown_blocks(
     *,
-    short_returns: dict[str, list[float]],
     long_returns: dict[str, list[float]],
-    correlation_shift_sigma: float,
+    short_returns: dict[str, list[float]],
+    correlation_breakdown_sigma: float,
     as_of: datetime,
     short_window_days: int,
     long_window_days: int,
 ) -> list[OutputBlock]:
-    """Emit one block per pair whose short-window correlation broke out.
+    """Emit one block per pair whose recent correlation broke from the prior baseline.
 
-    The "broke out" predicate: the deviation between the short and long
-    correlations exceeds ``correlation_shift_sigma`` multiples of the
-    trailing per-pair correlation variance computed via a rolling
-    short-window correlation series over the long-window history.
+    The test is the standard two-sample Fisher z-transform comparing the
+    recent short-window correlation against the *non-overlapping* prior
+    segment of the long window. Magnitude:
+
+    ``|atanh(r_recent) - atanh(r_prior)| / sqrt(1/(N_recent-3) + 1/(N_prior-3))``
+
+    The denominator is the Fisher-information null variance for the
+    difference of two correlation estimates from independent samples — it
+    depends only on the sample sizes. Independence is guaranteed by
+    excluding the short tail from the prior segment.
     """
+    prior_window_days = long_window_days - short_window_days
+    if prior_window_days < _FISHER_Z_MIN_SAMPLES:
+        return []
+    null_stdev = math.sqrt(
+        1.0 / (short_window_days - _FISHER_Z_DF_CORRECTION)
+        + 1.0 / (prior_window_days - _FISHER_Z_DF_CORRECTION)
+    )
+
     short_matrix = _correlation_matrix(short_returns)
-    long_matrix = _correlation_matrix(long_returns)
+    prior_returns: dict[str, list[float]] = {
+        ticker: returns[:-short_window_days] for ticker, returns in long_returns.items()
+    }
+    prior_matrix = _correlation_matrix(prior_returns)
+
     tickers = sorted(short_matrix)
     blocks: list[OutputBlock] = []
     for i, row in enumerate(tickers):
         for col in tickers[i + 1 :]:
-            short_corr = short_matrix[row][col]
-            long_corr = long_matrix[row][col]
-            # Trailing rolling correlations EXCLUDING the most recent
-            # short window — the trailing distribution is the historical
-            # baseline, not the active window we're testing.
-            history_a = list(long_returns.get(row, []))[:-short_window_days]
-            history_b = list(long_returns.get(col, []))[:-short_window_days]
-            rolling = _rolling_pair_correlations(
-                a_returns=history_a,
-                b_returns=history_b,
-                window=short_window_days,
-            )
-            if not rolling:
+            if (
+                min(
+                    len(short_returns.get(row, [])),
+                    len(short_returns.get(col, [])),
+                    len(prior_returns.get(row, [])),
+                    len(prior_returns.get(col, [])),
+                )
+                < _FISHER_Z_MIN_SAMPLES
+            ):
                 continue
-            sigma = statistics.pstdev(rolling)
-            if sigma == 0.0:
-                continue
-            magnitude = abs(short_corr - long_corr) / sigma
-            if magnitude < correlation_shift_sigma:
+            recent_corr = short_matrix[row][col]
+            prior_corr = prior_matrix[row][col]
+            magnitude = abs(_fisher_z(recent_corr) - _fisher_z(prior_corr)) / null_stdev
+            if magnitude < correlation_breakdown_sigma:
                 continue
             state, reason = _calibration_for_window(
                 n_observations=min(
@@ -176,8 +195,10 @@ def _correlation_breakdown_blocks(
                     bootstrap_reason=reason,
                     payload={
                         "pair": [row, col],
-                        "short_correlation": short_corr,
-                        "long_correlation": long_corr,
+                        "short_correlation": recent_corr,
+                        "long_correlation": _pearson_correlation(
+                            long_returns[row], long_returns[col]
+                        ),
                         "deviation_sigma": magnitude,
                         "short_window_days": short_window_days,
                         "long_window_days": long_window_days,
@@ -424,7 +445,7 @@ def compute_correlation_regime_change(
     breakdown_blocks = _correlation_breakdown_blocks(
         short_returns=short_returns,
         long_returns=long_returns,
-        correlation_shift_sigma=config.correlation_shift_sigma,
+        correlation_breakdown_sigma=config.correlation_breakdown_sigma,
         as_of=as_of,
         short_window_days=config.short_window_days,
         long_window_days=config.long_window_days,

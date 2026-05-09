@@ -1230,6 +1230,7 @@ def _valid_distillation_raw() -> dict[str, Any]:
         },
         "narrative_lag": {
             "narrative_lag_correlation_shift_sigma": 1.5,
+            "correlation_breakdown_sigma": 3.0,
             "narrative_lag_media_silence_hours": 12,
         },
         "persistence_windows": {

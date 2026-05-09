@@ -104,7 +104,8 @@ Maintains trailing lead-lag timing estimates per pair (Class B) and flags overdu
 
 | Narrative lag | Default | Rationale |
 |---|---|---|
-| `narrative_lag_correlation_shift_sigma` | 1.5 | Correlation matrix shift exceeding 1.5σ relative to its trailing 60-day variance. Below this, intra-day correlation noise dominates; above it, a real regime shift is likely. |
+| `narrative_lag_correlation_shift_sigma` | 1.5 | Sigma multiple gating the dispersion-shift z-test (today's universe-wide return stdev vs. 20-day trailing distribution) and the intra-sector pair-divergence test (cross-sectional baseline within each sector). Below 1.5σ, intra-day correlation noise dominates; above it, a real regime shift is likely. |
+| `correlation_breakdown_sigma` | 3.0 | Sigma multiple gating the per-pair correlation-breakdown test under the Fisher z-transform. The recent short-window correlation is compared against the non-overlapping prior segment of the long window; the null variance is the standard two-sample Fisher-information form `1/(N_recent-3) + 1/(N_prior-3)`. The 3.0σ value is calibrated for the universe-pair multiplicity (~3,000 simultaneous tests at an 80-ticker universe scale): per-test p ≈ 0.003 → ~9 expected false positives in calm markets, while a coordinated regime shift fires across many pairs simultaneously and remains visible. Distinct from `narrative_lag_correlation_shift_sigma` because the breakdown test runs once per universe pair and so faces a multiple-comparison cost the dispersion and intra-sector tests do not. |
 | `narrative_lag_media_silence_hours` | 12 | Window during which financial media coverage is checked for narrative pickup. If the correlation has shifted but media in this window contains no coverage of the underlying regime, narrative lag is flagged. |
 
 ### Persistence and percentile windows

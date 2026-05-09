@@ -297,7 +297,7 @@ class TestAudienceRouting:
             config=CorrelationRegimeChangeConfig(
                 short_window_days=20,
                 long_window_days=60,
-                correlation_shift_sigma=1.5,
+                correlation_breakdown_sigma=1.5,
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,

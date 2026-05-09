@@ -141,17 +141,11 @@ class TestCorrelationBreakdown:
     def test_correlation_breakdown_fires_when_pair_correlation_shifts(
         self, session: Session
     ) -> None:
-        # Long window: A and B move together (cor ~ 1).
-        # Short window: B inverts (cor ~ -1) → big shift.
+        # Prior 40-day window: A and B move together (cor ~ +1).
+        # Recent 20-day window: B inverts (cor ~ -1) → big Fisher-z shift.
         as_of = datetime(2026, 4, 30, tzinfo=UTC)
         start_day = as_of - timedelta(days=60)
-        # 40 long-window days where A and B move identically each day →
-        # rolling correlation == 1.0 with zero variance — too tight for
-        # a meaningful sigma. Sprinkle small perturbations so the rolling
-        # pstdev is nonzero but bounded; then in the short window B
-        # inverts sharply so the deviation overwhelms the trailing sigma.
         long_returns_a = [0.01, -0.005, 0.008, -0.012, 0.006] * 8
-        # Tiny noise so rolling correlations don't all equal 1.
         long_returns_b = [
             r + (0.00005 if i % 5 else -0.00005) for i, r in enumerate(long_returns_a)
         ]
@@ -162,7 +156,6 @@ class TestCorrelationBreakdown:
         short_b_inverted = [-r for r in short_a]
         a_returns = long_returns_a + short_a
         b_returns = long_returns_b + short_b_inverted
-        # Walk closes.
         a_closes = [100.0]
         b_closes = [100.0]
         for r in a_returns:
@@ -180,7 +173,7 @@ class TestCorrelationBreakdown:
             config=CorrelationRegimeChangeConfig(
                 short_window_days=20,
                 long_window_days=60,
-                correlation_shift_sigma=1.5,
+                correlation_breakdown_sigma=1.5,
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
@@ -192,6 +185,53 @@ class TestCorrelationBreakdown:
         assert breakdown_blocks, "expected at least one correlation breakdown block"
         block = breakdown_blocks[0]
         assert OutputAudience.CORRELATION_REGIME_BRIEF in block.audience
+
+    def test_stable_pair_does_not_fire_or_inflate_magnitude(self, session: Session) -> None:
+        """A pair with stationary correlation across the window must not fire."""
+        as_of = datetime(2026, 4, 30, tzinfo=UTC)
+        start_day = as_of - timedelta(days=60)
+        # 60-day pattern with stable pair correlation across the whole
+        # history — the recent 20-day correlation should not look different
+        # from the prior 40-day correlation.
+        base_returns_a = [0.01, -0.005, 0.008, -0.012, 0.006] * 12
+        base_returns_b = [
+            r + (0.00005 if i % 5 else -0.00005) for i, r in enumerate(base_returns_a)
+        ]
+        a_closes = [100.0]
+        b_closes = [100.0]
+        for r in base_returns_a:
+            a_closes.append(a_closes[-1] * (1.0 + r))
+        for r in base_returns_b:
+            b_closes.append(b_closes[-1] * (1.0 + r))
+        _seed_path(session, ticker="A", closes=a_closes, start_day=start_day)
+        _seed_path(session, ticker="B", closes=b_closes, start_day=start_day)
+        session.commit()
+
+        blocks = compute_correlation_regime_change(
+            session,
+            universe_tickers=("A", "B"),
+            as_of=as_of,
+            config=CorrelationRegimeChangeConfig(
+                short_window_days=20,
+                long_window_days=60,
+                correlation_breakdown_sigma=1.5,
+                dispersion_window_days=20,
+                dispersion_sigma=1.5,
+                media_silence_hours=12,
+            ),
+        )
+
+        # Per-pair breakdown blocks (the dispersion_shift block is also a
+        # ``q7.correlation_breakdown.*`` id; filter it out via the pair shape).
+        pair_blocks = [
+            b
+            for b in blocks
+            if b.block_id.startswith("q7.correlation_breakdown.")
+            and b.block_id != "q7.correlation_breakdown.dispersion_shift"
+        ]
+        assert pair_blocks == [], (
+            f"expected no pair-level breakdowns for a stable pair; got {len(pair_blocks)}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +276,7 @@ class TestDispersionShift:
             config=CorrelationRegimeChangeConfig(
                 short_window_days=20,
                 long_window_days=60,
-                correlation_shift_sigma=1.5,
+                correlation_breakdown_sigma=1.5,
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
@@ -293,7 +333,7 @@ class TestNarrativeLagFlag:
             config=CorrelationRegimeChangeConfig(
                 short_window_days=20,
                 long_window_days=60,
-                correlation_shift_sigma=1.5,
+                correlation_breakdown_sigma=1.5,
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
@@ -352,7 +392,7 @@ class TestNarrativeLagFlag:
             config=CorrelationRegimeChangeConfig(
                 short_window_days=20,
                 long_window_days=60,
-                correlation_shift_sigma=1.5,
+                correlation_breakdown_sigma=1.5,
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,
@@ -409,7 +449,7 @@ class TestNarrativeLagFlag:
             config=CorrelationRegimeChangeConfig(
                 short_window_days=20,
                 long_window_days=60,
-                correlation_shift_sigma=1.5,
+                correlation_breakdown_sigma=1.5,
                 dispersion_window_days=20,
                 dispersion_sigma=1.5,
                 media_silence_hours=12,

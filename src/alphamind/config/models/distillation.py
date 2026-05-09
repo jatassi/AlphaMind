@@ -147,6 +147,7 @@ class NarrativeLag(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     narrative_lag_correlation_shift_sigma: float = Field(ge=0)
+    correlation_breakdown_sigma: float = Field(ge=0)
     narrative_lag_media_silence_hours: int = Field(ge=1)
 
 
