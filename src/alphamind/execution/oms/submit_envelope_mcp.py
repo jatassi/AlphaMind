@@ -37,6 +37,7 @@ from alphamind.decision.portfolio_manager.validation import (
     validate_pm_envelope,
 )
 from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
+from alphamind.execution.oms.command_ids import compute_attempt_seq, derive_pm_command_id
 from alphamind.execution.oms.command_models import (
     AddCommand,
     AdjustCommand,
@@ -242,8 +243,9 @@ class SubmitEnvelopeState:
     count, both of which are deterministic from the envelope alone).
 
     ``invocation_id`` is required (non-empty) — it is interpolated into every
-    synthetic command_id via ``_format_command_id``; an empty value would
-    surface there as malformed IDs like ``inv-.{envelope_id}.0.0``.
+    synthetic command_id via :func:`alphamind.execution.oms.command_ids.derive_pm_command_id`;
+    an empty value would surface there as malformed IDs like
+    ``inv-.{envelope_id}.0.0``.
     """
 
     validation_state: ValidationToolState
@@ -425,7 +427,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
         envelope = _validate_envelope_payload(args)
     except ValidationError as exc:
         envelope_id = str(args.get("envelope_id", "ENV-REC-INVALID"))
-        synthetic_command_id = _format_command_id(
+        synthetic_command_id = _safe_derive_pm_command_id(
             invocation_id=state.invocation_id,
             envelope_id=envelope_id,
             command_ordinal=0,
@@ -601,7 +603,7 @@ def _build_envelope_level_rejection(
     follows Layer-2/3 validation; ``None`` when Layer-1 (Pydantic) parse
     failed and there is no envelope to log.
     """
-    synthetic_command_id = _format_command_id(
+    synthetic_command_id = _safe_derive_pm_command_id(
         invocation_id=invocation_id,
         envelope_id=envelope_id,
         command_ordinal=0,
@@ -661,7 +663,7 @@ def _process_commands(
     the per-command results in command_ordinal order.
     """
     results: list[SubmissionResult] = []
-    attempt_seq = _attempt_seq(envelope)
+    attempt_seq = compute_attempt_seq(envelope)
     for ordinal, command in enumerate(envelope.commands):
         result = _process_one_command(
             command=command,
@@ -685,7 +687,7 @@ def _process_one_command(
     sector_resolver: Callable[[str], str],
 ) -> SubmissionResult:
     """Process one embedded command — translate, validate, format result."""
-    command_id = _format_command_id(
+    command_id = derive_pm_command_id(
         invocation_id=state.invocation_id,
         envelope_id=envelope.envelope_id,
         command_ordinal=command_ordinal,
@@ -755,12 +757,6 @@ def _process_one_command(
     )
 
 
-def _attempt_seq(envelope: PMEnvelope) -> int:
-    """Compute ``attempt_seq`` per oms-command-ids.md: count of post_rejection
-    modifications in the envelope's modifications list."""
-    return sum(1 for m in envelope.modifications if m.phase == "post_rejection")
-
-
 def _command_to_validation_request(
     command: OpenCommand | AddCommand | AdjustCommand,
 ) -> ValidationRequest:
@@ -769,24 +765,34 @@ def _command_to_validation_request(
 
     CLOSE and CANCEL commands are short-circuited at the caller (no projected
     exposure delta) and never reach this function. ADJUST commands carry no
-    new exposure on the stub envelope — for symmetry we still produce a
-    request shape, but the library treats ADJUST as a metadata-only change.
-    Story 03 will refine OPEN / ADD to read real position-size fields and
-    will look up an instrument for ADD via the position-id reference; until
-    then, ADD goes through the same placeholder path as ADJUST.
+    new exposure — they remain metadata-only, but a placeholder request is
+    still produced so the per-command result-list stays uniform. Canonical
+    :class:`AddCommand` has no embedded instrument (it references an existing
+    position by id); the engine-stub does not look up the position from
+    pm_view here, so ADD also routes to the placeholder path. Real exposure
+    projection for ADD lands when the OMS submission engine wires in the
+    position-id resolver (post-engine-stub).
     """
     if isinstance(command, OpenCommand):
         return _build_constructive_request_from_open(command)
-    # AdjustCommand and AddCommand — metadata-only / placeholder until
-    # story 03 lands; canonical AddCommand has no embedded instrument.
+    # AdjustCommand and AddCommand — placeholder shape; the library treats
+    # the request as metadata-only. Real exposure projection for ADD requires
+    # the position-id resolver wired through the OMS submission engine.
     action = ValidationAction.ADD if isinstance(command, AddCommand) else ValidationAction.ADJUST
+    if isinstance(command, AddCommand):
+        size = ValidationSize(
+            quantity=int(command.additional_quantity),
+            dollar_value=command.additional_dollar_value,
+        )
+    else:
+        size = ValidationSize(quantity=1, dollar_value=0.0)
     return ValidationRequest(
         instrument=ValidationInstrument(
             ticker="__PLACEHOLDER__",
             asset_type=InstrumentType.EQUITY,
             direction=Direction.LONG,
         ),
-        size=ValidationSize(quantity=1, dollar_value=0.0),
+        size=size,
         action=action,
     )
 
@@ -795,19 +801,19 @@ def _build_constructive_request_from_open(command: OpenCommand) -> ValidationReq
     """Translate an OPEN command into a validate_guardrail request.
 
     Reads instrument identity (ticker for equity, underlying for option /
-    strategy) via :func:`_instrument_ticker_key`. For sector-concentration
-    and per-rule projection the library needs a notional sizing; the stub
-    uses a token sizing of 1% of portfolio so the projection produces
-    non-degenerate values. Story 03 swaps the token sizing for real fields.
+    strategy) via :func:`_instrument_ticker_key` and sizing
+    (``quantity``, ``dollar_value``) directly from
+    :class:`PositionSize` per the canonical OMS command schema.
     """
     instrument = ValidationInstrument(
         ticker=_instrument_ticker_key(command.instrument),
         asset_type=_OMS_TO_VALIDATION_ASSET[command.instrument.asset_type],
         direction=_OMS_TO_VALIDATION_DIRECTION[_instrument_direction(command.instrument)],
     )
-    # Token $1,000 (1% of $100k default portfolio). The stub does not have
-    # access to the full broker-grade sizing fields.
-    size = ValidationSize(quantity=1, dollar_value=1_000.0)
+    size = ValidationSize(
+        quantity=int(command.position_size.quantity),
+        dollar_value=command.position_size.dollar_value,
+    )
     return ValidationRequest(instrument=instrument, size=size, action=ValidationAction.OPEN)
 
 
@@ -918,21 +924,33 @@ def _build_rejection_payload(*, result: ValidationResult) -> RejectionPayload:
 # ---------------------------------------------------------------------------
 
 
-def _format_command_id(
+def _safe_derive_pm_command_id(
     *,
     invocation_id: str,
     envelope_id: str,
     command_ordinal: int,
     attempt_seq: int,
 ) -> str:
-    """Format a synthetic command_id per ``oms-command-ids.md``.
+    """Derive a synthetic PM command_id; tolerate Layer-1 fallback envelope ids.
 
-    Pattern: ``inv-{invocation_id}.{envelope_id}.{command_ordinal}.{attempt_seq}``.
-    The wrapper prefixes ``inv-`` if the supplied invocation_id does not
-    already start with it so the regex on the design doc holds.
+    Layer-1 parse-failure paths can produce a synthetic ``envelope_id`` that
+    does not match the canonical pattern (e.g., the literal ``ENV-REC-INVALID``
+    fallback when the raw payload omits ``envelope_id`` entirely). The
+    canonical :func:`derive_pm_command_id` raises ``ValueError`` for such
+    inputs; this wrapper catches that case and assembles a structurally
+    well-formed (regex-matching) ID anyway so the failure-log surface stays
+    queryable.
     """
-    prefix = invocation_id if invocation_id.startswith("inv-") else f"inv-{invocation_id}"
-    return f"{prefix}.{envelope_id}.{command_ordinal}.{attempt_seq}"
+    try:
+        return derive_pm_command_id(
+            invocation_id=invocation_id,
+            envelope_id=envelope_id,
+            command_ordinal=command_ordinal,
+            attempt_seq=attempt_seq,
+        )
+    except ValueError:
+        prefix = invocation_id if invocation_id.startswith("inv-") else f"inv-{invocation_id}"
+        return f"{prefix}.{envelope_id}.{command_ordinal}.{attempt_seq}"
 
 
 def _serialize_response(envelope_id: str, results: tuple[SubmissionResult, ...]) -> str:

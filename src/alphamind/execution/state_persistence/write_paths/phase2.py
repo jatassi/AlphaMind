@@ -14,25 +14,35 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import TypeAdapter
 from sqlalchemy import select
 
-from alphamind.decision.portfolio_manager.models import (
-    AddCommand,
-    AdjustCommand,
-    CancelCommand,
-    CloseCommand,
-    OMSCommand,
-    OpenCommand,
-    PMEnvelope,
-)
+from alphamind.decision.portfolio_manager.models import PMEnvelope
 from alphamind.decision.portfolio_manager.validation import ValidationError as PMValidationError
 from alphamind.execution.oms.command_models import (
+    AddCommand,
+    AdjustCommand,
+    BracketAdjustment,
+    BracketOrderParameters,
+    BracketOrderType,
+    CancelCommand,
+    CloseCommand,
+    EntryOrder,
+    EntryOrderType,
     EquityInstrument,
+    EventLeg,
+    InvalidationLeg,
+    NewStopLevel,
+    NewTargetLevel,
+    OMSCommand,
+    OpenCommand,
     OptionInstrument,
+    PriceLeg,
     StrategyInstrument,
+    Target,
+    TimeLeg,
 )
 from alphamind.execution.oms.submit_envelope_mcp import (
     FailedSubmissionEntry,
@@ -90,6 +100,7 @@ from alphamind.portfolio_state.events.activity_log import (
     PMDecisionDetail,
     PMVerdict,
     ThesisComponentAddedDetail,
+    ThesisComponentUpdatedDetail,
     ThesisCreatedDetail,
     ThesisResolvedDetail,
 )
@@ -102,6 +113,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketRecord,
     BracketStatus,
     EquityInstrumentSpec,
+    EventTrigger,
     OrderClass,
     OrderDirection,
     OrderDuration,
@@ -111,10 +123,12 @@ from alphamind.portfolio_state.records.orders import (
     OrderType,
     PriceParameters,
     PriceTrigger,
+    TimeTrigger,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
+    LocateStatus,
     PositionRecord,
     PositionStatus,
 )
@@ -125,13 +139,6 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
-
-# Token sizing the engine-stub uses for OPEN/ADD: $1k = 1% of $100k portfolio.
-# Matches ``alphamind.execution.oms.submit_envelope_mcp._build_constructive_request_from_open``.
-_STUB_TOKEN_DOLLAR_VALUE = 1_000.0
-_STUB_TOKEN_QUANTITY = 1.0
-_STUB_FILL_PRICE = _STUB_TOKEN_DOLLAR_VALUE / _STUB_TOKEN_QUANTITY  # $1000 per share token
-_STUB_STOP_PCT_BELOW_ENTRY = 0.05
 
 # Verdict mapping from PMEnvelope literal to PMVerdict StrEnum the activity log uses.
 _VERDICT_TO_PM_VERDICT: dict[str, PMVerdict] = {
@@ -341,23 +348,48 @@ async def _writeback_open(
     result: SubmissionResult,
 ) -> None:
     """OPEN: insert position (PENDING), thesis (ACTIVE w/ components), bracket
-    (PENDING_ENTRY), entry order, protective stop leg order. Reserve capital.
-    Emit order_submitted, thesis_created, capital_reserved.
+    (PENDING_ENTRY), entry order, take-profit + invalidation leg orders.
+    Reserve capital. Emit order_submitted, thesis_created, capital_reserved.
+
+    Every persisted field traces back to a canonical command field:
+
+    * position quantity ← ``command.position_size.quantity`` (carried at
+      ``share_count=0.0`` until the entry fills, but the entry order quantity
+      is the command's quantity)
+    * entry order parameters ← ``command.entry_order``
+    * bracket protective legs ← ``command.invalidation_legs`` + ``command.target``
+    * thesis summary + components ← ``command.thesis``
+    * capital reservation amount ← ``command.position_size.dollar_value``
     """
     ticker = _instrument_ticker_key(command.instrument)
     timestamp = datetime.now(UTC)
     ids = _new_open_ids(ticker, command_id=result.command_id)
+
+    # Mint per-leg order ids. The bracket carries one TAKE_PROFIT leg from
+    # ``command.target`` plus one leg per ``command.invalidation_legs`` entry
+    # (PRICE_STOP / TIME_EXPIRATION / EVENT_INVALIDATION). Event legs have no
+    # underlying broker order; price/time legs do.
+    target_order_id = f"ORD-{ticker}-target-{_id_suffix(result.command_id)}"
+    invalidation_leg_orders: list[tuple[InvalidationLeg, str | None]] = []
+    for idx, wire_leg in enumerate(command.invalidation_legs):
+        if isinstance(wire_leg, EventLeg):
+            invalidation_leg_orders.append((wire_leg, None))
+        else:
+            invalidation_leg_orders.append(
+                (wire_leg, f"ORD-{ticker}-inv{idx}-{_id_suffix(result.command_id)}")
+            )
 
     position = _build_pending_position(
         position_id=ids["position_id"],
         thesis_id=ids["thesis_id"],
         bracket_id=ids["bracket_id"],
         ticker=ticker,
+        direction=_direction_from_instrument(command.instrument),
     )
     thesis = _build_active_thesis(
         thesis_id=ids["thesis_id"],
         position_id=ids["position_id"],
-        ticker=ticker,
+        thesis=command.thesis,
         timestamp=timestamp,
     )
     bracket = _build_pending_bracket(
@@ -365,26 +397,53 @@ async def _writeback_open(
         position_id=ids["position_id"],
         ticker=ticker,
         entry_order_id=ids["entry_order_id"],
-        stop_leg_order_id=ids["stop_leg_order_id"],
+        target=command.target,
+        target_order_id=target_order_id,
+        invalidation_leg_orders=tuple(invalidation_leg_orders),
     )
-    entry_order = _build_pending_entry_order(
+    entry_order = _build_entry_order_from_command(
         order_id=ids["entry_order_id"],
         position_id=ids["position_id"],
         bracket_id=ids["bracket_id"],
         thesis_id=ids["thesis_id"],
         ticker=ticker,
+        entry_order=command.entry_order,
+        quantity=command.position_size.quantity,
+        direction=_direction_from_instrument(command.instrument),
         pm_command_id=result.command_id,
         timestamp=timestamp,
+        role=OrderRole.ENTRY,
     )
-    stop_leg_order = _build_pending_protective_order(
-        order_id=ids["stop_leg_order_id"],
+    target_order = _build_take_profit_order(
+        order_id=target_order_id,
         position_id=ids["position_id"],
         bracket_id=ids["bracket_id"],
         thesis_id=ids["thesis_id"],
         ticker=ticker,
+        target=command.target,
+        quantity=command.position_size.quantity,
+        direction=_direction_from_instrument(command.instrument),
         pm_command_id=result.command_id,
         timestamp=timestamp,
     )
+    invalidation_orders: list[OrderRecord] = []
+    for wire_leg, leg_order_id in invalidation_leg_orders:
+        if leg_order_id is None or isinstance(wire_leg, EventLeg):
+            continue
+        invalidation_orders.append(
+            _build_invalidation_leg_order(
+                order_id=leg_order_id,
+                position_id=ids["position_id"],
+                bracket_id=ids["bracket_id"],
+                thesis_id=ids["thesis_id"],
+                ticker=ticker,
+                wire_leg=wire_leg,
+                quantity=command.position_size.quantity,
+                direction=_direction_from_instrument(command.instrument),
+                pm_command_id=result.command_id,
+                timestamp=timestamp,
+            )
+        )
 
     handle.session.add(position_record_to_row(position))
     parent_thesis_row, child_rows = thesis_record_to_rows(thesis)
@@ -398,10 +457,12 @@ async def _writeback_open(
     for lrow in leg_rows:
         handle.session.add(lrow)
     handle.session.add(order_record_to_row(entry_order))
-    handle.session.add(order_record_to_row(stop_leg_order))
+    handle.session.add(order_record_to_row(target_order))
+    for inv_order in invalidation_orders:
+        handle.session.add(order_record_to_row(inv_order))
     await handle.session.flush()
 
-    await _reserve_capital(handle, amount_usd=_STUB_TOKEN_DOLLAR_VALUE)
+    await _reserve_capital(handle, amount_usd=command.position_size.dollar_value)
 
     await _emit_order_submitted(
         handle,
@@ -428,7 +489,7 @@ async def _writeback_open(
         order_id=ids["entry_order_id"],
         position_id=ids["position_id"],
         thesis_id=ids["thesis_id"],
-        amount_usd=_STUB_TOKEN_DOLLAR_VALUE,
+        amount_usd=command.position_size.dollar_value,
         timestamp=timestamp,
     )
 
@@ -446,6 +507,18 @@ async def _writeback_close(
 ) -> None:
     """CLOSE: insert close order (status PENDING). Emit order_submitted.
 
+    Reads canonical CloseCommand fields:
+
+    * ``command.quantity`` — numeric (partial close) or ``"all"`` (full close).
+      Numeric values become the close order's ``quantity``; ``"all"`` resolves
+      to the position's full share count.
+    * ``command.order_type`` — ``"market"`` or ``"limit"`` (mapped to
+      :class:`OrderType`).
+    * ``command.limit_price`` — populated for limit orders.
+    * ``command.close_rationale_type`` — feeds the eventual thesis resolution
+      category in Phase 1; recorded on the order via the originating
+      pm_command_id linkage so post-fill processing can re-classify.
+
     The bracket-leg cancellation and position closure happen on the close
     fill in Phase 1 (per design doc: state transitions from fills happen in
     Phase 1).
@@ -457,19 +530,52 @@ async def _writeback_close(
         raise ValueError(msg)
     position = position_row_to_record(pos_row)
 
+    # Resolve quantity from the union: numeric → that quantity; "all" → the
+    # position's full share count.
+    if command.quantity == "all":
+        if isinstance(position.details, EquityPositionDetails):
+            close_qty = position.details.share_count
+        else:
+            close_qty = getattr(position.details, "contract_count", 0.0)
+    else:
+        close_qty = float(command.quantity)
+    # The OrderRecord validator forbids quantity <= 0; partial closes that
+    # somehow round to zero get a minimum-of-one fallback so the persisted
+    # row stays valid (the actual fill quantity is set in Phase 1).
+    if close_qty <= 0:
+        close_qty = 1.0
+
+    if command.order_type == "limit":
+        order_type = OrderType.LIMIT
+        price_parameters = PriceParameters(limit_price=command.limit_price)
+    else:
+        order_type = OrderType.MARKET
+        price_parameters = PriceParameters()
+
     close_order = _build_close_order(
         order_id=_close_order_id(command.position_id, result.command_id),
         position_id=command.position_id,
         bracket_id=position.bracket_id or "",
         thesis_id=position.thesis_id,
         ticker=_position_ticker(position),
-        share_count=position.details.share_count
-        if isinstance(position.details, EquityPositionDetails)
-        else _STUB_TOKEN_QUANTITY,
+        direction=position.direction,
+        quantity=close_qty,
+        order_type=order_type,
+        price_parameters=price_parameters,
         pm_command_id=result.command_id,
         timestamp=timestamp,
     )
     handle.session.add(order_record_to_row(close_order))
+    # CLOSE-specific rationale metadata: close_rationale_type + invalidation_reason
+    # + risk_management_subtype feed the eventual thesis resolution in Phase 1.
+    # We surface them on the order_submitted detail via the order_parameters_json
+    # so the post-fill processor can read them without re-fetching the command.
+    rationale_metadata = {
+        "close_rationale_type": command.close_rationale_type,
+        "invalidation_reason": command.invalidation_reason,
+        "risk_management_subtype": command.risk_management_subtype,
+        "requested_quantity": ("all" if command.quantity == "all" else float(command.quantity)),
+    }
     await _emit_order_submitted(
         handle,
         order=close_order,
@@ -477,6 +583,7 @@ async def _writeback_close(
         thesis_id=position.thesis_id,
         timestamp=timestamp,
         pm_command_id=result.command_id,
+        extra_parameters=rationale_metadata,
     )
 
 
@@ -485,15 +592,44 @@ async def _writeback_close(
 # ---------------------------------------------------------------------------
 
 
+_ADJUST_FIELD_LABELS: dict[str, str] = {
+    "new_stop_level": "stop_level",
+    "new_target_level": "target_level",
+    "new_time_expiration": "time_expiration",
+    "new_event_invalidation": "event_invalidation",
+    "thesis_component_updates": "thesis_components",
+}
+
+
+def _adjust_field_set(command: AdjustCommand) -> str:
+    """Return a deterministic label for whichever change-field(s) are set.
+
+    Multi-field adjustments concatenate the labels separated by ``+`` so a
+    BracketModifiedDetail.field_changed value still pinpoints what moved.
+    """
+    set_labels = [
+        label for attr, label in _ADJUST_FIELD_LABELS.items() if getattr(command, attr) is not None
+    ]
+    return "+".join(set_labels) if set_labels else "no_op"
+
+
 async def _writeback_adjust(
     handle: InvocationHandle,
     *,
     command: AdjustCommand,
     result: SubmissionResult,
 ) -> None:
-    """ADJUST: insert new protective leg order (PENDING), mark old protective
-    orders CANCELLED, append bracket modification history. Emit
-    order_cancelled + order_submitted + bracket_modified.
+    """ADJUST: insert new protective leg order(s) and/or thesis component
+    updates per the change-field(s) set on the canonical command.
+
+    Dispatches on whichever of ``new_stop_level``, ``new_target_level``,
+    ``new_time_expiration``, ``new_event_invalidation``,
+    ``thesis_component_updates`` is set. For each price/time/target leg
+    change, the existing protective order is CANCELLED and a new PENDING
+    replacement is inserted. For thesis_component_updates, no order
+    mutations occur — only the activity-log emit captures the change.
+    ``BracketModifiedDetail.rationale`` is populated from
+    ``command.adjustment_rationale``.
     """
     timestamp = datetime.now(UTC)
     pos_row = await handle.session.get(PositionRow, command.position_id)
@@ -520,25 +656,28 @@ async def _writeback_adjust(
             timestamp=timestamp,
         )
 
-    new_order_id = _adjust_replacement_order_id(command.position_id, result.command_id)
-    new_protective = _build_pending_protective_order(
-        order_id=new_order_id,
-        position_id=command.position_id,
-        bracket_id=position.bracket_id,
-        thesis_id=position.thesis_id,
-        ticker=_position_ticker(position),
-        pm_command_id=result.command_id,
+    new_protective = _build_replacement_protective_order(
+        command=command,
+        position=position,
+        result=result,
         timestamp=timestamp,
     )
-    handle.session.add(order_record_to_row(new_protective))
-    await _emit_order_submitted(
-        handle,
-        order=new_protective,
-        position_id=command.position_id,
-        thesis_id=position.thesis_id,
-        timestamp=timestamp,
-        pm_command_id=result.command_id,
-    )
+    new_order_id: str
+    if new_protective is not None:
+        new_order_id = new_protective.order_id
+        handle.session.add(order_record_to_row(new_protective))
+        await _emit_order_submitted(
+            handle,
+            order=new_protective,
+            position_id=command.position_id,
+            thesis_id=position.thesis_id,
+            timestamp=timestamp,
+            pm_command_id=result.command_id,
+        )
+    else:
+        # Thesis-only adjustments produce no protective replacement; the
+        # bracket modification history still records the adjustment intent.
+        new_order_id = "<no_order>"
 
     await _append_bracket_modification(
         handle,
@@ -547,6 +686,7 @@ async def _writeback_adjust(
         new_order_id=new_order_id,
         timestamp=timestamp,
         pm_command_id=result.command_id,
+        rationale=command.adjustment_rationale,
     )
     await _emit(
         handle,
@@ -557,12 +697,153 @@ async def _writeback_adjust(
         timestamp=timestamp,
         detail=BracketModifiedDetail(
             source=BracketModificationSource.PM,
-            field_changed="protective_leg_order",
+            field_changed=_adjust_field_set(command),
             old_value=",".join(o.order_id for o in cancelled_orders) or "<none>",
             new_value=new_order_id,
-            rationale=f"PM adjust via {result.command_id}",
+            rationale=command.adjustment_rationale,
         ),
     )
+
+    if command.thesis_component_updates is not None and position.thesis_id is not None:
+        for wc in command.thesis_component_updates:
+            component_type = _OMS_COMPONENT_TYPE_TO_PERSISTED[wc.component_type]
+            await _emit(
+                handle,
+                event_type=EventType.THESIS_COMPONENT_UPDATED,
+                order_id=None,
+                position_id=command.position_id,
+                thesis_id=position.thesis_id,
+                timestamp=timestamp,
+                detail=ThesisComponentUpdatedDetail(
+                    component_id=f"{position.thesis_id}-{component_type.value.lower()}",
+                    field_changed="narrative",
+                    old_value="",
+                    new_value=wc.narrative,
+                ),
+            )
+
+
+def _new_stop_level_to_order_shape(
+    stop: NewStopLevel,
+) -> tuple[OrderRole, OrderType, PriceParameters]:
+    if stop.order_type == "limit":
+        return OrderRole.PRICE_STOP, OrderType.LIMIT, PriceParameters(limit_price=stop.limit_price)
+    if stop.order_type == "stop_limit":
+        return (
+            OrderRole.PRICE_STOP,
+            OrderType.STOP_LIMIT,
+            PriceParameters(
+                limit_price=stop.limit_price,
+                stop_trigger_price=stop.trigger_price,
+            ),
+        )
+    return (
+        OrderRole.PRICE_STOP,
+        OrderType.STOP,
+        PriceParameters(stop_trigger_price=stop.trigger_price),
+    )
+
+
+def _new_target_level_to_order_shape(
+    tgt: NewTargetLevel,
+) -> tuple[OrderRole, OrderType, PriceParameters]:
+    if tgt.order_type == "market":
+        return OrderRole.TAKE_PROFIT, OrderType.MARKET, PriceParameters()
+    return OrderRole.TAKE_PROFIT, OrderType.LIMIT, PriceParameters(limit_price=tgt.price)
+
+
+def _build_replacement_protective_order(
+    *,
+    command: AdjustCommand,
+    position: PositionRecord,
+    result: SubmissionResult,
+    timestamp: datetime,
+) -> OrderRecord | None:
+    """Build the replacement protective order for an ADJUST.
+
+    Returns ``None`` for thesis-only or event-only adjustments (no broker
+    order changes — event invalidation is advisory). Stop / target / time
+    changes each map to a single replacement order. When multiple
+    change-fields are set on one command, the precedence is
+    stop -> target -> time so the resulting order is deterministic.
+    """
+    new_order_id = _adjust_replacement_order_id(command.position_id, result.command_id)
+    return _build_replacement_order_for_change_fields(
+        new_order_id=new_order_id,
+        new_stop_level=command.new_stop_level,
+        new_target_level=command.new_target_level,
+        new_time_expiration_present=command.new_time_expiration is not None,
+        position=position,
+        pm_command_id=result.command_id,
+        timestamp=timestamp,
+    )
+
+
+def _build_replacement_order_for_change_fields(
+    *,
+    new_order_id: str,
+    new_stop_level: NewStopLevel | None,
+    new_target_level: NewTargetLevel | None,
+    new_time_expiration_present: bool,
+    position: PositionRecord,
+    pm_command_id: str,
+    timestamp: datetime,
+) -> OrderRecord | None:
+    """Shared replacement-order construction used by ADJUST and ADD's
+    optional ``bracket_adjustment``.
+
+    Returns ``None`` when no protective change-field is set (event-only or
+    thesis-only paths produce no broker order).
+    """
+    if new_stop_level is None and new_target_level is None and not new_time_expiration_present:
+        return None
+    bracket_id = position.bracket_id or ""
+    common: dict[str, Any] = {
+        "order_id": new_order_id,
+        "position_id": position.position_id,
+        "bracket_id": bracket_id,
+        "order_class": OrderClass.OTO,
+        "direction": _order_direction_for_close(position.direction),
+        "quantity": _position_quantity(position),
+        "ticker": _position_ticker(position),
+        "pm_command_id": pm_command_id,
+        "thesis_id": position.thesis_id,
+        "timestamp": timestamp,
+    }
+    if new_stop_level is not None:
+        role, order_type, price_parameters = _new_stop_level_to_order_shape(new_stop_level)
+    elif new_target_level is not None:
+        role, order_type, price_parameters = _new_target_level_to_order_shape(new_target_level)
+    else:
+        # new_time_expiration set: time-stop becomes a market order at deadline.
+        role, order_type, price_parameters = (
+            OrderRole.TIME_STOP,
+            OrderType.MARKET,
+            PriceParameters(),
+        )
+    return _build_pending_order(
+        role=role,
+        order_type=order_type,
+        price_parameters=price_parameters,
+        **common,
+    )
+
+
+def _position_quantity(position: PositionRecord) -> float:
+    """Best-effort quantity for a position used to size replacement orders.
+
+    For OPEN positions, returns the share/contract count from the typed
+    details payload. For PENDING positions (no fills yet), returns ``1.0``
+    so the persisted OrderRecord row's quantity invariant holds; the actual
+    quantity will be set when the entry fills (Phase 1).
+    """
+    if isinstance(position.details, EquityPositionDetails):
+        qty = position.details.share_count
+        return qty if qty > 0 else 1.0
+    contracts = getattr(position.details, "contract_count", None)
+    if isinstance(contracts, int | float) and contracts > 0:
+        return float(contracts)
+    return 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -578,8 +859,12 @@ async def _writeback_cancel(
 ) -> None:
     """CANCEL: mark target order CANCELLED. If the target is an entry leg:
     cancel all bracket legs, resolve thesis CANCELLED, dissolve bracket,
-    release reserved capital. Emit order_cancelled + capital_released +
-    (entry case) thesis_resolved + bracket_dissolved.
+    release reserved capital.
+
+    Reads ``command.order_id`` (target order to cancel) and
+    ``command.cancel_reason`` (drives :class:`OrderCancelledDetail`).
+    Emit order_cancelled + capital_released + (entry case) thesis_resolved
+    + bracket_dissolved.
     """
     del result  # Symmetric dispatch signature; CANCEL reads from command + DB.
     timestamp = datetime.now(UTC)
@@ -592,21 +877,26 @@ async def _writeback_cancel(
     target_row.status = OrderStatus.CANCELLED.value
     target_row.last_update_timestamp = timestamp.isoformat()
 
-    cancel_reason = command.cancel_reason or "pm_cancel"
     await _emit_order_cancelled(
         handle,
         order=target,
         position_id=target.position_id,
         thesis_id=target.originating_thesis_id,
-        cancel_reason=cancel_reason,
+        cancel_reason=command.cancel_reason,
         timestamp=timestamp,
     )
+    # Capital release amount derived from the cancelled order's notional
+    # (quantity * limit/stop price for non-market orders, or zero for market
+    # orders without price parameters — those have no capital reservation
+    # because a market order is filled immediately on submission and the
+    # reservation flowed through Phase 1 already).
+    release_amount = _order_notional_estimate(target)
     await _release_capital(
         handle,
         order_id=target.order_id,
         position_id=target.position_id,
         thesis_id=target.originating_thesis_id,
-        amount_usd=_STUB_TOKEN_DOLLAR_VALUE,
+        amount_usd=release_amount,
         timestamp=timestamp,
     )
 
@@ -641,6 +931,20 @@ async def _writeback_cancel(
         )
 
 
+def _order_notional_estimate(order: OrderRecord) -> float:
+    """Best-effort capital estimate for a cancelled order.
+
+    Uses the order's price parameters (limit price preferred, stop trigger
+    fallback) times the remaining quantity. Falls back to ``0.0`` for market
+    orders with no parameters.
+    """
+    pp = order.price_parameters
+    px = pp.limit_price if pp.limit_price is not None else pp.stop_trigger_price
+    if px is None:
+        return 0.0
+    return float(px) * float(order.remaining_quantity)
+
+
 # ---------------------------------------------------------------------------
 # ADD
 # ---------------------------------------------------------------------------
@@ -653,8 +957,17 @@ async def _writeback_add(
     result: SubmissionResult,
 ) -> None:
     """ADD: insert add-entry order (PENDING). Append a new thesis component.
-    Reserve capital. Emit order_submitted + thesis_component_added +
-    capital_reserved.
+    Reserve capital. Optionally cancel + resubmit modified bracket legs.
+    Emit order_submitted + thesis_component_added + capital_reserved
+    (+ bracket_modified entries if a bracket_adjustment was supplied).
+
+    Reads canonical :class:`AddCommand` fields:
+
+    * ``additional_quantity`` — entry order quantity
+    * ``additional_dollar_value`` — capital reservation amount
+    * ``entry_order`` — order type / price parameters
+    * ``thesis_addition_component`` — appended to the existing thesis
+    * ``bracket_adjustment`` (optional) — cancel + resubmit modified protective legs
 
     Canonical :class:`AddCommand` (story 01a) carries no embedded instrument
     — it references an existing position by id. The ticker is derived from
@@ -674,14 +987,18 @@ async def _writeback_add(
     )
 
     add_order_id = _add_order_id(command.position_id, result.command_id)
-    add_order = _build_add_entry_order(
+    add_order = _build_entry_order_from_command(
         order_id=add_order_id,
         position_id=command.position_id,
         bracket_id=bracket_id,
         thesis_id=position.thesis_id,
         ticker=ticker,
+        entry_order=command.entry_order,
+        quantity=command.additional_quantity,
+        direction=position.direction,
         pm_command_id=result.command_id,
         timestamp=timestamp,
+        role=OrderRole.ADD_ENTRY,
     )
     handle.session.add(order_record_to_row(add_order))
     await _emit_order_submitted(
@@ -695,6 +1012,8 @@ async def _writeback_add(
 
     if position.thesis_id is not None:
         component_id = _new_component_id(position.thesis_id, result.command_id)
+        wire_component_type = command.thesis_addition_component.component_type
+        component_type = _OMS_COMPONENT_TYPE_TO_PERSISTED[wire_component_type]
         await _emit(
             handle,
             event_type=EventType.THESIS_COMPONENT_ADDED,
@@ -704,18 +1023,100 @@ async def _writeback_add(
             timestamp=timestamp,
             detail=ThesisComponentAddedDetail(
                 component_id=component_id,
-                component_type=ThesisComponentType.ENTRY_RATIONALE.value,
+                component_type=component_type.value,
             ),
         )
 
-    await _reserve_capital(handle, amount_usd=_STUB_TOKEN_DOLLAR_VALUE)
+    await _reserve_capital(handle, amount_usd=command.additional_dollar_value)
     await _emit_capital_reserved(
         handle,
         order_id=add_order_id,
         position_id=command.position_id,
         thesis_id=position.thesis_id,
-        amount_usd=_STUB_TOKEN_DOLLAR_VALUE,
+        amount_usd=command.additional_dollar_value,
         timestamp=timestamp,
+    )
+
+    if command.bracket_adjustment is not None:
+        await _apply_bracket_adjustment(
+            handle,
+            adjustment=command.bracket_adjustment,
+            position=position,
+            pm_command_id=result.command_id,
+            timestamp=timestamp,
+        )
+
+
+async def _apply_bracket_adjustment(
+    handle: InvocationHandle,
+    *,
+    adjustment: BracketAdjustment,
+    position: PositionRecord,
+    pm_command_id: str,
+    timestamp: datetime,
+) -> None:
+    """Apply an ADD-time :class:`BracketAdjustment` — cancel old protective
+    legs, insert the replacement, append bracket modification history.
+    """
+    if position.bracket_id is None:
+        return
+    cancelled = await _cancel_pending_protective_orders(
+        handle, bracket_id=position.bracket_id, timestamp=timestamp
+    )
+    for cancelled_order in cancelled:
+        await _emit_order_cancelled(
+            handle,
+            order=cancelled_order,
+            position_id=position.position_id,
+            thesis_id=position.thesis_id,
+            cancel_reason="add_command_bracket_adjustment",
+            timestamp=timestamp,
+        )
+
+    new_order_id = f"ORD-ADD-ADJ-{position.position_id}-{_id_suffix(pm_command_id)}"
+    new_order = _build_replacement_order_for_change_fields(
+        new_order_id=new_order_id,
+        new_stop_level=adjustment.new_stop_level,
+        new_target_level=adjustment.new_target_level,
+        new_time_expiration_present=adjustment.new_time_expiration is not None,
+        position=position,
+        pm_command_id=pm_command_id,
+        timestamp=timestamp,
+    )
+    new_order_label = new_order.order_id if new_order is not None else "<no_order>"
+    if new_order is not None:
+        handle.session.add(order_record_to_row(new_order))
+        await _emit_order_submitted(
+            handle,
+            order=new_order,
+            position_id=position.position_id,
+            thesis_id=position.thesis_id,
+            timestamp=timestamp,
+            pm_command_id=pm_command_id,
+        )
+    await _append_bracket_modification(
+        handle,
+        bracket_id=position.bracket_id,
+        old_order_ids=tuple(o.order_id for o in cancelled),
+        new_order_id=new_order_label,
+        timestamp=timestamp,
+        pm_command_id=pm_command_id,
+        rationale="ADD bracket_adjustment",
+    )
+    await _emit(
+        handle,
+        event_type=EventType.BRACKET_MODIFIED,
+        order_id=None,
+        position_id=position.position_id,
+        thesis_id=position.thesis_id,
+        timestamp=timestamp,
+        detail=BracketModifiedDetail(
+            source=BracketModificationSource.PM,
+            field_changed="bracket_adjustment",
+            old_value=",".join(o.order_id for o in cancelled) or "<none>",
+            new_value=new_order_label,
+            rationale="ADD bracket_adjustment",
+        ),
     )
 
 
@@ -898,6 +1299,7 @@ async def _append_bracket_modification(
     new_order_id: str,
     timestamp: datetime,
     pm_command_id: str,
+    rationale: str = "ADJUST command",
 ) -> None:
     """Append one entry to the bracket's ``modification_history_json``.
 
@@ -918,7 +1320,7 @@ async def _append_bracket_modification(
             field_changed="protective_leg_order",
             old_value=",".join(old_order_ids) or "<none>",
             new_value=new_order_id,
-            rationale="ADJUST command",
+            rationale=rationale,
         ),
     )
     bracket_row.modification_history_json = _MODIFICATION_HISTORY_ADAPTER.dump_json(
@@ -931,25 +1333,100 @@ async def _append_bracket_modification(
 # ---------------------------------------------------------------------------
 
 
-def _build_pending_entry_order(
+# ---------------------------------------------------------------------------
+# Wire-format → persisted-record translation helpers
+# ---------------------------------------------------------------------------
+
+
+_ENTRY_ORDER_TYPE_TO_PERSISTED: dict[EntryOrderType, OrderType] = {
+    "market": OrderType.MARKET,
+    "limit": OrderType.LIMIT,
+    "stop_limit": OrderType.STOP_LIMIT,
+}
+
+
+_BRACKET_ORDER_TYPE_TO_PERSISTED: dict[BracketOrderType, OrderType] = {
+    "market": OrderType.STOP,  # stop-with-market-on-trigger
+    "limit": OrderType.STOP_LIMIT,
+    "stop": OrderType.STOP,
+    "stop_limit": OrderType.STOP_LIMIT,
+}
+
+
+def _direction_from_instrument(
+    instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
+) -> Direction:
+    """Persisted ``Direction`` for an OPEN command's instrument.
+
+    Strategy instruments carry direction per-leg; the position-level direction
+    defaults to LONG (the leg-level direction is preserved on each leg).
+    """
+    if isinstance(instrument, StrategyInstrument):
+        return Direction.LONG
+    return Direction.LONG if instrument.direction == "long" else Direction.SHORT
+
+
+def _order_direction_for_entry(direction: Direction) -> OrderDirection:
+    return OrderDirection.BUY if direction == Direction.LONG else OrderDirection.SELL
+
+
+def _order_direction_for_close(direction: Direction) -> OrderDirection:
+    """Direction of the order that closes a position with the given direction."""
+    return OrderDirection.SELL if direction == Direction.LONG else OrderDirection.BUY
+
+
+def _entry_price_parameters(entry_order: EntryOrder) -> PriceParameters:
+    """Project an ``EntryOrder`` to the persisted ``PriceParameters`` shape."""
+    if entry_order.type == "market":
+        return PriceParameters()
+    if entry_order.type == "limit":
+        return PriceParameters(limit_price=entry_order.limit_price)
+    # stop_limit
+    return PriceParameters(
+        limit_price=entry_order.limit_price, stop_trigger_price=entry_order.stop_price
+    )
+
+
+def _bracket_leg_price_parameters(params: BracketOrderParameters) -> PriceParameters:
+    """Project a wire ``BracketOrderParameters`` to ``PriceParameters``.
+
+    The trigger price comes from the leg's condition (encoded by the caller);
+    the limit price comes from ``params.limit_price`` for limit and stop_limit
+    legs.
+    """
+    if params.order_type == "limit":
+        return PriceParameters(limit_price=params.limit_price)
+    return PriceParameters()
+
+
+def _build_entry_order_from_command(  # noqa: PLR0913 — distinct ID, position, bracket, ticker, role threaded through.
     *,
     order_id: str,
     position_id: str,
     bracket_id: str,
-    thesis_id: str,
+    thesis_id: str | None,
     ticker: str,
+    entry_order: EntryOrder,
+    quantity: float,
+    direction: Direction,
     pm_command_id: str,
     timestamp: datetime,
+    role: OrderRole,
 ) -> OrderRecord:
-    return _build_stub_order(
+    """Build the persisted entry / add-entry order from a canonical EntryOrder."""
+    persisted_order_type = _ENTRY_ORDER_TYPE_TO_PERSISTED[entry_order.type]
+    price_parameters = _entry_price_parameters(entry_order)
+    order_class = OrderClass.SIMPLE if role == OrderRole.ADD_ENTRY else OrderClass.BRACKET
+    return _build_pending_order(
         order_id=order_id,
         position_id=position_id,
         bracket_id=bracket_id,
-        role=OrderRole.ENTRY,
-        order_class=OrderClass.BRACKET,
-        direction=OrderDirection.BUY,
-        order_type=OrderType.MARKET,
-        price_parameters=PriceParameters(),
+        role=role,
+        order_class=order_class,
+        direction=_order_direction_for_entry(direction),
+        order_type=persisted_order_type,
+        price_parameters=price_parameters,
+        quantity=quantity,
         ticker=ticker,
         pm_command_id=pm_command_id,
         thesis_id=thesis_id,
@@ -957,26 +1434,36 @@ def _build_pending_entry_order(
     )
 
 
-def _build_pending_protective_order(
+def _build_take_profit_order(  # noqa: PLR0913 — distinct identifiers + sizing must thread through.
     *,
     order_id: str,
     position_id: str,
     bracket_id: str,
     thesis_id: str | None,
     ticker: str,
+    target: Target,
+    quantity: float,
+    direction: Direction,
     pm_command_id: str,
     timestamp: datetime,
 ) -> OrderRecord:
-    stop_price = _STUB_FILL_PRICE * (1.0 - _STUB_STOP_PCT_BELOW_ENTRY)
-    return _build_stub_order(
+    """Build the persisted take-profit order from a canonical Target."""
+    if target.order_type == "market":
+        order_type = OrderType.MARKET
+        price_parameters = PriceParameters()
+    else:
+        order_type = OrderType.LIMIT
+        price_parameters = PriceParameters(limit_price=target.price)
+    return _build_pending_order(
         order_id=order_id,
         position_id=position_id,
         bracket_id=bracket_id,
-        role=OrderRole.PRICE_STOP,
+        role=OrderRole.TAKE_PROFIT,
         order_class=OrderClass.OTO,
-        direction=OrderDirection.SELL,
-        order_type=OrderType.STOP,
-        price_parameters=PriceParameters(stop_trigger_price=stop_price),
+        direction=_order_direction_for_close(direction),
+        order_type=order_type,
+        price_parameters=price_parameters,
+        quantity=quantity,
         ticker=ticker,
         pm_command_id=pm_command_id,
         thesis_id=thesis_id,
@@ -984,61 +1471,92 @@ def _build_pending_protective_order(
     )
 
 
-def _build_close_order(
+def _build_invalidation_leg_order(  # noqa: PLR0913 — leg construction threads ids + ticker + sizing.
     *,
     order_id: str,
     position_id: str,
     bracket_id: str,
     thesis_id: str | None,
     ticker: str,
-    share_count: float,
+    wire_leg: PriceLeg | TimeLeg,
+    quantity: float,
+    direction: Direction,
     pm_command_id: str,
     timestamp: datetime,
 ) -> OrderRecord:
-    return _build_stub_order(
+    """Build the persisted protective-leg order for a price/time invalidation leg."""
+    persisted_order_type = _BRACKET_ORDER_TYPE_TO_PERSISTED[wire_leg.order_parameters.order_type]
+    if isinstance(wire_leg, PriceLeg):
+        trigger_price = wire_leg.condition.trigger_price
+        if persisted_order_type == OrderType.STOP_LIMIT:
+            price_parameters = PriceParameters(
+                limit_price=wire_leg.order_parameters.limit_price,
+                stop_trigger_price=trigger_price,
+            )
+        else:
+            price_parameters = PriceParameters(stop_trigger_price=trigger_price)
+        role = OrderRole.PRICE_STOP
+    else:
+        # TimeLeg: the broker order is a stop-on-time at the deadline. Persisted
+        # as STOP with a sentinel trigger price (the ledger row's broker-grade
+        # stop price is recorded in the BracketLeg's TimeTrigger; the order row
+        # stops on the deadline at the engine's time-stop monitor).
+        # Persisted limit/stop arithmetic: the protective-leg ``OrderRecord``
+        # mirrors the broker shape; for time-based legs the broker emits a
+        # market order at the deadline, which we record as a market sell with
+        # no price parameters.
+        price_parameters = PriceParameters()
+        persisted_order_type = OrderType.MARKET
+        role = OrderRole.TIME_STOP
+    return _build_pending_order(
+        order_id=order_id,
+        position_id=position_id,
+        bracket_id=bracket_id,
+        role=role,
+        order_class=OrderClass.OTO,
+        direction=_order_direction_for_close(direction),
+        order_type=persisted_order_type,
+        price_parameters=price_parameters,
+        quantity=quantity,
+        ticker=ticker,
+        pm_command_id=pm_command_id,
+        thesis_id=thesis_id,
+        timestamp=timestamp,
+    )
+
+
+def _build_close_order(  # noqa: PLR0913 — close construction threads ids + sizing + price params.
+    *,
+    order_id: str,
+    position_id: str,
+    bracket_id: str,
+    thesis_id: str | None,
+    ticker: str,
+    direction: Direction,
+    quantity: float,
+    order_type: OrderType,
+    price_parameters: PriceParameters,
+    pm_command_id: str,
+    timestamp: datetime,
+) -> OrderRecord:
+    return _build_pending_order(
         order_id=order_id,
         position_id=position_id,
         bracket_id=bracket_id,
         role=OrderRole.CLOSE,
         order_class=OrderClass.SIMPLE,
-        direction=OrderDirection.SELL,
-        order_type=OrderType.MARKET,
-        price_parameters=PriceParameters(),
+        direction=_order_direction_for_close(direction),
+        order_type=order_type,
+        price_parameters=price_parameters,
         ticker=ticker,
         pm_command_id=pm_command_id,
         thesis_id=thesis_id,
         timestamp=timestamp,
-        quantity=max(share_count, _STUB_TOKEN_QUANTITY),
+        quantity=quantity,
     )
 
 
-def _build_add_entry_order(
-    *,
-    order_id: str,
-    position_id: str,
-    bracket_id: str,
-    thesis_id: str | None,
-    ticker: str,
-    pm_command_id: str,
-    timestamp: datetime,
-) -> OrderRecord:
-    return _build_stub_order(
-        order_id=order_id,
-        position_id=position_id,
-        bracket_id=bracket_id,
-        role=OrderRole.ADD_ENTRY,
-        order_class=OrderClass.SIMPLE,
-        direction=OrderDirection.BUY,
-        order_type=OrderType.MARKET,
-        price_parameters=PriceParameters(),
-        ticker=ticker,
-        pm_command_id=pm_command_id,
-        thesis_id=thesis_id,
-        timestamp=timestamp,
-    )
-
-
-def _build_stub_order(  # noqa: PLR0913 — captures every NOT-NULL OrderRecord field once.
+def _build_pending_order(  # noqa: PLR0913 — captures every NOT-NULL OrderRecord field once.
     *,
     order_id: str,
     position_id: str | None,
@@ -1052,7 +1570,7 @@ def _build_stub_order(  # noqa: PLR0913 — captures every NOT-NULL OrderRecord 
     pm_command_id: str,
     thesis_id: str | None,
     timestamp: datetime,
-    quantity: float = _STUB_TOKEN_QUANTITY,
+    quantity: float,
 ) -> OrderRecord:
     return OrderRecord(
         order_id=order_id,
@@ -1092,11 +1610,24 @@ def _build_pending_position(
     thesis_id: str,
     bracket_id: str,
     ticker: str,
+    direction: Direction,
 ) -> PositionRecord:
+    """Build a PENDING position; fills happen in Phase 1, so share_count is 0.
+
+    The position record's ``share_count`` is always zero at OPEN time — the
+    record reflects state, not intent. The OPEN command's
+    ``position_size.quantity`` flows into the entry order; once the entry
+    fills, Phase 1 transitions the position to OPEN and writes the actual
+    share count from the fill.
+    """
+    short_fields_present = direction == Direction.SHORT
     details = EquityPositionDetails(
         ticker=ticker,
         share_count=0.0,
         average_cost_basis_per_share=0.0,
+        borrow_rate_pct=0.0 if short_fields_present else None,
+        locate_status=LocateStatus.LOCATED if short_fields_present else None,
+        margin_held_usd=0.0 if short_fields_present else None,
     )
     return PositionRecord.model_validate(
         {
@@ -1104,7 +1635,7 @@ def _build_pending_position(
             "thesis_id": thesis_id,
             "bracket_id": bracket_id,
             "status": PositionStatus.PENDING,
-            "direction": Direction.LONG,
+            "direction": direction,
             "entry_timestamp": None,
             "details": details,
             "execution_history": (),
@@ -1116,41 +1647,91 @@ def _build_pending_position(
     )
 
 
+_OMS_COMPONENT_TYPE_TO_PERSISTED: dict[str, ThesisComponentType] = {
+    "entry_rationale": ThesisComponentType.ENTRY_RATIONALE,
+    "target_rationale": ThesisComponentType.TARGET_RATIONALE,
+    "invalidation_rationale": ThesisComponentType.INVALIDATION_RATIONALE,
+}
+
+
 def _build_active_thesis(
     *,
     thesis_id: str,
     position_id: str,
-    ticker: str,
+    thesis: Any,
     timestamp: datetime,
 ) -> ThesisRecord:
-    components = tuple(
-        ThesisComponent(
-            component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
-            component_type=ct,
-            linked_bracket_leg_type=None,
-            linked_bracket_leg_id=None,
-            instrument_reference=ticker,
-            narrative=f"Stub {ct.value} narrative for {ticker}",
-            key_assumptions=(KeyAssumption(text=f"{ticker} stub assumption", outcome=None),),
-            generation_timestamp=timestamp,
-            resolution_outcome=None,
-            resolution_notes=None,
+    """Build an ACTIVE thesis from the canonical command's :class:`Thesis`.
+
+    Components are constructed one-per-wire-component; missing required
+    component types (entry / target / invalidation rationale) are filled with
+    placeholder narratives derived from the wire summary so the thesis
+    coverage invariant holds. The wire ``Thesis.summary`` becomes the
+    persisted ``ThesisRecord.summary``; per-component narrative + key
+    assumptions are projected verbatim.
+    """
+    wire_components = list(thesis.components)
+    seen_types = {c.component_type for c in wire_components}
+    summary = thesis.summary
+
+    persisted_components: list[ThesisComponent] = []
+    for wc in wire_components:
+        component_type = _OMS_COMPONENT_TYPE_TO_PERSISTED[wc.component_type]
+        persisted_components.append(
+            ThesisComponent(
+                component_id=f"{thesis_id}-{component_type.value.lower()}",
+                thesis_id=thesis_id,
+                component_type=component_type,
+                linked_bracket_leg_type=None,
+                linked_bracket_leg_id=None,
+                instrument_reference=wc.instrument_reference,
+                narrative=wc.narrative,
+                key_assumptions=tuple(
+                    KeyAssumption(text=a, outcome=None) for a in wc.key_assumptions
+                ),
+                generation_timestamp=timestamp,
+                resolution_outcome=None,
+                resolution_notes=None,
+            )
         )
-        for ct in (
-            ThesisComponentType.ENTRY_RATIONALE,
-            ThesisComponentType.TARGET_RATIONALE,
-            ThesisComponentType.INVALIDATION_RATIONALE,
-        )
+
+    # Coverage backfill: ThesisRecord requires entry / target / invalidation
+    # rationales. Wire-format thesis is producer-validated as having at least
+    # one component but does not enforce mandatory coverage; the writeback
+    # injects placeholder components for any missing required type.
+    required_wire_types = (
+        "entry_rationale",
+        "target_rationale",
+        "invalidation_rationale",
     )
+    for required in required_wire_types:
+        if required in seen_types:
+            continue
+        component_type = _OMS_COMPONENT_TYPE_TO_PERSISTED[required]
+        persisted_components.append(
+            ThesisComponent(
+                component_id=f"{thesis_id}-{component_type.value.lower()}",
+                thesis_id=thesis_id,
+                component_type=component_type,
+                linked_bracket_leg_type=None,
+                linked_bracket_leg_id=None,
+                instrument_reference=summary,
+                narrative=summary,
+                key_assumptions=(KeyAssumption(text=summary, outcome=None),),
+                generation_timestamp=timestamp,
+                resolution_outcome=None,
+                resolution_notes=None,
+            )
+        )
+
     time_expectation_hours = 24.0
     return ThesisRecord(
         thesis_id=thesis_id,
         position_id=position_id,
-        summary=f"Stub thesis for {ticker}",
-        key_catalyst="stub-catalyst",
+        summary=summary,
+        key_catalyst=summary,
         position_size_rationale=None,
-        components=components,
+        components=tuple(persisted_components),
         status=ThesisRecordStatus.ACTIVE,
         generation_timestamp=timestamp,
         time_expectation_hours=time_expectation_hours,
@@ -1163,29 +1744,123 @@ def _build_active_thesis(
     )
 
 
+def _wire_leg_to_bracket_leg(
+    *,
+    leg_id: str,
+    wire_leg: InvalidationLeg,
+    leg_order_id: str | None,
+    ticker: str,
+) -> BracketLeg:
+    """Translate a wire-format invalidation leg to a persisted :class:`BracketLeg`.
+
+    Per parent decision (G), wire-format and persisted leg shapes remain
+    distinct — this helper bridges them at the writeback. Price legs use
+    :class:`PriceTrigger` against the underlying; time legs use
+    :class:`TimeTrigger` with the deadline; event legs use
+    :class:`EventTrigger` (advisory only — no broker order).
+    """
+    if isinstance(wire_leg, PriceLeg):
+        cmp = wire_leg.condition.comparator
+        # PriceTrigger.direction: LTE for stop-on-decline (most common LONG
+        # stop), GTE for stop-on-rise (most common SHORT stop / LONG target).
+        direction: Literal["LTE", "GTE"] = "LTE" if cmp in ("<=", "<") else "GTE"
+        return BracketLeg(
+            leg_id=leg_id,
+            leg_type=BracketLegType.PRICE_STOP,
+            order_id=leg_order_id,
+            trigger=PriceTrigger(
+                underlying_ticker=wire_leg.condition.underlying_trigger or ticker,
+                threshold_usd=wire_leg.condition.trigger_price,
+                direction=direction,
+            ),
+            enforcement=BracketLegEnforcement.MECHANICAL,
+            status=BracketLegStatus.PENDING_ACTIVATION,
+        )
+    if isinstance(wire_leg, TimeLeg):
+        return BracketLeg(
+            leg_id=leg_id,
+            leg_type=BracketLegType.TIME_EXPIRATION,
+            order_id=leg_order_id,
+            trigger=TimeTrigger(deadline=wire_leg.condition.deadline),
+            enforcement=BracketLegEnforcement.MECHANICAL,
+            status=BracketLegStatus.PENDING_ACTIVATION,
+        )
+    # EventLeg — soft, no broker order.
+    return BracketLeg(
+        leg_id=leg_id,
+        leg_type=BracketLegType.EVENT_INVALIDATION,
+        order_id=None,
+        trigger=EventTrigger(description=wire_leg.condition.event_description),
+        enforcement=BracketLegEnforcement.ADVISORY,
+        status=BracketLegStatus.PENDING_ACTIVATION,
+    )
+
+
+def _target_to_bracket_leg(
+    *,
+    leg_id: str,
+    target: Target,
+    target_order_id: str,
+    ticker: str,
+    direction: Direction,
+) -> BracketLeg:
+    """Translate the canonical :class:`Target` to a persisted TAKE_PROFIT leg.
+
+    Long take-profit fires on price >= threshold (GTE); short on price <= (LTE).
+    """
+    return BracketLeg(
+        leg_id=leg_id,
+        leg_type=BracketLegType.TAKE_PROFIT,
+        order_id=target_order_id,
+        trigger=PriceTrigger(
+            underlying_ticker=ticker,
+            threshold_usd=target.price if target.price is not None else 0.01,
+            direction="GTE" if direction == Direction.LONG else "LTE",
+        ),
+        enforcement=BracketLegEnforcement.MECHANICAL,
+        status=BracketLegStatus.PENDING_ACTIVATION,
+    )
+
+
 def _build_pending_bracket(
     *,
     bracket_id: str,
     position_id: str,
     ticker: str,
     entry_order_id: str,
-    stop_leg_order_id: str,
+    target: Target,
+    target_order_id: str,
+    invalidation_leg_orders: tuple[tuple[InvalidationLeg, str | None], ...],
 ) -> BracketRecord:
-    stop_price = _STUB_FILL_PRICE * (1.0 - _STUB_STOP_PCT_BELOW_ENTRY)
-    leg = BracketLeg(
-        leg_id=f"{bracket_id}-leg-stop",
-        leg_type=BracketLegType.PRICE_STOP,
-        order_id=stop_leg_order_id,
-        trigger=PriceTrigger(underlying_ticker=ticker, threshold_usd=stop_price, direction="LTE"),
-        enforcement=BracketLegEnforcement.MECHANICAL,
-        status=BracketLegStatus.PENDING_ACTIVATION,
+    """Build a PENDING_ENTRY bracket.
+
+    Take-profit leg comes from ``target``; one leg per ``invalidation_leg``
+    entry. The bracket record carries no creation timestamp; per-leg
+    submission timestamps live on the broker orders.
+    """
+    target_leg = _target_to_bracket_leg(
+        leg_id=f"{bracket_id}-leg-target",
+        target=target,
+        target_order_id=target_order_id,
+        ticker=ticker,
+        direction=Direction.LONG,
     )
+    invalidation_legs: list[BracketLeg] = []
+    for idx, (wire_leg, leg_order_id) in enumerate(invalidation_leg_orders):
+        invalidation_legs.append(
+            _wire_leg_to_bracket_leg(
+                leg_id=f"{bracket_id}-leg-inv{idx}",
+                wire_leg=wire_leg,
+                leg_order_id=leg_order_id,
+                ticker=ticker,
+            )
+        )
     return BracketRecord(
         bracket_id=bracket_id,
         position_id=position_id,
         status=BracketStatus.PENDING_ENTRY,
         entry_order_id=entry_order_id,
-        protective_legs=(leg,),
+        protective_legs=(target_leg, *invalidation_legs),
         modification_history=(),
         corporate_action_cancellation_reason=None,
         entry_window_deadline=None,
@@ -1253,8 +1928,9 @@ async def _emit_order_submitted(
     thesis_id: str | None,
     timestamp: datetime,
     pm_command_id: str,
+    extra_parameters: dict[str, Any] | None = None,
 ) -> None:
-    parameters = {
+    parameters: dict[str, Any] = {
         "order_id": order.order_id,
         "role": order.role.value,
         "direction": order.direction.value,
@@ -1262,6 +1938,12 @@ async def _emit_order_submitted(
         "quantity": order.quantity,
         "instrument_ticker": getattr(order.instrument_spec, "ticker", ""),
     }
+    if order.price_parameters.limit_price is not None:
+        parameters["limit_price"] = order.price_parameters.limit_price
+    if order.price_parameters.stop_trigger_price is not None:
+        parameters["stop_trigger_price"] = order.price_parameters.stop_trigger_price
+    if extra_parameters:
+        parameters.update(extra_parameters)
     await _emit(
         handle,
         event_type=EventType.ORDER_SUBMITTED,

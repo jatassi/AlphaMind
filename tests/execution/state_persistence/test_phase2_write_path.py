@@ -364,12 +364,17 @@ def _all_pass_position_eval() -> PositionActionEvaluation:
     )
 
 
-def _open_command(underlying: str = "NVDA") -> OpenCommand:
+def _open_command(
+    underlying: str = "NVDA",
+    *,
+    quantity: float = 10.0,
+    dollar_value: float = 10_000.0,
+) -> OpenCommand:
     return OpenCommand(
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker=underlying, direction="long"),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-        position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+        position_size=PositionSize(quantity=quantity, dollar_value=dollar_value),
         target=Target(
             target_type="absolute_price",
             price=950.0,
@@ -417,12 +422,28 @@ def _close_command(position_id: str = "POS-NVDA-001") -> CloseCommand:
     )
 
 
-def _adjust_command(position_id: str = "POS-NVDA-001") -> AdjustCommand:
+def _adjust_command(
+    position_id: str = "POS-NVDA-001",
+    *,
+    with_stop_level: bool = True,
+) -> AdjustCommand:
+    """Build a canonical ADJUST command.
+
+    By default, includes a ``new_stop_level`` so the writeback produces a
+    replacement protective order. Pass ``with_stop_level=False`` for a
+    thesis-only ADJUST that exercises the no-broker-mutation path.
+    """
+    from alphamind.execution.oms.command_models import NewStopLevel
+
     return AdjustCommand(
         command_type="adjust",
         position_id=position_id,
         adjustment_rationale="Tighten stop.",
-        new_stop_level=None,
+        new_stop_level=(
+            NewStopLevel(trigger_price=145.0, order_type="stop", limit_price=None)
+            if with_stop_level
+            else None
+        ),
         new_target_level=None,
         new_time_expiration=None,
         new_event_invalidation=None,
@@ -926,6 +947,59 @@ async def test_open_command_writes_position_thesis_bracket_orders_and_events(
     assert EventType.PM_DECISION.value in types
 
 
+async def test_open_command_persists_real_position_size_and_capital_reservation(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """OPEN writeback reads ``command.position_size`` end-to-end:
+
+    * the entry order's quantity equals ``command.position_size.quantity``
+    * the cash ledger reserves exactly ``command.position_size.dollar_value``
+    * the capital_reserved activity-log detail records the same dollar value.
+
+    Replaces the prior $1k/share token sizing with the real PM intent.
+    """
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    # _open_command builds quantity=10.0, dollar_value=10_000.0.
+    cmd = _open_command(underlying="NVDA")
+    envelope = _make_analyst_envelope(commands=(cmd,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        # Entry order quantity is the command's position_size.quantity, not 1.0.
+        entry_orders = (
+            (await sess.execute(select(OrderRow).where(OrderRow.order_role == "ENTRY")))
+            .scalars()
+            .all()
+        )
+        assert len(entry_orders) == 1
+        assert entry_orders[0].quantity == pytest.approx(cmd.position_size.quantity)
+
+        # Capital reservation is the command's dollar_value, not 1_000.0.
+        cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash_row is not None
+        assert cash_row.reserved_capital_usd == pytest.approx(cmd.position_size.dollar_value)
+
+    # capital_reserved activity-log detail matches.
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    capital_rows = [r for r in rows if r.event_type == EventType.CAPITAL_RESERVED.value]
+    assert len(capital_rows) == 1
+    detail = json.loads(capital_rows[0].detail_json)
+    assert detail["amount_usd"] == pytest.approx(cmd.position_size.dollar_value)
+
+
 async def test_persist_envelope_outcome_stamps_phase2_completion_on_invocation_row(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
@@ -1135,6 +1209,267 @@ async def test_close_command_writes_close_order_and_emits_order_submitted(
     assert EventType.PM_DECISION.value in types
 
 
+async def test_close_command_surfaces_rationale_metadata_on_order_submitted(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """CLOSE writeback threads ``close_rationale_type``, ``invalidation_reason``,
+    ``risk_management_subtype``, and the requested quantity through to the
+    ``order_submitted`` activity-log detail so post-fill thesis resolution can
+    classify without re-fetching the command."""
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
+
+    cmd = _close_command(position_id="POS-NVDA-001")
+    envelope = _make_strategist_envelope(commands=(cmd,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    submitted_rows = [r for r in rows if r.event_type == EventType.ORDER_SUBMITTED.value]
+    assert len(submitted_rows) == 1
+    detail = json.loads(submitted_rows[0].detail_json)
+    params = detail["order_parameters_json"]
+    assert params["close_rationale_type"] == cmd.close_rationale_type
+    assert params["invalidation_reason"] == cmd.invalidation_reason
+    assert params["risk_management_subtype"] == cmd.risk_management_subtype
+    assert params["requested_quantity"] == "all"
+
+
+async def test_close_command_with_partial_quantity_uses_command_quantity(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A partial CLOSE with ``quantity=3.0`` produces a close order of qty=3.0."""
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
+
+    partial_close = CloseCommand(
+        command_type="close",
+        position_id="POS-NVDA-001",
+        quantity=3.0,
+        order_type="market",
+        limit_price=None,
+        close_rationale_type="conviction_reduced",
+        invalidation_reason=None,
+        risk_management_subtype=None,
+    )
+    envelope = _make_strategist_envelope(commands=(partial_close,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        close_orders = (
+            (await sess.execute(select(OrderRow).where(OrderRow.order_role == "CLOSE")))
+            .scalars()
+            .all()
+        )
+        assert len(close_orders) == 1
+        assert close_orders[0].quantity == pytest.approx(3.0)
+
+
+async def test_adjust_command_dispatches_on_thesis_only(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A thesis-only ADJUST (no stop/target/time/event change-fields) does not
+    insert a new protective order; it emits BRACKET_MODIFIED with the
+    ``adjustment_rationale`` and one THESIS_COMPONENT_UPDATED per updated
+    component."""
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
+
+    cmd = _adjust_command(position_id="POS-NVDA-001", with_stop_level=False)
+    envelope = _make_strategist_envelope(commands=(cmd,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    types = [r.event_type for r in rows]
+    assert EventType.BRACKET_MODIFIED.value in types
+    assert EventType.THESIS_COMPONENT_UPDATED.value in types
+
+    # rationale comes from command.adjustment_rationale.
+    bracket_mod_rows = [r for r in rows if r.event_type == EventType.BRACKET_MODIFIED.value]
+    detail = json.loads(bracket_mod_rows[0].detail_json)
+    assert detail["rationale"] == cmd.adjustment_rationale
+
+
+async def test_cancel_command_releases_capital_from_order_notional(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """CANCEL of a LIMIT entry releases capital based on the order's
+    limit_price x remaining_quantity, not a hardcoded stub value."""
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+    from alphamind.portfolio_state.records.orders import (
+        EquityInstrumentSpec,
+        OrderClass,
+        OrderDirection,
+        OrderDuration,
+        OrderRecord,
+        OrderRole,
+        OrderStatus,
+        OrderType,
+        PriceParameters,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    # Seed 5000 reserved capital; the LIMIT entry at $50 x 100 shares = $5000.
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=5_000.0)
+    entry_rec = OrderRecord(
+        order_id="ord-entry-bigsize",
+        position_id="POS-NVDA-001",
+        bracket_id="BRK-NVDA-1",
+        role=OrderRole.ENTRY,
+        instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+        direction=OrderDirection.BUY,
+        order_type=OrderType.LIMIT,
+        order_class=OrderClass.BRACKET,
+        price_parameters=PriceParameters(limit_price=50.0),
+        quantity=100.0,
+        duration=OrderDuration.DAY,
+        status=OrderStatus.PENDING,
+        alpaca_order_id="alp-ord-entry-bigsize",
+        alpaca_order_id_chain=("alp-ord-entry-bigsize",),
+        submission_timestamp=_NOW - timedelta(hours=1),
+        last_update_timestamp=_NOW - timedelta(hours=1),
+        filled_quantity=0.0,
+        avg_fill_price=None,
+        remaining_quantity=100.0,
+        modification_count=0,
+        originating_thesis_id="THE-NVDA-1",
+        originating_pm_command_id=None,
+        age_hours=1.0,
+    )
+    await _seed_position_cluster(
+        factory,
+        _open_position(),
+        _active_thesis(),
+        _active_bracket(),
+        entry_rec,
+    )
+
+    envelope = _make_strategist_envelope(commands=(_cancel_command(order_id="ord-entry-bigsize"),))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash_row is not None
+        # 5000 reserved - 5000 released = 0 remaining.
+        assert cash_row.reserved_capital_usd == pytest.approx(0.0)
+
+
+async def test_add_command_persists_real_quantity_and_dollar_value(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """ADD writeback reads ``additional_quantity`` and ``additional_dollar_value``:
+    add-entry order quantity equals the command's additional_quantity; the
+    capital reservation matches additional_dollar_value."""
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
+    await _seed_position_cluster(factory, _open_position(), _active_thesis(), _active_bracket())
+
+    cmd = _add_command(position_id="POS-NVDA-001")
+    envelope = _make_strategist_envelope(commands=(cmd,))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        add_orders = (
+            (await sess.execute(select(OrderRow).where(OrderRow.order_role == "ADD_ENTRY")))
+            .scalars()
+            .all()
+        )
+        assert len(add_orders) == 1
+        assert add_orders[0].quantity == pytest.approx(cmd.additional_quantity)
+
+        cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash_row is not None
+        assert cash_row.reserved_capital_usd == pytest.approx(cmd.additional_dollar_value)
+
+
+async def test_open_command_persists_target_and_invalidation_legs(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """OPEN writeback constructs one bracket leg per ``command.invalidation_legs``
+    plus a TAKE_PROFIT leg from ``command.target``. Each price/time leg has an
+    associated PENDING broker order; event legs have order_id=None."""
+    from alphamind.execution.state_persistence.tables.bracket_legs import BracketLegRow
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    envelope = _make_analyst_envelope(commands=(_open_command(underlying="NVDA"),))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-REC-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        leg_rows = (await sess.execute(select(BracketLegRow))).scalars().all()
+        leg_types = {r.leg_type for r in leg_rows}
+        # _open_command sets one PriceLeg (PRICE_STOP) plus a price target ⇒
+        # bracket has TAKE_PROFIT + PRICE_STOP legs.
+        assert "TAKE_PROFIT" in leg_types
+        assert "PRICE_STOP" in leg_types
+
+
 async def test_adjust_command_cancels_old_protective_order_and_submits_new(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
@@ -1261,6 +1596,8 @@ async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(
     _, factory = db
     await _seed_invocation_substrate(factory)
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=1_000.0)
+    # LIMIT order at $100 x 10 shares = $1,000 notional — the CANCEL writeback
+    # releases the order's notional (limit_price x remaining_quantity).
     entry_order_rec = OrderRecord(
         order_id="ord-entry-1",
         position_id="POS-NVDA-001",
@@ -1268,9 +1605,9 @@ async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(
         role=OrderRole.ENTRY,
         instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
         direction=OrderDirection.BUY,
-        order_type=OrderType.MARKET,
+        order_type=OrderType.LIMIT,
         order_class=OrderClass.BRACKET,
-        price_parameters=PriceParameters(),
+        price_parameters=PriceParameters(limit_price=100.0),
         quantity=10.0,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
@@ -1618,7 +1955,11 @@ async def test_handle_submit_envelope_wires_sql_writeback_on_accepted_envelope(
         starting_validation_state=_minimal_validation_state(),
     )
 
-    envelope = _make_analyst_envelope()
+    # Use a small position size so the OPEN passes per-rule guardrails against
+    # the minimal validation-state's $100k portfolio + 10% per-position limit.
+    envelope = _make_analyst_envelope(
+        commands=(_open_command(underlying="NVDA", quantity=1.0, dollar_value=1_000.0),)
+    )
     bundle = _bundle_with_recommendation("REC-1")
 
     ctx, handle = await _open_handle(factory)

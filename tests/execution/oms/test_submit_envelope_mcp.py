@@ -271,13 +271,21 @@ def _position_eval_all_pass() -> PositionActionEvaluation:
     )
 
 
-def _open_command(underlying: str = "NVDA") -> OpenCommand:
-    """Build a canonical full-shape OPEN command."""
+def _open_command(
+    underlying: str = "NVDA", *, dollar_value: float = 1_000.0, quantity: float = 1.0
+) -> OpenCommand:
+    """Build a canonical full-shape OPEN command.
+
+    Default sizing is small enough (1% of $100k portfolio at the fixture's
+    limits) that the projected exposure stays under every per-rule headroom;
+    callers exercising larger sizing pass ``dollar_value`` / ``quantity``
+    explicitly.
+    """
     return OpenCommand(
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker=underlying, direction="long"),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-        position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+        position_size=PositionSize(quantity=quantity, dollar_value=dollar_value),
         target=Target(
             target_type="absolute_price",
             price=950.0,
@@ -1401,7 +1409,7 @@ async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
 
 
 def test_submit_envelope_state_rejects_empty_invocation_id() -> None:
-    """An empty ``invocation_id`` would propagate into ``_format_command_id``
+    """An empty ``invocation_id`` would propagate into ``derive_pm_command_id``
     and produce malformed IDs like ``inv-.{envelope_id}.0.0``; the constructor
     must reject it so the constraint is enforced at the type system."""
     from alphamind.execution.oms.submit_envelope_mcp import SubmitEnvelopeState
