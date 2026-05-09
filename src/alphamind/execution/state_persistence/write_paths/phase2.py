@@ -1173,7 +1173,7 @@ def _build_pending_bracket(
 
 
 def _new_open_ids(ticker: str, *, command_id: str) -> dict[str, str]:
-    suffix = _short_token(command_id)
+    suffix = _id_suffix(command_id)
     return {
         "position_id": f"POS-{ticker}-{suffix}",
         "thesis_id": f"THE-{ticker}-{suffix}",
@@ -1184,22 +1184,22 @@ def _new_open_ids(ticker: str, *, command_id: str) -> dict[str, str]:
 
 
 def _close_order_id(position_id: str, command_id: str) -> str:
-    return f"ORD-CLOSE-{position_id}-{_short_token(command_id)}"
+    return f"ORD-CLOSE-{position_id}-{_id_suffix(command_id)}"
 
 
 def _adjust_replacement_order_id(position_id: str, command_id: str) -> str:
-    return f"ORD-ADJUST-{position_id}-{_short_token(command_id)}"
+    return f"ORD-ADJUST-{position_id}-{_id_suffix(command_id)}"
 
 
 def _add_order_id(position_id: str, command_id: str) -> str:
-    return f"ORD-ADD-{position_id}-{_short_token(command_id)}"
+    return f"ORD-ADD-{position_id}-{_id_suffix(command_id)}"
 
 
 def _new_component_id(thesis_id: str, command_id: str) -> str:
-    return f"{thesis_id}-add-{_short_token(command_id)}"
+    return f"{thesis_id}-add-{_id_suffix(command_id)}"
 
 
-def _short_token(command_id: str) -> str:
+def _id_suffix(command_id: str) -> str:
     """Stable suffix derived from the synthetic command id.
 
     Uses the full 32-hex UUID — collision-resistant under any realistic

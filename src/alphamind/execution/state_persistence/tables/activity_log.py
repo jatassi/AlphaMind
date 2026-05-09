@@ -9,8 +9,11 @@ rows are append-only, and a parent row referenced by an activity-log entry
 cannot be deleted without first removing the entry.
 
 ``position_id`` / ``order_id`` / ``thesis_id`` are nullable plain TEXT
-columns at this story; the FKs to ``positions`` / ``orders`` / ``theses``
-land in a follow-up integration migration once stories 04a-04b ship.
+columns on this mapper; the FKs to ``positions`` / ``orders`` / ``theses``
+are enforced at the schema level by migration
+``e9d2c4f7b3a1_tighten_state_persistence_fks`` (DEFERRABLE INITIALLY
+DEFERRED, ``ON DELETE RESTRICT``). They are not declared on this mapper
+— see ALP-369 for the follow-up that adds mapper-level declarations.
 """
 
 from __future__ import annotations

@@ -8,8 +8,12 @@ JSON for P/L-anchored legs.
 FK on ``bracket_id`` with ``ON DELETE RESTRICT`` — bracket rows are
 append-only, and a parent bracket cannot be deleted while children
 reference it. ``order_id`` is nullable for ``EVENT_INVALIDATION`` legs
-and a FK target only at this story (the constraint to ``orders`` is
-wired during integration). The UNIQUE constraint on
+and a plain TEXT column on this mapper; the FK to ``orders`` is enforced
+at the schema level by migration
+``e9d2c4f7b3a1_tighten_state_persistence_fks``
+(DEFERRABLE INITIALLY DEFERRED, ``ON DELETE RESTRICT``). It is not
+declared on this mapper — see ALP-369 for the follow-up that adds
+mapper-level declarations. The UNIQUE constraint on
 ``(bracket_id, leg_index)`` preserves leg-ordering invariants.
 """
 
