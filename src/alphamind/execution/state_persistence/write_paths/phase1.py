@@ -82,11 +82,13 @@ from alphamind.portfolio_state.events.activity_log import (
     PositionExitMethod,
     PositionOpenedDetail,
     PositionOpenMechanism,
+    PositionReducedDetail,
     ThesisResolvedDetail,
 )
 from alphamind.portfolio_state.records.orders import (
     BracketLegStatus,
     BracketStatus,
+    OptionsInstrumentSpec,
     OrderDirection,
     OrderRecord,
     OrderStatus,
@@ -94,6 +96,7 @@ from alphamind.portfolio_state.records.orders import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
+    OptionsPositionDetails,
     PositionFill,
     PositionRecord,
     PositionStatus,
@@ -403,8 +406,27 @@ def _apply_fill_to_position(
     *,
     is_buy_side: bool,
 ) -> PositionRecord:
-    """Dispatch entry / add / exit handling based on position state and direction."""
-    details = _require_equity_details(position, "Phase 1 fill integration")
+    """Dispatch entry / add / exit handling based on instrument type, status, and direction."""
+    details = position.details
+    if isinstance(details, EquityPositionDetails):
+        return _apply_fill_to_equity_position(position, details, fill, is_buy_side=is_buy_side)
+    if isinstance(details, OptionsPositionDetails):
+        return _apply_fill_to_options_position(position, details, fill, is_buy_side=is_buy_side)
+    msg = (
+        f"Phase 1 fill integration currently supports equity and options positions only; "
+        f"got {details.instrument_type!r}"
+    )
+    raise NotImplementedError(msg)
+
+
+def _apply_fill_to_equity_position(
+    position: PositionRecord,
+    details: EquityPositionDetails,
+    fill: FillRecord,
+    *,
+    is_buy_side: bool,
+) -> PositionRecord:
+    """Equity branch: PENDING entry, OPEN add, or sell-side exit."""
     if is_buy_side and position.status == PositionStatus.PENDING:
         return _apply_entry_fill(position, details, fill)
     if is_buy_side and position.status == PositionStatus.OPEN:
@@ -418,14 +440,49 @@ def _apply_fill_to_position(
 def _require_equity_details(position: PositionRecord, label: str) -> EquityPositionDetails:
     """Narrow ``PositionRecord.details`` to ``EquityPositionDetails``.
 
-    Phase 1 ships the equity path; options / strategy variants land in a
-    follow-up story without changing the surrounding atomicity contract.
+    Used by the corporate-action integration path which still ships only
+    equity coverage (per-action-type matrix for options lands with
+    ALP-124). Phase 1 fill integration handles equity + options via
+    discriminator-based dispatch in ``_apply_fill_to_position``.
     """
     details = position.details
     if not isinstance(details, EquityPositionDetails):
         msg = f"{label} currently supports equity positions only; got {details.instrument_type!r}"
         raise NotImplementedError(msg)
     return details
+
+
+def _apply_fill_to_options_position(
+    position: PositionRecord,
+    details: OptionsPositionDetails,
+    fill: FillRecord,
+    *,
+    is_buy_side: bool,
+) -> PositionRecord:
+    """Options branch: dispatch entry / add / exit per status and direction.
+
+    SHORT options entries (SELL_TO_OPEN) are first-class — unlike equity, where
+    short entry requires a borrow leg ``OptionsPositionDetails`` doesn't model.
+    The fill direction for an options entry always aligns with the position's
+    direction (LONG ⇐ BUY_TO_OPEN, SHORT ⇐ SELL_TO_OPEN), so PENDING positions
+    dispatch unconditionally to the entry-fill helper.
+
+    On OPEN positions, an "opening" fill (one that grows the position) is
+    same-sided as the position direction; an exit fill is opposite-sided.
+    """
+    if position.status == PositionStatus.PENDING:
+        return _apply_options_entry_fill(position, details, fill)
+    if position.status == PositionStatus.OPEN:
+        if _is_opening_fill(position.direction, is_buy_side):
+            return _apply_options_add_fill(position, details, fill)
+        return _apply_options_exit_fill(position, details, fill)
+    msg = f"Phase 1 cannot integrate fill against position status {position.status!r}"
+    raise ValueError(msg)
+
+
+def _is_opening_fill(direction: Direction, is_buy_side: bool) -> bool:
+    """Same-sided fills grow the position; opposite-sided fills exit it."""
+    return is_buy_side == (direction == Direction.LONG)
 
 
 def _apply_entry_fill(
@@ -493,6 +550,100 @@ def _apply_exit_fill(
     closed = abs(qty_after) < _QTY_EPSILON
     update: dict[str, object] = {
         "details": details.model_copy(update={"share_count": 0.0 if closed else qty_after}),
+        "execution_history": (*position.execution_history, _position_fill_from_record(fill)),
+        "realized_pnl_to_date_usd": cumulative_realized,
+    }
+    if closed:
+        update["status"] = PositionStatus.CLOSED
+    return position.model_copy(update=update)
+
+
+def _apply_options_entry_fill(
+    position: PositionRecord,
+    details: OptionsPositionDetails,
+    fill: FillRecord,
+) -> PositionRecord:
+    """PENDING → OPEN options entry: set premium, contract count, history.
+
+    ``premium_paid_per_contract`` stores the absolute per-contract premium
+    (positive for both long and short positions) — symmetric with equity's
+    ``average_cost_basis_per_share`` and consistent with the snapshot
+    assembler's price-like usage of the field. Direction sign is applied
+    where total cost basis or P/L is reported.
+
+    Greeks set at OPEN-validation time by the guardrail-evaluation library
+    are preserved unchanged — refresh is the continuous monitor's job.
+    """
+    new_details = details.model_copy(
+        update={
+            "contract_count": fill.fill_quantity,
+            "premium_paid_per_contract": fill.fill_price,
+        }
+    )
+    return position.model_copy(
+        update={
+            "status": PositionStatus.OPEN,
+            "entry_timestamp": fill.fill_timestamp,
+            "details": new_details,
+            "execution_history": (_position_fill_from_record(fill),),
+        }
+    )
+
+
+def _apply_options_add_fill(
+    position: PositionRecord,
+    details: OptionsPositionDetails,
+    fill: FillRecord,
+) -> PositionRecord:
+    """ADD-side options fill on an OPEN position: increment quantity, recompute premium."""
+    new_count = details.contract_count + fill.fill_quantity
+    weighted_premium = (
+        (details.premium_paid_per_contract * details.contract_count)
+        + (fill.fill_price * fill.fill_quantity)
+    ) / new_count
+    new_details = details.model_copy(
+        update={
+            "contract_count": new_count,
+            "premium_paid_per_contract": weighted_premium,
+        }
+    )
+    return position.model_copy(
+        update={
+            "details": new_details,
+            "execution_history": (*position.execution_history, _position_fill_from_record(fill)),
+        }
+    )
+
+
+def _apply_options_exit_fill(
+    position: PositionRecord,
+    details: OptionsPositionDetails,
+    fill: FillRecord,
+) -> PositionRecord:
+    """Exit options fill: decrement quantity, accumulate realized P/L (multiplier-scaled).
+
+    Realized P/L mirrors the equity formula: ``(exit - entry) * qty * dir_sign``,
+    further scaled by ``contract_multiplier``. dir_sign is +1 for LONG (long
+    closed for higher than paid is profit) and -1 for SHORT (short covered
+    for less than received is profit).
+    """
+    qty_after = details.contract_count - fill.fill_quantity
+    if qty_after < -_QTY_EPSILON:
+        msg = (
+            f"options exit fill quantity ({fill.fill_quantity}) exceeds open contract count "
+            f"({details.contract_count}) for position_id={position.position_id!r}"
+        )
+        raise ValueError(msg)
+    pnl_per_contract = fill.fill_price - details.premium_paid_per_contract
+    direction_sign = -1.0 if position.direction == Direction.SHORT else 1.0
+    realized_delta = (
+        pnl_per_contract * fill.fill_quantity * details.contract_multiplier * direction_sign
+    )
+    cumulative_realized = (position.realized_pnl_to_date_usd or 0.0) + realized_delta
+
+    closed = abs(qty_after) < _QTY_EPSILON
+    update: dict[str, object] = {
+        "details": details.model_copy(update={"contract_count": 0.0 if closed else qty_after}),
         "execution_history": (*position.execution_history, _position_fill_from_record(fill)),
         "realized_pnl_to_date_usd": cumulative_realized,
     }
@@ -635,6 +786,10 @@ async def _apply_cash_movement(
 ) -> float:
     """Debit / credit the cash ledger by the consideration of this fill.
 
+    Options consideration scales by the contract multiplier from the order's
+    ``OptionsInstrumentSpec`` (typically 100). Equity consideration is
+    ``fill_price * fill_quantity`` directly.
+
     Buy-side fills additionally drain the per-order capital reservation
     Phase 2 staked when the order was submitted; the decrement caps at
     zero (defensive — partial fills, rounding, or mid-flight adjustments
@@ -643,7 +798,7 @@ async def _apply_cash_movement(
     Returns the *signed cash delta* — positive for credits (sell-side
     proceeds), negative for debits (buy-side consideration).
     """
-    consideration = fill.fill_price * fill.fill_quantity
+    consideration = _fill_consideration_usd(order, fill)
     fees = max(fill.fees_usd, 0.0)
     is_buy = order.direction in _BUY_DIRECTIONS
     delta = -(consideration + fees) if is_buy else (consideration - fees)
@@ -655,6 +810,15 @@ async def _apply_cash_movement(
         )
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
     return delta
+
+
+def _fill_consideration_usd(order: OrderRecord, fill: FillRecord) -> float:
+    """USD notional moved by the fill — multiplier-scaled for options."""
+    base = fill.fill_price * fill.fill_quantity
+    spec = order.instrument_spec
+    if isinstance(spec, OptionsInstrumentSpec):
+        return base * spec.contract_multiplier
+    return base
 
 
 async def _stamp_drawdown_state(handle: InvocationHandle) -> None:
@@ -690,7 +854,7 @@ async def _emit_capital_release(
     handle: InvocationHandle, order: OrderRecord, fill: FillRecord
 ) -> None:
     """Buy-side fills release the per-order capital reservation made by Phase 2."""
-    amount = fill.fill_price * fill.fill_quantity
+    amount = _fill_consideration_usd(order, fill)
     await _emit(
         handle,
         event_type=EventType.CAPITAL_RELEASED,
@@ -768,6 +932,28 @@ async def _emit_fill_activity_log_entries(
             detail=BracketActivatedDetail(
                 bracket_id=bracket_id,
                 protective_leg_order_ids=await _bracket_leg_order_ids(handle, bracket_id),
+            ),
+        )
+
+    partial_close = (position_before.status, position_after.status) == (
+        PositionStatus.OPEN,
+        PositionStatus.OPEN,
+    ) and not _is_opening_fill(position_after.direction, direction_is_buy)
+    if partial_close:
+        partial_pnl = (position_after.realized_pnl_to_date_usd or 0.0) - (
+            position_before.realized_pnl_to_date_usd or 0.0
+        )
+        await _emit(
+            handle,
+            event_type=EventType.POSITION_REDUCED,
+            order_id=order.order_id,
+            position_id=pos_id,
+            thesis_id=thesis_id,
+            timestamp=fill.fill_timestamp,
+            detail=PositionReducedDetail(
+                reduced_quantity=fill.fill_quantity,
+                partial_realized_pnl_usd=partial_pnl,
+                close_rationale_classification="",
             ),
         )
 
