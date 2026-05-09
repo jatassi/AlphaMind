@@ -1,10 +1,17 @@
-"""Engine-stub OMS package — story 06c (ALP-328).
+"""OMS package — engine-stub MCP wrapper plus canonical command models.
 
-Public surface for the ``submit_envelope`` MCP wrapper. The wrapper itself is
-a transitional engine-stub; see :mod:`alphamind.execution.oms.submit_envelope_mcp`.
+The :mod:`~alphamind.execution.oms.command_models` module (story 01a / ALP-370)
+holds the broker-grade Pydantic translation of
+``docs/design/05-execution-layer/oms-command-schema.md`` — the discriminated
+union over OPEN / CLOSE / ADJUST / CANCEL / ADD.
 
-Also exports the canonical OMS command-ID derivation utility — story 01b
-(ALP-371); see :mod:`alphamind.execution.oms.command_ids`.
+The :mod:`~alphamind.execution.oms.command_ids` module (story 01b / ALP-371)
+provides the canonical command-ID derivation utility (PM-originated and
+engine-originated).
+
+The engine-stub :mod:`~alphamind.execution.oms.submit_envelope_mcp` module
+(story 06c / ALP-328) is the transitional MCP wrapper around the OMS write
+API; its public surface is re-exported here for backwards compatibility.
 """
 
 from alphamind.execution.oms.command_ids import (
@@ -17,6 +24,50 @@ from alphamind.execution.oms.command_ids import (
     is_pm_originated,
     parse_engine_command_id,
     parse_pm_command_id,
+)
+from alphamind.execution.oms.command_models import (
+    AddCommand,
+    AdjustCommand,
+    AssetType,
+    BracketAdjustment,
+    BracketOrderParameters,
+    BracketOrderType,
+    CancelCommand,
+    CloseCommand,
+    CloseRationaleType,
+    CommandType,
+    Comparator,
+    ComponentType,
+    ContractType,
+    Direction,
+    EntryOrder,
+    EntryOrderType,
+    EquityInstrument,
+    EventCondition,
+    EventLeg,
+    Instrument,
+    InvalidationLeg,
+    LegType,
+    NewEventInvalidation,
+    NewStopLevel,
+    NewTargetLevel,
+    OMSCommand,
+    OpenCommand,
+    OptionInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    RiskManagementSubtype,
+    StrategyInstrument,
+    StrategyLeg,
+    StrategyType,
+    Target,
+    TargetType,
+    Thesis,
+    ThesisComponent,
+    TimeCondition,
+    TimeLeg,
+    oms_command_schema,
 )
 from alphamind.execution.oms.submit_envelope_mcp import (
     Acknowledgment,
@@ -33,13 +84,54 @@ from alphamind.execution.oms.submit_envelope_mcp import (
 
 __all__ = [
     "Acknowledgment",
+    "AddCommand",
+    "AdjustCommand",
+    "AssetType",
+    "BracketAdjustment",
+    "BracketOrderParameters",
+    "BracketOrderType",
+    "CancelCommand",
+    "CloseCommand",
+    "CloseRationaleType",
+    "CommandType",
+    "Comparator",
+    "ComponentType",
+    "ContractType",
+    "Direction",
     "EngineCommandIdComponents",
+    "EntryOrder",
+    "EntryOrderType",
+    "EquityInstrument",
+    "EventCondition",
+    "EventLeg",
     "FailedSubmissionEntry",
+    "Instrument",
+    "InvalidationLeg",
+    "LegType",
+    "NewEventInvalidation",
+    "NewStopLevel",
+    "NewTargetLevel",
+    "OMSCommand",
+    "OpenCommand",
+    "OptionInstrument",
     "PMCommandIdComponents",
+    "PositionSize",
+    "PriceCondition",
+    "PriceLeg",
     "RejectionPayload",
+    "RiskManagementSubtype",
+    "StrategyInstrument",
+    "StrategyLeg",
+    "StrategyType",
     "SubmissionLogEntry",
     "SubmissionResult",
     "SubmitEnvelopeState",
+    "Target",
+    "TargetType",
+    "Thesis",
+    "ThesisComponent",
+    "TimeCondition",
+    "TimeLeg",
     "build_initial_submit_envelope_state",
     "build_submit_envelope_mcp_server",
     "compute_attempt_seq",
@@ -49,6 +141,7 @@ __all__ = [
     "get_submission_log",
     "is_engine_originated",
     "is_pm_originated",
+    "oms_command_schema",
     "parse_engine_command_id",
     "parse_pm_command_id",
 ]
