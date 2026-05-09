@@ -27,8 +27,11 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-# Hardcoded vocabularies pinned to this revision so future EventType
-# additions do not silently shift this migration's payload.
+# This snapshot reflects the EventType vocabulary at the time of forward
+# migration. If you add EventType members in subsequent migrations and then
+# run ``alembic downgrade -1`` past this one, the CHECK constraint will narrow
+# to this snapshot — re-extend the constraint in your forward migration to
+# avoid silently invalidating future writes.
 _EVENT_TYPES_PRE_366 = (
     "POSITION_OPENED",
     "POSITION_CLOSED",
