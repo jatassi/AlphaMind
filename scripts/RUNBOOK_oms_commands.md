@@ -64,20 +64,18 @@ sub-minute runtime. It exercises four phases plus a summary:
    be reachable from HEAD (all five predecessor stories landed: ALP-370
    through ALP-375).
 3. A freshly-migrated SQLite DB. The script does NOT migrate; it relies
-   on the durable substrate's tables existing. To produce one for ad-hoc
-   verification:
+   on the durable substrate's tables existing. The canonical setup runs
+   the Alembic migration chain against a temp DB:
 
-   ```python
-   from pathlib import Path
-   import alphamind.execution.state_persistence.tables  # noqa: F401
-   from alphamind.persistence.models import Base
-   from alphamind.persistence.session import make_engine
-
-   db_path = Path("/tmp/alphamind-verify-oms.db")
-   engine = make_engine(str(db_path))
-   Base.metadata.create_all(engine)
-   engine.dispose()
+   ```bash
+   mkdir -p /tmp/alphamind-verify-oms
+   rm -f /tmp/alphamind-verify-oms/alphamind.db
+   uv run alembic -c alembic.ini -x db=/tmp/alphamind-verify-oms/alphamind.db upgrade head
    ```
+
+   The `-x db=<path>` arg is the env.py contract (see
+   `src/alphamind/persistence/migrations/env.py`); plain `-x db_url=…` is
+   ignored and the migration silently writes to the default path.
 
    On macOS dev, point `--db-path` at the SMB-mounted production DB at
    `/Volumes/Users/jacks/AlphaMind/data/alphamind.db` only after taking
@@ -91,7 +89,7 @@ sub-minute runtime. It exercises four phases plus a summary:
 ## Invocation
 
 ```bash
-uv run python scripts/verify_oms_commands.py --db-path /tmp/alphamind-verify-oms.db
+uv run python scripts/verify_oms_commands.py --db-path /tmp/alphamind-verify-oms/alphamind.db
 ```
 
 CLI flags:
