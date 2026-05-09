@@ -168,10 +168,34 @@ The `--output json` mode emits:
 
 ## Operational caveats
 
-**The verify script does not exercise live broker calls.** Per parent
-ALP-120 decision (C), broker routing is deferred. Phases 3 + 4 exercise
-the canonical command → Phase 2 writeback → activity log surface; the
-Alpaca submission wire is out of scope.
+**Engine-stub now routes to real Alpaca paper-mode submission.** As of
+ALP-390 (engine-stub coordinated swap, work tree ALP-121), when the runner
+supplies a `TradingClient` + `AccountStateQueries` + `ExecutionConfig` to
+`build_submit_envelope_mcp_server` (PM envelopes) or `submit_engine_envelope`
+(engine envelopes), accepted commands route through
+`alphamind.execution.oms.broker_dispatch.dispatch_command_to_broker` before
+the Phase 2 writeback. The persisted entry / close / add / adjust order
+carries Alpaca's real `alpaca_order_id`; protective leg orders keep the
+synthetic `alp-{order_id}` placeholder until `trade_updates` (story 02f)
+acks each child leg.
+
+Run `verify_oms_commands.py` against a fresh DB to exercise the legacy
+synthetic-ack path (no broker context supplied — preserves the pre-ALP-390
+behavior the verify covers); operator dry-runs against live Alpaca paper
+mode are the responsibility of the e2e verify (`RUNBOOK_end_to_end_verification.md`).
+On gateway-submission failure the OMS writes a `command_abandoned`
+activity-log entry and the per-command result is rejected; on permanent
+rejection (4xx with documented reason) the synchronous OMS rejection
+carries the broker's `PermanentRejection.code` in
+`rejection_payload.gateway_reason`.
+
+**The verify script does not exercise live broker calls.** Phases 3 + 4
+exercise the canonical command → Phase 2 writeback → activity log surface
+without supplying the optional `client` / `queries` / `execution_config`
+to the engine-stub factory; the Alpaca submission wire is out of scope.
+End-to-end coverage of the broker-routed path lives in
+`tests/execution/oms/test_engine_stub_broker_routing.py` and
+`scripts/verify_e2e_runbook.py`.
 
 **The PM envelope path uses a degenerate Layer-2/3 fixture.** The
 pre-processor bundle, retrieval store, and PM view are minimal — just

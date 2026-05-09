@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from alphamind.execution.oms.command_ids import (
     derive_engine_command_id,
@@ -50,6 +50,12 @@ from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationHandle,
 )
+
+if TYPE_CHECKING:
+    from alpaca.trading.client import TradingClient
+
+    from alphamind.config.models.execution import ExecutionConfig
+    from alphamind.execution.broker_adapter import AccountStateQueries
 
 __all__ = [
     "SubmitEngineEnvelopeState",
@@ -103,6 +109,9 @@ async def submit_engine_envelope(
     handle: InvocationHandle,
     state: SubmitEngineEnvelopeState,
     config: StatePersistenceConfig,
+    client: TradingClient | None = None,
+    queries: AccountStateQueries | None = None,
+    execution_config: ExecutionConfig | None = None,
 ) -> SubmissionResult:
     """Persist the protective CLOSE embedded in *envelope* and return a SubmissionResult.
 
@@ -113,6 +122,13 @@ async def submit_engine_envelope(
     ``position_selection_rationale``, ``rule_breached``, and (when set) the
     cascade_id. On ``deferred_to_pm`` secondary-breach, the function returns
     a rejection without persisting the close.
+
+    When ``client`` + ``queries`` + ``execution_config`` are supplied (engine-stub
+    coordinated swap, story 03e / ALP-390), the embedded CLOSE additionally
+    routes through :func:`dispatch_command_to_broker` before persistence; the
+    persisted order carries Alpaca's real ``alpaca_order_id`` and the
+    acknowledgment surfaces it. When the broker context is omitted (legacy
+    fixture-only path), the synthetic acknowledgment behavior is preserved.
 
     Raises :class:`ValueError` for command-ID inconsistencies, monitor-session
     mismatches, or duplicate ``(monitor_session_id, trigger_id)`` submissions
@@ -203,6 +219,33 @@ async def submit_engine_envelope(
             rejection_payload=rejection,
         )
 
+    # Optionally route through the broker adapter before persistence (engine-stub
+    # coordinated swap — story 03e / ALP-390). When the runner supplies a
+    # ``TradingClient`` + ``AccountStateQueries`` + ``ExecutionConfig``, the
+    # CLOSE submits to Alpaca first; the persisted order carries the broker's
+    # real ``alpaca_order_id``. Otherwise (legacy fixture-only path), the
+    # synthetic acknowledgment behavior is preserved.
+    submitted_alpaca_order_id: str | None = None
+    submitted_ack_order_id: str = f"ORD-CLOSE-{embedded.position_id}"
+    if client is not None and queries is not None and execution_config is not None:
+        dispatch_outcome = await _dispatch_engine_close(
+            embedded,
+            handle=handle,
+            client=client,
+            queries=queries,
+            execution_config=execution_config,
+            client_order_id=command_id,
+        )
+        if isinstance(dispatch_outcome, str):
+            submitted_alpaca_order_id = dispatch_outcome
+            submitted_ack_order_id = dispatch_outcome
+        else:
+            return _build_engine_gateway_failure_result(
+                command_id=command_id,
+                envelope=envelope,
+                reason=dispatch_outcome,
+            )
+
     # Persist the protective CLOSE via the Phase 2 writeback machinery.
     # Threading engine-guardrail provenance + position_selection_rationale +
     # cascade_id (when set) + rule_breached through extra_metadata so the
@@ -234,6 +277,7 @@ async def submit_engine_envelope(
         close_command=embedded,
         command_id=command_id,
         extra_metadata=extra_metadata,
+        submitted_alpaca_order_id=submitted_alpaca_order_id,
     )
 
     # Mark the trigger as seen only after a successful persistence; a failure
@@ -247,6 +291,129 @@ async def submit_engine_envelope(
         command_id=command_id,
         acknowledgment=Acknowledgment(
             position_id=embedded.position_id,
-            order_id=f"ORD-CLOSE-{embedded.position_id}",
+            order_id=submitted_ack_order_id,
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Broker-dispatch helpers (story 03e / ALP-390)
+# ---------------------------------------------------------------------------
+
+
+async def _dispatch_engine_close(
+    close_command: Any,
+    *,
+    handle: InvocationHandle,
+    client: TradingClient,
+    queries: AccountStateQueries,
+    execution_config: ExecutionConfig,
+    client_order_id: str,
+) -> str | _BrokerFailure:
+    """Dispatch the engine-originated CLOSE through the broker adapter.
+
+    Resolves position context (symbol / quantity / side) from the persisted
+    position record under *handle*'s session — engine envelopes carry only
+    ``position_id`` and the dispatcher needs the broker-grade fields per the
+    canonical CLOSE → broker translation contract.
+
+    Returns the broker's ``alpaca_order_id`` on success or a
+    :class:`_BrokerFailure` carrying the failure reason.
+    """
+    from alphamind.execution.broker_adapter import (
+        GatewaySubmissionFailed,
+        Submitted,
+    )
+    from alphamind.execution.broker_adapter.order_options import (
+        PermanentRejectionError,
+    )
+    from alphamind.execution.oms.broker_dispatch import dispatch_command_to_broker
+    from alphamind.execution.state_persistence.tables.positions import PositionRow
+    from alphamind.execution.state_persistence.tables.positions_codec import (
+        row_to_record as position_row_to_record,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        EquityPositionDetails,
+    )
+
+    pos_row = await handle.session.get(PositionRow, close_command.position_id)
+    if pos_row is None:
+        msg = f"engine CLOSE references missing position_id={close_command.position_id!r}"
+        raise ValueError(msg)
+    position = position_row_to_record(pos_row)
+
+    if not isinstance(position.details, EquityPositionDetails):
+        # Options / strategy engine-CLOSE routing requires OCC + intent threading.
+        # The continuous monitor (ALP-123) wires those once it lands; until then
+        # a non-equity engine close is not supported in the broker-routed path.
+        msg = (
+            f"engine CLOSE on position {close_command.position_id!r} carries "
+            f"non-equity details ({type(position.details).__name__}); "
+            "broker-routed engine close currently supports equity only"
+        )
+        raise NotImplementedError(msg)
+
+    try:
+        outcome = await dispatch_command_to_broker(
+            close_command,
+            client=client,
+            queries=queries,
+            execution=execution_config,
+            client_order_id=client_order_id,
+            position_asset_type="equity",
+            position_symbol=position.details.ticker,
+            position_qty=position.details.share_count,
+            position_side="long" if position.direction.value == "LONG" else "short",
+        )
+    except PermanentRejectionError as exc:
+        return _BrokerFailure(reason=f"permanent_rejection: code={exc.rejection.code}")
+
+    if isinstance(outcome, GatewaySubmissionFailed):
+        return _BrokerFailure(
+            reason=(
+                f"gateway_submission_failed: {outcome.reason} "
+                f"(last_error={outcome.last_error_class}, attempts={outcome.attempt_count})"
+            )
+        )
+    assert isinstance(outcome, Submitted)
+    return outcome.payload.alpaca_order_id
+
+
+@dataclass(frozen=True)
+class _BrokerFailure:
+    """Internal carrier surfacing a broker-side failure to the engine envelope path."""
+
+    reason: str
+
+
+def _build_engine_gateway_failure_result(
+    *,
+    command_id: str,
+    envelope: EngineEnvelope,
+    reason: _BrokerFailure,
+) -> SubmissionResult:
+    """Build a rejected SubmissionResult for a broker gateway failure.
+
+    Engine envelopes that fail at the broker do NOT mark the trigger as seen
+    (the caller's ``state.seen_trigger_ids.add(...)`` is skipped via the
+    early return) — the continuous monitor may retry on the next trigger.
+    """
+    rejection = RejectionPayload(
+        rules_breached=(
+            _BreachedRule(
+                rule="broker_gateway_failure",
+                current=envelope.guardrail_trigger_record.breach_details.current_value,
+                limit=envelope.guardrail_trigger_record.breach_details.limit_value,
+                overage=envelope.guardrail_trigger_record.breach_details.overage,
+                unit=envelope.guardrail_trigger_record.breach_details.unit or "",
+            ),
+        ),
+        suggested_modification=reason.reason,
+        feature_disabled=None,
+    )
+    return SubmissionResult(
+        command_ordinal=0,
+        status="rejected",
+        command_id=command_id,
+        rejection_payload=rejection,
     )
