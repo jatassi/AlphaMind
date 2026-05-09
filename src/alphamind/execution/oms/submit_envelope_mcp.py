@@ -428,7 +428,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
     if not layer23.is_valid:
         suggested = layer23.errors[0].message
         if invocation_handle is not None:
-            await _persist_guardrail_rejection_via_phase2(
+            await _persist_envelope_rejection_via_phase2(
                 invocation_handle, envelope, layer23.errors, state_persistence_config
             )
         return _build_envelope_level_rejection(
@@ -500,7 +500,7 @@ async def _persist_envelope_parse_failure_via_phase2(
     await persist_envelope_parse_failure(invocation_handle, failed_entry, config=config)
 
 
-async def _persist_guardrail_rejection_via_phase2(
+async def _persist_envelope_rejection_via_phase2(
     invocation_handle: Any,
     envelope: PMEnvelope,
     errors: Sequence[Any],
@@ -508,11 +508,11 @@ async def _persist_guardrail_rejection_via_phase2(
 ) -> None:
     """Lazy import + dispatch — symmetric with the parse-failure helper."""
     from alphamind.execution.state_persistence.write_paths.phase2 import (
-        persist_guardrail_rejection,
+        persist_envelope_rejection,
     )
 
     config = state_persistence_config or _stub_state_persistence_config()
-    await persist_guardrail_rejection(invocation_handle, envelope, tuple(errors), config=config)
+    await persist_envelope_rejection(invocation_handle, envelope, tuple(errors), config=config)
 
 
 def _stub_state_persistence_config() -> Any:

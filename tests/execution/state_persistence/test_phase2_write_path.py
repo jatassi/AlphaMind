@@ -573,20 +573,20 @@ async def test_envelope_parse_failure_writes_one_log_entry(
 
 
 # ===========================================================================
-# Tests — persist_guardrail_rejection (Layer-2/3 envelope-level rejection)
+# Tests — persist_envelope_rejection (Layer-2/3 envelope-level rejection)
 # ===========================================================================
 
 
-async def test_persist_guardrail_rejection_writes_one_log_entry(
+async def test_persist_envelope_rejection_writes_one_log_entry(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """A Layer-2/3 envelope-level rejection (e.g. halt-mode invariant
-    violation) appends one GUARDRAIL_REJECTION activity log entry capturing
+    violation) appends one ENVELOPE_REJECTED activity log entry capturing
     the envelope id and the criterion ids of every blocking ValidationError.
     """
     from alphamind.decision.portfolio_manager.validation import ValidationError as PMValError
     from alphamind.execution.state_persistence.write_paths.phase2 import (
-        persist_guardrail_rejection,
+        persist_envelope_rejection,
     )
 
     _, factory = db
@@ -602,7 +602,7 @@ async def test_persist_guardrail_rejection_writes_one_log_entry(
     )
 
     ctx, handle = await _open_handle(factory)
-    await persist_guardrail_rejection(
+    await persist_envelope_rejection(
         handle, envelope, errors, config=_make_state_persistence_config()
     )
     await ctx.__aexit__(None, None, None)
@@ -610,28 +610,32 @@ async def test_persist_guardrail_rejection_writes_one_log_entry(
     rows = await _read_activity_log_for(factory, handle.invocation_id)
     assert len(rows) == 1
     row = rows[0]
-    assert row.event_type == EventType.GUARDRAIL_REJECTION.value
+    assert row.event_type == EventType.ENVELOPE_REJECTED.value
     detail = json.loads(row.detail_json)
-    assert "ENV-REC-2" in detail["command_summary"]
-    assert detail["blocking_rule_ids"] == ["halt_mode_invariant"]
-    assert detail["suggested_modification"] == "halt_mode forbids OPEN commands"
+    assert detail["envelope_id"] == "ENV-REC-2"
+    assert detail["referenced_position_id"] is None
+    assert detail["attempted_command_count"] == len(envelope.commands)
+    assert detail["blocking_criteria"] == ["halt_mode_invariant"]
+    errors_list = json.loads(detail["validation_errors_json"])
+    assert errors_list[0]["message"] == "halt_mode forbids OPEN commands"
+    assert errors_list[0]["criterion"] == "halt_mode_invariant"
 
 
-async def test_persist_guardrail_rejection_nullifies_orphan_position_id_on_fk_schema(
+async def test_persist_envelope_rejection_nullifies_orphan_position_id_on_fk_schema(
     tmp_path: Path,
 ) -> None:
     """A strategist envelope referencing an unknown ``position_id`` rejects
     cleanly without rolling back the surrounding invocation transaction.
 
     The FK on ``activity_log.position_id`` (DEFERRABLE INITIALLY DEFERRED) is
-    validated at COMMIT — if ``persist_guardrail_rejection`` were to forward
+    validated at COMMIT — if ``persist_envelope_rejection`` were to forward
     the envelope's orphan position_id into the activity_log row verbatim, the
     invocation commit would raise ``IntegrityError`` and lose the entire
     rejection record (along with any earlier work in the same handle).
 
     Contract: the activity_log row commits with ``position_id IS NULL`` and
     the orphan envelope position_id preserved in the JSON detail (via
-    ``command_summary``) so operator forensics still get full context.
+    ``referenced_position_id``) so operator forensics still get full context.
     """
     from argparse import Namespace
 
@@ -640,7 +644,7 @@ async def test_persist_guardrail_rejection_nullifies_orphan_position_id_on_fk_sc
 
     from alphamind.decision.portfolio_manager.validation import ValidationError as PMValError
     from alphamind.execution.state_persistence.write_paths.phase2 import (
-        persist_guardrail_rejection,
+        persist_envelope_rejection,
     )
 
     db_path = tmp_path / "alphamind.db"
@@ -666,7 +670,7 @@ async def test_persist_guardrail_rejection_nullifies_orphan_position_id_on_fk_sc
         )
 
         ctx, handle = await _open_handle(factory)
-        await persist_guardrail_rejection(
+        await persist_envelope_rejection(
             handle, envelope, errors, config=_make_state_persistence_config()
         )
         # Commit must succeed — the FK at COMMIT must not reject the row.
@@ -675,22 +679,22 @@ async def test_persist_guardrail_rejection_nullifies_orphan_position_id_on_fk_sc
         rows = await _read_activity_log_for(factory, handle.invocation_id)
         assert len(rows) == 1
         row = rows[0]
-        assert row.event_type == EventType.GUARDRAIL_REJECTION.value
+        assert row.event_type == EventType.ENVELOPE_REJECTED.value
         assert row.position_id is None  # nullified to satisfy the FK
         detail = json.loads(row.detail_json)
         # Envelope context preserved for operator forensics.
-        assert "ENV-SA-99" in detail["command_summary"]
-        assert "POS-NONEXISTENT" in detail["command_summary"]
-        assert detail["blocking_rule_ids"] == ["position_id_resolves"]
+        assert detail["envelope_id"] == "ENV-SA-99"
+        assert detail["referenced_position_id"] == "POS-NONEXISTENT"
+        assert detail["blocking_criteria"] == ["position_id_resolves"]
     finally:
         await async_engine.dispose()
 
 
-async def test_handle_submit_envelope_writes_guardrail_rejection_on_layer23_failure(
+async def test_handle_submit_envelope_writes_envelope_rejection_on_layer23_failure(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """When the engine-stub passes Layer-1 but fails Layer-2/3, both surfaces
-    populate: in-memory submission_log AND SQL guardrail_rejection entry."""
+    populate: in-memory submission_log AND SQL envelope_rejected entry."""
     from alphamind.execution.oms.submit_envelope_mcp import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
@@ -730,7 +734,7 @@ async def test_handle_submit_envelope_writes_guardrail_rejection_on_layer23_fail
 
     rows = await _read_activity_log_for(factory, handle.invocation_id)
     types = {r.event_type for r in rows}
-    assert EventType.GUARDRAIL_REJECTION.value in types
+    assert EventType.ENVELOPE_REJECTED.value in types
 
 
 # ===========================================================================

@@ -77,9 +77,9 @@ from alphamind.portfolio_state.events.activity_log import (
     CapitalReservedDetail,
     CommandAbandonedDetail,
     EnvelopeParseFailedDetail,
+    EnvelopeRejectionDetail,
     EventSource,
     EventType,
-    GuardrailRejectionDetail,
     OrderCancelledDetail,
     OrderSubmittedDetail,
     PMDecisionDetail,
@@ -191,21 +191,21 @@ async def persist_envelope_parse_failure(
     )
 
 
-async def persist_guardrail_rejection(
+async def persist_envelope_rejection(
     handle: InvocationHandle,
     envelope: PMEnvelope,
     errors: tuple[PMValidationError, ...],
     *,
     config: StatePersistenceConfig,
 ) -> None:
-    """Persist a Layer-2/3 envelope-level rejection as one ``guardrail_rejection`` entry.
+    """Persist a Layer-2/3 envelope-level rejection as one ``envelope_rejected`` entry.
 
     Symmetric with ``persist_envelope_parse_failure`` — the envelope parsed
     cleanly at Layer-1 but failed an invariant or cross-command coherence
-    check (per ``validate_pm_envelope``). The first error's message becomes
-    ``suggested_modification``; every error's ``criterion`` (when set) feeds
-    ``blocking_rule_ids`` so a feedback-loop query can correlate envelope
-    rejections back to their failing rules.
+    check (per ``validate_pm_envelope``). Every error's ``criterion`` (when
+    set) feeds ``blocking_criteria`` so a feedback-loop query can correlate
+    envelope rejections back to their failing rules; the full error inventory
+    serializes into ``validation_errors_json`` for operator forensics.
 
     The envelope's ``position_id`` is *not* forwarded into the activity_log
     row's ``position_id`` column. A common Layer-3 rejection criterion is
@@ -213,30 +213,27 @@ async def persist_guardrail_rejection(
     the orphan id that has no row in ``positions``, and the FK constraint
     on ``activity_log.position_id`` (DEFERRABLE INITIALLY DEFERRED, validated
     at COMMIT) would roll back the entire invocation transaction. The
-    envelope id and any referenced position id are preserved verbatim in the
-    JSON ``command_summary`` for operator forensics; an orphan position_id
-    is unqueryable against ``positions`` anyway, which is what that column
-    is for.
+    envelope id and any referenced position id are preserved in the JSON
+    detail's ``envelope_id`` and ``referenced_position_id`` fields for
+    operator forensics; an orphan position_id is unqueryable against
+    ``positions`` anyway, which is what that column is for.
     """
     del config  # No knobs consumed at this story; signature is forward-shaped.
 
     if not errors:
-        msg = "persist_guardrail_rejection requires at least one ValidationError"
+        msg = "persist_envelope_rejection requires at least one ValidationError"
         raise ValueError(msg)
 
-    summary = f"envelope {envelope.envelope_id} failed Layer-2/3 validation"
-    if envelope.position_id is not None:
-        summary += f" (referenced position_id={envelope.position_id!r})"
-    detail = GuardrailRejectionDetail(
-        command_summary=summary,
-        blocking_rule_ids=tuple(e.criterion for e in errors if e.criterion is not None),
-        current_limit_values_json={},
-        headroom_json={},
-        suggested_modification=errors[0].message,
+    detail = EnvelopeRejectionDetail(
+        envelope_id=envelope.envelope_id,
+        referenced_position_id=envelope.position_id,
+        attempted_command_count=len(envelope.commands),
+        blocking_criteria=tuple(e.criterion for e in errors if e.criterion is not None),
+        validation_errors_json=json.dumps([e.model_dump(mode="json") for e in errors]),
     )
     await _emit(
         handle,
-        event_type=EventType.GUARDRAIL_REJECTION,
+        event_type=EventType.ENVELOPE_REJECTED,
         order_id=None,
         position_id=None,
         thesis_id=None,
@@ -1304,5 +1301,5 @@ __all__ = [
     "persist_command_abandoned",
     "persist_envelope_outcome",
     "persist_envelope_parse_failure",
-    "persist_guardrail_rejection",
+    "persist_envelope_rejection",
 ]
