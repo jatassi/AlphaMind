@@ -12,17 +12,16 @@ the typed record validates, so a future direct-SQL writer faces fail-closed
 guarantees. Indexes cover the four hot read paths: status (pending-orders
 sweep), position lookup, bracket lookup, Alpaca-side reconciliation.
 
-``position_id`` and ``bracket_id`` are plain TEXT on this mapper; the FKs
-to ``positions`` / ``brackets`` are enforced at the schema level by
-migration ``e9d2c4f7b3a1_tighten_state_persistence_fks``
-(DEFERRABLE INITIALLY DEFERRED, ``ON DELETE RESTRICT``). They are not
-declared on this mapper — see ALP-369 for the follow-up that adds
-mapper-level declarations.
+``position_id`` and ``bracket_id`` carry DEFERRABLE INITIALLY DEFERRED FKs to
+``positions`` / ``brackets`` (``ON DELETE RESTRICT``), matching the
+``e9d2c4f7b3a1_tighten_state_persistence_fks`` migration. The deferral
+accommodates the orders↔brackets cycle (``brackets.entry_order_id`` points
+back at orders) that Phase 2's OPEN writeback seeds in a single transaction.
 """
 
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, Float, Index, Integer, Text
+from sqlalchemy import CheckConstraint, Float, ForeignKey, Index, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from alphamind.persistence.models import Base
@@ -60,8 +59,28 @@ class OrderRow(Base):
     __tablename__ = "orders"
 
     order_id: Mapped[str] = mapped_column(Text, primary_key=True)
-    position_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    bracket_id: Mapped[str] = mapped_column(Text, nullable=False)
+    position_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey(
+            "positions.position_id",
+            name="fk_orders_position_id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=True,
+    )
+    bracket_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey(
+            "brackets.bracket_id",
+            name="fk_orders_bracket_id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=False,
+    )
     order_role: Mapped[str] = mapped_column(Text, nullable=False)
     order_class: Mapped[str] = mapped_column(Text, nullable=False)
     instrument_spec_json: Mapped[str] = mapped_column(Text, nullable=False)

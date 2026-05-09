@@ -7,13 +7,12 @@ metadata-only granularity. The component bodies live in the sibling
 ``thesis_components`` table; ``narrative_json`` carries the parent
 record's non-component fields preserved as JSON for faithful round-trip.
 
-``position_id`` is a plain TEXT column on this mapper; the FK to
-``positions`` is enforced at the schema level by migration
-``e9d2c4f7b3a1_tighten_state_persistence_fks`` (DEFERRABLE INITIALLY
-DEFERRED, ``ON DELETE RESTRICT``). It is not declared on this mapper —
-see ALP-369 for the follow-up that adds mapper-level declarations.
-The CHECK constraints encode the same enum vocabularies the typed
-``ThesisRecord`` enforces, so a future direct-SQL writer faces the
+``position_id`` carries a DEFERRABLE INITIALLY DEFERRED FK to
+``positions.position_id`` (``ON DELETE RESTRICT``), matching the
+``e9d2c4f7b3a1_tighten_state_persistence_fks`` migration. The deferral
+accommodates the positions↔theses cycle that Phase 2's OPEN writeback seeds
+in a single transaction. CHECK constraints encode the same enum vocabularies
+the typed ``ThesisRecord`` enforces, so a future direct-SQL writer faces the
 same fail-closed guarantees.
 """
 
@@ -21,7 +20,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from sqlalchemy import CheckConstraint, Float, Index, Text
+from sqlalchemy import CheckConstraint, Float, ForeignKey, Index, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from alphamind.persistence.models import Base
@@ -49,7 +48,17 @@ class ThesisRow(Base):
     __tablename__ = "theses"
 
     thesis_id: Mapped[str] = mapped_column(Text, primary_key=True)
-    position_id: Mapped[str] = mapped_column(Text, nullable=False)
+    position_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey(
+            "positions.position_id",
+            name="fk_theses_position_id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=False,
+    )
     status: Mapped[str] = mapped_column(Text, nullable=False)
     resolution_timestamp: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolution_category: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -6,18 +6,18 @@ entity references. Polymorphic over instrument type via the
 ``PositionDetailsPayload`` model's ``model_dump_json()``).
 
 The status state machine (``PENDING`` → ``OPEN`` → ``CLOSED``) is encoded as
-a CHECK constraint. ``thesis_id`` and ``bracket_id`` are nullable plain TEXT
-columns on this mapper; the FKs to ``theses`` / ``brackets`` (and
-``parent_position_id`` to ``positions``) are enforced at the schema level by
-migration ``e9d2c4f7b3a1_tighten_state_persistence_fks``
-(DEFERRABLE INITIALLY DEFERRED, ``ON DELETE RESTRICT``). They are not
-declared on this mapper — see ALP-369 for the follow-up that adds
-mapper-level declarations.
+a CHECK constraint. ``thesis_id``, ``bracket_id``, and ``parent_position_id``
+are nullable TEXT columns carrying DEFERRABLE INITIALLY DEFERRED FKs to
+``theses`` / ``brackets`` / ``positions`` (``ON DELETE RESTRICT``). The
+deferral matches the ``e9d2c4f7b3a1_tighten_state_persistence_fks`` migration
+and accommodates Phase 2's OPEN writeback, which seeds position + thesis +
+bracket + entry order in a single transaction with cyclic cross-references
+that resolve at COMMIT.
 """
 
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, Float, Index, Integer, Text
+from sqlalchemy import CheckConstraint, Float, ForeignKey, Index, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from alphamind.persistence.models import Base
@@ -53,8 +53,28 @@ class PositionRow(Base):
     __tablename__ = "positions"
 
     position_id: Mapped[str] = mapped_column(Text, primary_key=True)
-    thesis_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    bracket_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    thesis_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey(
+            "theses.thesis_id",
+            name="fk_positions_thesis_id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=True,
+    )
+    bracket_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey(
+            "brackets.bracket_id",
+            name="fk_positions_bracket_id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=True,
+    )
     status: Mapped[str] = mapped_column(Text, nullable=False)
     direction: Mapped[str] = mapped_column(Text, nullable=False)
     entry_timestamp: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -63,7 +83,17 @@ class PositionRow(Base):
     execution_history_json: Mapped[str] = mapped_column(Text, nullable=False)
     realized_pnl_to_date_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     corporate_action_adjustment_needed: Mapped[int] = mapped_column(Integer, nullable=False)
-    parent_position_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parent_position_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey(
+            "positions.position_id",
+            name="fk_positions_parent_position_id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=True,
+    )
     origin: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
