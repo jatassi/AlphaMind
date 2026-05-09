@@ -16,6 +16,11 @@ from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection
 
 from alphamind.persistence.session import make_engine
+from alphamind.portfolio_state.events.activity_log import (
+    EventGroup,
+    EventSource,
+    EventType,
+)
 
 # Pin both the ALP-368 revision and its predecessor so this test is stable
 # against future migrations chaining onto it.
@@ -74,9 +79,9 @@ class TestActivityLogEnvelopeRejectedMigration:
                         "eid": "alp368-1",
                         "iid": "inv-1",
                         "ts": "2026-05-09T12:00:00Z",
-                        "et": "ENVELOPE_REJECTED",
-                        "eg": "PM_DECISION",
-                        "src": "GUARDRAIL_LAYER",
+                        "et": EventType.ENVELOPE_REJECTED.value,
+                        "eg": EventGroup.PM_DECISION.value,
+                        "src": EventSource.GUARDRAIL_LAYER.value,
                         "body": "{}",
                     },
                 )
@@ -103,9 +108,13 @@ class TestActivityLogEnvelopeRejectedMigration:
                         " source, detail_json) "
                         "VALUES "
                         "('alp368-2', 'inv-1', '2026-05-09T12:00:00Z', "
-                        " 'ENVELOPE_REJECTED', 'PM_DECISION', NULL, NULL, "
-                        " NULL, 'GUARDRAIL_LAYER', '{}')"
-                    )
+                        " :et, :eg, NULL, NULL, NULL, :src, '{}')"
+                    ),
+                    {
+                        "et": EventType.ENVELOPE_REJECTED.value,
+                        "eg": EventGroup.PM_DECISION.value,
+                        "src": EventSource.GUARDRAIL_LAYER.value,
+                    },
                 )
         finally:
             eng.dispose()
