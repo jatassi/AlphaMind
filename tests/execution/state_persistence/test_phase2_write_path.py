@@ -617,6 +617,75 @@ async def test_persist_guardrail_rejection_writes_one_log_entry(
     assert detail["suggested_modification"] == "halt_mode forbids OPEN commands"
 
 
+async def test_persist_guardrail_rejection_nullifies_orphan_position_id_on_fk_schema(
+    tmp_path: Path,
+) -> None:
+    """A strategist envelope referencing an unknown ``position_id`` rejects
+    cleanly without rolling back the surrounding invocation transaction.
+
+    The FK on ``activity_log.position_id`` (DEFERRABLE INITIALLY DEFERRED) is
+    validated at COMMIT — if ``persist_guardrail_rejection`` were to forward
+    the envelope's orphan position_id into the activity_log row verbatim, the
+    invocation commit would raise ``IntegrityError`` and lose the entire
+    rejection record (along with any earlier work in the same handle).
+
+    Contract: the activity_log row commits with ``position_id IS NULL`` and
+    the orphan envelope position_id preserved in the JSON detail (via
+    ``command_summary``) so operator forensics still get full context.
+    """
+    from argparse import Namespace
+
+    from alembic import command
+    from alembic.config import Config
+
+    from alphamind.decision.portfolio_manager.validation import ValidationError as PMValError
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_guardrail_rejection,
+    )
+
+    db_path = tmp_path / "alphamind.db"
+    repo_root = Path(__file__).parents[3]
+    cfg = Config(repo_root / "alembic.ini", cmd_opts=Namespace(x=[f"db={db_path}"]))
+    command.upgrade(cfg, "head")
+
+    async_engine = make_async_engine(str(db_path))
+    factory = make_async_session_factory(async_engine)
+    try:
+        await _seed_invocation_substrate(factory)
+
+        envelope = _make_strategist_envelope(envelope_id="ENV-SA-99", position_id="POS-NONEXISTENT")
+        errors = (
+            PMValError(
+                field_path="position_id",
+                message=(
+                    "position_id='POS-NONEXISTENT' does not match any open "
+                    "position in pm_view.positions"
+                ),
+                criterion="position_id_resolves",
+            ),
+        )
+
+        ctx, handle = await _open_handle(factory)
+        await persist_guardrail_rejection(
+            handle, envelope, errors, config=_make_state_persistence_config()
+        )
+        # Commit must succeed — the FK at COMMIT must not reject the row.
+        await ctx.__aexit__(None, None, None)
+
+        rows = await _read_activity_log_for(factory, handle.invocation_id)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.event_type == EventType.GUARDRAIL_REJECTION.value
+        assert row.position_id is None  # nullified to satisfy the FK
+        detail = json.loads(row.detail_json)
+        # Envelope context preserved for operator forensics.
+        assert "ENV-SA-99" in detail["command_summary"]
+        assert "POS-NONEXISTENT" in detail["command_summary"]
+        assert detail["blocking_rule_ids"] == ["position_id_resolves"]
+    finally:
+        await async_engine.dispose()
+
+
 async def test_handle_submit_envelope_writes_guardrail_rejection_on_layer23_failure(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:

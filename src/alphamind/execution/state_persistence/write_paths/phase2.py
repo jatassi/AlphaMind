@@ -206,6 +206,17 @@ async def persist_guardrail_rejection(
     ``suggested_modification``; every error's ``criterion`` (when set) feeds
     ``blocking_rule_ids`` so a feedback-loop query can correlate envelope
     rejections back to their failing rules.
+
+    The envelope's ``position_id`` is *not* forwarded into the activity_log
+    row's ``position_id`` column. A common Layer-3 rejection criterion is
+    ``position_id_resolves`` — the envelope's ``position_id`` is precisely
+    the orphan id that has no row in ``positions``, and the FK constraint
+    on ``activity_log.position_id`` (DEFERRABLE INITIALLY DEFERRED, validated
+    at COMMIT) would roll back the entire invocation transaction. The
+    envelope id and any referenced position id are preserved verbatim in the
+    JSON ``command_summary`` for operator forensics; an orphan position_id
+    is unqueryable against ``positions`` anyway, which is what that column
+    is for.
     """
     del config  # No knobs consumed at this story; signature is forward-shaped.
 
@@ -213,8 +224,11 @@ async def persist_guardrail_rejection(
         msg = "persist_guardrail_rejection requires at least one ValidationError"
         raise ValueError(msg)
 
+    summary = f"envelope {envelope.envelope_id} failed Layer-2/3 validation"
+    if envelope.position_id is not None:
+        summary += f" (referenced position_id={envelope.position_id!r})"
     detail = GuardrailRejectionDetail(
-        command_summary=f"envelope {envelope.envelope_id} failed Layer-2/3 validation",
+        command_summary=summary,
         blocking_rule_ids=tuple(e.criterion for e in errors if e.criterion is not None),
         current_limit_values_json={},
         headroom_json={},
@@ -224,7 +238,7 @@ async def persist_guardrail_rejection(
         handle,
         event_type=EventType.GUARDRAIL_REJECTION,
         order_id=None,
-        position_id=envelope.position_id,
+        position_id=None,
         thesis_id=None,
         timestamp=datetime.now(UTC),
         detail=detail,
