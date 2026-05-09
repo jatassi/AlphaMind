@@ -135,7 +135,7 @@ Each envelope:
   - `pm_strategist`: `status_classification_warrant`, `action_status_alignment`, `action_specific_justification`, `portfolio_coherence`.
 - `modifications` (array) — zero or more records. Empty for `approve` and `reject`; at least one record for `approve_with_modification`. Each record:
   - `phase` (`"pre_submission"` | `"post_rejection"`) — `pre_submission` for PM-authored modifications; `post_rejection` for modifications appended after a synchronous guardrail rejection on `submit_envelope`.
-  - `field_changed` (string) — the command field whose value was modified (e.g., `"position_size.pct_of_portfolio"`, `"invalidation_legs[0].condition.trigger_price"`).
+  - `field_changed` (string) — the command field whose value was modified (e.g., `"position_size.dollar_value"`, `"invalidation_legs[0].condition.trigger_price"`).
   - `original_value` (any) — value as proposed by the analyst or strategist.
   - `approved_value` (any) — value the PM approved.
   - `adjustment_category` (`"risk_reduction"` | `"conviction_disagreement"` | `"capital_constraint"` | `"portfolio_balance"` | `"guardrail_rejection_response"`). `guardrail_rejection_response` requires `phase == "post_rejection"` and a populated `triggering_rule`; every other category requires `phase == "pre_submission"`.
@@ -149,7 +149,7 @@ Each envelope:
 - `commands` (array) — zero or more OMS commands per the schemas in `oms-commands.md`. Empty for rejections, hold envelopes that need no command, and rejected-at-submission commands that were not reissued; at least one command on an `approve_with_modification` envelope.
 
 Command-authoring rules (for commands inside envelopes passed to `submit_envelope`):
-- For `OPEN` derived from an analyst proposal: copy instrument, entry order, position size (quantity + dollar_value + pct_of_portfolio + premium_at_risk where applicable), target, invalidation legs, and thesis components from the analyst output. Do not author greeks — the guardrail layer computes them at validation time.
+- For `OPEN` derived from an analyst proposal: copy instrument, entry order, position size (quantity + dollar_value + premium_at_risk where applicable), target, invalidation legs, and thesis components from the analyst output. Do not author greeks — the guardrail layer computes them at validation time.
 - For `ADD` from a strategist proposal: copy the add quantity, entry order, thesis addition component, and any bracket adjustments.
 - For `CLOSE` from a strategist proposal: copy position_id, quantity, execution method, and `close_rationale` (with classification and — for `thesis_invalidated` — the specific invalidation reason).
 - For `ADJUST` originated by the PM as a complementary risk-reducing command: populate `position_id`, the changes (stop level, target level, time expiration, event invalidation, or thesis component updates), and a PM-authored adjustment_rationale.
@@ -167,7 +167,7 @@ When you modify an exposure-changing parameter, the validated `delta_adjusted_ex
   </tool_call_flow>
 
   <tool_call>
-  Example submit_envelope call — ENV-REC-1 (approve_with_modification, one OPEN command). The OPEN command shows the minimal shape the Layer-1 validator inspects (`command_type`, `instrument`, `position_size`); the full broker-grade fields (`entry_order`, `target`, `invalidation_legs`, `thesis`) are populated per `oms-commands.md` and are omitted here for brevity.
+  Example submit_envelope call — ENV-REC-1 (approve_with_modification, one OPEN command). The OPEN command carries the full canonical OMS shape per `oms-command-schema.md` (`command_type`, `instrument`, `entry_order`, `position_size`, `target`, `invalidation_legs`, `thesis`).
   submit_envelope({
     "envelope_id": "ENV-REC-1",
     "invocation_id": "inv-2026-04-23T14-30Z",
@@ -188,9 +188,9 @@ When you modify an exposure-changing parameter, the validated `delta_adjusted_ex
     "modifications": [
       {
         "phase": "pre_submission",
-        "field_changed": "position_size.pct_of_portfolio",
-        "original_value": 3.37,
-        "approved_value": 2.10,
+        "field_changed": "position_size.dollar_value",
+        "original_value": 3370,
+        "approved_value": 2100,
         "adjustment_category": "portfolio_balance",
         "rationale": "Two held positions already aligned to hyperscaler capex; scaling to band floor reduces catalyst concentration without rejecting the thesis."
       }
@@ -207,10 +207,40 @@ When you modify an exposure-changing parameter, the validated `delta_adjusted_ex
         "command_type": "open",
         "instrument": {
           "asset_type": "equity",
-          "direction": "long",
-          "underlying": "NVDA"
+          "ticker": "NVDA",
+          "direction": "long"
         },
-        "position_size": { "sector": "semis" }
+        "entry_order": { "type": "market" },
+        "position_size": { "quantity": 24, "dollar_value": 2100 },
+        "target": {
+          "target_type": "absolute_price",
+          "price": 95.0,
+          "order_type": "limit"
+        },
+        "invalidation_legs": [
+          {
+            "type": "price",
+            "is_hard": true,
+            "condition": {
+              "underlying_trigger": "NVDA",
+              "comparator": "<=",
+              "trigger_price": 78.0
+            },
+            "order_parameters": { "order_type": "market" }
+          }
+        ],
+        "thesis": {
+          "summary": "Pre-earnings long on NVDA; AI capex tailwind sustained.",
+          "components": [
+            {
+              "component_type": "entry_rationale",
+              "linked_leg": "entry",
+              "instrument_reference": "NVDA",
+              "narrative": "Hyperscaler capex acceleration into FY26 supports continued top-line beat.",
+              "key_assumptions": ["Capex run-rate intact through next print."]
+            }
+          ]
+        }
       }
     ]
   })

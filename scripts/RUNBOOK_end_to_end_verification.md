@@ -94,6 +94,7 @@ they read time-dependent DB state.
 | 0 | Types | position_thesis_model | No | <10s |
 | 1 | Data | bootstrap, ongoing_collection | No | ~5s |
 | 1b | Execution: state persistence | state_persistence | No | <5s |
+| 1c | Execution: OMS commands | oms_commands | No | <60s |
 | 2 | Distillation | distillation, regime_transition, calibration_mix | Yes (1 of 3) | ~30–60s |
 | 3 | Analysis: domain researchers | domain_researchers, domain_researcher_failure_modes | Yes (1 of 2) | ~30–60s |
 | 4 | Analysis: qualitative + adaptive | qualitative_researcher, adaptive_researcher | Yes | ~45–90s |
@@ -192,6 +193,49 @@ the durable substrate is live; downstream pipeline-composition wiring
 runs against `submit_envelope` which writes through to the substrate); the
 PM will silently degrade to in-memory-only operation if the substrate is
 broken.
+
+## Phase 1c — OMS commands
+
+Pure in-process integration check against the OMS commands work tree
+(ALP-120) — the canonical broker-grade Pydantic command shapes, the
+PM-originated and engine-originated command-ID derivation utility, the
+engine-stub `submit_envelope` MCP wrapper (PM envelope path), and the
+monitor-facing `submit_engine_envelope` write function (engine envelope
+path). No SDK calls, no LLM cost. Sub-minute runtime against a fresh DB.
+Phase 1c proves the canonical command surface is internally consistent
+and that the Phase 2 writeback consumes real command fields (no stub
+constants).
+
+```bash
+uv run python scripts/verify_oms_commands.py \
+    --db-path "$DB_PATH"
+```
+
+Verifies four phases against a freshly-migrated DB: canonical Pydantic
+round-trip across all five command variants (OPEN / CLOSE / ADJUST /
+CANCEL / ADD) plus `EngineEnvelope`; command-ID utility (PM derivation
+against the `oms-command-ids.md` worked example, engine derivation, parse
+round-trip, `attempt_seq` computation); PM envelope path
+(`build_submit_envelope_mcp_server` → Phase 2 writeback → activity log,
+asserting the persisted `capital_reserved` amount equals the canonical
+command's real `dollar_value` — proves the retired `$1k` stub from
+ALP-374 is gone); engine envelope path (`submit_engine_envelope` → Phase
+2 close writeback → activity-log entry with `engine_guardrail` provenance
+threaded through).
+
+`--db-path` defaults to the standard resolution chain (`DATABASE_PATH`
+env var, then `config/main.yaml` `paths.database` key). For ad-hoc
+verification against a fresh DB, the script's runbook documents an
+in-process snippet that runs `Base.metadata.create_all` against a
+tmp-path DB.
+
+**On failure:** read `scripts/RUNBOOK_oms_commands.md` § Failure-mode
+triage. The FAIL output names the phase and a one-line diagnostic; match
+the phase number (1–4) to its row in the triage table. The most common
+regression is a Phase 3 stub-constant reintroduction — the
+`capital_reserved.amount_usd=1000.0` failure means `_writeback_open` is
+again hard-coding a stub instead of reading
+`command.position_size.dollar_value`.
 
 ## Phase 2 — Distillation layer
 

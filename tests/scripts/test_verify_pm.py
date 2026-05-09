@@ -129,17 +129,30 @@ def _make_envelope_for_log(invocation_id: str = "inv-pm-001") -> Any:
     from alphamind.decision.portfolio_manager.models import (
         AddCommand,
         CriterionAssessment,
-        OMSInstrument,
-        OMSPositionSize,
         PMAnalystEnvelope,
         ThesisQualityEvaluation,
+    )
+    from alphamind.execution.oms.command_models import (
+        EntryOrder,
+    )
+    from alphamind.execution.oms.command_models import (
+        ThesisComponent as OMSThesisComponent,
     )
 
     cmd = AddCommand(
         command_type="add",
         position_id="POS-AAPL-001",
-        instrument=OMSInstrument(asset_type="equity", direction="long", underlying="AAPL"),
-        position_size=OMSPositionSize(sector="tech"),
+        additional_quantity=5.0,
+        additional_dollar_value=5_000.0,
+        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        thesis_addition_component=OMSThesisComponent(
+            component_type="entry_rationale",
+            linked_leg="add",
+            instrument_reference="AAPL",
+            narrative="Add to AAPL.",
+            key_assumptions=("Setup intact.",),
+        ),
+        bracket_adjustment=None,
     )
     pass_criterion = CriterionAssessment(status="pass")
     return PMAnalystEnvelope(
