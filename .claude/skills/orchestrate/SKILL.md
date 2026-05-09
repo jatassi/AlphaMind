@@ -59,14 +59,15 @@ Before any dispatch:
 Use `TaskCreate` once, up front, to register everything you must not drop. Two groups:
 
 - **One task per sub-issue** — title `<NN — Title>`, status `pending`. As you dispatch, mark `in_progress`; as you verify and merge, mark `completed`.
-- **Completion-sequence tasks** — register all seven before the work begins so they cannot be forgotten:
+- **Completion-sequence tasks** — register all eight before the work begins so they cannot be forgotten:
   1. `Open PR to main`
   2. `Run end-to-end verification (per-feature verify script)`
-  3. `Spawn /review subagent`
-  4. `Address review feedback`
-  5. `Update docs/project-tracker.md status to _done_`
-  6. `Land PR and clean local git state`
-  7. `Send PushNotification summarizing completed work`
+  3. `Pre-review triage of work-tree residue`
+  4. `Spawn /review subagent`
+  5. `Address review feedback`
+  6. `Update docs/project-tracker.md status to _done_`
+  7. `Land PR and clean local git state`
+  8. `Send PushNotification summarizing completed work`
 
 ### 5. Create and push the feature branch
 
@@ -194,6 +195,7 @@ After all stories in a wave have been verified and merged (or blocked), and *bef
 
 - Run the full chain on the feature branch: `uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest -n auto`. Catches integration issues that pass per-story but fail combined.
 - **Push the feature branch to `origin`** (`git push origin <feature-branch>`) so the next wave's worktrees can rebase onto its latest tip. Skipping this means wave-N+1 subagents will only see content reachable from `main`, missing every story merged in waves 1..N.
+- **Regenerate fixture artifacts ONCE per wave, not per-story.** When 3+ parallel stories in the same wave each modify a generated artifact (typical: `tests/fixtures/replay_harness/fixture_store/*/raw_inputs.sqlite` after migrations land — every story regenerates from `python tests/fixtures/replay_harness/generate_fixtures.py`), each per-story merge produces a binary-file conflict. Resolve trivially with `git checkout --theirs <path>` during cherry-pick (the regenerated content is wrong-for-the-final-state anyway), then run the regen script ONCE after all parallel stories merge and commit the result as a `test(<feature>): regenerate fixtures after wave-N <thing>` follow-up commit. Avoids N-1 useless conflict-resolution cycles.
 - If clean, proceed to the next survey.
 - If the global run fails, the failure is in the integration boundary between this wave's stories. Diagnose; fix directly if trivial; re-dispatch the relevant story if not. Do not advance to the next wave until the global run is clean.
 - **If the global run flakes — passes some runs, fails others on the same code — do not defer it as a finding. Bisect.** The flake exists because some test in this wave (or in the work tree's accumulated additions to the suite) mutates global state that another test depends on; xdist surfaces it intermittently because workload distribution to workers shifts run-to-run. Procedure: confirm by running `for i in 1 2 3 4 5; do uv run pytest -n auto 2>&1 | tail -1; done`; if mixed pass/fail, narrow with `--ignore=<test-dir>` to drop test groups until the flake stops, then narrow within the offending dir to a single file; read the offending file for `sys.modules` mutation, `logging.config.fileConfig` calls (default `disable_existing_loggers=True` is a classic trap), `os.environ` writes, shared filesystem-state mutations, `caplog` interactions, or fixture-leak across tests. The fix usually lands in production code (e.g., pass `disable_existing_loggers=False` to the offending `fileConfig` call), not in the test that surfaces the flake. CLAUDE.md is strict that test-order dependence is a real bug; a flake from your work tree counts as a wave-gate failure even if a previous run passed.
@@ -207,6 +209,16 @@ Skip delegation only when overhead exceeds the work:
 - Trivial-fix unwarranted lint suppressions.
 - The single-line `docs/project-tracker.md` status update.
 - Trivial story work the parent Issue's orchestrator notes mark for inline handling (e.g., a one-line README link).
+
+**Subagent token-limit recovery.** If a dispatch reports `You've hit your limit · resets <date>` (or any other mid-flight termination short of the verbatim-git-log report), the work may still be substantively complete — agents typically commit last, so a token cutoff during the staging step leaves all the implementation as untracked files in the worktree. Investigate before re-dispatching:
+
+- `git -C <worktree-path> log --oneline <feature-branch>..HEAD` — if a commit is listed, the agent finished and the cutoff was during reporting; verify normally.
+- `git -C <worktree-path> status --short` — list untracked + modified files. If a coherent set of files exists (production module + tests + any required doc/config edits matching the story's scope), the work is likely complete-but-uncommitted.
+- `wc -l <files>` to gauge volume; spot-read the largest 1–2 files for shape coherence (does the script have an entry point? does the test file have the expected test cases?).
+- `cd <worktree-path> && uv run ruff check <changed-paths> && uv run mypy <changed-paths> && uv run pytest <test-path> -n auto` — if lint + tests pass against the new files, the work is sound; copy the files into the main repo, commit directly with a descriptive `feat(<feature>): <story summary> (ALP-<N>)` message, and proceed as if the dispatch had returned cleanly.
+- If the staged work is partial (missing a test, an obvious untouched file the story called out, lint failures, or any sign the agent stopped mid-implementation rather than mid-reporting), re-dispatch with a fresh worktree.
+
+The bar for direct-commit recovery: you can describe each file's purpose in one sentence and the test/lint chain is green. Otherwise re-dispatch.
 
 For everything else, delegate.
 
@@ -257,7 +269,31 @@ The bar for "straightforward": the fix is contained to one or two files in this 
 
 Do not advance to the /review step on a failing or unrun verification — the verification establishes that what the PR ships actually runs end-to-end, and a /review on broken code wastes the reviewer's cycles on issues a re-run would have caught.
 
-### 3. Spawn /review subagent
+### 3. Pre-review triage of subagent-reported deferrals
+
+Throughout the run, implementing subagents will report items they deferred or scope-shrunk — narrowed implementations, unresolved follow-ups, design questions they didn't have authority to answer, work they explicitly handed back to the orchestrator. Track these as you go (a scratch list in your head or in TaskCreate notes is fine; the per-story task notifications also preserve them). Before /review, walk the consolidated list and reason about each one with a bias toward addressing now.
+
+The orchestrator has the integration view that per-story subagents lack and that /review will rediscover at cost. Addressing the obvious now reduces /review's surface, focuses its findings on architectural / cross-cutting issues, and avoids re-doing work between the reviewer's recommendation and your fix.
+
+**Triage each deferral into one of three buckets:**
+
+- **Address now** — the fix is contained, the substrate to support it exists, and a reviewer would flag it as a blocker or strong-suggested. Most subagent-flagged deferrals fall here once you ask "what's actually preventing this from being done?"
+- **Defer with explicit Linear ticket** — the fix requires meaningful design work, sibling-work-tree coordination, or scope expansion the operator hasn't authorized. Open a Linear follow-up issue with the gap analysis. Do not let deferrals live only in runbook caveats or commit messages — those decay; Linear tickets surface in `/draft-user-stories` planning.
+- **Skip** — cosmetic, premature optimization, or future-proofing without a current incident.
+
+**The bias toward "now".** The default is to address; the burden of proof is on deferral. Reasons that survive the bias:
+
+- Substrate the fix needs genuinely doesn't exist yet (cross-feature primitive missing, vocabulary extension would touch a sibling work tree's contract).
+- Risk of regression exceeds the value of closing the gap.
+- Operator-decision territory (algorithmic change, design ambiguity, scope expansion).
+
+Anything else, fix now.
+
+**Dispatch.** When the triage produces a non-empty "address now" list, dispatch a single Opus subagent on a fresh worktree with the consolidated list. The subagent can group fixes into one or a small handful of well-scoped commits. After the dispatch returns, verify and cherry-pick onto the feature branch, then run the wave-end gate (full lint + test) to confirm the additions don't regress.
+
+When the triage list is empty, record that explicitly ("Pre-review triage: no addressable deferrals") and proceed to /review.
+
+### 4. Spawn /review subagent
 
 ```
 Agent({
@@ -271,7 +307,7 @@ Agent({
 
 Wait for completion. The result is a list of suggestions.
 
-### 4. Address review feedback
+### 5. Address review feedback
 
 Assess each suggestion with **bias toward acceptance** — the reviewer is calibrated and the feedback typically warrants action. Reject only with explicit reason (e.g., "this would re-introduce the X anti-pattern", "this contradicts the Y design constraint"). For accepted suggestions:
 
@@ -293,13 +329,14 @@ After the subagent reports back, verify and merge into the feature branch as in 
 
 After all accepted feedback is addressed, push the new commits to the PR.
 
-### 5. Update docs/project-tracker.md
+### 6. Update docs/project-tracker.md
 
 Edit the feature's bullet under "Ready for implementation": change `_in progress_` (or whatever transient status it had) to `_done_`. Commit with a message like `chore(project-tracker): mark <feature> done`. This commit goes on the feature branch and rides the same PR.
 
-### 6. Land PR and clean local git state
+### 7. Land PR and clean local git state
 
 - Wait for CI green on the PR (if CI exists).
+- **Before `gh pr merge`, sweep stale `main`-bearing worktrees.** Run `git worktree list` and look for orphan worktrees from prior sessions checked out to `main` (typical naming: `.claude/worktrees/<random-name>` with no `agent-` prefix). `gh pr merge` switches the local checkout to `main` to apply the merge and fails with `fatal: 'main' is already used by worktree at <path>` if a stale `main` worktree exists. Confirm the orphan's `git -C <path> status --short` is clean (no uncommitted work), then `git worktree remove -f -f <path>`. Diagnose only if the worktree has uncommitted work — rare for orphans, but possible if it represents the operator's in-progress side work.
 - Merge the PR (squash-merge or merge per repo convention; check `gh pr view` for repo defaults).
 - Locally:
 
@@ -347,7 +384,7 @@ This discards uncommitted edits and untracked files inside the worktree without 
 
 Verify clean state: `git status` shows nothing pending.
 
-### 7. PushNotification
+### 8. PushNotification
 
 Send a notification summarizing the run:
 
@@ -397,7 +434,7 @@ Surface blockers immediately, do not work around them:
 - **Dispatching all stories at once "to save time".** Wave structure exists because dependencies are real. Out-of-order dispatch produces stories that depend on absent code and waste subagent cycles.
 - **Dispatching multiple stories that share a target file in the same wave.** When two or more stories all create or edit the same file (e.g., three sub-stories each adding a test case to one shared file), parallel worktrees produce independent versions of the file and the cherry-picks conflict at integration time. Either sequence them across waves, merge them into one story, or — if the parent Issue's notes say "story A creates the file; siblings ADD to it" — dispatch story A first, wait for merge + push, then dispatch the siblings.
 - **Running `pytest` without `-n auto`** anywhere — your verification, the subagent's verification, the wave gate. CLAUDE.md is strict; serial pytest runs hide xdist-only failures.
-- **Trusting subagent self-reports.** They sometimes report "done" with uncommitted changes (`feedback_subagent_must_commit`). Always verify with `git log <feature-branch>..<subagent-branch>` and `git status` in the worktree.
+- **Trusting subagent self-reports.** They sometimes report "done" with uncommitted changes (`feedback_subagent_must_commit`). Always verify with `git log <feature-branch>..<subagent-branch>` and `git status` in the worktree. Per-story tests cover per-story acceptance criteria, but they often don't exercise the production-call path end-to-end. The /review can surface integration gaps the wave gates miss — e.g., a Phase 1 transaction commit and a repository snapshot-read each working in isolation, but the production caller unable to string them together because a sentinel field (`phase1_completed_at`) is never set on the production write path; the e2e verify script masks the gap by manually pre-stamping it. **A verify script that fakes a missing wire is a yellow flag the orchestrator should catch on integration** — when reviewing the e2e verify story's diff, scan for synthetic timestamp/state stamps that production code should but doesn't write. If found, mark them as a pre-merge follow-up.
 - **Skipping the wave-end global lint+test gate.** Per-story verification doesn't catch integration issues. The global gate is cheap; skipping it costs more later.
 - **Restating the parent Issue's orchestrator notes here.** This skill provides defaults; the parent Issue provides feature-specific overrides. Read both; apply them additively.
 - **Marking the post-completion tasks `completed` early.** Mark each only after the action observably succeeded (PR open and visible, /review subagent returned, etc.).
