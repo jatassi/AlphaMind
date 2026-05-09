@@ -31,12 +31,23 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind.decision.portfolio_manager.models import (
     CriterionAssessment,
-    OMSInstrument,
-    OMSPositionSize,
     OpenCommand,
     PMAnalystEnvelope,
     PMEnvelope,
     ThesisQualityEvaluation,
+)
+from alphamind.execution.oms.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+)
+from alphamind.execution.oms.command_models import (
+    ThesisComponent as OMSThesisComponent,
 )
 from alphamind.execution.oms.submit_envelope_mcp import (
     Acknowledgment,
@@ -477,7 +488,6 @@ def _unprocessed_entry_fill() -> FillRecord:
 
 
 _PHASE_D_TICKER = "NVDA"
-_PHASE_D_SECTOR = "semis"
 _PHASE_D_ENVELOPE_ID = "ENV-REC-1"
 _PHASE_D_RECOMMENDATION_ID = "REC-1"
 
@@ -496,12 +506,44 @@ def _all_pass_thesis_evaluation() -> ThesisQualityEvaluation:
 def _phase_d_open_envelope(invocation_id: str) -> PMEnvelope:
     open_command = OpenCommand(
         command_type="open",
-        instrument=OMSInstrument(
+        instrument=EquityInstrument(
             asset_type="equity",
+            ticker=_PHASE_D_TICKER,
             direction="long",
-            underlying=_PHASE_D_TICKER,
         ),
-        position_size=OMSPositionSize(sector=_PHASE_D_SECTOR),  # type: ignore[arg-type]
+        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+        target=Target(
+            target_type="absolute_price",
+            price=950.0,
+            pl_percentage=None,
+            pl_dollar=None,
+            order_type="limit",
+        ),
+        invalidation_legs=(
+            PriceLeg(
+                type="price",
+                is_hard=True,
+                condition=PriceCondition(
+                    underlying_trigger=_PHASE_D_TICKER,
+                    comparator="<=",
+                    trigger_price=750.0,
+                ),
+                order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+            ),
+        ),
+        thesis=Thesis(
+            summary=f"Long {_PHASE_D_TICKER}.",
+            components=(
+                OMSThesisComponent(
+                    component_type="entry_rationale",
+                    linked_leg="entry",
+                    instrument_reference=_PHASE_D_TICKER,
+                    narrative="Capex tailwind.",
+                    key_assumptions=("Capex stays elevated.",),
+                ),
+            ),
+        ),
     )
     return PMAnalystEnvelope(
         envelope_id=_PHASE_D_ENVELOPE_ID,

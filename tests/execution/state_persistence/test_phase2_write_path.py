@@ -30,14 +30,25 @@ from alphamind.decision.portfolio_manager.models import (
     CancelCommand,
     CloseCommand,
     CriterionAssessment,
-    OMSInstrument,
-    OMSPositionSize,
     OpenCommand,
     PMAnalystEnvelope,
     PMEnvelope,
     PMStrategistEnvelope,
     PositionActionEvaluation,
     ThesisQualityEvaluation,
+)
+from alphamind.execution.oms.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+)
+from alphamind.execution.oms.command_models import (
+    ThesisComponent as OMSThesisComponent,
 )
 from alphamind.execution.oms.submit_envelope_mcp import (
     Acknowledgment,
@@ -353,11 +364,43 @@ def _all_pass_position_eval() -> PositionActionEvaluation:
     )
 
 
-def _open_command(underlying: str = "NVDA", sector: str = "semis") -> OpenCommand:
+def _open_command(underlying: str = "NVDA") -> OpenCommand:
     return OpenCommand(
         command_type="open",
-        instrument=OMSInstrument(asset_type="equity", direction="long", underlying=underlying),
-        position_size=OMSPositionSize(sector=sector),  # type: ignore[arg-type]
+        instrument=EquityInstrument(asset_type="equity", ticker=underlying, direction="long"),
+        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+        target=Target(
+            target_type="absolute_price",
+            price=950.0,
+            pl_percentage=None,
+            pl_dollar=None,
+            order_type="limit",
+        ),
+        invalidation_legs=(
+            PriceLeg(
+                type="price",
+                is_hard=True,
+                condition=PriceCondition(
+                    underlying_trigger=underlying,
+                    comparator="<=",
+                    trigger_price=750.0,
+                ),
+                order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+            ),
+        ),
+        thesis=Thesis(
+            summary=f"Long {underlying}.",
+            components=(
+                OMSThesisComponent(
+                    component_type="entry_rationale",
+                    linked_leg="entry",
+                    instrument_reference=underlying,
+                    narrative="Capex tailwind.",
+                    key_assumptions=("Capex stays elevated.",),
+                ),
+            ),
+        ),
     )
 
 
@@ -365,28 +408,55 @@ def _close_command(position_id: str = "POS-NVDA-001") -> CloseCommand:
     return CloseCommand(
         command_type="close",
         position_id=position_id,
+        quantity="all",
+        order_type="market",
+        limit_price=None,
         close_rationale_type="thesis_invalidated",
+        invalidation_reason="Thesis broken.",
+        risk_management_subtype=None,
     )
 
 
 def _adjust_command(position_id: str = "POS-NVDA-001") -> AdjustCommand:
-    return AdjustCommand(command_type="adjust", position_id=position_id)
+    return AdjustCommand(
+        command_type="adjust",
+        position_id=position_id,
+        adjustment_rationale="Tighten stop.",
+        new_stop_level=None,
+        new_target_level=None,
+        new_time_expiration=None,
+        new_event_invalidation=None,
+        thesis_component_updates=(
+            OMSThesisComponent(
+                component_type="entry_rationale",
+                linked_leg="entry",
+                instrument_reference="NVDA",
+                narrative="Updated rationale.",
+                key_assumptions=("Updated.",),
+            ),
+        ),
+    )
 
 
 def _cancel_command(order_id: str = "ord-entry-1") -> CancelCommand:
-    return CancelCommand(command_type="cancel", order_id=order_id)
+    return CancelCommand(command_type="cancel", order_id=order_id, cancel_reason="stale")
 
 
-def _add_command(
-    position_id: str = "POS-NVDA-001",
-    underlying: str = "NVDA",
-    sector: str = "semis",
-) -> AddCommand:
+def _add_command(position_id: str = "POS-NVDA-001") -> AddCommand:
     return AddCommand(
         command_type="add",
         position_id=position_id,
-        instrument=OMSInstrument(asset_type="equity", direction="long", underlying=underlying),
-        position_size=OMSPositionSize(sector=sector),  # type: ignore[arg-type]
+        additional_quantity=5.0,
+        additional_dollar_value=5_000.0,
+        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        thesis_addition_component=OMSThesisComponent(
+            component_type="entry_rationale",
+            linked_leg="add",
+            instrument_reference="NVDA",
+            narrative="Add to NVDA.",
+            key_assumptions=("Setup intact.",),
+        ),
+        bracket_adjustment=None,
     )
 
 

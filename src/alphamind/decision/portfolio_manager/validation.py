@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import re
 import typing
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from pydantic import BaseModel
 
@@ -46,6 +46,11 @@ from alphamind.decision.portfolio_manager.models import (
     ThesisQualityEvaluation,
 )
 from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
+from alphamind.execution.oms.command_models import (
+    EquityInstrument,
+    OptionInstrument,
+    StrategyInstrument,
+)
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 
 __all__ = [
@@ -378,26 +383,47 @@ def _check_halt_mode_no_constructive(
 # ---------------------------------------------------------------------------
 
 
-def _check_embedded_command_sector(
-    envelope: PMEnvelope, *, active_sectors: frozenset[str]
-) -> Iterable[ValidationError]:
-    """(h) Embedded OPEN/ADD commands' ``position_size.sector`` ∈ ``active_sectors``.
+def _instrument_resolution_key(
+    instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
+) -> str:
+    """Return the ticker/underlying key used to resolve sector for an instrument.
 
-    The :class:`Sector` enum is the risk-side 4-way taxonomy
-    (``tech | semis | financials | energy``) per parent decision (L). CLOSE,
-    ADJUST, and CANCEL commands carry no sector — the check applies only to
-    constructive commands.
+    :class:`EquityInstrument` exposes ``ticker``; :class:`OptionInstrument` and
+    :class:`StrategyInstrument` expose ``underlying``. OPEN commands carry
+    exactly one of these via the discriminated :data:`Instrument` union.
+    """
+    if isinstance(instrument, EquityInstrument):
+        return instrument.ticker
+    return instrument.underlying
+
+
+def _check_embedded_command_sector(
+    envelope: PMEnvelope,
+    *,
+    active_sectors: frozenset[str],
+    sector_resolver: Callable[[str], str],
+) -> Iterable[ValidationError]:
+    """(h) Embedded OPEN command sector ∈ ``active_sectors``.
+
+    Sector is derived via ``sector_resolver`` applied to the instrument's
+    ticker (equity) or underlying (option / strategy) per parent decision
+    (B); the canonical :class:`PositionSize` carries no sector field.
+    Canonical :class:`AddCommand` references an existing position by id
+    and carries no embedded instrument, so the sector check only applies
+    to OPEN.
     """
     for i, command in enumerate(envelope.commands):
-        if not isinstance(command, OpenCommand | AddCommand):
+        if not isinstance(command, OpenCommand):
             continue
-        sector = command.position_size.sector
+        key = _instrument_resolution_key(command.instrument)
+        sector = sector_resolver(key)
         if sector not in active_sectors:
             yield ValidationError(
-                field_path=f"commands[{i}].position_size.sector",
+                field_path=f"commands[{i}].instrument",
                 message=(
-                    f"embedded {command.command_type!r} command sector {sector!r} is not in "
-                    f"active_sectors {sorted(active_sectors)!r}"
+                    f"embedded {command.command_type!r} command sector {sector!r} (resolved from "
+                    f"instrument key {key!r}) is not in active_sectors "
+                    f"{sorted(active_sectors)!r}"
                 ),
                 criterion="embedded_command_sector_active",
             )
@@ -565,6 +591,7 @@ def validate_pm_envelope(
     pm_view: PortfolioManagerView,
     active_sectors: frozenset[str],
     halt_mode: bool,
+    sector_resolver: Callable[[str], str],
 ) -> ValidationResult:
     """Run Layer-2 + Layer-3 checks on *envelope*.
 
@@ -585,12 +612,17 @@ def validate_pm_envelope(
         ``position_id`` (when present) against ``pm_view.positions``.
     active_sectors:
         The active portfolio profile's ``active_sectors`` set (subset of
-        ``{"tech", "semis", "financials", "energy"}``). Embedded OPEN/ADD
-        commands whose ``position_size.sector`` is outside this set are an
-        error.
+        ``{"tech", "semis", "financials", "energy"}``). Embedded OPEN
+        commands whose resolved sector is outside this set are an error.
     halt_mode:
         Whether the PM invocation is running in halt (risk-reduction) mode.
         When ``True``, embedded OPEN or ADD commands are forbidden.
+    sector_resolver:
+        ``ticker -> sector`` callable. Per parent decision (B), sector is a
+        risk-side concept derived at validation time rather than a
+        wire-format field on :class:`~alphamind.execution.oms.command_models.PositionSize`.
+        Embedded OPEN commands' instruments are resolved via this callable
+        applied to ``ticker`` (equity) or ``underlying`` (option / strategy).
 
     Returns
     -------
@@ -606,7 +638,11 @@ def validate_pm_envelope(
     errors.extend(_check_close_command_subtype(envelope))
     errors.extend(_check_anti_patterns_canonical(envelope))
     errors.extend(_check_halt_mode_no_constructive(envelope, halt_mode=halt_mode))
-    errors.extend(_check_embedded_command_sector(envelope, active_sectors=active_sectors))
+    errors.extend(
+        _check_embedded_command_sector(
+            envelope, active_sectors=active_sectors, sector_resolver=sector_resolver
+        )
+    )
     errors.extend(_check_narrative_references(envelope, retrieval_store=retrieval_store))
     errors.extend(
         _check_source_recommendation_id_resolves(

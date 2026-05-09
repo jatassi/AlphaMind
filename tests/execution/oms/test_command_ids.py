@@ -15,8 +15,6 @@ import pytest
 from alphamind.decision.portfolio_manager.models import (
     CriterionAssessment,
     ModificationRecord,
-    OMSInstrument,
-    OMSPositionSize,
     OpenCommand,
     PMAnalystEnvelope,
     ThesisQualityEvaluation,
@@ -31,6 +29,17 @@ from alphamind.execution.oms import (
     is_pm_originated,
     parse_engine_command_id,
     parse_pm_command_id,
+)
+from alphamind.execution.oms.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+    ThesisComponent,
 )
 
 # ---------------------------------------------------------------------------
@@ -55,8 +64,40 @@ def _thesis_eval_all_pass() -> ThesisQualityEvaluation:
 def _open_command() -> OpenCommand:
     return OpenCommand(
         command_type="open",
-        instrument=OMSInstrument(asset_type="equity", direction="long", underlying="NVDA"),
-        position_size=OMSPositionSize(sector="semis"),
+        instrument=EquityInstrument(asset_type="equity", ticker="NVDA", direction="long"),
+        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+        target=Target(
+            target_type="absolute_price",
+            price=950.0,
+            pl_percentage=None,
+            pl_dollar=None,
+            order_type="limit",
+        ),
+        invalidation_legs=(
+            PriceLeg(
+                type="price",
+                is_hard=True,
+                condition=PriceCondition(
+                    underlying_trigger="NVDA",
+                    comparator="<=",
+                    trigger_price=750.0,
+                ),
+                order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+            ),
+        ),
+        thesis=Thesis(
+            summary="Long NVDA.",
+            components=(
+                ThesisComponent(
+                    component_type="entry_rationale",
+                    linked_leg="entry",
+                    instrument_reference="NVDA",
+                    narrative="Capex tailwind.",
+                    key_assumptions=("Capex stays elevated.",),
+                ),
+            ),
+        ),
     )
 
 

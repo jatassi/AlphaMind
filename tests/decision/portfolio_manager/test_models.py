@@ -33,8 +33,6 @@ from alphamind.decision.portfolio_manager.models import (
     CriterionAssessment,
     ModificationRecord,
     OMSCommand,
-    OMSInstrument,
-    OMSPositionSize,
     OpenCommand,
     PMAnalystEnvelope,
     PMCompletionRecord,
@@ -45,6 +43,17 @@ from alphamind.decision.portfolio_manager.models import (
     VerdictSummary,
     completion_record_schema,
     envelope_schema,
+)
+from alphamind.execution.oms.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+    ThesisComponent,
 )
 
 # ---------------------------------------------------------------------------
@@ -82,16 +91,124 @@ def _close_command_basic() -> CloseCommand:
     return CloseCommand(
         command_type="close",
         position_id="POS-NVDA-001",
+        quantity="all",
+        order_type="market",
+        limit_price=None,
         close_rationale_type="thesis_invalidated",
+        invalidation_reason="Thesis broken.",
+        risk_management_subtype=None,
+    )
+
+
+def _full_thesis_for_open() -> Thesis:
+    return Thesis(
+        summary="Long NVDA on AI capex tailwind.",
+        components=(
+            ThesisComponent(
+                component_type="entry_rationale",
+                linked_leg="entry",
+                instrument_reference="NVDA",
+                narrative="Hyperscaler capex sustains topline growth.",
+                key_assumptions=("Capex run-rate intact.",),
+            ),
+        ),
+    )
+
+
+def _hard_price_leg() -> PriceLeg:
+    return PriceLeg(
+        type="price",
+        is_hard=True,
+        condition=PriceCondition(
+            underlying_trigger="NVDA",
+            comparator="<=",
+            trigger_price=750.0,
+        ),
+        order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
     )
 
 
 def _open_command_basic() -> OpenCommand:
     return OpenCommand(
         command_type="open",
-        instrument=OMSInstrument(asset_type="equity", direction="long", underlying="NVDA"),
-        position_size=OMSPositionSize(sector="semis"),
+        instrument=EquityInstrument(asset_type="equity", ticker="NVDA", direction="long"),
+        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+        target=Target(
+            target_type="absolute_price",
+            price=950.0,
+            pl_percentage=None,
+            pl_dollar=None,
+            order_type="limit",
+        ),
+        invalidation_legs=(_hard_price_leg(),),
+        thesis=_full_thesis_for_open(),
     )
+
+
+# Canonical OPEN command JSON payload (used in TypeAdapter.validate_python tests).
+# Mirrors the canonical schema in oms-command-schema.md (no transitional fields).
+_OPEN_COMMAND_PAYLOAD: dict[str, Any] = {
+    "command_type": "open",
+    "instrument": {"asset_type": "equity", "ticker": "NVDA", "direction": "long"},
+    "entry_order": {"type": "market"},
+    "position_size": {"quantity": 10.0, "dollar_value": 10_000.0},
+    "target": {
+        "target_type": "absolute_price",
+        "price": 950.0,
+        "order_type": "limit",
+    },
+    "invalidation_legs": [
+        {
+            "type": "price",
+            "is_hard": True,
+            "condition": {
+                "underlying_trigger": "NVDA",
+                "comparator": "<=",
+                "trigger_price": 750.0,
+            },
+            "order_parameters": {"order_type": "market"},
+        }
+    ],
+    "thesis": {
+        "summary": "Long NVDA.",
+        "components": [
+            {
+                "component_type": "entry_rationale",
+                "linked_leg": "entry",
+                "instrument_reference": "NVDA",
+                "narrative": "Capex tailwind.",
+                "key_assumptions": ["Capex stays elevated."],
+            }
+        ],
+    },
+}
+
+
+_CLOSE_COMMAND_PAYLOAD: dict[str, Any] = {
+    "command_type": "close",
+    "position_id": "POS-NVDA-001",
+    "quantity": "all",
+    "order_type": "market",
+    "close_rationale_type": "thesis_invalidated",
+    "invalidation_reason": "Thesis broken.",
+}
+
+
+_ADD_COMMAND_PAYLOAD: dict[str, Any] = {
+    "command_type": "add",
+    "position_id": "POS-1",
+    "additional_quantity": 5.0,
+    "additional_dollar_value": 5_000.0,
+    "entry_order": {"type": "market"},
+    "thesis_addition_component": {
+        "component_type": "entry_rationale",
+        "linked_leg": "add",
+        "instrument_reference": "NVDA",
+        "narrative": "Add.",
+        "key_assumptions": ["Setup intact."],
+    },
+}
 
 
 def _make_analyst_envelope(**overrides: Any) -> PMAnalystEnvelope:
@@ -440,17 +557,7 @@ class TestDiscriminatedUnion:
             "modifications": [],
             "concerns": [],
             "rationale_narrative": "Aligned.",
-            "commands": [
-                {
-                    "command_type": "open",
-                    "instrument": {
-                        "asset_type": "equity",
-                        "direction": "long",
-                        "underlying": "NVDA",
-                    },
-                    "position_size": {"sector": "semis"},
-                }
-            ],
+            "commands": [_OPEN_COMMAND_PAYLOAD],
         }
         envelope = adapter.validate_python(payload)
         assert isinstance(envelope, PMAnalystEnvelope)
@@ -474,13 +581,7 @@ class TestDiscriminatedUnion:
             "modifications": [],
             "concerns": [],
             "rationale_narrative": "Sound.",
-            "commands": [
-                {
-                    "command_type": "close",
-                    "position_id": "POS-NVDA-001",
-                    "close_rationale_type": "thesis_invalidated",
-                }
-            ],
+            "commands": [_CLOSE_COMMAND_PAYLOAD],
         }
         envelope = adapter.validate_python(payload)
         assert isinstance(envelope, PMStrategistEnvelope)
@@ -535,6 +636,8 @@ class TestCloseCommandInvariants:
             CloseCommand(
                 command_type="close",
                 position_id="POS-1",
+                quantity="all",
+                order_type="market",
                 close_rationale_type="risk_management",
             )
 
@@ -542,6 +645,8 @@ class TestCloseCommandInvariants:
         cmd = CloseCommand(
             command_type="close",
             position_id="POS-1",
+            quantity="all",
+            order_type="market",
             close_rationale_type="risk_management",
             risk_management_subtype="pm_directed",
         )
@@ -551,7 +656,10 @@ class TestCloseCommandInvariants:
         cmd = CloseCommand(
             command_type="close",
             position_id="POS-1",
+            quantity="all",
+            order_type="market",
             close_rationale_type="thesis_invalidated",
+            invalidation_reason="Thesis broken.",
         )
         assert cmd.risk_management_subtype is None
 
@@ -564,13 +672,7 @@ class TestCloseCommandInvariants:
 class TestOMSCommandDiscriminator:
     def test_open_routes_to_open_command(self) -> None:
         adapter: TypeAdapter[OMSCommand] = TypeAdapter(OMSCommand)
-        cmd = adapter.validate_python(
-            {
-                "command_type": "open",
-                "instrument": {"asset_type": "equity", "direction": "long", "underlying": "NVDA"},
-                "position_size": {"sector": "semis"},
-            }
-        )
+        cmd = adapter.validate_python(_OPEN_COMMAND_PAYLOAD)
         assert isinstance(cmd, OpenCommand)
 
     def test_close_routes_to_close_command(self) -> None:
@@ -579,6 +681,8 @@ class TestOMSCommandDiscriminator:
             {
                 "command_type": "close",
                 "position_id": "POS-1",
+                "quantity": "all",
+                "order_type": "market",
                 "close_rationale_type": "target_reached",
             }
         )
@@ -586,34 +690,27 @@ class TestOMSCommandDiscriminator:
 
     def test_adjust_routes_to_adjust_command(self) -> None:
         adapter: TypeAdapter[OMSCommand] = TypeAdapter(OMSCommand)
-        cmd = adapter.validate_python({"command_type": "adjust", "position_id": "POS-1"})
+        cmd = adapter.validate_python(
+            {
+                "command_type": "adjust",
+                "position_id": "POS-1",
+                "adjustment_rationale": "Tighten stop.",
+                "new_stop_level": {"trigger_price": 100.0, "order_type": "market"},
+            }
+        )
         assert isinstance(cmd, AdjustCommand)
 
     def test_cancel_routes_to_cancel_command(self) -> None:
         adapter: TypeAdapter[OMSCommand] = TypeAdapter(OMSCommand)
-        cmd = adapter.validate_python({"command_type": "cancel", "order_id": "ORD-1"})
+        cmd = adapter.validate_python(
+            {"command_type": "cancel", "order_id": "ORD-1", "cancel_reason": "stale"}
+        )
         assert isinstance(cmd, CancelCommand)
 
     def test_add_routes_to_add_command(self) -> None:
         adapter: TypeAdapter[OMSCommand] = TypeAdapter(OMSCommand)
-        cmd = adapter.validate_python(
-            {
-                "command_type": "add",
-                "position_id": "POS-1",
-                "instrument": {"asset_type": "equity", "direction": "long", "underlying": "NVDA"},
-                "position_size": {"sector": "semis"},
-            }
-        )
+        cmd = adapter.validate_python(_ADD_COMMAND_PAYLOAD)
         assert isinstance(cmd, AddCommand)
-
-    def test_sector_taxonomy_4way_enforced(self) -> None:
-        """OMSPositionSize.sector uses the risk-side 4-way (not 3-way)."""
-        for valid in ("tech", "semis", "financials", "energy"):
-            ps = OMSPositionSize(sector=valid)
-            assert ps.sector == valid
-        # 3-way analysis-side sector ("tech_semis") is rejected.
-        with pytest.raises(ValidationError):
-            OMSPositionSize(sector="tech_semis")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -913,42 +1010,38 @@ class TestSchemaAccessors:
 
 
 # ---------------------------------------------------------------------------
-# 12. Type-reuse hard rule — Sector imported from analyst, not redefined
+# 12. Canonical-import hard rule — PM re-exports OMS commands from the canonical home
 # ---------------------------------------------------------------------------
 
 
-class TestTypeReuse:
-    def test_sector_imported_from_analyst(self) -> None:
-        from alphamind.decision.analyst.models import Sector as AnalystSector
-        from alphamind.decision.portfolio_manager.oms_command_models import (
-            OMSPositionSize,
-        )
+class TestCanonicalReexport:
+    def test_pm_reexports_canonical_command_types(self) -> None:
+        # Story 02b deletes PM's transitional ``oms_command_models.py``; PM's
+        # ``models`` module re-exports the canonical types from
+        # ``alphamind.execution.oms.command_models``. Identity (``is``) check
+        # confirms there's no second definition.
+        from alphamind.decision.portfolio_manager import models as pm_models
+        from alphamind.execution.oms import command_models as canonical
 
-        # OMSPositionSize.sector field references the same Sector Literal alias
-        # as the analyst module. Pydantic does not preserve the original alias,
-        # but the underlying ``Literal`` arg-tuple is identical.
-        # Construct a position size using each canonical sector — verify the
-        # set is identical to ``Sector``'s args.
-        analyst_args = set(get_args(AnalystSector))
-        for s in analyst_args:
-            ps = OMSPositionSize(sector=s)
-            assert ps.sector == s
+        assert pm_models.OpenCommand is canonical.OpenCommand
+        assert pm_models.CloseCommand is canonical.CloseCommand
+        assert pm_models.AdjustCommand is canonical.AdjustCommand
+        assert pm_models.CancelCommand is canonical.CancelCommand
+        assert pm_models.AddCommand is canonical.AddCommand
+        assert pm_models.OMSCommand is canonical.OMSCommand
 
 
 # ---------------------------------------------------------------------------
-# 13. OMS command models module docstring references ALP-120 (transitional)
+# 13. Transitional artifacts deleted — PM's old oms_command_models.py is gone
 # ---------------------------------------------------------------------------
 
 
-class TestTransitionalDocstring:
-    def test_oms_command_models_module_docstring_mentions_alp120(self) -> None:
-        import alphamind.decision.portfolio_manager.oms_command_models as oms_mod
-
-        doc = oms_mod.__doc__ or ""
-        assert "ALP-120" in doc, "oms_command_models module docstring must reference ALP-120"
-        assert "transitional" in doc.lower(), (
-            "oms_command_models module docstring must label this file transitional"
-        )
+class TestTransitionalArtifactsDeleted:
+    def test_pm_oms_command_models_module_deleted(self) -> None:
+        # Story 02b deletes ``alphamind.decision.portfolio_manager.oms_command_models``.
+        # Importing the now-absent module raises ImportError.
+        with pytest.raises(ImportError):
+            import alphamind.decision.portfolio_manager.oms_command_models  # noqa: F401
 
 
 # ---------------------------------------------------------------------------

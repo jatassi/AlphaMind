@@ -19,14 +19,11 @@ import pytest
 
 from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
-from alphamind.decision.analyst.models import Sector
 from alphamind.decision.portfolio_manager.models import (
     AddCommand,
     CancelCommand,
     CloseCommand,
     CriterionAssessment,
-    OMSInstrument,
-    OMSPositionSize,
     OpenCommand,
     PMAnalystEnvelope,
     PMStrategistEnvelope,
@@ -50,6 +47,19 @@ from alphamind.decision.proposal_pre_processor.models import (
     WrappedPendingOrderAssessment,
     WrappedPositionAssessment,
     WrappedRecommendation,
+)
+from alphamind.execution.oms.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+)
+from alphamind.execution.oms.command_models import (
+    ThesisComponent as OMSThesisComponent,
 )
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 from alphamind.portfolio_state.records.capital import (
@@ -261,24 +271,63 @@ def _position_eval_all_pass() -> PositionActionEvaluation:
     )
 
 
-def _open_command(sector: Sector = "semis", underlying: str = "NVDA") -> OpenCommand:
+def _open_command(underlying: str = "NVDA") -> OpenCommand:
+    """Build a canonical full-shape OPEN command."""
     return OpenCommand(
         command_type="open",
-        instrument=OMSInstrument(asset_type="equity", direction="long", underlying=underlying),
-        position_size=OMSPositionSize(sector=sector),
+        instrument=EquityInstrument(asset_type="equity", ticker=underlying, direction="long"),
+        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+        target=Target(
+            target_type="absolute_price",
+            price=950.0,
+            pl_percentage=None,
+            pl_dollar=None,
+            order_type="limit",
+        ),
+        invalidation_legs=(
+            PriceLeg(
+                type="price",
+                is_hard=True,
+                condition=PriceCondition(
+                    underlying_trigger=underlying,
+                    comparator="<=",
+                    trigger_price=750.0,
+                ),
+                order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+            ),
+        ),
+        thesis=Thesis(
+            summary=f"Long {underlying}.",
+            components=(
+                OMSThesisComponent(
+                    component_type="entry_rationale",
+                    linked_leg="entry",
+                    instrument_reference=underlying,
+                    narrative="Capex tailwind.",
+                    key_assumptions=("Capex stays elevated.",),
+                ),
+            ),
+        ),
     )
 
 
-def _add_command(
-    position_id: str = "POS-NVDA-001",
-    sector: Sector = "semis",
-    underlying: str = "NVDA",
-) -> AddCommand:
+def _add_command(position_id: str = "POS-NVDA-001") -> AddCommand:
+    """Build a canonical ADD command (no embedded instrument)."""
     return AddCommand(
         command_type="add",
         position_id=position_id,
-        instrument=OMSInstrument(asset_type="equity", direction="long", underlying=underlying),
-        position_size=OMSPositionSize(sector=sector),
+        additional_quantity=5.0,
+        additional_dollar_value=5_000.0,
+        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        thesis_addition_component=OMSThesisComponent(
+            component_type="entry_rationale",
+            linked_leg="add",
+            instrument_reference="NVDA",
+            narrative="Add to NVDA.",
+            key_assumptions=("Setup intact.",),
+        ),
+        bracket_adjustment=None,
     )
 
 
@@ -287,15 +336,24 @@ def _close_command(
     position_id: str = "POS-NVDA-001",
     rationale_type: str = "thesis_invalidated",
 ) -> CloseCommand:
-    return CloseCommand(
-        command_type="close",
-        position_id=position_id,
-        close_rationale_type=rationale_type,  # type: ignore[arg-type]
+    return CloseCommand.model_validate(
+        {
+            "command_type": "close",
+            "position_id": position_id,
+            "quantity": "all",
+            "order_type": "market",
+            "limit_price": None,
+            "close_rationale_type": rationale_type,
+            "invalidation_reason": (
+                "Thesis broken." if rationale_type == "thesis_invalidated" else None
+            ),
+            "risk_management_subtype": None,
+        }
     )
 
 
 def _cancel_command(order_id: str = "ORD-1") -> CancelCommand:
-    return CancelCommand(command_type="cancel", order_id=order_id)
+    return CancelCommand(command_type="cancel", order_id=order_id, cancel_reason="stale")
 
 
 def _make_analyst_envelope(**overrides: Any) -> PMAnalystEnvelope:
@@ -776,9 +834,9 @@ async def test_processes_multiple_commands_with_partial_rejection() -> None:
     # Command 1: tech OPEN — projected after = 6.5 + 1.0 = 7.5%, PASS.
     # Command 2: tech OPEN — would push to 8.5%, FAIL on sector_concentration.
     # Command 3: energy OPEN — XOM → energy sector at 0% baseline → PASS.
-    cmd1 = _open_command(sector="tech", underlying="ABC")
-    cmd2 = _open_command(sector="tech", underlying="ABC")
-    cmd3 = _open_command(sector="energy", underlying="XOM")
+    cmd1 = _open_command(underlying="ABC")
+    cmd2 = _open_command(underlying="ABC")
+    cmd3 = _open_command(underlying="XOM")
 
     envelope = _make_strategist_envelope(
         verdict="approve",

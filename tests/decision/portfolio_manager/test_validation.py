@@ -19,19 +19,16 @@ negative test:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any
 
 from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
-from alphamind.decision.analyst.models import Sector
 from alphamind.decision.portfolio_manager.models import (
     AddCommand,
     CloseCommand,
     ConcernRecord,
     CriterionAssessment,
     ModificationRecord,
-    OMSInstrument,
-    OMSPositionSize,
     OpenCommand,
     PMAnalystEnvelope,
     PMStrategistEnvelope,
@@ -57,6 +54,17 @@ from alphamind.decision.proposal_pre_processor.models import (
     WrappedPositionAssessment,
     WrappedRecommendation,
 )
+from alphamind.execution.oms.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+    ThesisComponent,
+)
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 
 # ---------------------------------------------------------------------------
@@ -66,6 +74,23 @@ from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManag
 
 _NOW = datetime(2026, 5, 5, 12, 0, 0, tzinfo=UTC)
 _DEFAULT_ACTIVE_SECTORS = frozenset({"tech", "semis", "financials", "energy"})
+
+
+# Default fixture sector resolver — maps a small test universe of tickers to
+# the risk-side 4-way sector taxonomy. Tests that need to exercise inactive
+# sectors override the resolver via :func:`_validate(sector_resolver=...)`.
+_DEFAULT_TICKER_TO_SECTOR: dict[str, str] = {
+    "NVDA": "semis",
+    "JPM": "financials",
+    "XOM": "energy",
+    "AAPL": "tech",
+    "MSFT": "tech",
+    "GOOGL": "tech",
+}
+
+
+def _default_sector_resolver(ticker: str) -> str:
+    return _DEFAULT_TICKER_TO_SECTOR.get(ticker, "tech")
 
 
 def _retrieval_store(*ref_ids: str) -> RetrievalStore:
@@ -98,43 +123,102 @@ def _position_eval_all_pass() -> PositionActionEvaluation:
     )
 
 
-def _open_command(sector: Sector = "semis", underlying: str = "NVDA") -> OpenCommand:
-    return OpenCommand(
-        command_type="open",
-        instrument=OMSInstrument(asset_type="equity", direction="long", underlying=underlying),
-        position_size=OMSPositionSize(sector=sector),
+def _full_thesis() -> Thesis:
+    """Minimal canonical thesis with one entry-rationale component."""
+    return Thesis(
+        summary="Long NVDA on continued AI capex tailwind.",
+        components=(
+            ThesisComponent(
+                component_type="entry_rationale",
+                linked_leg="entry",
+                instrument_reference="NVDA",
+                narrative="AI demand sustains topline growth.",
+                key_assumptions=("Hyperscaler capex remains elevated.",),
+            ),
+        ),
     )
 
 
-def _add_command(
-    position_id: str = "POS-NVDA-001",
-    sector: Sector = "semis",
-    underlying: str = "NVDA",
-) -> AddCommand:
+def _hard_price_invalidation_leg() -> PriceLeg:
+    """Minimal hard price-trigger leg satisfying OpenCommand's hard-backstop invariant."""
+    return PriceLeg(
+        type="price",
+        is_hard=True,
+        condition=PriceCondition(
+            underlying_trigger="NVDA",
+            comparator="<=",
+            trigger_price=750.0,
+        ),
+        order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+    )
+
+
+def _open_command(underlying: str = "NVDA") -> OpenCommand:
+    """Construct a canonical :class:`OpenCommand` with the full required shape.
+
+    Sector is no longer a wire-format field per parent decision (B); the
+    validator derives it via ``sector_resolver(instrument.ticker)``.
+    """
+    return OpenCommand(
+        command_type="open",
+        instrument=EquityInstrument(asset_type="equity", ticker=underlying, direction="long"),
+        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+        target=Target(
+            target_type="absolute_price",
+            price=950.0,
+            pl_percentage=None,
+            pl_dollar=None,
+            order_type="limit",
+        ),
+        invalidation_legs=(_hard_price_invalidation_leg(),),
+        thesis=_full_thesis(),
+    )
+
+
+def _add_command(position_id: str = "POS-NVDA-001") -> AddCommand:
+    """Construct a canonical :class:`AddCommand`.
+
+    Canonical ADD references an existing position by id; it carries no
+    embedded ``instrument`` (per oms-command-schema.md). The validator's
+    sector check therefore applies only to OPEN, not ADD.
+    """
     return AddCommand(
         command_type="add",
         position_id=position_id,
-        instrument=OMSInstrument(asset_type="equity", direction="long", underlying=underlying),
-        position_size=OMSPositionSize(sector=sector),
+        additional_quantity=5.0,
+        additional_dollar_value=5_000.0,
+        entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+        thesis_addition_component=ThesisComponent(
+            component_type="entry_rationale",
+            linked_leg="add",
+            instrument_reference="NVDA",
+            narrative="Add to NVDA on continued strength.",
+            key_assumptions=("Setup intact.",),
+        ),
+        bracket_adjustment=None,
     )
-
-
-_CloseRationaleType = Literal[
-    "thesis_invalidated", "target_reached", "risk_management", "tactical_exit"
-]
-_RiskManagementSubtype = Literal["pm_directed", "engine_guardrail"]
 
 
 def _close_command(
     *,
-    rationale_type: _CloseRationaleType = "thesis_invalidated",
-    risk_management_subtype: _RiskManagementSubtype | None = None,
+    rationale_type: str = "thesis_invalidated",
+    risk_management_subtype: str | None = None,
 ) -> CloseCommand:
-    return CloseCommand(
-        command_type="close",
-        position_id="POS-NVDA-001",
-        close_rationale_type=rationale_type,
-        risk_management_subtype=risk_management_subtype,
+    """Construct a canonical :class:`CloseCommand` with the full required shape."""
+    return CloseCommand.model_validate(
+        {
+            "command_type": "close",
+            "position_id": "POS-NVDA-001",
+            "quantity": "all",
+            "order_type": "market",
+            "limit_price": None,
+            "close_rationale_type": rationale_type,
+            "invalidation_reason": (
+                "Thesis broken." if rationale_type == "thesis_invalidated" else None
+            ),
+            "risk_management_subtype": risk_management_subtype,
+        }
     )
 
 
@@ -340,6 +424,7 @@ def _validate(
     retrieval_store: RetrievalStore | None = None,
     active_sectors: frozenset[str] = _DEFAULT_ACTIVE_SECTORS,
     halt_mode: bool = False,
+    sector_resolver: Any = None,
 ) -> Any:
     """Helper that fills sensible defaults and invokes the validator."""
     if bundle is None:
@@ -366,6 +451,8 @@ def _validate(
             pm_view = _make_pm_view()
     if retrieval_store is None:
         retrieval_store = _retrieval_store()
+    if sector_resolver is None:
+        sector_resolver = _default_sector_resolver
     return validate_pm_envelope(
         envelope,
         retrieval_store=retrieval_store,
@@ -373,6 +460,7 @@ def _validate(
         pm_view=pm_view,
         active_sectors=active_sectors,
         halt_mode=halt_mode,
+        sector_resolver=sector_resolver,
     )
 
 
@@ -754,10 +842,16 @@ class TestCloseCommandRiskManagementSubtype:
 
     def test_engine_guardrail_close_fails(self) -> None:
         # Engine-originated provenance leaking into a PM envelope is the bug.
-        bad_close = CloseCommand.model_construct(
+        # Use the canonical full shape so the parent envelope construction's
+        # discriminated-union validation succeeds.
+        bad_close = CloseCommand(
             command_type="close",
             position_id="POS-NVDA-001",
+            quantity="all",
+            order_type="market",
+            limit_price=None,
             close_rationale_type="risk_management",
+            invalidation_reason=None,
             risk_management_subtype="engine_guardrail",
         )
         envelope = _make_strategist_envelope(commands=(bad_close,))
@@ -850,28 +944,43 @@ class TestHaltModeNoConstructiveCommands:
 
 class TestEmbeddedCommandSectorActive:
     def test_open_command_with_active_sector_passes(self) -> None:
-        envelope = _make_analyst_envelope(commands=(_open_command(sector="semis"),))
+        # NVDA → "semis" via the default fixture resolver; semis ∈ active_sectors.
+        envelope = _make_analyst_envelope(commands=(_open_command(underlying="NVDA"),))
         result = _validate(envelope, active_sectors=frozenset({"semis", "tech"}))
         assert result.is_valid
 
     def test_open_command_with_inactive_sector_fails(self) -> None:
-        envelope = _make_analyst_envelope(commands=(_open_command(sector="energy"),))
+        # XOM → "energy" via the default fixture resolver; energy ∉ {tech, semis}.
+        envelope = _make_analyst_envelope(commands=(_open_command(underlying="XOM"),))
         result = _validate(envelope, active_sectors=frozenset({"tech", "semis"}))
         assert not result.is_valid
         assert any("commands[0]" in err.field_path for err in result.errors)
-        assert any("sector" in err.field_path for err in result.errors)
+        assert any("instrument" in err.field_path for err in result.errors)
 
-    def test_add_command_with_inactive_sector_fails(self) -> None:
+    def test_open_command_sector_derived_via_resolver(self) -> None:
+        # Custom resolver maps NVDA → "energy" — overrides the default and
+        # exercises the resolver-driven dispatch path explicitly.
+        envelope = _make_analyst_envelope(commands=(_open_command(underlying="NVDA"),))
+        result = _validate(
+            envelope,
+            active_sectors=frozenset({"tech", "semis"}),
+            sector_resolver=lambda t: "energy" if t == "NVDA" else "tech",
+        )
+        assert not result.is_valid
+        assert any(err.criterion == "embedded_command_sector_active" for err in result.errors)
+
+    def test_add_command_skipped_no_embedded_instrument(self) -> None:
+        # Canonical AddCommand carries no embedded instrument (it references an
+        # existing position by id), so the sector check is a no-op for ADD.
         envelope = _make_strategist_envelope(
             verdict="approve",
-            commands=(_add_command(sector="energy"),),
+            commands=(_add_command(),),
         )
         result = _validate(envelope, active_sectors=frozenset({"tech", "semis"}))
-        assert not result.is_valid
-        assert any("sector" in err.field_path for err in result.errors)
+        assert result.is_valid
 
     def test_close_command_sector_check_skipped(self) -> None:
-        # CloseCommand carries no sector field; the check applies only to OPEN/ADD.
+        # CloseCommand carries no instrument field; the check applies only to OPEN.
         envelope = _make_strategist_envelope(commands=(_close_command(),))
         result = _validate(envelope, active_sectors=frozenset({"tech"}))
         assert result.is_valid
@@ -1057,11 +1166,11 @@ class TestErrorInventoryCompleteness:
     def test_returns_full_inventory_not_first_error(self) -> None:
         # Construct an envelope with two distinct invariant violations:
         # (1) envelope_id integer mismatch with source_recommendation_id;
-        # (2) embedded OPEN command sector outside active_sectors.
+        # (2) embedded OPEN command sector outside active_sectors (XOM → "energy").
         envelope = _make_analyst_envelope(
             envelope_id="ENV-REC-2",
             source_recommendation_id="REC-7",
-            commands=(_open_command(sector="energy"),),
+            commands=(_open_command(underlying="XOM"),),
         )
         bundle = _make_bundle(recommendations=(_recommendation_stub("REC-7"),))
         result = _validate(

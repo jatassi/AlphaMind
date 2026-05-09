@@ -33,8 +33,6 @@ from alphamind.decision.portfolio_manager.harness import (
 )
 from alphamind.decision.portfolio_manager.models import (
     CriterionAssessment,
-    OMSInstrument,
-    OMSPositionSize,
     OpenCommand,
     PMAnalystEnvelope,
     PMCompletionRecord,
@@ -52,6 +50,19 @@ from alphamind.decision.proposal_pre_processor.models import (
     ConvictionHistogram,
     ProposalPreProcessorBundle,
     StrategistSection,
+)
+from alphamind.execution.oms.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+)
+from alphamind.execution.oms.command_models import (
+    ThesisComponent as OMSThesisComponent,
 )
 from alphamind.execution.oms.submit_envelope_mcp import (
     Acknowledgment,
@@ -1161,8 +1172,42 @@ async def test_submission_log_threads_from_engine_stub_state_cell(
         commands=(
             OpenCommand(
                 command_type="open",
-                instrument=OMSInstrument(asset_type="equity", direction="long", underlying="NVDA"),
-                position_size=OMSPositionSize(sector="semis"),
+                instrument=EquityInstrument(asset_type="equity", ticker="NVDA", direction="long"),
+                entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
+                position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+                target=Target(
+                    target_type="absolute_price",
+                    price=950.0,
+                    pl_percentage=None,
+                    pl_dollar=None,
+                    order_type="limit",
+                ),
+                invalidation_legs=(
+                    PriceLeg(
+                        type="price",
+                        is_hard=True,
+                        condition=PriceCondition(
+                            underlying_trigger="NVDA",
+                            comparator="<=",
+                            trigger_price=750.0,
+                        ),
+                        order_parameters=BracketOrderParameters(
+                            order_type="market", limit_price=None
+                        ),
+                    ),
+                ),
+                thesis=Thesis(
+                    summary="Long NVDA.",
+                    components=(
+                        OMSThesisComponent(
+                            component_type="entry_rationale",
+                            linked_leg="entry",
+                            instrument_reference="NVDA",
+                            narrative="Capex tailwind.",
+                            key_assumptions=("Capex stays elevated.",),
+                        ),
+                    ),
+                ),
             ),
         ),
     )

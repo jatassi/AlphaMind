@@ -15,10 +15,12 @@ upgrade) swaps the inline ``_format_command_id`` in
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
-from alphamind.decision.portfolio_manager import PMEnvelope
+if TYPE_CHECKING:
+    from alphamind.decision.portfolio_manager import PMEnvelope
 
 __all__ = [
     "EngineCommandIdComponents",

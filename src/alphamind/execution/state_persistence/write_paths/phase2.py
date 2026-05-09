@@ -29,6 +29,11 @@ from alphamind.decision.portfolio_manager.models import (
     PMEnvelope,
 )
 from alphamind.decision.portfolio_manager.validation import ValidationError as PMValidationError
+from alphamind.execution.oms.command_models import (
+    EquityInstrument,
+    OptionInstrument,
+    StrategyInstrument,
+)
 from alphamind.execution.oms.submit_envelope_mcp import (
     FailedSubmissionEntry,
     SubmissionResult,
@@ -122,7 +127,7 @@ from alphamind.portfolio_state.records.theses import (
 )
 
 # Token sizing the engine-stub uses for OPEN/ADD: $1k = 1% of $100k portfolio.
-# Matches ``alphamind.execution.oms.submit_envelope_mcp._build_constructive_request``.
+# Matches ``alphamind.execution.oms.submit_envelope_mcp._build_constructive_request_from_open``.
 _STUB_TOKEN_DOLLAR_VALUE = 1_000.0
 _STUB_TOKEN_QUANTITY = 1.0
 _STUB_FILL_PRICE = _STUB_TOKEN_DOLLAR_VALUE / _STUB_TOKEN_QUANTITY  # $1000 per share token
@@ -134,6 +139,21 @@ _VERDICT_TO_PM_VERDICT: dict[str, PMVerdict] = {
     "approve_with_modification": PMVerdict.APPROVE_WITH_MODIFICATION,
     "reject": PMVerdict.REJECT,
 }
+
+
+def _instrument_ticker_key(
+    instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
+) -> str:
+    """Return the ticker/underlying key for a canonical OMS instrument.
+
+    Equity instruments expose ``ticker``; option / strategy expose
+    ``underlying``. Mirrors helpers in
+    :mod:`alphamind.decision.portfolio_manager.validation` and
+    :mod:`alphamind.execution.oms.submit_envelope_mcp`.
+    """
+    if isinstance(instrument, EquityInstrument):
+        return instrument.ticker
+    return instrument.underlying
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +344,7 @@ async def _writeback_open(
     (PENDING_ENTRY), entry order, protective stop leg order. Reserve capital.
     Emit order_submitted, thesis_created, capital_reserved.
     """
-    ticker = command.instrument.underlying
+    ticker = _instrument_ticker_key(command.instrument)
     timestamp = datetime.now(UTC)
     ids = _new_open_ids(ticker, command_id=result.command_id)
 
@@ -635,6 +655,10 @@ async def _writeback_add(
     """ADD: insert add-entry order (PENDING). Append a new thesis component.
     Reserve capital. Emit order_submitted + thesis_component_added +
     capital_reserved.
+
+    Canonical :class:`AddCommand` (story 01a) carries no embedded instrument
+    — it references an existing position by id. The ticker is derived from
+    the position's details payload.
     """
     timestamp = datetime.now(UTC)
     pos_row = await handle.session.get(PositionRow, command.position_id)
@@ -643,7 +667,11 @@ async def _writeback_add(
         raise ValueError(msg)
     position = position_row_to_record(pos_row)
     bracket_id = position.bracket_id or ""
-    ticker = command.instrument.underlying
+    ticker: str = (
+        getattr(position.details, "ticker", None)
+        or getattr(position.details, "underlying_ticker", None)
+        or ""
+    )
 
     add_order_id = _add_order_id(command.position_id, result.command_id)
     add_order = _build_add_entry_order(

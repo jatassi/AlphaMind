@@ -31,14 +31,12 @@ from pydantic import (
     model_validator,
 )
 
-from alphamind.decision.portfolio_manager.oms_command_models import (
+from alphamind.execution.oms.command_models import (
     AddCommand,
     AdjustCommand,
     CancelCommand,
     CloseCommand,
     OMSCommand,
-    OMSInstrument,
-    OMSPositionSize,
     OpenCommand,
 )
 
@@ -53,8 +51,6 @@ __all__ = [
     "CriterionAssessment",
     "ModificationRecord",
     "OMSCommand",
-    "OMSInstrument",
-    "OMSPositionSize",
     "OpenCommand",
     "PMAnalystEnvelope",
     "PMCompletionRecord",

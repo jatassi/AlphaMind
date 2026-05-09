@@ -32,19 +32,22 @@ from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
-from alphamind.decision.portfolio_manager import (
-    AddCommand,
-    AdjustCommand,
-    CancelCommand,
-    CloseCommand,
-    OMSCommand,
-    OpenCommand,
-    PMEnvelope,
-)
+from alphamind.decision.portfolio_manager.models import PMEnvelope
 from alphamind.decision.portfolio_manager.validation import (
     validate_pm_envelope,
 )
 from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
+from alphamind.execution.oms.command_models import (
+    AddCommand,
+    AdjustCommand,
+    CancelCommand,
+    CloseCommand,
+    EquityInstrument,
+    OMSCommand,
+    OpenCommand,
+    OptionInstrument,
+    StrategyInstrument,
+)
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 from alphamind.portfolio_state.records.positions import Direction, InstrumentType
 from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -63,6 +66,36 @@ from alphamind.risk_guardrails.state_delivery.validation_tool import (
     ValidationToolState,
     validate_guardrail,
 )
+
+
+def _instrument_ticker_key(
+    instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
+) -> str:
+    """Return the ticker/underlying key from a canonical OMS instrument.
+
+    Equity instruments expose ``ticker``; option/strategy instruments expose
+    ``underlying``. Mirrors the dispatch helper in
+    :mod:`alphamind.decision.portfolio_manager.validation`.
+    """
+    if isinstance(instrument, EquityInstrument):
+        return instrument.ticker
+    return instrument.underlying
+
+
+def _instrument_direction(
+    instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
+) -> str:
+    """Return ``direction`` for equity/option; default ``"long"`` for strategy.
+
+    Canonical :class:`StrategyInstrument` carries direction per-leg rather
+    than at the instrument level; the engine-stub falls back to ``"long"``
+    for projection purposes. Story 03 reshapes the projection to consume
+    real strategy fields.
+    """
+    if isinstance(instrument, StrategyInstrument):
+        return "long"
+    return instrument.direction
+
 
 _ENVELOPE_ADAPTER: TypeAdapter[PMEnvelope] = TypeAdapter(PMEnvelope)
 
@@ -424,6 +457,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
         pm_view=pm_view,
         active_sectors=active_sectors,
         halt_mode=halt_mode,
+        sector_resolver=sector_resolver,
     )
     if not layer23.is_valid:
         suggested = layer23.errors[0].message
@@ -737,45 +771,44 @@ def _command_to_validation_request(
     exposure delta) and never reach this function. ADJUST commands carry no
     new exposure on the stub envelope — for symmetry we still produce a
     request shape, but the library treats ADJUST as a metadata-only change.
+    Story 03 will refine OPEN / ADD to read real position-size fields and
+    will look up an instrument for ADD via the position-id reference; until
+    then, ADD goes through the same placeholder path as ADJUST.
     """
     if isinstance(command, OpenCommand):
-        return _build_constructive_request(command, action=ValidationAction.OPEN)
-    if isinstance(command, AddCommand):
-        return _build_constructive_request(command, action=ValidationAction.ADD)
-    # AdjustCommand — metadata-only; produce a token shape against a neutral
-    # placeholder ticker. ADJUST is rare enough on stub envelopes that we
-    # accept the placeholder; downstream stories may revisit when the full
-    # OMS command shape (ALP-120) lands.
+        return _build_constructive_request_from_open(command)
+    # AdjustCommand and AddCommand — metadata-only / placeholder until
+    # story 03 lands; canonical AddCommand has no embedded instrument.
+    action = ValidationAction.ADD if isinstance(command, AddCommand) else ValidationAction.ADJUST
     return ValidationRequest(
         instrument=ValidationInstrument(
-            ticker="__ADJUST__",
+            ticker="__PLACEHOLDER__",
             asset_type=InstrumentType.EQUITY,
             direction=Direction.LONG,
         ),
         size=ValidationSize(quantity=1, dollar_value=0.0),
-        action=ValidationAction.ADJUST,
+        action=action,
     )
 
 
-def _build_constructive_request(
-    command: OpenCommand | AddCommand, *, action: ValidationAction
-) -> ValidationRequest:
-    """Translate an OPEN or ADD command into a validate_guardrail request.
+def _build_constructive_request_from_open(command: OpenCommand) -> ValidationRequest:
+    """Translate an OPEN command into a validate_guardrail request.
 
-    The minimal embedded OMS command shape carries asset_type / direction /
-    underlying / sector. For sector-concentration and per-rule projection the
-    library needs a notional sizing; the stub uses a token sizing of 1% of
-    portfolio so the projection produces non-degenerate values.
+    Reads instrument identity (ticker for equity, underlying for option /
+    strategy) via :func:`_instrument_ticker_key`. For sector-concentration
+    and per-rule projection the library needs a notional sizing; the stub
+    uses a token sizing of 1% of portfolio so the projection produces
+    non-degenerate values. Story 03 swaps the token sizing for real fields.
     """
     instrument = ValidationInstrument(
-        ticker=command.instrument.underlying,
+        ticker=_instrument_ticker_key(command.instrument),
         asset_type=_OMS_TO_VALIDATION_ASSET[command.instrument.asset_type],
-        direction=_OMS_TO_VALIDATION_DIRECTION[command.instrument.direction],
+        direction=_OMS_TO_VALIDATION_DIRECTION[_instrument_direction(command.instrument)],
     )
     # Token $1,000 (1% of $100k default portfolio). The stub does not have
     # access to the full broker-grade sizing fields.
     size = ValidationSize(quantity=1, dollar_value=1_000.0)
-    return ValidationRequest(instrument=instrument, size=size, action=action)
+    return ValidationRequest(instrument=instrument, size=size, action=ValidationAction.OPEN)
 
 
 _OMS_TO_VALIDATION_ASSET: Mapping[str, InstrumentType] = {
@@ -806,7 +839,13 @@ def _build_acknowledgment(
     validation result available — they short-circuit the guardrail re-run).
     """
     if isinstance(command, OpenCommand | AddCommand):
-        ticker = command.instrument.underlying
+        # Canonical OpenCommand carries `instrument`; canonical AddCommand
+        # references the existing position by ``position_id`` and has no
+        # embedded instrument. Derive a stub ticker tag accordingly.
+        if isinstance(command, OpenCommand):
+            ticker = _instrument_ticker_key(command.instrument)
+        else:
+            ticker = command.position_id
         per_rule_headroom = tuple(
             _PerRuleHeadroomEntry(
                 rule=p.rule,
