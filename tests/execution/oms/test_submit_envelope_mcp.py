@@ -1335,3 +1335,39 @@ async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
         assert cash_row.reserved_capital_usd > 0.0
     finally:
         await async_engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# 14. SubmitEnvelopeState rejects empty invocation_id
+# ---------------------------------------------------------------------------
+
+
+def test_submit_envelope_state_rejects_empty_invocation_id() -> None:
+    """An empty ``invocation_id`` would propagate into ``_format_command_id``
+    and produce malformed IDs like ``inv-.{envelope_id}.0.0``; the constructor
+    must reject it so the constraint is enforced at the type system."""
+    from alphamind.execution.oms.submit_envelope_mcp import SubmitEnvelopeState
+
+    cfg = _config()
+    validation_state = _make_validation_state(config=cfg)
+
+    with pytest.raises(ValueError, match="invocation_id"):
+        SubmitEnvelopeState(validation_state=validation_state, invocation_id="")
+
+
+def test_build_initial_submit_envelope_state_rejects_empty_invocation_id() -> None:
+    """The public assembler must propagate the empty-string rejection so
+    composition pipelines that forget to thread the invocation id fail loudly
+    at construction rather than silently producing malformed command IDs."""
+    from alphamind.execution.oms.submit_envelope_mcp import (
+        build_initial_submit_envelope_state,
+    )
+
+    cfg = _config()
+    validation_state = _make_validation_state(config=cfg)
+
+    with pytest.raises(ValueError, match="invocation_id"):
+        build_initial_submit_envelope_state(
+            invocation_id="",
+            starting_validation_state=validation_state,
+        )

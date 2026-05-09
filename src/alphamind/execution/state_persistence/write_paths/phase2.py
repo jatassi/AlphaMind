@@ -28,6 +28,7 @@ from alphamind.decision.portfolio_manager.models import (
     OpenCommand,
     PMEnvelope,
 )
+from alphamind.decision.portfolio_manager.validation import ValidationError as PMValidationError
 from alphamind.execution.oms.submit_envelope_mcp import (
     FailedSubmissionEntry,
     SubmissionResult,
@@ -78,6 +79,7 @@ from alphamind.portfolio_state.events.activity_log import (
     EnvelopeParseFailedDetail,
     EventSource,
     EventType,
+    GuardrailRejectionDetail,
     OrderCancelledDetail,
     OrderSubmittedDetail,
     PMDecisionDetail,
@@ -150,7 +152,7 @@ async def persist_envelope_outcome(
     del config  # No knobs consumed at this story; signature is forward-shaped.
 
     accepted_command_ids: list[str] = []
-    for result, command in zip(submission_results, envelope.commands, strict=False):
+    for result, command in zip(submission_results, envelope.commands, strict=True):
         if result.status != "accepted":
             continue
         await _dispatch_command_writeback(handle, command=command, result=result)
@@ -186,6 +188,47 @@ async def persist_envelope_parse_failure(
         timestamp=datetime.now(UTC),
         detail=detail,
         source=EventSource.COMMAND_EXECUTOR,
+    )
+
+
+async def persist_guardrail_rejection(
+    handle: InvocationHandle,
+    envelope: PMEnvelope,
+    errors: tuple[PMValidationError, ...],
+    *,
+    config: StatePersistenceConfig,
+) -> None:
+    """Persist a Layer-2/3 envelope-level rejection as one ``guardrail_rejection`` entry.
+
+    Symmetric with ``persist_envelope_parse_failure`` — the envelope parsed
+    cleanly at Layer-1 but failed an invariant or cross-command coherence
+    check (per ``validate_pm_envelope``). The first error's message becomes
+    ``suggested_modification``; every error's ``criterion`` (when set) feeds
+    ``blocking_rule_ids`` so a feedback-loop query can correlate envelope
+    rejections back to their failing rules.
+    """
+    del config  # No knobs consumed at this story; signature is forward-shaped.
+
+    if not errors:
+        msg = "persist_guardrail_rejection requires at least one ValidationError"
+        raise ValueError(msg)
+
+    detail = GuardrailRejectionDetail(
+        command_summary=f"envelope {envelope.envelope_id} failed Layer-2/3 validation",
+        blocking_rule_ids=tuple(e.criterion for e in errors if e.criterion is not None),
+        current_limit_values_json={},
+        headroom_json={},
+        suggested_modification=errors[0].message,
+    )
+    await _emit(
+        handle,
+        event_type=EventType.GUARDRAIL_REJECTION,
+        order_id=None,
+        position_id=envelope.position_id,
+        thesis_id=None,
+        timestamp=datetime.now(UTC),
+        detail=detail,
+        source=EventSource.GUARDRAIL_LAYER,
     )
 
 
@@ -1143,8 +1186,13 @@ def _new_component_id(thesis_id: str, command_id: str) -> str:
 
 
 def _short_token(command_id: str) -> str:
-    """Stable short suffix derived from the synthetic command id."""
-    return uuid.uuid5(uuid.NAMESPACE_OID, command_id).hex[:8]
+    """Stable suffix derived from the synthetic command id.
+
+    Uses the full 32-hex UUID — collision-resistant under any realistic
+    invocation volume; truncation buys nothing operationally and risks
+    overlap as the corpus grows.
+    """
+    return uuid.uuid5(uuid.NAMESPACE_OID, command_id).hex
 
 
 def _position_ticker(position: PositionRecord) -> str:
@@ -1242,4 +1290,5 @@ __all__ = [
     "persist_command_abandoned",
     "persist_envelope_outcome",
     "persist_envelope_parse_failure",
+    "persist_guardrail_rejection",
 ]

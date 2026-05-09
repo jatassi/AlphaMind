@@ -573,6 +573,98 @@ async def test_envelope_parse_failure_writes_one_log_entry(
 
 
 # ===========================================================================
+# Tests — persist_guardrail_rejection (Layer-2/3 envelope-level rejection)
+# ===========================================================================
+
+
+async def test_persist_guardrail_rejection_writes_one_log_entry(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A Layer-2/3 envelope-level rejection (e.g. halt-mode invariant
+    violation) appends one GUARDRAIL_REJECTION activity log entry capturing
+    the envelope id and the criterion ids of every blocking ValidationError.
+    """
+    from alphamind.decision.portfolio_manager.validation import ValidationError as PMValError
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_guardrail_rejection,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+
+    envelope = _make_analyst_envelope(envelope_id="ENV-REC-2")
+    errors = (
+        PMValError(
+            field_path="commands[0]",
+            message="halt_mode forbids OPEN commands",
+            criterion="halt_mode_invariant",
+        ),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await persist_guardrail_rejection(
+        handle, envelope, errors, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.event_type == EventType.GUARDRAIL_REJECTION.value
+    detail = json.loads(row.detail_json)
+    assert "ENV-REC-2" in detail["command_summary"]
+    assert detail["blocking_rule_ids"] == ["halt_mode_invariant"]
+    assert detail["suggested_modification"] == "halt_mode forbids OPEN commands"
+
+
+async def test_handle_submit_envelope_writes_guardrail_rejection_on_layer23_failure(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """When the engine-stub passes Layer-1 but fails Layer-2/3, both surfaces
+    populate: in-memory submission_log AND SQL guardrail_rejection entry."""
+    from alphamind.execution.oms.submit_envelope_mcp import (
+        _handle_submit_envelope,
+        build_initial_submit_envelope_state,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+
+    state = build_initial_submit_envelope_state(
+        invocation_id=_INV_ID,
+        starting_validation_state=_minimal_validation_state(),
+    )
+
+    envelope = _make_analyst_envelope()
+    bundle = _bundle_with_recommendation("REC-1")
+
+    ctx, handle = await _open_handle(factory)
+    response = await _handle_submit_envelope(
+        envelope.model_dump(mode="json"),
+        state=state,
+        retrieval_store=_minimal_retrieval_store(),
+        pre_processor_bundle=bundle,
+        pm_view=_minimal_pm_view(),
+        active_sectors=frozenset({"tech", "semis", "financials", "energy"}),
+        halt_mode=True,  # forces Layer-2/3 failure on the OPEN command
+        sector_resolver=lambda _: "semis",
+        invocation_handle=handle,
+    )
+    await ctx.__aexit__(None, None, None)
+
+    payload = json.loads(response["content"][0]["text"])
+    assert payload["submission_results"][0]["status"] == "rejected"
+    # Both surfaces populated: in-memory log AND SQL writeback.
+    assert len(state.submission_log) == 1
+    assert state.submission_log[0].envelope.envelope_id == envelope.envelope_id
+
+    rows = await _read_activity_log_for(factory, handle.invocation_id)
+    types = {r.event_type for r in rows}
+    assert EventType.GUARDRAIL_REJECTION.value in types
+
+
+# ===========================================================================
 # Tests — persist_envelope_outcome
 # ===========================================================================
 

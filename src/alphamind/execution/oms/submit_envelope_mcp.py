@@ -24,7 +24,7 @@ closure, JSON content blocks for response.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -207,13 +207,22 @@ class SubmitEnvelopeState:
     incremented (the synthetic ID format derives ordinal from the envelope's
     command index and ``attempt_seq`` from ``post_rejection`` modification
     count, both of which are deterministic from the envelope alone).
+
+    ``invocation_id`` is required (non-empty) — it is interpolated into every
+    synthetic command_id via ``_format_command_id``; an empty value would
+    surface there as malformed IDs like ``inv-.{envelope_id}.0.0``.
     """
 
     validation_state: ValidationToolState
+    invocation_id: str
     submission_log: tuple[SubmissionLogEntry, ...] = ()
     failed_submission_log: tuple[FailedSubmissionEntry, ...] = ()
     command_id_counter: int = 0
-    invocation_id: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.invocation_id:
+            msg = "SubmitEnvelopeState.invocation_id must be non-empty"
+            raise ValueError(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -235,9 +244,6 @@ def build_initial_submit_envelope_state(
     """
     return SubmitEnvelopeState(
         validation_state=starting_validation_state,
-        submission_log=(),
-        failed_submission_log=(),
-        command_id_counter=0,
         invocation_id=invocation_id,
     )
 
@@ -421,6 +427,10 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
     )
     if not layer23.is_valid:
         suggested = layer23.errors[0].message
+        if invocation_handle is not None:
+            await _persist_guardrail_rejection_via_phase2(
+                invocation_handle, envelope, layer23.errors, state_persistence_config
+            )
         return _build_envelope_level_rejection(
             envelope_id=envelope.envelope_id,
             invocation_id=state.invocation_id,
@@ -488,6 +498,21 @@ async def _persist_envelope_parse_failure_via_phase2(
 
     config = state_persistence_config or _stub_state_persistence_config()
     await persist_envelope_parse_failure(invocation_handle, failed_entry, config=config)
+
+
+async def _persist_guardrail_rejection_via_phase2(
+    invocation_handle: Any,
+    envelope: PMEnvelope,
+    errors: Sequence[Any],
+    state_persistence_config: Any | None,
+) -> None:
+    """Lazy import + dispatch — symmetric with the parse-failure helper."""
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_guardrail_rejection,
+    )
+
+    config = state_persistence_config or _stub_state_persistence_config()
+    await persist_guardrail_rejection(invocation_handle, envelope, tuple(errors), config=config)
 
 
 def _stub_state_persistence_config() -> Any:
