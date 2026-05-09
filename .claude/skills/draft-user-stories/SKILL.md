@@ -289,6 +289,8 @@ The description body — Markdown, no frontmatter (status tracking lives in the 
 
 In scope, all under `<src path>`. Tests at `<test path>`.
 
+[Editorial discipline: write the final shape, not your drafting process. Phrases like "Wait, this is a third method. Let me include it", "Actually, on second thought…", or "Let me consider…" are thinking-out-loud residue. They survive Linear's render and clutter the body for the agent picking it up. Edit them out before `save_issue`. Same applies to internal contradictions ("X is NOT in the API. … Implement X as a third method.") — converge to one positive statement.]
+
 ### 1. <First named deliverable>
 
 [Function signature, type definition, or behavior description. Be precise — include parameter names, types, return shape, and edge-case semantics. Quote the design doc where possible. If a public function, include its docstring shape.]
