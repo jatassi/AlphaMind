@@ -15,6 +15,7 @@ Story 01 (ALP-378) ships the foundational substrate:
 
 Story 02a (ALP-379) — :class:`AccountStateQueries` wrappers.
 Story 02b (ALP-380) — equity order POST translation.
+Story 02d (ALP-382) — multi-leg mleg order POST translation.
 Story 02e (ALP-383) — order PATCH + DELETE translation.
 Story 02f (ALP-384) — fill-stream subscriber + translator.
 
@@ -44,6 +45,13 @@ from alphamind.execution.broker_adapter.order_equity import (
     submit_equity_add,
     submit_equity_close,
     submit_equity_open,
+)
+from alphamind.execution.broker_adapter.order_mleg import (
+    MLEGLegAck,
+    MLEGSubmission,
+    submit_mleg_add,
+    submit_mleg_close,
+    submit_mleg_open,
 )
 from alphamind.execution.broker_adapter.order_modify import (
     CancellationAck,
@@ -81,6 +89,8 @@ __all__ = [
     "ExecutionMode",
     "FillReport",
     "GatewaySubmissionFailed",
+    "MLEGLegAck",
+    "MLEGSubmission",
     "MarketClock",
     "OrderLegSnapshot",
     "OrderSnapshot",
@@ -100,6 +110,9 @@ __all__ = [
     "submit_equity_add",
     "submit_equity_close",
     "submit_equity_open",
+    "submit_mleg_add",
+    "submit_mleg_close",
+    "submit_mleg_open",
     "submit_replace",
     "submit_with_retry",
     "subscribe_trade_updates",

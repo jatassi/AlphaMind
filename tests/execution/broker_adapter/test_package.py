@@ -55,6 +55,16 @@ _EQUITY_SYMBOLS: frozenset[str] = frozenset(
     }
 )
 
+_MLEG_SYMBOLS: frozenset[str] = frozenset(
+    {
+        "MLEGLegAck",
+        "MLEGSubmission",
+        "submit_mleg_add",
+        "submit_mleg_close",
+        "submit_mleg_open",
+    }
+)
+
 _MODIFY_SYMBOLS: frozenset[str] = frozenset(
     {
         "CancellationAck",
@@ -70,6 +80,7 @@ _REQUIRED_SYMBOLS: frozenset[str] = (
     | _QUERIES_SYMBOLS
     | _FILL_STREAM_SYMBOLS
     | _EQUITY_SYMBOLS
+    | _MLEG_SYMBOLS
     | _MODIFY_SYMBOLS
 )
 
@@ -161,6 +172,18 @@ def test_equity_symbols_directly_importable() -> None:
     )
 
     _ = (EquitySubmission, submit_equity_add, submit_equity_close, submit_equity_open)
+
+
+def test_mleg_symbols_directly_importable() -> None:
+    from alphamind.execution.broker_adapter import (
+        MLEGLegAck,
+        MLEGSubmission,
+        submit_mleg_add,
+        submit_mleg_close,
+        submit_mleg_open,
+    )
+
+    _ = (MLEGLegAck, MLEGSubmission, submit_mleg_add, submit_mleg_close, submit_mleg_open)
 
 
 def test_modify_symbols_directly_importable() -> None:
