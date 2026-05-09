@@ -15,11 +15,12 @@ Story 01 (ALP-378) ships the foundational substrate:
 
 Story 02a (ALP-379) — :class:`AccountStateQueries` wrappers.
 Story 02b (ALP-380) — equity order POST translation.
+Story 02c (ALP-381) — single-leg options POST translation + OCC builder.
 Story 02d (ALP-382) — multi-leg mleg order POST translation.
 Story 02e (ALP-383) — order PATCH + DELETE translation.
 Story 02f (ALP-384) — fill-stream subscriber + translator.
 
-Subsequent wave-2 stories ship in parallel; see the parent issue
+Subsequent wave-3 stories ship in parallel; see the parent issue
 (`ALP-121 <https://linear.app/alphamind-jatassi/issue/ALP-121>`_).
 """
 
@@ -60,6 +61,13 @@ from alphamind.execution.broker_adapter.order_modify import (
     submit_cancel,
     submit_replace,
 )
+from alphamind.execution.broker_adapter.order_options import (
+    OptionsSubmission,
+    build_occ_symbol,
+    submit_options_add,
+    submit_options_close,
+    submit_options_open,
+)
 from alphamind.execution.broker_adapter.queries import (
     AccountStateQueries,
     ActivitySnapshot,
@@ -92,6 +100,7 @@ __all__ = [
     "MLEGLegAck",
     "MLEGSubmission",
     "MarketClock",
+    "OptionsSubmission",
     "OrderLegSnapshot",
     "OrderSnapshot",
     "OrderStatus",
@@ -104,6 +113,7 @@ __all__ = [
     "SubmissionOutcome",
     "Submitted",
     "TradeAccountSnapshot",
+    "build_occ_symbol",
     "classify_alpaca_error",
     "is_transient",
     "submit_cancel",
@@ -113,6 +123,9 @@ __all__ = [
     "submit_mleg_add",
     "submit_mleg_close",
     "submit_mleg_open",
+    "submit_options_add",
+    "submit_options_close",
+    "submit_options_open",
     "submit_replace",
     "submit_with_retry",
     "subscribe_trade_updates",
