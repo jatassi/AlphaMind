@@ -270,6 +270,42 @@ async def persist_envelope_rejection(
     )
 
 
+async def persist_engine_envelope_outcome(
+    handle: InvocationHandle,
+    *,
+    close_command: CloseCommand,
+    command_id: str,
+    extra_metadata: dict[str, Any],
+) -> None:
+    """Persist the protective CLOSE for an engine-originated envelope.
+
+    Sibling to :func:`persist_envelope_outcome` for the engine path
+    (story 04 / ALP-375). Engine envelopes carry exactly one CLOSE command
+    with no PM verdict — there is no ``pm_decision`` activity-log entry to
+    emit. The function delegates to :func:`_writeback_close` with engine
+    context threaded through ``extra_metadata`` (cascade_id,
+    position_selection_rationale, rule_breached) and ``EventSource.BRACKET_MANAGER``
+    as the activity-log source per ``oms-commands.md § Command origins``.
+
+    The continuous monitor produced the envelope; the OMS owns persistence.
+    The surrounding ``InvocationContext`` commits or rolls back atomically.
+    """
+    synthetic_result = SubmissionResult(
+        command_ordinal=0,
+        status="accepted",
+        command_id=command_id,
+        acknowledgment=None,
+    )
+    await _writeback_close(
+        handle,
+        command=close_command,
+        result=synthetic_result,
+        extra_metadata=extra_metadata,
+        source=EventSource.BRACKET_MANAGER,
+    )
+    await stamp_phase_completion(handle, column="phase2_completed_at")
+
+
 async def persist_command_abandoned(
     handle: InvocationHandle,
     *,
@@ -504,6 +540,8 @@ async def _writeback_close(
     *,
     command: CloseCommand,
     result: SubmissionResult,
+    extra_metadata: dict[str, Any] | None = None,
+    source: EventSource = EventSource.COMMAND_EXECUTOR,
 ) -> None:
     """CLOSE: insert close order (status PENDING). Emit order_submitted.
 
@@ -522,6 +560,16 @@ async def _writeback_close(
     The bracket-leg cancellation and position closure happen on the close
     fill in Phase 1 (per design doc: state transitions from fills happen in
     Phase 1).
+
+    ``extra_metadata`` is folded into the ``order_parameters_json`` payload of
+    the emitted ``order_submitted`` activity log entry — the engine-envelope
+    submission path (story 04 / ALP-375) uses it to thread
+    ``cascade_id`` / ``position_selection_rationale`` / ``rule_breached``
+    through to the activity log alongside the existing rationale metadata.
+
+    ``source`` overrides the default ``COMMAND_EXECUTOR`` event source — the
+    engine-envelope path tags entries with ``BRACKET_MANAGER`` per
+    ``oms-commands.md § Command origins`` and the ``EventSource`` enum docstring.
     """
     timestamp = datetime.now(UTC)
     pos_row = await handle.session.get(PositionRow, command.position_id)
@@ -570,12 +618,14 @@ async def _writeback_close(
     # + risk_management_subtype feed the eventual thesis resolution in Phase 1.
     # We surface them on the order_submitted detail via the order_parameters_json
     # so the post-fill processor can read them without re-fetching the command.
-    rationale_metadata = {
+    rationale_metadata: dict[str, Any] = {
         "close_rationale_type": command.close_rationale_type,
         "invalidation_reason": command.invalidation_reason,
         "risk_management_subtype": command.risk_management_subtype,
         "requested_quantity": ("all" if command.quantity == "all" else float(command.quantity)),
     }
+    if extra_metadata:
+        rationale_metadata.update(extra_metadata)
     await _emit_order_submitted(
         handle,
         order=close_order,
@@ -584,6 +634,7 @@ async def _writeback_close(
         timestamp=timestamp,
         pm_command_id=result.command_id,
         extra_parameters=rationale_metadata,
+        source=source,
     )
 
 
@@ -1929,6 +1980,7 @@ async def _emit_order_submitted(
     timestamp: datetime,
     pm_command_id: str,
     extra_parameters: dict[str, Any] | None = None,
+    source: EventSource = EventSource.COMMAND_EXECUTOR,
 ) -> None:
     parameters: dict[str, Any] = {
         "order_id": order.order_id,
@@ -1955,6 +2007,7 @@ async def _emit_order_submitted(
             order_parameters_json=parameters,
             pm_command_id=pm_command_id,
         ),
+        source=source,
     )
 
 
@@ -2009,6 +2062,7 @@ async def _emit(
 
 __all__ = [
     "persist_command_abandoned",
+    "persist_engine_envelope_outcome",
     "persist_envelope_outcome",
     "persist_envelope_parse_failure",
     "persist_envelope_rejection",

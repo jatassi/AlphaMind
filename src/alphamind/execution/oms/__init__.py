@@ -16,6 +16,12 @@ ALP-372) holds the canonical Pydantic translation of
 :class:`GuardrailTriggerRecord` / :class:`BreachDetails` /
 :class:`SecondaryBreachCheckResult` sub-records.
 
+The :mod:`~alphamind.execution.oms.submit_engine_envelope` module (story 04 /
+ALP-375) provides the monitor-facing :func:`submit_engine_envelope` write
+function the continuous monitor calls between invocations to persist a
+protective CLOSE. Symbols are loaded lazily via :func:`__getattr__` for the
+same reason as the engine-stub module.
+
 The engine-stub :mod:`~alphamind.execution.oms.submit_envelope_mcp` module
 (story 06c / ALP-328) is the transitional MCP wrapper around the OMS write
 API; its public surface is re-exported here for backwards compatibility.
@@ -94,6 +100,10 @@ from alphamind.execution.oms.engine_envelope import (
 )
 
 if TYPE_CHECKING:
+    from alphamind.execution.oms.submit_engine_envelope import (
+        SubmitEngineEnvelopeState,
+        build_initial_submit_engine_envelope_state,
+    )
     from alphamind.execution.oms.submit_envelope_mcp import (
         Acknowledgment,
         FailedSubmissionEntry,
@@ -122,21 +132,42 @@ _LAZY_SUBMIT_ENVELOPE_MCP_NAMES = frozenset(
     }
 )
 
+_LAZY_SUBMIT_ENGINE_ENVELOPE_NAMES = frozenset(
+    {
+        "SubmitEngineEnvelopeState",
+        "build_initial_submit_engine_envelope_state",
+    }
+)
+
 
 def __getattr__(name: str) -> Any:
-    """Lazy-load engine-stub symbols on first access.
+    """Lazy-load engine-stub and engine-envelope-submit symbols on first access.
 
     ``submit_envelope_mcp`` depends on :mod:`alphamind.decision.portfolio_manager`
     (Layer-2/3 validator + canonical envelope types), which itself depends
     on canonical OMS command models exported from this package. Eager
-    import here would create a circular import. The engine-stub is loaded
-    lazily on first attribute access; module identity is cached on the
-    package after the first lookup.
-    """
-    if name in _LAZY_SUBMIT_ENVELOPE_MCP_NAMES:
-        from alphamind.execution.oms import submit_envelope_mcp as _stub
+    import here would create a circular import. ``submit_engine_envelope``
+    transitively imports ``submit_envelope_mcp`` for the
+    :class:`SubmissionResult` / :class:`Acknowledgment` shapes, so it
+    inherits the same lazy-load discipline. Modules are loaded lazily on
+    first attribute access; module identity is cached on the package after
+    the first lookup.
 
+    The ``importlib.import_module`` path is intentional — a ``from … import``
+    statement re-enters ``__getattr__`` for the submodule name and recurses
+    forever; ``import_module`` looks up the submodule directly on
+    ``sys.modules`` after the import completes.
+    """
+    import importlib
+
+    if name in _LAZY_SUBMIT_ENVELOPE_MCP_NAMES:
+        _stub = importlib.import_module("alphamind.execution.oms.submit_envelope_mcp")
         attr = getattr(_stub, name)
+        globals()[name] = attr
+        return attr
+    if name in _LAZY_SUBMIT_ENGINE_ENVELOPE_NAMES:
+        _engine = importlib.import_module("alphamind.execution.oms.submit_engine_envelope")
+        attr = getattr(_engine, name)
         globals()[name] = attr
         return attr
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -191,6 +222,7 @@ __all__ = [
     "StrategyType",
     "SubmissionLogEntry",
     "SubmissionResult",
+    "SubmitEngineEnvelopeState",
     "SubmitEnvelopeState",
     "Target",
     "TargetType",
@@ -198,6 +230,7 @@ __all__ = [
     "ThesisComponent",
     "TimeCondition",
     "TimeLeg",
+    "build_initial_submit_engine_envelope_state",
     "build_initial_submit_envelope_state",
     "build_submit_envelope_mcp_server",
     "compute_attempt_seq",
