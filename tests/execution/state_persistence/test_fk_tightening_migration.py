@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import inspect, text
+from sqlalchemy import Connection, inspect, text
 from sqlalchemy.exc import IntegrityError
 
 from alphamind.persistence.session import make_engine
@@ -198,9 +198,9 @@ class TestFkTighteningMigration:
             eng.dispose()
 
 
-def _insert_process_lifetime(conn: object) -> None:
+def _insert_process_lifetime(conn: Connection) -> None:
     """Minimal row honoring all NOT NULL columns of ``process_lifetimes``."""
-    conn.execute(  # type: ignore[attr-defined]
+    conn.execute(
         text(
             "INSERT INTO process_lifetimes "
             "(process_lifetime_id, process_role, process_start_at, process_pid, "
@@ -216,9 +216,9 @@ def _insert_process_lifetime(conn: object) -> None:
     )
 
 
-def _insert_invocation(conn: object) -> None:
+def _insert_invocation(conn: Connection) -> None:
     """Minimal row honoring all NOT NULL columns of ``invocations``."""
-    conn.execute(  # type: ignore[attr-defined]
+    conn.execute(
         text(
             "INSERT INTO invocations "
             "(invocation_id, process_lifetime_id, start_at, trigger_type, "

@@ -130,6 +130,7 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
+from alphamind.portfolio_state.repository import PortfolioStateRepository
 from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
@@ -488,7 +489,7 @@ def _active_risk_parameters() -> ActiveRiskParameterSet:
 async def _build_repo(
     factory: async_sessionmaker[AsyncSession],
     invocation_id: str,
-) -> object:
+) -> PortfolioStateRepository:
     arp = _active_risk_parameters()
 
     async def _provider() -> ActiveRiskParameterSet:
@@ -565,8 +566,8 @@ async def test_six_step_snapshot_isolation_contract(
 
     # ---- Snapshot read after Phase 1 -------------------------------------
     repo = await _build_repo(factory, invocation_id=phase1_invocation_id)
-    open_after_phase1 = await repo.get_open_positions()  # type: ignore[attr-defined]
-    pending_after_phase1 = await repo.get_pending_positions()  # type: ignore[attr-defined]
+    open_after_phase1 = await repo.get_open_positions()
+    pending_after_phase1 = await repo.get_pending_positions()
     assert {p.position_id for p in open_after_phase1} == {"pos-six"}
     # Phase 2 hasn't run; no other PENDING positions exist yet.
     assert pending_after_phase1 == ()
@@ -587,8 +588,8 @@ async def test_six_step_snapshot_isolation_contract(
 
     # ---- Snapshot read after Phase 2 -------------------------------------
     repo_after_phase2 = await _build_repo(factory, invocation_id=f"{_INV_ID}-phase2")
-    open_after_phase2 = await repo_after_phase2.get_open_positions()  # type: ignore[attr-defined]
-    pending_after_phase2 = await repo_after_phase2.get_pending_positions()  # type: ignore[attr-defined]
+    open_after_phase2 = await repo_after_phase2.get_open_positions()
+    pending_after_phase2 = await repo_after_phase2.get_pending_positions()
     # Phase 1's OPEN position still surfaces.
     assert {p.position_id for p in open_after_phase2} == {"pos-six"}
     # Phase 2 introduced exactly one new PENDING position (the NVDA OPEN).
