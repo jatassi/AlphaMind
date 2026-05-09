@@ -1,9 +1,8 @@
 """Tests for the public surface of the broker_adapter package.
 
-Story ALP-378 introduced the substrate symbols; story ALP-384 (this commit)
-adds the fill-stream subscriber + translator + ``FillReport`` projection.
-Sibling stories 02a-e contribute additional symbols to the same surface and
-will extend this required set at merge time.
+Story ALP-378 introduced the substrate symbols; subsequent wave-2 stories
+add their own symbols. Each story extends the relevant frozenset below;
+the union forms the expected public surface.
 """
 
 from __future__ import annotations
@@ -24,6 +23,20 @@ _SUBSTRATE_SYMBOLS: frozenset[str] = frozenset(
     }
 )
 
+_QUERIES_SYMBOLS: frozenset[str] = frozenset(
+    {
+        "AccountStateQueries",
+        "ActivitySnapshot",
+        "AssetSnapshot",
+        "CalendarDay",
+        "MarketClock",
+        "OrderLegSnapshot",
+        "OrderSnapshot",
+        "PositionSnapshot",
+        "TradeAccountSnapshot",
+    }
+)
+
 _FILL_STREAM_SYMBOLS: frozenset[str] = frozenset(
     {
         "FillReport",
@@ -33,7 +46,9 @@ _FILL_STREAM_SYMBOLS: frozenset[str] = frozenset(
     }
 )
 
-_REQUIRED_SYMBOLS: frozenset[str] = _SUBSTRATE_SYMBOLS | _FILL_STREAM_SYMBOLS
+_REQUIRED_SYMBOLS: frozenset[str] = (
+    _SUBSTRATE_SYMBOLS | _QUERIES_SYMBOLS | _FILL_STREAM_SYMBOLS
+)
 
 
 def test_public_surface_includes_all_required_symbols() -> None:
@@ -63,7 +78,6 @@ def test_substrate_symbols_directly_importable() -> None:
         submit_with_retry,
     )
 
-    # Touch each binding so unused-import linting can't quietly drop one.
     _ = (
         AlpacaClientFactory,
         ExecutionMode,
@@ -76,6 +90,33 @@ def test_substrate_symbols_directly_importable() -> None:
         classify_alpaca_error,
         is_transient,
         submit_with_retry,
+    )
+
+
+def test_queries_symbols_directly_importable() -> None:
+    """Each ALP-379 account-state-query symbol importable from package root."""
+    from alphamind.execution.broker_adapter import (
+        AccountStateQueries,
+        ActivitySnapshot,
+        AssetSnapshot,
+        CalendarDay,
+        MarketClock,
+        OrderLegSnapshot,
+        OrderSnapshot,
+        PositionSnapshot,
+        TradeAccountSnapshot,
+    )
+
+    _ = (
+        AccountStateQueries,
+        ActivitySnapshot,
+        AssetSnapshot,
+        CalendarDay,
+        MarketClock,
+        OrderLegSnapshot,
+        OrderSnapshot,
+        PositionSnapshot,
+        TradeAccountSnapshot,
     )
 
 
