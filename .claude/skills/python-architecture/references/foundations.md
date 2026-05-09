@@ -16,6 +16,8 @@ Each thesis carries: **claim**, **rationale**, **attribution**, **when it breaks
 
 **When it breaks.** Code that genuinely is "thin glue over an external system" — a CLI wrapper around a REST API, a one-shot script. There the shell is the program, and forcing a core/shell split is overhead for no benefit.
 
+The other failure mode is over-application: extracting every transformation into its own pure helper produces a swarm of shallow modules whose integration logic — now scattered across call sites — is the real bug surface. Purity is necessary but not sufficient; the result must also be deep (§A5). When in doubt, prefer one deep pure module over five shallow pure ones.
+
 **Audit signal.** Look for `requests.get`, `httpx.AsyncClient`, `session.execute`, `datetime.now()`, `time.time()`, `random.random()`, `open(...)`, or `subprocess.run` deep inside what should be domain logic. Also look for domain methods that take a session, a clock, or a client as a parameter — that's an okay way to factor it, but if the *only* parameter is the client, the function is shell, not core.
 
 **Design signal.** Sketch the system as a pipeline of pure functions before deciding where the I/O lives. Push I/O outward as far as it will go without becoming nonsensical. The shell should be visibly thinner than the core in terms of line count.
@@ -69,6 +71,26 @@ This thesis is elaborated in `data-and-types.md §D, §E`. This entry is the met
 **Audit signal.** Module paths longer than 3 segments after the project root. Single-file packages whose only purpose is to nest the file (`feature/sub/sub/the_actual_module.py`). Imports where the path is longer than the symbol being imported.
 
 **Design signal.** Start with one module. Promote when it crosses ~400 lines or has three distinct concerns. Resist the urge to pre-create empty `domain/`, `application/`, `infrastructure/` directories until they have content that justifies them.
+
+---
+
+## §A5. Deep modules: small interface, large implementation
+
+**Claim.** A module is *deep* when its public surface is small relative to the complexity it hides; *shallow* when the interface area approaches the size of the implementation. Optimise interfaces to be the smallest expression of the contract that callers actually need — let the module absorb complexity that doesn't need to escape.
+
+**Rationale.** Every public symbol is a coupling point: every caller depends on its name, signature, and contract, and every refactor must preserve them. A module that exposes ten functions to its callers has ten times the coupling surface of one that exposes one function and hides the other nine. The Ousterhout heuristic: imagine the module's documentation. A deep module has a small "what it does" section and a large "how it works" section. A shallow one has them inverted.
+
+Deep modules are also the dual failure mode of §A1's functional-core enthusiasm. Pure functions are easy to test individually, which can produce a swarm of single-purpose helpers extracted "for testability" — but the integration logic that threads them together is now the shallow seam where the real bugs live, and those bugs are not covered by the unit tests of the helpers. The fix is to deepen: collapse the helpers into a module whose public surface is one or two well-named entry points, and test at that boundary.
+
+A second-order benefit: deep modules are easier to navigate for both humans and LLM agents. Understanding one concept doesn't require bouncing between many small files; the implementation is co-located with the interface that defines it.
+
+**Attribution.** John Ousterhout, *A Philosophy of Software Design* (the canonical statement). The "interface should be smaller than implementation" framing is his. Compatible with §C5 (`__all__` discipline) — `__all__` *declares* the surface; depth is about *minimising* it. Compatible with §A1 — depth and purity are orthogonal axes; a module can be deep and pure (preferred), deep and impure (ok at the shell), shallow and pure (the failure mode this thesis names), or shallow and impure (the worst).
+
+**When it breaks.** Genuine library APIs whose value *is* the breadth of their surface (numpy, pandas) — the wide interface is the product. Glue / configuration / wiring modules whose job is exposing a flat menu of capabilities. And during incremental development, where a module legitimately exposes more than its final shape will because the right boundaries haven't surfaced yet.
+
+**Audit signal.** Three smells. First, modules whose public symbols (or `__all__` entries) approach the count of internal symbols — the interface is roughly as wide as the implementation. Second, "pure helper" modules of single-line or single-expression functions where every helper is called from one place — the helpers are scaffolding extracted for testing, not modelling anything. Third, integration logic (call sites that orchestrate the helpers) without its own tests — the bugs have been displaced into the seam.
+
+**Design signal.** Before defining a module's public functions, ask: what is the smallest set of entry points a caller needs? Default to one or two. Push everything else inward as private (`_name` or absent from `__all__`). When tempted to extract "just one more pure helper", ask whether the helper is genuinely reusable or whether it's making the call site shallower without buying anything. Test the deepened module at its public boundary; delete the now-redundant tests that exercised the internal helpers (see `testing.md §J1`).
 
 ---
 
