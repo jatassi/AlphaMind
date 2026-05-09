@@ -3,11 +3,22 @@
 Per ``docs/design/05-execution-layer/state-persistence.md`` § Read paths the
 snapshot-isolation contract is::
 
-    1. Phase 1 commits (fills integrate, ``phase1_completed_at`` stamped).
-    2. Snapshot read sees Phase 1's mutations.
-    3. Phase 2 commits (envelope writebacks land, ``phase2_completed_at``
+    1. Phase 1 begins a write transaction.
+    2. Phase 1 commits (fills integrate, ``phase1_completed_at`` stamped).
+    3. The ingestion layer reads a snapshot.
+    4. The ingestion layer completes its read.
+    5. Phase 2 begins a write transaction.
+    6. Phase 2 commits (envelope writebacks land, ``phase2_completed_at``
        stamped).
-    4. A subsequent snapshot read reflects Phase 2's additions.
+
+This module exercises steps 1, 2, 5, and 6 plus the snapshot reads bracketing
+them (steps 3-4 implemented as direct repository reads). Both phases run
+under a single ``invocation_id`` against a schema migrated to ``head`` so the
+deferred FK constraints participate in every commit. The concurrent
+fill-persistence path (the "Throughout steps 1-6, the gateway may
+independently persist new fill records" guarantee from the design doc) is
+out of surface for this test — it is exercised in
+``test_fill_records_table.py``.
 
 Per-step unit tests live in ``test_phase1_write_path.py``,
 ``test_phase2_write_path.py``, and ``test_sql_repository.py``. This module
@@ -18,11 +29,14 @@ real state.
 
 from __future__ import annotations
 
+from argparse import Namespace
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind.decision.portfolio_manager.models import (
@@ -40,7 +54,6 @@ from alphamind.execution.oms.submit_envelope_mcp import (
 )
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
     InvocationHandle,
 )
 from alphamind.execution.state_persistence.invocation_context.records import (
@@ -83,11 +96,9 @@ from alphamind.execution.state_persistence.write_paths.records import (
     FillProcessingStatus,
     FillRecord,
 )
-from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
     make_async_engine,
     make_async_session_factory,
-    make_engine,
 )
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_parameters import (
@@ -147,13 +158,15 @@ _PROCESS_ID = "proc-1"
 async def db(
     tmp_path: Path,
 ) -> AsyncIterator[tuple[AsyncEngine, async_sessionmaker[AsyncSession]]]:
+    """Yield (async_engine, factory) over a fresh DB migrated to ``head``.
+
+    ``alembic upgrade head`` runs the FK-tightening migration so the
+    deferred FK constraints participate in every Phase 1 / Phase 2 commit.
+    """
     db_path = tmp_path / "alphamind.db"
-
-    import alphamind.execution.state_persistence.tables  # noqa: F401
-
-    sync_engine = make_engine(str(db_path))
-    Base.metadata.create_all(sync_engine)
-    sync_engine.dispose()
+    repo_root = Path(__file__).parents[3]
+    cfg = Config(repo_root / "alembic.ini", cmd_opts=Namespace(x=[f"db={db_path}"]))
+    command.upgrade(cfg, "head")
 
     async_engine = make_async_engine(str(db_path))
     factory = make_async_session_factory(async_engine)
@@ -421,12 +434,63 @@ def _unprocessed_fill() -> FillRecord:
     )
 
 
+def _pending_protective_stop_order(
+    *,
+    bracket_id: str,
+    position_id: str,
+    order_id: str,
+) -> OrderRecord:
+    """Companion stop-leg order satisfying the bracket-leg→order FK.
+
+    The seeded ``BracketLeg`` carries ``order_id=f"{bracket_id}-ord-stop"``;
+    on the FK-tightened schema that reference must resolve. The order is
+    minimally shaped (PENDING protective stop) — Phase 1's fill integration
+    only mutates the entry order, so this row sits inert through the test.
+    """
+    return OrderRecord.model_validate(
+        {
+            "order_id": order_id,
+            "position_id": position_id,
+            "bracket_id": bracket_id,
+            "role": OrderRole.PRICE_STOP,
+            "instrument_spec": EquityInstrumentSpec(ticker="AAPL"),
+            "direction": OrderDirection.SELL,
+            "order_type": OrderType.STOP,
+            "order_class": OrderClass.SIMPLE,
+            "price_parameters": PriceParameters(stop_trigger_price=140.0),
+            "quantity": 10.0,
+            "duration": OrderDuration.GTC,
+            "status": OrderStatus.PENDING,
+            "alpaca_order_id": f"alp-{order_id}",
+            "alpaca_order_id_chain": (f"alp-{order_id}",),
+            "submission_timestamp": _NOW - timedelta(minutes=15),
+            "last_update_timestamp": _NOW - timedelta(minutes=15),
+            "filled_quantity": 0.0,
+            "avg_fill_price": None,
+            "remaining_quantity": 10.0,
+            "modification_count": 0,
+            "originating_thesis_id": "thesis-six",
+            "originating_pm_command_id": None,
+            "age_hours": 0.25,
+        }
+    )
+
+
 async def _seed_initial_state(factory: async_sessionmaker[AsyncSession]) -> None:
-    """Seed the entities Phase 1 needs to integrate one entry fill cleanly."""
+    """Seed the entities Phase 1 needs to integrate one entry fill cleanly.
+
+    All cross-referenced rows commit in a single transaction so the
+    DEFERRABLE-INITIALLY-DEFERRED FKs (positions↔theses↔brackets↔orders cycles)
+    are validated together at COMMIT time.
+    """
     await _seed_invocation_substrate(factory)
     async with factory() as sess:
         entry_order = _pending_entry_order(bracket_id="brk-six", position_id="pos-six")
+        stop_order = _pending_protective_stop_order(
+            bracket_id="brk-six", position_id="pos-six", order_id="brk-six-ord-stop"
+        )
         sess.add(order_record_to_row(entry_order))
+        sess.add(order_record_to_row(stop_order))
         sess.add(position_record_to_row(_pending_position()))
         await sess.flush()
         parent_thesis_row, child_rows = thesis_record_to_rows(_active_thesis())
@@ -447,15 +511,22 @@ async def _seed_initial_state(factory: async_sessionmaker[AsyncSession]) -> None
         await sess.commit()
 
 
-async def _open_handle(
-    factory: async_sessionmaker[AsyncSession], *, suffix: str
-) -> tuple[InvocationContext, InvocationHandle]:
-    ctx = InvocationContext(
-        session_factory=factory,
-        record=_invocation_record(invocation_id=f"{_INV_ID}-{suffix}"),
-    )
-    handle = await ctx.__aenter__()
-    return ctx, handle
+async def _open_handle_for_existing_invocation(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    invocation_id: str,
+) -> tuple[AsyncSession, InvocationHandle]:
+    """Open a session bound to a pre-existing invocation row.
+
+    Production uses ``InvocationContext`` to insert the invocation row on
+    enter — that's correct for one-transaction-per-invocation flows. The
+    six-step contract spans two transactions on the same ``invocation_id``
+    (Phase 1 commit, then snapshot read, then Phase 2 commit), so the row
+    must be inserted exactly once before either phase opens. The caller
+    commits and closes the returned session.
+    """
+    session = factory()
+    return session, InvocationHandle(session=session, invocation_id=invocation_id)
 
 
 # ---------------------------------------------------------------------------
@@ -547,6 +618,11 @@ async def test_six_step_snapshot_isolation_contract(
 ) -> None:
     """Phase 1 commit → snapshot read → Phase 2 commit → second snapshot read.
 
+    Both phases run under the SAME ``invocation_id`` (the design contract
+    binds the entire six-step sequence to one invocation cycle). The schema
+    is migrated to ``head`` so the FK-tightening migration's deferred
+    constraints are validated at every commit.
+
     Asserts:
     * The Phase-1 snapshot sees the now-OPEN seeded position.
     * The Phase-1 snapshot does NOT include Phase 2's PENDING position
@@ -558,14 +634,19 @@ async def test_six_step_snapshot_isolation_contract(
     await _seed_initial_state(factory)
 
     # ---- Phase 1 commit ---------------------------------------------------
-    phase1_invocation_id = f"{_INV_ID}-phase1"
-    ctx, handle = await _open_handle(factory, suffix="phase1")
-    summary = await process_unprocessed_fills(handle, config=_config())
-    await ctx.__aexit__(None, None, None)
+    # _seed_invocation_substrate already inserted the invocation row, so
+    # both phases reuse it (the production InvocationContext insert step
+    # is moved up-front for tests that span two transactions on one row).
+    session, handle = await _open_handle_for_existing_invocation(factory, invocation_id=_INV_ID)
+    try:
+        summary = await process_unprocessed_fills(handle, config=_config())
+        await session.commit()
+    finally:
+        await session.close()
     assert summary.fills_processed == 1
 
     # ---- Snapshot read after Phase 1 -------------------------------------
-    repo = await _build_repo(factory, invocation_id=phase1_invocation_id)
+    repo = await _build_repo(factory, invocation_id=_INV_ID)
     open_after_phase1 = await repo.get_open_positions()
     pending_after_phase1 = await repo.get_pending_positions()
     assert {p.position_id for p in open_after_phase1} == {"pos-six"}
@@ -582,12 +663,15 @@ async def test_six_step_snapshot_isolation_contract(
             acknowledgment=Acknowledgment(),
         ),
     )
-    ctx2, handle2 = await _open_handle(factory, suffix="phase2")
-    await persist_envelope_outcome(handle2, envelope, results, config=_config())
-    await ctx2.__aexit__(None, None, None)
+    session2, handle2 = await _open_handle_for_existing_invocation(factory, invocation_id=_INV_ID)
+    try:
+        await persist_envelope_outcome(handle2, envelope, results, config=_config())
+        await session2.commit()
+    finally:
+        await session2.close()
 
     # ---- Snapshot read after Phase 2 -------------------------------------
-    repo_after_phase2 = await _build_repo(factory, invocation_id=f"{_INV_ID}-phase2")
+    repo_after_phase2 = await _build_repo(factory, invocation_id=_INV_ID)
     open_after_phase2 = await repo_after_phase2.get_open_positions()
     pending_after_phase2 = await repo_after_phase2.get_pending_positions()
     # Phase 1's OPEN position still surfaces.
