@@ -32,6 +32,7 @@ from alphamind.portfolio_state.records.activity_log import (
     CorporateActionType,
     DistillationConfigChange,
     EnvelopeParseFailedDetail,
+    EnvelopeRejectionDetail,
     EventGroup,
     EventSource,
     EventType,
@@ -119,8 +120,8 @@ class TestEnumMembers:
     def test_event_type_is_str_enum(self) -> None:
         assert issubclass(EventType, StrEnum)
 
-    def test_event_type_has_exactly_37_members(self) -> None:
-        assert len(EventType) == 37
+    def test_event_type_has_exactly_38_members(self) -> None:
+        assert len(EventType) == 38
 
     def test_event_type_position_lifecycle_members(self) -> None:
         for name in ("POSITION_OPENED", "POSITION_CLOSED", "POSITION_ADDED", "POSITION_REDUCED"):
@@ -176,7 +177,12 @@ class TestEnumMembers:
             assert hasattr(EventType, name), f"Missing EventType.{name}"
 
     def test_event_type_pm_decision_members(self) -> None:
-        for name in ("PM_DECISION", "COMMAND_ABANDONED", "ENVELOPE_PARSE_FAILED"):
+        for name in (
+            "PM_DECISION",
+            "COMMAND_ABANDONED",
+            "ENVELOPE_PARSE_FAILED",
+            "ENVELOPE_REJECTED",
+        ):
             assert hasattr(EventType, name), f"Missing EventType.{name}"
 
     def test_event_type_corporate_action_members(self) -> None:
@@ -296,9 +302,9 @@ class TestMappingExhaustiveness:
 class TestAnyDetailTypeAlias:
     """AnyDetailType is exported and covers all 35 detail-payload classes."""
 
-    def test_any_detail_type_has_37_members(self) -> None:
+    def test_any_detail_type_has_38_members(self) -> None:
         members = get_args(AnyDetailType)
-        assert len(members) == 37
+        assert len(members) == 38
 
     def test_any_detail_type_covers_all_detail_classes(self) -> None:
         members = set(get_args(AnyDetailType))
@@ -1633,3 +1639,65 @@ class TestEnvelopeParseFailedDetail:
             detail=detail,
         )
         assert entry.event_type == EventType.ENVELOPE_PARSE_FAILED
+
+
+class TestEnvelopeRejectionDetail:
+    """ENVELOPE_REJECTED variant carries Layer-2/3 forensics (ALP-368)."""
+
+    def test_envelope_rejection_detail_round_trip(self) -> None:
+        detail = EnvelopeRejectionDetail(
+            envelope_id="ENV-REC-2",
+            referenced_position_id="POS-NONEXISTENT",
+            attempted_command_count=1,
+            blocking_criteria=("position_id_resolves",),
+            validation_errors_json=(
+                '[{"field_path": "position_id", "message": "missing", '
+                '"criterion": "position_id_resolves"}]'
+            ),
+        )
+        assert detail.envelope_id == "ENV-REC-2"
+        assert detail.referenced_position_id == "POS-NONEXISTENT"
+        assert detail.attempted_command_count == 1
+        assert detail.blocking_criteria == ("position_id_resolves",)
+        assert "position_id_resolves" in detail.validation_errors_json
+
+    def test_envelope_rejection_detail_no_referenced_position(self) -> None:
+        detail = EnvelopeRejectionDetail(
+            envelope_id="ENV-REC-3",
+            referenced_position_id=None,
+            attempted_command_count=2,
+            blocking_criteria=("halt_mode_no_constructive_commands",),
+            validation_errors_json="[]",
+        )
+        assert detail.referenced_position_id is None
+
+    def test_event_type_to_detail_class_lookup(self) -> None:
+        assert EVENT_TYPE_TO_DETAIL_CLASS[EventType.ENVELOPE_REJECTED] is EnvelopeRejectionDetail
+
+    def test_event_type_to_group_lookup(self) -> None:
+        assert EVENT_TYPE_TO_GROUP[EventType.ENVELOPE_REJECTED] == EventGroup.PM_DECISION
+
+    def test_any_detail_type_includes_envelope_rejection(self) -> None:
+        assert EnvelopeRejectionDetail in get_args(AnyDetailType)
+
+    def test_activity_log_entry_accepts_envelope_rejected(self) -> None:
+        detail = EnvelopeRejectionDetail(
+            envelope_id="ENV-REC-2",
+            referenced_position_id=None,
+            attempted_command_count=1,
+            blocking_criteria=("halt_mode_no_constructive_commands",),
+            validation_errors_json="[]",
+        )
+        entry = ActivityLogEntry(
+            entry_id="eid-002",
+            invocation_id="inv-001",
+            timestamp=_UTC_TS,
+            event_type=EventType.ENVELOPE_REJECTED,
+            event_group=EventGroup.PM_DECISION,
+            position_id=None,
+            order_id=None,
+            thesis_id=None,
+            source=EventSource.GUARDRAIL_LAYER,
+            detail=detail,
+        )
+        assert entry.event_type == EventType.ENVELOPE_REJECTED

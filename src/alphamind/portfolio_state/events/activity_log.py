@@ -78,6 +78,7 @@ class EventType(StrEnum):
     PM_DECISION = "PM_DECISION"
     COMMAND_ABANDONED = "COMMAND_ABANDONED"
     ENVELOPE_PARSE_FAILED = "ENVELOPE_PARSE_FAILED"
+    ENVELOPE_REJECTED = "ENVELOPE_REJECTED"
 
     # Corporate action events
     CORPORATE_ACTION_APPLIED = "CORPORATE_ACTION_APPLIED"
@@ -594,6 +595,29 @@ class EnvelopeParseFailedDetail(BaseModel):
     raw_args_json: str
 
 
+class EnvelopeRejectionDetail(BaseModel):
+    """Detail payload for ENVELOPE_REJECTED events.
+
+    Persists Layer-2/3 rejection of a parsed envelope by ``validate_pm_envelope``
+    — invariant violations or cross-command coherence failures. Symmetric with
+    :class:`EnvelopeParseFailedDetail` (Layer-1 parse failures); both event
+    types are PM_DECISION-grouped envelope-level forensics.
+
+    The envelope's ``position_id`` is preserved here as ``referenced_position_id``
+    for operator forensics; the activity_log row's ``position_id`` column is
+    nullified by the emitter to honor the FK constraint when the orphan id is
+    itself the rejection cause (criterion ``position_id_resolves``).
+    """
+
+    model_config = {"frozen": True}
+
+    envelope_id: str
+    referenced_position_id: str | None
+    attempted_command_count: int
+    blocking_criteria: tuple[str, ...]
+    validation_errors_json: str
+
+
 # ---------------------------------------------------------------------------
 # Per-event-type detail-payload classes — Configuration events
 # ---------------------------------------------------------------------------
@@ -709,6 +733,7 @@ AnyDetailType = (
     | PMDecisionDetail
     | CommandAbandonedDetail
     | EnvelopeParseFailedDetail
+    | EnvelopeRejectionDetail
     | CorporateActionAppliedDetail
     | DistillationConfigChangeDetail
 )
@@ -753,6 +778,7 @@ EVENT_TYPE_TO_DETAIL_CLASS: dict[EventType, type] = {
     EventType.PM_DECISION: PMDecisionDetail,
     EventType.COMMAND_ABANDONED: CommandAbandonedDetail,
     EventType.ENVELOPE_PARSE_FAILED: EnvelopeParseFailedDetail,
+    EventType.ENVELOPE_REJECTED: EnvelopeRejectionDetail,
     EventType.CORPORATE_ACTION_APPLIED: CorporateActionAppliedDetail,
     EventType.DISTILLATION_CONFIG_CHANGE: DistillationConfigChangeDetail,
 }
@@ -793,6 +819,7 @@ EVENT_TYPE_TO_GROUP: dict[EventType, EventGroup] = {
     EventType.PM_DECISION: EventGroup.PM_DECISION,
     EventType.COMMAND_ABANDONED: EventGroup.PM_DECISION,
     EventType.ENVELOPE_PARSE_FAILED: EventGroup.PM_DECISION,
+    EventType.ENVELOPE_REJECTED: EventGroup.PM_DECISION,
     EventType.CORPORATE_ACTION_APPLIED: EventGroup.CORPORATE_ACTION,
     EventType.DISTILLATION_CONFIG_CHANGE: EventGroup.CONFIGURATION,
 }
