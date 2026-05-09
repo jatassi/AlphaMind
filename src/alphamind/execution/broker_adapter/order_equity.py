@@ -43,12 +43,29 @@ from alphamind.execution.broker_adapter.retry import (
 from alphamind.execution.oms.command_models import (
     AddCommand,
     CloseCommand,
+    EquityInstrument,
     OpenCommand,
     PriceLeg,
 )
 
 # Pattern per oms-command-ids.md: PM-originated ("inv-…") or engine-originated ("MON.")
 _CLIENT_ORDER_ID_PATTERN: re.Pattern[str] = re.compile(r"^(inv-|MON\.)")
+
+
+def _require_equity_instrument(instrument: object, *, command_kind: str) -> EquityInstrument:
+    """Assert the dispatched command carries an EquityInstrument.
+
+    Routing equity / options / strategy is the dispatcher's job (story 03e);
+    the equity translator's precondition is that the caller routed correctly.
+    A wrong-asset instrument is a programming error — surface as ``TypeError``.
+    """
+    if not isinstance(instrument, EquityInstrument):
+        msg = (
+            f"submit_equity_{command_kind} requires EquityInstrument; "
+            f"got {type(instrument).__name__}"
+        )
+        raise TypeError(msg)
+    return instrument
 
 
 @dataclass(frozen=True)
@@ -92,9 +109,9 @@ async def submit_equity_open(
     """
     _validate_client_order_id(client_order_id)
 
-    instrument = command.instrument
-    ticker: str = instrument.ticker  # type: ignore[union-attr]
-    side = _entry_side(instrument.direction)  # type: ignore[union-attr]
+    instrument = _require_equity_instrument(command.instrument, command_kind="open")
+    ticker: str = instrument.ticker
+    side = _entry_side(instrument.direction)
     qty = command.position_size.quantity
 
     order_class, take_profit, stop_loss = _bracket_params(command)
