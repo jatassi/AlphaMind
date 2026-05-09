@@ -211,30 +211,37 @@ Phase 1c proves the canonical command surface is internally consistent
 and that the Phase 2 writeback consumes real command fields (no stub
 constants).
 
+Phase 1c requires a **freshly-migrated tmp DB** — not the prod snapshot
+`$DB_PATH`. Phase 3 of the script seeds `cash_ledger.id='current'` as
+part of the PM envelope path; the prod DB already has that row, so
+`$DB_PATH` collides with `UNIQUE constraint failed: cash_ledger.id`.
+Migrate a tmp DB to head and pass that:
+
 ```bash
+mkdir -p /tmp/alphamind-verify-oms
+rm -f /tmp/alphamind-verify-oms/alphamind.db
+uv run alembic -c alembic.ini \
+    -x db=/tmp/alphamind-verify-oms/alphamind.db upgrade head
 uv run python scripts/verify_oms_commands.py \
-    --db-path "$DB_PATH"
+    --db-path /tmp/alphamind-verify-oms/alphamind.db
 ```
 
-Verifies four phases against a freshly-migrated DB (the script's `--help`
-labels the trailing summary line "Phase 5", but only four real phases
-run): canonical Pydantic round-trip across all five command variants
-(OPEN / CLOSE / ADJUST / CANCEL / ADD) plus `EngineEnvelope`; command-ID
-utility (PM derivation
-against the `oms-command-ids.md` worked example, engine derivation, parse
-round-trip, `attempt_seq` computation); PM envelope path
-(`build_submit_envelope_mcp_server` → Phase 2 writeback → activity log,
-asserting the persisted `capital_reserved` amount equals the canonical
-command's real `dollar_value` — proves the retired `$1k` stub from
-ALP-374 is gone); engine envelope path (`submit_engine_envelope` → Phase
-2 close writeback → activity-log entry with `engine_guardrail` provenance
-threaded through).
+The `-x db=<path>` form is the `alembic env.py` contract; plain
+`-x db_url=…` is silently ignored (migration writes to the default path).
 
-`--db-path` defaults to the standard resolution chain (`DATABASE_PATH`
-env var, then `config/main.yaml` `paths.database` key). For ad-hoc
-verification against a fresh DB, the script's runbook documents an
-in-process snippet that runs `Base.metadata.create_all` against a
-tmp-path DB.
+Verifies four phases against the freshly-migrated DB (the script's
+`--help` labels the trailing summary line "Phase 5", but only four real
+phases run): canonical Pydantic round-trip across all five command
+variants (OPEN / CLOSE / ADJUST / CANCEL / ADD) plus `EngineEnvelope`;
+command-ID utility (PM derivation against the `oms-command-ids.md`
+worked example, engine derivation, parse round-trip, `attempt_seq`
+computation); PM envelope path (`build_submit_envelope_mcp_server` →
+Phase 2 writeback → activity log, asserting the persisted
+`capital_reserved` amount equals the canonical command's real
+`dollar_value` — proves the retired `$1k` stub from ALP-374 is gone);
+engine envelope path (`submit_engine_envelope` → Phase 2 close
+writeback → activity-log entry with `engine_guardrail` provenance
+threaded through).
 
 **On failure:** read `scripts/RUNBOOK_oms_commands.md` § Failure-mode
 triage. The FAIL output names the phase and a one-line diagnostic; match
