@@ -233,8 +233,16 @@ class TestOrdersTableShape:
 
 class TestRoundTripCodec:
     def test_basic_market_entry_round_trips(self, session: Session) -> None:
+        from tests.execution.state_persistence._fk_substrate import (
+            stub_bracket_row,
+            stub_position_row,
+        )
+
         record = _market_order()
-        session.add(record_to_row(record))
+        row = record_to_row(record)
+        session.add(stub_position_row("stub-pos-1"))
+        session.add(stub_bracket_row(row.bracket_id, "stub-pos-1", row.order_id))
+        session.add(row)
         session.commit()
 
         readback = session.get(OrderRow, "ord-1")

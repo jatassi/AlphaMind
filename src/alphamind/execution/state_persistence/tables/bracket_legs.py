@@ -7,14 +7,13 @@ JSON for P/L-anchored legs.
 
 FK on ``bracket_id`` with ``ON DELETE RESTRICT`` — bracket rows are
 append-only, and a parent bracket cannot be deleted while children
-reference it. ``order_id`` is nullable for ``EVENT_INVALIDATION`` legs
-and a plain TEXT column on this mapper; the FK to ``orders`` is enforced
-at the schema level by migration
-``e9d2c4f7b3a1_tighten_state_persistence_fks``
-(DEFERRABLE INITIALLY DEFERRED, ``ON DELETE RESTRICT``). It is not
-declared on this mapper — see ALP-369 for the follow-up that adds
-mapper-level declarations. The UNIQUE constraint on
-``(bracket_id, leg_index)`` preserves leg-ordering invariants.
+reference it. ``order_id`` is nullable for ``EVENT_INVALIDATION`` legs and
+carries a DEFERRABLE INITIALLY DEFERRED FK to ``orders.order_id``
+(``ON DELETE RESTRICT``), matching the
+``e9d2c4f7b3a1_tighten_state_persistence_fks`` migration. The deferral
+accommodates Phase 2's OPEN writeback, which inserts the protective leg
+order and the parent bracket in the same transaction. The UNIQUE constraint
+on ``(bracket_id, leg_index)`` preserves leg-ordering invariants.
 """
 
 from __future__ import annotations
@@ -61,7 +60,17 @@ class BracketLegRow(Base):
     )
     leg_index: Mapped[int] = mapped_column(Integer, nullable=False)
     leg_type: Mapped[str] = mapped_column(Text, nullable=False)
-    order_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    order_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey(
+            "orders.order_id",
+            name="fk_bracket_legs_order_id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=True,
+    )
     trigger_kind: Mapped[str] = mapped_column(Text, nullable=False)
     trigger_payload_json: Mapped[str] = mapped_column(Text, nullable=False)
     pl_anchor_json: Mapped[str | None] = mapped_column(Text, nullable=True)

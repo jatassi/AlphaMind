@@ -559,6 +559,51 @@ async def _seed_invocation_substrate(
         await sess.commit()
 
 
+async def _seed_position_order_thesis_bracket(
+    factory: async_sessionmaker[AsyncSession],
+    position: PositionRecord,
+    order: OrderRecord,
+    thesis: ThesisRecord,
+    bracket: BracketRecord,
+) -> None:
+    """Seed a full position cluster in a single deferred-FK transaction.
+
+    All four entities reference each other cyclically, so they must commit
+    together.  Bracket legs are flushed after the parent bracket row so the
+    non-deferred bracket_legs.bracket_id FK is satisfied at flush time.
+
+    Protective-leg order_ids (deferred FK to orders) are also seeded as stub
+    orders in the same transaction so the COMMIT does not raise IntegrityError.
+    """
+    from tests.execution.state_persistence._fk_substrate import stub_order_row
+
+    thesis_row, component_rows = thesis_record_to_rows(thesis)
+    bracket_row, leg_rows = bracket_record_to_rows(bracket)
+
+    # Collect every order_id that appears in the bracket or its legs but is not
+    # the main order being seeded: brackets.entry_order_id and each leg.order_id.
+    seeded_order_ids: set[str] = {order.order_id}
+    extra_order_ids: list[str] = [bracket_row.entry_order_id] + [
+        lrow.order_id for lrow in leg_rows if lrow.order_id is not None
+    ]
+
+    async with factory() as sess:
+        sess.add(position_record_to_row(position))
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        sess.add(order_record_to_row(order))
+        for oid in extra_order_ids:
+            if oid not in seeded_order_ids:
+                sess.add(stub_order_row(oid, bracket.bracket_id))
+                seeded_order_ids.add(oid)
+        sess.add(bracket_row)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        await sess.commit()
+
+
 async def _seed_position(
     factory: async_sessionmaker[AsyncSession],
     record: PositionRecord,
@@ -664,10 +709,13 @@ async def test_entry_fill_transitions_pending_position_to_open(
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    await _seed_order(factory, _make_pending_entry_order())
-    await _seed_position(factory, _make_pending_position())
-    await _seed_bracket(factory, _make_pending_bracket())
-    await _seed_thesis(factory, _make_active_thesis())
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_pending_position(),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_pending_bracket(),
+    )
     await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=100_000.0))
     await _seed_drawdown_state(factory)
     await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-1"))
@@ -748,19 +796,38 @@ async def test_exit_fill_closes_position_and_resolves_thesis(
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    # Open position holding 10 shares at $150 cost basis.
-    await _seed_order(
-        factory,
-        _make_pending_entry_order(
-            order_id="ord-close-1",
-            role=OrderRole.CLOSE,
-            direction=OrderDirection.SELL,
-            position_id="pos-1",
-        ),
+    close_order = _make_pending_entry_order(
+        order_id="ord-close-1",
+        role=OrderRole.CLOSE,
+        direction=OrderDirection.SELL,
+        position_id="pos-1",
     )
-    await _seed_position(factory, _make_open_position())
-    await _seed_bracket(factory, _make_active_bracket())
-    await _seed_thesis(factory, _make_thesis_with_resolved_components())
+    # All four entities reference each other cyclically — seed in one transaction.
+    # _make_active_bracket uses entry_order_id="ord-entry-1" and a protective leg
+    # with order_id="brk-1-ord-stop", so we need stubs for all referenced orders.
+    from tests.execution.state_persistence._fk_substrate import stub_order_row
+
+    entry_order = _make_pending_entry_order()
+    thesis_row, component_rows = thesis_record_to_rows(_make_thesis_with_resolved_components())
+    bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
+    leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
+    seeded_order_ids = {entry_order.order_id, close_order.order_id}
+    async with factory() as sess:
+        sess.add(position_record_to_row(_make_open_position()))
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        sess.add(order_record_to_row(entry_order))
+        sess.add(order_record_to_row(close_order))
+        for oid in leg_order_ids:
+            if oid not in seeded_order_ids:
+                sess.add(stub_order_row(oid, bracket_row.bracket_id))
+                seeded_order_ids.add(oid)
+        sess.add(bracket_row)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        await sess.commit()
     await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=98_500.0))
     await _seed_drawdown_state(factory)
     # Sell 10 shares at $160 -> realized P/L = (160 - 150) * 10 = $100.
@@ -832,10 +899,13 @@ async def test_multi_fill_ordering_produces_cumulative_state(
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    await _seed_order(factory, _make_pending_entry_order(quantity=10.0))
-    await _seed_position(factory, _make_pending_position())
-    await _seed_bracket(factory, _make_pending_bracket())
-    await _seed_thesis(factory, _make_active_thesis())
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_pending_position(),
+        _make_pending_entry_order(quantity=10.0),
+        _make_active_thesis(),
+        _make_pending_bracket(),
+    )
     await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=100_000.0))
     await _seed_drawdown_state(factory)
     # Fill 1: 4 shares at $150 (earlier timestamp); Fill 2: 6 shares at $151.
@@ -910,9 +980,13 @@ async def test_corporate_action_split_emits_events_and_ledger_anchor(
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    await _seed_position(factory, _make_open_position(share_count=10.0))
-    await _seed_bracket(factory, _make_active_bracket())
-    await _seed_thesis(factory, _make_active_thesis())
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_open_position(share_count=10.0),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_active_bracket(),
+    )
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
 
@@ -976,33 +1050,44 @@ async def test_corporate_action_split_emits_events_and_ledger_anchor(
 async def test_atomicity_exception_rolls_back_fills_and_log(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """A synthetic exception mid-integration leaves fills unprocessed and the
-    activity log carries no entries from this invocation."""
+    """An exception mid-integration leaves fills unprocessed and the activity
+    log carries no entries from this invocation.
+
+    The trigger is a SELL_TO_OPEN direction on a PENDING position — Phase 1
+    raises NotImplementedError for short-entry fills (FK enforcement makes the
+    original "missing position row" scenario impossible at the seeding layer).
+    """
     from alphamind.execution.state_persistence.write_paths.phase1 import (
         process_unprocessed_fills,
     )
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    # Order references a position that doesn't exist — Phase 1 will raise
-    # while trying to integrate the position update.
-    await _seed_order(factory, _make_pending_entry_order())
-    # Intentionally seed only the bracket + thesis but NOT the position.
-    await _seed_bracket(factory, _make_pending_bracket())
-    await _seed_thesis(factory, _make_active_thesis())
+    short_entry_order = _make_pending_entry_order(
+        order_id="ord-short-1",
+        direction=OrderDirection.SELL_TO_OPEN,
+        position_id="pos-1",
+    )
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_pending_position(),
+        short_entry_order,
+        _make_active_thesis(),
+        _make_pending_bracket(),
+    )
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
-    await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-1"))
+    await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-1", order_id="ord-short-1"))
 
     ctx, handle = await _open_handle(factory)
     invocation_id = handle.invocation_id
     try:
-        with pytest.raises(ValueError, match="position_id"):
+        with pytest.raises(NotImplementedError, match="SHORT entry"):
             await process_unprocessed_fills(handle, config=_make_state_persistence_config())
     finally:
         # Funnel the (caught) exception through the context manager so the
         # surrounding transaction rolls back.
-        await ctx.__aexit__(ValueError, ValueError("forced"), None)
+        await ctx.__aexit__(NotImplementedError, NotImplementedError("forced"), None)
 
     async with factory() as sess:
         # Fill row remains unprocessed.
@@ -1036,10 +1121,13 @@ async def test_quarantined_fill_excluded_without_aborting_batch(
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    await _seed_order(factory, _make_pending_entry_order())
-    await _seed_position(factory, _make_pending_position())
-    await _seed_bracket(factory, _make_pending_bracket())
-    await _seed_thesis(factory, _make_active_thesis())
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_pending_position(),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_pending_bracket(),
+    )
     await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=100_000.0))
     await _seed_drawdown_state(factory)
 
@@ -1111,10 +1199,13 @@ async def test_buy_fill_decrements_reserved_capital_to_zero(
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    await _seed_order(factory, _make_pending_entry_order(quantity=10.0))
-    await _seed_position(factory, _make_pending_position())
-    await _seed_bracket(factory, _make_pending_bracket())
-    await _seed_thesis(factory, _make_active_thesis())
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_pending_position(),
+        _make_pending_entry_order(quantity=10.0),
+        _make_active_thesis(),
+        _make_pending_bracket(),
+    )
     # Seed cash with a $1000 reservation already in place (mirroring Phase 2's OPEN).
     seeded = CashLedger.model_validate(
         {
@@ -1169,10 +1260,13 @@ async def test_buy_fill_clamps_reserved_capital_decrement_at_zero(
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    await _seed_order(factory, _make_pending_entry_order(quantity=10.0))
-    await _seed_position(factory, _make_pending_position())
-    await _seed_bracket(factory, _make_pending_bracket())
-    await _seed_thesis(factory, _make_active_thesis())
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_pending_position(),
+        _make_pending_entry_order(quantity=10.0),
+        _make_active_thesis(),
+        _make_pending_bracket(),
+    )
     # Seed only $500 reserved while the fill consumes $1000.
     seeded = CashLedger.model_validate(
         {
@@ -1210,167 +1304,92 @@ async def test_buy_fill_clamps_reserved_capital_decrement_at_zero(
         assert cash.reserved_capital_usd == pytest.approx(0.0)
 
 
-async def test_entry_fill_with_missing_bracket_row_raises_state_inconsistency(
+async def test_pending_position_with_missing_bracket_row_rejected_at_commit(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """A position carrying ``bracket_id=brk-1`` must have a brk-1 row;
-    ``_activate_bracket`` returning silently on the missing row would mask
-    state corruption. Surface a typed StateInconsistencyError instead.
+    """FK enforcement prevents committing a position that references a non-existent
+    bracket row — the deferred FK on positions.bracket_id raises IntegrityError at
+    COMMIT, which is the database-level equivalent of the application-level
+    StateInconsistencyError that Phase 1 used to guard against.
 
-    Pin ``order.position_id`` so the entry-resolution short-circuit doesn't
-    fire first (that path also needs the bracket row to look up the
-    position; pinning lets the dispatcher reach ``_activate_bracket``).
+    This test verifies that the invariant is enforced at the schema layer.
     """
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
-        StateInconsistencyError,
-        process_unprocessed_fills,
-    )
+    from sqlalchemy.exc import IntegrityError
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    await _seed_order(factory, _make_pending_entry_order(position_id="pos-1"))
-    await _seed_position(factory, _make_pending_position())
-    # Intentionally skip _seed_bracket — _activate_bracket will see the gap.
-    await _seed_thesis(factory, _make_active_thesis())
-    await _seed_cash_ledger(factory)
-    await _seed_drawdown_state(factory)
-    await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-1"))
 
-    ctx, handle = await _open_handle(factory)
-    try:
-        with pytest.raises(StateInconsistencyError, match="bracket"):
-            await process_unprocessed_fills(handle, config=_make_state_persistence_config())
-    finally:
-        await ctx.__aexit__(StateInconsistencyError, StateInconsistencyError("forced"), None)
+    # Attempt to commit a position row pointing at a bracket that does not exist.
+    position_row = position_record_to_row(_make_pending_position())  # bracket_id="brk-1"
+    with pytest.raises(IntegrityError):
+        async with factory() as sess:
+            sess.add(position_row)
+            await sess.commit()
 
 
-async def test_exit_fill_with_missing_bracket_row_raises_state_inconsistency(
+async def test_open_position_with_missing_bracket_row_rejected_at_commit(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """An OPEN position pointing at a missing bracket row on close fill must
-    raise; silent return masks FK corruption."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
-        StateInconsistencyError,
-        process_unprocessed_fills,
-    )
+    """FK enforcement prevents committing an OPEN position that references a
+    non-existent bracket row — deferred FK on positions.bracket_id raises
+    IntegrityError at COMMIT.  This is the schema-level guard for the
+    invariant that Phase 1's _dissolve_bracket path previously enforced at
+    the application layer.
+    """
+    from sqlalchemy.exc import IntegrityError
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    await _seed_order(
-        factory,
-        _make_pending_entry_order(
-            order_id="ord-close-1",
-            role=OrderRole.CLOSE,
-            direction=OrderDirection.SELL,
-            position_id="pos-1",
-        ),
-    )
-    await _seed_position(factory, _make_open_position())
-    await _seed_thesis(factory, _make_thesis_with_resolved_components())
-    await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=98_500.0))
-    await _seed_drawdown_state(factory)
-    # bracket NOT seeded — _dissolve_bracket sees missing row.
-    await _append_fill(
-        factory,
-        _make_unprocessed_fill(
-            fill_id="fill-close-1",
-            order_id="ord-close-1",
-            fill_price=160.0,
-            fill_quantity=10.0,
-        ),
-    )
 
-    ctx, handle = await _open_handle(factory)
-    try:
-        with pytest.raises(StateInconsistencyError, match="bracket"):
-            await process_unprocessed_fills(handle, config=_make_state_persistence_config())
-    finally:
-        await ctx.__aexit__(StateInconsistencyError, StateInconsistencyError("forced"), None)
+    # Attempt to commit an OPEN position pointing at a bracket that does not exist.
+    position_row = position_record_to_row(_make_open_position())  # bracket_id="brk-1"
+    with pytest.raises(IntegrityError):
+        async with factory() as sess:
+            sess.add(position_row)
+            await sess.commit()
 
 
-async def test_exit_fill_with_missing_thesis_row_raises_state_inconsistency(
+async def test_open_position_with_missing_thesis_row_rejected_at_commit(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """An OPEN position pointing at a missing thesis row on close fill must
-    raise once the bracket dissolves — silent return masks FK corruption."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
-        StateInconsistencyError,
-        process_unprocessed_fills,
-    )
+    """FK enforcement prevents committing a position that references a non-existent
+    thesis row — deferred FK on positions.thesis_id raises IntegrityError at COMMIT.
+    This is the schema-level guard for the invariant that Phase 1's
+    _maybe_resolve_thesis path previously enforced at the application layer.
+    """
+    from sqlalchemy.exc import IntegrityError
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    await _seed_order(
-        factory,
-        _make_pending_entry_order(
-            order_id="ord-close-1",
-            role=OrderRole.CLOSE,
-            direction=OrderDirection.SELL,
-            position_id="pos-1",
-        ),
-    )
-    await _seed_position(factory, _make_open_position())
-    await _seed_bracket(factory, _make_active_bracket())
-    # thesis NOT seeded — _maybe_resolve_thesis sees missing row.
-    await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=98_500.0))
-    await _seed_drawdown_state(factory)
-    await _append_fill(
-        factory,
-        _make_unprocessed_fill(
-            fill_id="fill-close-1",
-            order_id="ord-close-1",
-            fill_price=160.0,
-            fill_quantity=10.0,
-        ),
-    )
 
-    ctx, handle = await _open_handle(factory)
-    try:
-        with pytest.raises(StateInconsistencyError, match="thesis"):
-            await process_unprocessed_fills(handle, config=_make_state_persistence_config())
-    finally:
-        await ctx.__aexit__(StateInconsistencyError, StateInconsistencyError("forced"), None)
+    # Attempt to commit an OPEN position pointing at a thesis that does not exist.
+    position_row = position_record_to_row(_make_open_position())  # thesis_id="thesis-1"
+    with pytest.raises(IntegrityError):
+        async with factory() as sess:
+            sess.add(position_row)
+            await sess.commit()
 
 
-async def test_corporate_action_with_missing_bracket_row_raises_state_inconsistency(
+async def test_corporate_action_position_with_missing_bracket_row_rejected_at_commit(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
-    """A corporate action against a position whose bracket FK target is missing
-    must raise — ``_cancel_bracket_for_corporate_action`` returning silently
-    masks state corruption."""
-    from alphamind.execution.state_persistence.write_paths.phase1 import (
-        CorporateActionActivity,
-        StateInconsistencyError,
-        process_unprocessed_fills,
-    )
+    """FK enforcement prevents committing a position that references a non-existent
+    bracket row — deferred FK on positions.bracket_id raises IntegrityError at COMMIT.
+    This is the schema-level guard for the invariant that Phase 1's
+    _cancel_bracket_for_corporate_action path previously enforced at the application layer.
+    """
+    from sqlalchemy.exc import IntegrityError
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    await _seed_position(factory, _make_open_position(share_count=10.0))
-    # bracket NOT seeded — _cancel_bracket_for_corporate_action sees missing row.
-    await _seed_thesis(factory, _make_active_thesis())
-    await _seed_cash_ledger(factory)
-    await _seed_drawdown_state(factory)
 
-    ca = CorporateActionActivity(
-        alpaca_activity_id="ca-split-1",
-        action_type=CorporateActionType.SPLIT,
-        ticker="AAPL",
-        new_ticker=None,
-        ratio_or_amount=4.0,
-        position_id="pos-1",
-        signed_cash_impact_usd=0.0,
-        transaction_time=_NOW - timedelta(minutes=5),
-    )
-
-    ctx, handle = await _open_handle(factory)
-    try:
-        with pytest.raises(StateInconsistencyError, match="bracket"):
-            await process_unprocessed_fills(
-                handle, config=_make_state_persistence_config(), ca_activities=(ca,)
-            )
-    finally:
-        await ctx.__aexit__(StateInconsistencyError, StateInconsistencyError("forced"), None)
+    # Attempt to commit an OPEN position pointing at a bracket that does not exist.
+    # _make_open_position uses bracket_id="brk-1" by default.
+    position_row = position_record_to_row(_make_open_position(share_count=10.0))
+    with pytest.raises(IntegrityError):
+        async with factory() as sess:
+            sess.add(position_row)
+            await sess.commit()
 
 
 async def test_short_entry_fill_raises_explicit_not_implemented(
@@ -1387,17 +1406,17 @@ async def test_short_entry_fill_raises_explicit_not_implemented(
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    await _seed_order(
+    await _seed_position_order_thesis_bracket(
         factory,
+        _make_pending_position(),
         _make_pending_entry_order(
             order_id="ord-short-entry",
             direction=OrderDirection.SELL_TO_OPEN,
             position_id="pos-1",
         ),
+        _make_active_thesis(),
+        _make_pending_bracket(),
     )
-    await _seed_position(factory, _make_pending_position())
-    await _seed_bracket(factory, _make_pending_bracket())
-    await _seed_thesis(factory, _make_active_thesis())
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
     await _append_fill(
@@ -1427,10 +1446,13 @@ async def test_phase1_stamps_completion_timestamp_on_invocation_row(
 
     _, factory = db
     await _seed_invocation_substrate(factory)
-    await _seed_order(factory, _make_pending_entry_order())
-    await _seed_position(factory, _make_pending_position())
-    await _seed_bracket(factory, _make_pending_bracket())
-    await _seed_thesis(factory, _make_active_thesis())
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_pending_position(),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_pending_bracket(),
+    )
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
     await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-1"))

@@ -362,7 +362,20 @@ class TestPositionRoundTrip:
         ],
     )
     def test_record_round_trip(self, session: Session, record: PositionRecord) -> None:
+        from tests.execution.state_persistence._fk_substrate import (
+            stub_bracket_row,
+            stub_order_row,
+            stub_thesis_row,
+        )
+
         row = record_to_row(record)
+        # Seed FK parents in the same transaction (deferred FKs check at COMMIT).
+        if row.thesis_id is not None:
+            session.add(stub_thesis_row(row.thesis_id, row.position_id))
+        if row.bracket_id is not None:
+            entry_order_id = f"stub-entry-{row.bracket_id}"
+            session.add(stub_order_row(entry_order_id, row.bracket_id))
+            session.add(stub_bracket_row(row.bracket_id, row.position_id, entry_order_id))
         session.add(row)
         session.commit()
 
@@ -457,10 +470,21 @@ class TestInvariantRejection:
 
         The mismatch can only arise from a hand-crafted INSERT that bypasses
         the codec; ``record_to_row`` always emits matching values."""
-        # Build an equity row but flip the column-side instrument_type to OPTIONS.
+        from tests.execution.state_persistence._fk_substrate import (
+            stub_bracket_row,
+            stub_order_row,
+            stub_thesis_row,
+        )
+
         record = _equity_position()
         row = record_to_row(record)
         row.instrument_type = InstrumentType.OPTIONS.value
+        if row.thesis_id is not None:
+            session.add(stub_thesis_row(row.thesis_id, row.position_id))
+        if row.bracket_id is not None:
+            entry_order_id = f"stub-entry-{row.bracket_id}"
+            session.add(stub_order_row(entry_order_id, row.bracket_id))
+            session.add(stub_bracket_row(row.bracket_id, row.position_id, entry_order_id))
         session.add(row)
         session.commit()
 

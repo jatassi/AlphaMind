@@ -8,12 +8,13 @@ Foreign key on ``invocation_id`` with ``ON DELETE RESTRICT`` — invocation
 rows are append-only, and a parent row referenced by an activity-log entry
 cannot be deleted without first removing the entry.
 
-``position_id`` / ``order_id`` / ``thesis_id`` are nullable plain TEXT
-columns on this mapper; the FKs to ``positions`` / ``orders`` / ``theses``
-are enforced at the schema level by migration
-``e9d2c4f7b3a1_tighten_state_persistence_fks`` (DEFERRABLE INITIALLY
-DEFERRED, ``ON DELETE RESTRICT``). They are not declared on this mapper
-— see ALP-369 for the follow-up that adds mapper-level declarations.
+``position_id`` / ``order_id`` / ``thesis_id`` are nullable TEXT columns
+carrying DEFERRABLE INITIALLY DEFERRED FKs to ``positions`` / ``orders`` /
+``theses`` (``ON DELETE RESTRICT``), matching the
+``e9d2c4f7b3a1_tighten_state_persistence_fks`` migration. The deferral
+accommodates Phase 2's writebacks, where activity-log emission can precede
+parent-row commit when a single transaction seeds the full position +
+thesis + bracket + orders cluster.
 """
 
 from __future__ import annotations
@@ -62,9 +63,39 @@ class ActivityLogRow(Base):
     entry_at: Mapped[str] = mapped_column(Text, nullable=False)
     event_type: Mapped[str] = mapped_column(Text, nullable=False)
     event_group: Mapped[str] = mapped_column(Text, nullable=False)
-    position_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    order_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    thesis_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    position_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey(
+            "positions.position_id",
+            name="fk_activity_log_position_id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=True,
+    )
+    order_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey(
+            "orders.order_id",
+            name="fk_activity_log_order_id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=True,
+    )
+    thesis_id: Mapped[str | None] = mapped_column(
+        Text,
+        ForeignKey(
+            "theses.thesis_id",
+            name="fk_activity_log_thesis_id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=True,
+    )
     source: Mapped[str] = mapped_column(Text, nullable=False)
     detail_json: Mapped[str] = mapped_column(Text, nullable=False)
 

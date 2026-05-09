@@ -212,7 +212,6 @@ def _add_position_closed(
     invocation_id: str,
     timestamp: datetime,
     entry_id: str,
-    position_id: str = "pos-1",
 ) -> None:
     detail = PositionClosedDetail(
         exit_method=PositionExitMethod.PM_DECISION,
@@ -226,7 +225,7 @@ def _add_position_closed(
         timestamp=timestamp,
         event_type=EventType.POSITION_CLOSED,
         event_group=EventGroup.POSITION_LIFECYCLE,
-        position_id=position_id,
+        position_id=None,
         order_id=None,
         thesis_id=None,
         source=EventSource.FILL_PROCESSOR,
@@ -255,7 +254,7 @@ def _add_order_cancelled(
         event_type=EventType.ORDER_CANCELLED,
         event_group=EventGroup.ORDER_LIFECYCLE,
         position_id=None,
-        order_id="ord-1",
+        order_id=None,
         thesis_id=None,
         source=source,
         detail=detail,

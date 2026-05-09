@@ -112,8 +112,18 @@ async def async_engine_and_factory(
 
     Tables are materialized via the sync engine, then the parent
     ``process_lifetimes`` row is seeded so any test that opens an
-    ``InvocationContext`` has an FK target ready.
+    ``InvocationContext`` has an FK target ready.  Stub positions, orders, and
+    theses covering the position_ids / order_ids / thesis_ids used across the
+    activity-log tests are seeded once here so every FK on ActivityLogRow
+    resolves at COMMIT.
     """
+    from tests.execution.state_persistence._fk_substrate import (
+        stub_bracket_row,
+        stub_order_row,
+        stub_position_row,
+        stub_thesis_row,
+    )
+
     db_path = tmp_path / "alphamind.db"
 
     import alphamind.execution.state_persistence.tables  # noqa: F401
@@ -125,6 +135,12 @@ async def async_engine_and_factory(
     sync_engine = make_engine(str(db_path))
     with make_session_factory(sync_engine)() as sess:
         sess.add(process_lifetime_record_to_row(_make_process_lifetime_record()))
+        for pid in ("pos-1", "pos-2", "pos-3", "pos-A", "pos-B", "pos-C"):
+            sess.add(stub_position_row(pid))
+        sess.add(stub_thesis_row("thesis-1", "pos-1"))
+        sess.add(stub_order_row("ord-1", "brk-stub-1"))
+        sess.add(stub_order_row("brk-stub-1-entry", "brk-stub-1"))
+        sess.add(stub_bracket_row("brk-stub-1", "pos-1", "brk-stub-1-entry"))
         sess.commit()
     sync_engine.dispose()
 

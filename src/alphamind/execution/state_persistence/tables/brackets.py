@@ -8,18 +8,17 @@ implement the conditions mechanically).
 events (``BracketLegModification`` Pydantic instances) serialized via
 ``model_dump_json()``.
 
-``position_id`` and ``entry_order_id`` are plain TEXT on this mapper; the
-FKs to ``positions`` / ``orders`` are enforced at the schema level by
-migration ``e9d2c4f7b3a1_tighten_state_persistence_fks``
-(DEFERRABLE INITIALLY DEFERRED, ``ON DELETE RESTRICT``). They are not
-declared on this mapper — see ALP-369 for the follow-up that adds
-mapper-level declarations. The 1:1 invariant with positions is encoded
-via a UNIQUE index on ``position_id``.
+``position_id`` and ``entry_order_id`` carry DEFERRABLE INITIALLY DEFERRED
+FKs to ``positions`` / ``orders`` (``ON DELETE RESTRICT``), matching the
+``e9d2c4f7b3a1_tighten_state_persistence_fks`` migration. The deferral
+accommodates the orders↔brackets and positions↔brackets cycles that Phase 2's
+OPEN writeback seeds in a single transaction. The 1:1 invariant with
+positions is encoded via a UNIQUE index on ``position_id``.
 """
 
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, Index, Text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from alphamind.persistence.models import Base
@@ -41,9 +40,29 @@ class BracketRow(Base):
     __tablename__ = "brackets"
 
     bracket_id: Mapped[str] = mapped_column(Text, primary_key=True)
-    position_id: Mapped[str] = mapped_column(Text, nullable=False)
+    position_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey(
+            "positions.position_id",
+            name="fk_brackets_position_id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=False,
+    )
     status: Mapped[str] = mapped_column(Text, nullable=False)
-    entry_order_id: Mapped[str] = mapped_column(Text, nullable=False)
+    entry_order_id: Mapped[str] = mapped_column(
+        Text,
+        ForeignKey(
+            "orders.order_id",
+            name="fk_brackets_entry_order_id",
+            ondelete="RESTRICT",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=False,
+    )
     entry_window_deadline: Mapped[str | None] = mapped_column(Text, nullable=True)
     corporate_action_cancellation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     modification_history_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
