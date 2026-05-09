@@ -31,6 +31,10 @@ If a test passes serially but fails under xdist, the cause is test-order depende
 - Always spawn subagents in background (async) mode
 - Always list model name (Sonnet or Opus) in subagent title like this: [Sonnet | Opus] <Title>
 
+## Git / GitHub Instructions
+
+- always use squash merge
+
 ## Your Location
 If you are running on Windows, you are on the production server. 
 
