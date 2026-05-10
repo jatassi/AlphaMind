@@ -99,7 +99,7 @@ def _make_eps_response(
     ticker: str = "AAPL",
     periods: list[tuple[str, float, int | None]] | None = None,
 ) -> dict[str, Any]:
-    """Build a fake finnhub earnings_estimate response."""
+    """Build a fake finnhub company_eps_estimates response."""
     if periods is None:
         periods = [("2026-06-30", 1.5, 10), ("2026-09-30", 1.8, 10)]
     return {
@@ -116,7 +116,7 @@ def _make_revenue_response(
     ticker: str = "AAPL",
     periods: list[tuple[str, float, int | None]] | None = None,
 ) -> dict[str, Any]:
-    """Build a fake finnhub revenue_estimate response."""
+    """Build a fake finnhub company_revenue_estimates response."""
     if periods is None:
         periods = [("2026-06-30", 95_000_000_000.0, 10), ("2026-09-30", 98_000_000_000.0, 10)]
     return {
@@ -138,7 +138,7 @@ def _run_collect(
     revenue_response_map: dict[str, dict[str, Any]],
 ) -> None:
     """Helper: run collect_estimate_revisions with mocked SDK."""
-    with patch("finnhub.Client") as mock_client:
+    with patch("finnhub.Client", autospec=True) as mock_client:
         mock_sdk = mock_client.return_value
 
         def _eps_side(symbol: str, **_kwargs: Any) -> dict[str, Any]:
@@ -149,8 +149,8 @@ def _run_collect(
                 symbol, {"symbol": symbol, "data": [], "freq": "quarterly"}
             )
 
-        mock_sdk.earnings_estimate.side_effect = _eps_side
-        mock_sdk.revenue_estimate.side_effect = _rev_side
+        mock_sdk.company_eps_estimates.side_effect = _eps_side
+        mock_sdk.company_revenue_estimates.side_effect = _rev_side
 
         from alphamind.data_sources.finnhub.estimate_revisions import collect_estimate_revisions
 
@@ -441,14 +441,14 @@ class TestUniverseFilter:
         session.commit()
 
         # When ticker_scope is None, only active tickers should be processed
-        with patch("finnhub.Client") as mock_client:
+        with patch("finnhub.Client", autospec=True) as mock_client:
             mock_sdk = mock_client.return_value
-            mock_sdk.earnings_estimate.return_value = {
+            mock_sdk.company_eps_estimates.return_value = {
                 "symbol": "INACT",
                 "data": [{"period": "2026-06-30", "epsAvg": 1.0, "numberAnalysts": 5}],
                 "freq": "quarterly",
             }
-            mock_sdk.revenue_estimate.return_value = {
+            mock_sdk.company_revenue_estimates.return_value = {
                 "symbol": "INACT",
                 "data": [],
                 "freq": "quarterly",
@@ -613,12 +613,12 @@ class TestBootstrapEstimateRevisions:
         fake_repo: Any,
     ) -> None:
         """bootstrap_estimate_revisions() inserts rows with prior_consensus_value=NULL."""
-        with patch("finnhub.Client") as mock_client:
+        with patch("finnhub.Client", autospec=True) as mock_client:
             mock_sdk = mock_client.return_value
-            mock_sdk.earnings_estimate.return_value = _make_eps_response(
+            mock_sdk.company_eps_estimates.return_value = _make_eps_response(
                 "AAPL", [("2026-06-30", 1.5, 10)]
             )
-            mock_sdk.revenue_estimate.return_value = _make_revenue_response("AAPL", [])
+            mock_sdk.company_revenue_estimates.return_value = _make_revenue_response("AAPL", [])
 
             from alphamind.data_sources.finnhub.estimate_revisions import (
                 bootstrap_estimate_revisions,
@@ -648,12 +648,12 @@ class TestBootstrapEstimateRevisions:
         """Running bootstrap_estimate_revisions() twice does not duplicate rows."""
 
         def _run_bootstrap() -> None:
-            with patch("finnhub.Client") as mock_client:
+            with patch("finnhub.Client", autospec=True) as mock_client:
                 mock_sdk = mock_client.return_value
-                mock_sdk.earnings_estimate.return_value = _make_eps_response(
+                mock_sdk.company_eps_estimates.return_value = _make_eps_response(
                     "AAPL", [("2026-06-30", 1.5, 10)]
                 )
-                mock_sdk.revenue_estimate.return_value = _make_revenue_response("AAPL", [])
+                mock_sdk.company_revenue_estimates.return_value = _make_revenue_response("AAPL", [])
 
                 from alphamind.data_sources.finnhub.estimate_revisions import (
                     bootstrap_estimate_revisions,
@@ -686,10 +686,10 @@ class TestFailureRecording:
         self, engine: Engine, session_factory: sessionmaker[Session], fake_repo: Any
     ) -> None:
         """When the SDK raises, collection_runs records 'failed' and no rows are written."""
-        with patch("finnhub.Client") as mock_client:
+        with patch("finnhub.Client", autospec=True) as mock_client:
             mock_sdk = mock_client.return_value
-            mock_sdk.earnings_estimate.side_effect = RuntimeError("API down")
-            mock_sdk.revenue_estimate.side_effect = RuntimeError("API down")
+            mock_sdk.company_eps_estimates.side_effect = RuntimeError("API down")
+            mock_sdk.company_revenue_estimates.side_effect = RuntimeError("API down")
 
             from alphamind.data_sources.finnhub.estimate_revisions import collect_estimate_revisions
 
@@ -712,9 +712,9 @@ class TestFailureRecording:
         fake_repo: Any,
     ) -> None:
         """On failure, no EarningsEstimateRevisions rows are written."""
-        with patch("finnhub.Client") as mock_client:
+        with patch("finnhub.Client", autospec=True) as mock_client:
             mock_sdk = mock_client.return_value
-            mock_sdk.earnings_estimate.side_effect = RuntimeError("API down")
+            mock_sdk.company_eps_estimates.side_effect = RuntimeError("API down")
 
             from alphamind.data_sources.finnhub.estimate_revisions import collect_estimate_revisions
 
@@ -859,3 +859,56 @@ class TestBootstrapRunAll:
         assert est_idx > cal_idx, (
             f"est_revisions (pos {est_idx}) must follow calendar (pos {cal_idx})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Slice 12 — SDK API drift guard (regression for ALP-405)
+# ---------------------------------------------------------------------------
+
+
+class TestSdkApiDrift:
+    """The fetch helpers must call methods that actually exist on finnhub.Client.
+
+    Uses ``spec=finnhub.Client`` so accessing a non-existent attribute raises
+    AttributeError at test time. Without this, plain MagicMock auto-vivifies
+    any attribute and a typoed/renamed SDK method name slips into production
+    (root cause of ALP-405).
+    """
+
+    def test_fetch_eps_estimates_calls_real_sdk_method(self) -> None:
+        from unittest.mock import MagicMock
+
+        import finnhub
+
+        from alphamind.data_sources.finnhub.estimate_revisions import _fetch_eps_estimates
+
+        sdk = MagicMock(spec=finnhub.Client)
+        sdk.company_eps_estimates.return_value = {
+            "data": [{"period": "2026-06-30", "epsAvg": 1.5, "numberAnalysts": 10}],
+            "freq": "quarterly",
+            "symbol": "AAPL",
+        }
+
+        result = _fetch_eps_estimates(sdk, "AAPL")
+
+        sdk.company_eps_estimates.assert_called_once_with("AAPL")
+        assert result == [{"period": "2026-06-30", "epsAvg": 1.5, "numberAnalysts": 10}]
+
+    def test_fetch_revenue_estimates_calls_real_sdk_method(self) -> None:
+        from unittest.mock import MagicMock
+
+        import finnhub
+
+        from alphamind.data_sources.finnhub.estimate_revisions import _fetch_revenue_estimates
+
+        sdk = MagicMock(spec=finnhub.Client)
+        sdk.company_revenue_estimates.return_value = {
+            "data": [{"period": "2026-06-30", "revenueAvg": 95e9, "numberAnalysts": 10}],
+            "freq": "quarterly",
+            "symbol": "AAPL",
+        }
+
+        result = _fetch_revenue_estimates(sdk, "AAPL")
+
+        sdk.company_revenue_estimates.assert_called_once_with("AAPL")
+        assert result == [{"period": "2026-06-30", "revenueAvg": 95e9, "numberAnalysts": 10}]

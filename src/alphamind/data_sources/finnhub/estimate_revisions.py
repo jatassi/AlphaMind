@@ -136,13 +136,13 @@ def _latest_stored(
 
 @with_retries(RetryShape.important, _sleep=lambda _: None)
 def _fetch_eps_estimates(sdk: Any, symbol: str) -> list[dict[str, Any]]:
-    result = sdk.earnings_estimate(symbol) or {}
+    result = sdk.company_eps_estimates(symbol) or {}
     return result.get("data") or []
 
 
 @with_retries(RetryShape.important, _sleep=lambda _: None)
 def _fetch_revenue_estimates(sdk: Any, symbol: str) -> list[dict[str, Any]]:
-    result = sdk.revenue_estimate(symbol) or {}
+    result = sdk.company_revenue_estimates(symbol) or {}
     return result.get("data") or []
 
 
