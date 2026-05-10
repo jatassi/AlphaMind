@@ -49,6 +49,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
     StrategyLeg,
     StrategyPositionDetails,
+    resolve_ticker,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -110,4 +111,5 @@ __all__ = [
     "ThesisStatus",
     "TimeTrigger",
     "UnsettledProceedsEntry",
+    "resolve_ticker",
 ]

@@ -220,7 +220,7 @@ def resolve_ticker(
         return details.ticker
     if isinstance(details, OptionsPositionDetails):
         return details.underlying_ticker
-    if details.legs:
+    if isinstance(details, StrategyPositionDetails) and details.legs:
         return details.legs[0].options.underlying_ticker
     return None
 
