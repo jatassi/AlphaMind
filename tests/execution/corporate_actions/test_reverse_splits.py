@@ -39,7 +39,6 @@ from alphamind.portfolio_state.records.positions import (
 from tests.execution.corporate_actions._handler_substrate import (
     NOW,
     FakeAlpacaPositionLookup,
-    db,  # noqa: F401 — fixture re-export
     make_active_bracket,
     make_active_thesis,
     make_open_equity_position,
@@ -56,7 +55,7 @@ from tests.execution.corporate_actions._handler_substrate import (
 
 
 async def test_reverse_split_scales_equity_quantity_and_basis(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """A 1-for-10 reverse split divides shares by 10 and multiplies basis by 10."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -101,7 +100,7 @@ async def test_reverse_split_scales_equity_quantity_and_basis(
 
 
 async def test_reverse_split_credits_fractional_cash_out_when_cash_impact_positive(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """When ``signed_cash_impact_usd > 0`` the handler emits CASH_CREDITED w/ fractional reason."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -154,7 +153,7 @@ async def test_reverse_split_credits_fractional_cash_out_when_cash_impact_positi
 
 
 async def test_reverse_split_no_cash_credit_when_impact_zero(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """No CASH_CREDITED entry when ``signed_cash_impact_usd == 0``."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -204,7 +203,7 @@ async def test_reverse_split_no_cash_credit_when_impact_zero(
 
 
 async def test_reverse_split_options_projects_alpaca_state_and_clears_greeks(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Options branch reads Alpaca's post-adjustment state and zeroes greeks to None."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -265,7 +264,7 @@ async def test_reverse_split_options_projects_alpaca_state_and_clears_greeks(
 
 
 async def test_reverse_split_strategy_applies_per_leg_projection(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Strategy branch projects per-leg state from Alpaca, with one log entry per CA."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -329,7 +328,7 @@ async def test_reverse_split_strategy_applies_per_leg_projection(
 
 
 async def test_reverse_split_emits_corporate_action_applied(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Exactly one CORPORATE_ACTION_APPLIED event is emitted."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -379,7 +378,7 @@ async def test_reverse_split_emits_corporate_action_applied(
 
 
 async def test_reverse_split_cancels_bracket(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Bracket is dissolved with reason ``corporate_action_reverse_split``."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -435,7 +434,7 @@ async def test_reverse_split_cancels_bracket(
 
 
 async def test_reverse_split_writes_dedup_ledger(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Exactly one ledger row is written for the activity ID."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -486,7 +485,7 @@ async def test_reverse_split_writes_dedup_ledger(
 
 
 async def test_reverse_split_raises_on_missing_position(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """A reverse split for a missing position id raises ``ValueError``."""
     from alphamind.execution.corporate_actions import integrate_ca_activity

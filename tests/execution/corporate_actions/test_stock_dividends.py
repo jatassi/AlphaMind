@@ -33,7 +33,6 @@ from alphamind.portfolio_state.records.positions import (
 from tests.execution.corporate_actions._handler_substrate import (
     NOW,
     FakeAlpacaPositionLookup,
-    db,  # noqa: F401 — fixture re-export
     make_active_bracket,
     make_active_thesis,
     make_open_equity_position,
@@ -50,7 +49,7 @@ from tests.execution.corporate_actions._handler_substrate import (
 
 
 async def test_stock_dividend_scales_equity_quantity_and_basis(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """A 10% stock dividend multiplies shares by 1.1 and divides basis by 1.1."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -95,7 +94,7 @@ async def test_stock_dividend_scales_equity_quantity_and_basis(
 
 
 async def test_stock_dividend_no_cash_movement(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """No CASH_CREDITED / CASH_DEBITED entries; no cash impact."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -146,7 +145,7 @@ async def test_stock_dividend_no_cash_movement(
 
 
 async def test_stock_dividend_options_projects_alpaca_state(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Options branch reads Alpaca's post-adjustment state and flags greeks stale."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -201,7 +200,7 @@ async def test_stock_dividend_options_projects_alpaca_state(
 
 
 async def test_stock_dividend_strategy_applies_per_leg_projection(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Strategy branch projects each leg from Alpaca."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -265,7 +264,7 @@ async def test_stock_dividend_strategy_applies_per_leg_projection(
 
 
 async def test_stock_dividend_emits_corporate_action_applied(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Exactly one CORPORATE_ACTION_APPLIED event is emitted."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -315,7 +314,7 @@ async def test_stock_dividend_emits_corporate_action_applied(
 
 
 async def test_stock_dividend_cancels_bracket_and_writes_ledger(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Bracket is dissolved with stock-dividend reason; ledger row written."""
     from alphamind.execution.corporate_actions import integrate_ca_activity

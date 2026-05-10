@@ -32,7 +32,6 @@ from alphamind.portfolio_state.records.positions import (
 )
 from tests.execution.corporate_actions._handler_substrate import (
     NOW,
-    db,  # noqa: F401 — fixture re-export
     make_active_bracket,
     make_active_thesis,
     make_open_equity_position,
@@ -48,7 +47,7 @@ from tests.execution.corporate_actions._handler_substrate import (
 
 
 async def test_symbol_change_renames_equity_ticker(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Equity branch updates ``ticker`` to ``activity.new_ticker`` without scaling."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -94,7 +93,7 @@ async def test_symbol_change_renames_equity_ticker(
 
 
 async def test_symbol_change_renames_options_underlying(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Options branch updates ``underlying_ticker`` and leaves the contract spec intact."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -146,7 +145,7 @@ async def test_symbol_change_renames_options_underlying(
 
 
 async def test_symbol_change_renames_each_strategy_leg(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Strategy branch renames every leg's ``underlying_ticker``."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -205,7 +204,7 @@ async def test_symbol_change_renames_each_strategy_leg(
 
 
 async def test_symbol_change_no_cash_movement(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """No CASH_CREDITED / CASH_DEBITED entries; symbol change is cash-neutral."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -256,7 +255,7 @@ async def test_symbol_change_no_cash_movement(
 
 
 async def test_symbol_change_cancels_bracket_and_writes_ledger(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Bracket is dissolved with symbol-change reason; ledger row written."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -313,7 +312,7 @@ async def test_symbol_change_cancels_bracket_and_writes_ledger(
 
 
 async def test_symbol_change_emits_corporate_action_applied(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """Exactly one CORPORATE_ACTION_APPLIED event is emitted."""
     from alphamind.execution.corporate_actions import integrate_ca_activity
@@ -363,7 +362,7 @@ async def test_symbol_change_emits_corporate_action_applied(
 
 
 async def test_symbol_change_requires_new_ticker(
-    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
     """A SYMBOL_CHANGE activity without ``new_ticker`` raises ``ValueError``."""
     from alphamind.execution.corporate_actions import integrate_ca_activity

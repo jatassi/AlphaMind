@@ -8,12 +8,9 @@ share the seed helpers without duplicating ~250 lines per file.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 
-import pytest
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.execution.broker_adapter.queries import PositionSnapshot
 from alphamind.execution.state_persistence.invocation_context.context import (
@@ -43,12 +40,6 @@ from alphamind.execution.state_persistence.tables.positions_codec import (
 )
 from alphamind.execution.state_persistence.tables.theses_codec import (
     record_to_rows as thesis_record_to_rows,
-)
-from alphamind.persistence.models import Base
-from alphamind.persistence.session import (
-    make_async_engine,
-    make_async_session_factory,
-    make_engine,
 )
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.records.cash import CashLedger
@@ -94,30 +85,6 @@ from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 INV_ID = "inv-ca-2026-05-08T12:00:00Z"
 PROCESS_ID = "proc-ca-1"
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-async def db(
-    tmp_path: Path,
-) -> AsyncIterator[tuple[AsyncEngine, async_sessionmaker[AsyncSession]]]:
-    """Yield (async_engine, session_factory) over a fresh on-disk SQLite DB."""
-    db_path = tmp_path / "alphamind_ca.db"
-
-    import alphamind.execution.state_persistence.tables  # noqa: F401 — side-effect import
-
-    sync_engine = make_engine(str(db_path))
-    Base.metadata.create_all(sync_engine)
-    sync_engine.dispose()
-
-    async_engine = make_async_engine(str(db_path))
-    factory = make_async_session_factory(async_engine)
-    yield async_engine, factory
-    await async_engine.dispose()
 
 
 # ---------------------------------------------------------------------------
