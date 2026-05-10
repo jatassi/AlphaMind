@@ -1,11 +1,11 @@
-"""Equity SPLIT handler and stubs for all other CA action types (ALP-409).
+"""Equity SPLIT handler (ALP-409).
 
 The SPLIT handler is the full implementation moved from
 ``state_persistence.write_paths.phase1._integrate_one_ca_activity``.
 
-Every other ``CorporateActionType`` member maps to a stub that raises
-``NotImplementedError`` with the standard message; stories 03a-03d replace
-these stubs with real implementations.
+All other ``CorporateActionType`` handlers (reverse split, stock dividend,
+cash dividends, mergers, spin-off, symbol change) live in dedicated modules
+under this package.
 """
 
 from __future__ import annotations
@@ -92,66 +92,4 @@ async def handle_split(
     )
 
 
-async def handle_reverse_split(
-    handle: InvocationHandle,
-    activity: CorporateActionActivity,
-    _: AlpacaPositionLookup | None = None,
-) -> None:
-    """Stub — raises ``NotImplementedError`` until story 03a lands."""
-    del handle, activity
-    msg = "CA action_type='REVERSE_SPLIT' not yet supported by Phase 1"
-    raise NotImplementedError(msg)
-
-
-async def handle_stock_dividend(
-    handle: InvocationHandle,
-    activity: CorporateActionActivity,
-    _: AlpacaPositionLookup | None = None,
-) -> None:
-    """Stub — raises ``NotImplementedError`` until story 03a lands."""
-    del handle, activity
-    msg = "CA action_type='STOCK_DIVIDEND' not yet supported by Phase 1"
-    raise NotImplementedError(msg)
-
-
-async def handle_cash_dividend_long(
-    handle: InvocationHandle,
-    activity: CorporateActionActivity,
-    _: AlpacaPositionLookup | None = None,
-) -> None:
-    """Stub — raises ``NotImplementedError`` until story 03b lands."""
-    del handle, activity
-    msg = "CA action_type='CASH_DIVIDEND_LONG' not yet supported by Phase 1"
-    raise NotImplementedError(msg)
-
-
-async def handle_cash_dividend_short(
-    handle: InvocationHandle,
-    activity: CorporateActionActivity,
-    _: AlpacaPositionLookup | None = None,
-) -> None:
-    """Stub — raises ``NotImplementedError`` until story 03b lands."""
-    del handle, activity
-    msg = "CA action_type='CASH_DIVIDEND_SHORT' not yet supported by Phase 1"
-    raise NotImplementedError(msg)
-
-
-async def handle_symbol_change(
-    handle: InvocationHandle,
-    activity: CorporateActionActivity,
-    _: AlpacaPositionLookup | None = None,
-) -> None:
-    """Stub — raises ``NotImplementedError`` until story 03a lands."""
-    del handle, activity
-    msg = "CA action_type='SYMBOL_CHANGE' not yet supported by Phase 1"
-    raise NotImplementedError(msg)
-
-
-__all__ = [
-    "handle_cash_dividend_long",
-    "handle_cash_dividend_short",
-    "handle_reverse_split",
-    "handle_split",
-    "handle_stock_dividend",
-    "handle_symbol_change",
-]
+__all__ = ["_require_equity_details", "handle_split"]
