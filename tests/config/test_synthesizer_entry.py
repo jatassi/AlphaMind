@@ -32,11 +32,9 @@ def test_synthesizer_entry_loads() -> None:
     entry = _load_synthesizer_entry()
     assert entry.model == "claude-sonnet-4-6"
     assert entry.prompt == "prompts/analysis/synthesizer.md"
-    assert entry.latency_budget_seconds == 360
+    assert entry.latency_budget_seconds == 540
     assert entry.context_token_budget == 12000
-    # Sonnet 4.6 emits ~4400 tokens of extended thinking before brief text;
-    # cap covers thinking + the synthesizer's prose response with headroom.
-    assert entry.output_token_budget == 8000
+    assert entry.output_token_budget == 14000
 
 
 def test_synthesizer_prompt_path_exists() -> None:

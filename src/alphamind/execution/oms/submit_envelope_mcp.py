@@ -26,10 +26,23 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+
+if TYPE_CHECKING:
+    from alpaca.trading.client import TradingClient
+
+    from alphamind.config.models.execution import ExecutionConfig
+    from alphamind.execution.broker_adapter import AccountStateQueries
+    from alphamind.execution.broker_adapter.order_modify import (
+        AssetClass as ReplaceAssetClass,
+    )
+    from alphamind.execution.broker_adapter.order_modify import (
+        OrderClass as ReplaceOrderClass,
+    )
+    from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.decision.portfolio_manager.models import PMEnvelope
@@ -175,7 +188,14 @@ class _BreachedRule(BaseModel):
 class RejectionPayload(BaseModel):
     """Synchronous rejection record per breach-behavior.md § Hard rejection
     semantics. Identical shape to the engine-side rejection so the PM's
-    feedback handling treats stub and real-engine rejections uniformly."""
+    feedback handling treats stub and real-engine rejections uniformly.
+
+    ``gateway_reason`` carries the broker's
+    :class:`alphamind.execution.broker_adapter.PermanentRejection` code
+    (e.g. ``"insufficient_buying_power"``) when the rejection originated at
+    the broker after Layer-1/2/3 validation accepted the command — story 03e
+    (ALP-390) coordinated swap. ``None`` for guardrail-side rejections.
+    """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
@@ -185,6 +205,7 @@ class RejectionPayload(BaseModel):
     greeks: Greeks | None = None
     delta_adjusted_exposure: float | None = None
     feature_disabled: Literal["options", "short_selling", "sector"] | None = None
+    gateway_reason: str | None = None
 
 
 class SubmissionResult(BaseModel):
@@ -338,6 +359,9 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     library_market: MarketInputs,
     invocation_handle: Any | None = None,
     state_persistence_config: Any | None = None,
+    client: TradingClient | None = None,
+    queries: AccountStateQueries | None = None,
+    execution_config: ExecutionConfig | None = None,
 ) -> tuple[Mapping[str, McpSdkServerConfig], tuple[str, ...]]:
     """Build a per-invocation SDK MCP server bound to *state*.
 
@@ -364,6 +388,14 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     ``envelope_parse_failed`` activity log entries. Composition pipelines
     (ALP-310) inject the handle obtained from the surrounding
     ``InvocationContext``.
+
+    When ``client`` + ``queries`` + ``execution_config`` are supplied
+    (engine-stub coordinated swap, story 03e / ALP-390), each accepted
+    command additionally routes through :func:`dispatch_command_to_broker`
+    before persistence; the persisted entry / close / add / adjust order
+    carries Alpaca's real ``alpaca_order_id`` and the acknowledgment surfaces
+    it. Gateway-submission failures map to ``command_abandoned`` activity-log
+    entries; permanent rejections surface as synchronous OMS rejections.
     """
     _ = (library_config, library_market)  # accepted for runner-signature parity
 
@@ -388,6 +420,9 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
             sector_resolver=sector_resolver,
             invocation_handle=invocation_handle,
             state_persistence_config=state_persistence_config,
+            client=client,
+            queries=queries,
+            execution_config=execution_config,
         )
 
     server = create_sdk_mcp_server(name=_SERVER_NAME, tools=[_submit_envelope])
@@ -412,6 +447,9 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
     sector_resolver: Callable[[str], str],
     invocation_handle: Any | None = None,
     state_persistence_config: Any | None = None,
+    client: TradingClient | None = None,
+    queries: AccountStateQueries | None = None,
+    execution_config: ExecutionConfig | None = None,
 ) -> dict[str, Any]:
     """Coerce input → run validators → process commands → log + respond.
 
@@ -421,6 +459,11 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
     writes one ``envelope_parse_failed`` activity log entry. When the handle
     is ``None`` (legacy fixture-only path), only the in-memory state-cell
     surfaces are mutated — preserves the engine-stub's pre-ALP-366 behavior.
+
+    When ``client`` + ``queries`` + ``execution_config`` are supplied
+    (engine-stub coordinated swap, story 03e / ALP-390), each command that
+    passes Layer-1/2/3 validation routes through
+    :func:`dispatch_command_to_broker` before Phase 2 writeback.
     """
     # Step 1: Layer-1 — coerce to PMEnvelope.
     try:
@@ -482,19 +525,52 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
         sector_resolver=sector_resolver,
     )
 
-    # Step 4: append to submission log.
+    # Step 4: optionally route accepted commands through the broker adapter
+    # (engine-stub coordinated swap, story 03e / ALP-390). Returns per-command
+    # dispatch outcomes alongside (possibly mutated) submission results — a
+    # validated-but-broker-rejected command flips from accepted → rejected, and
+    # its dispatch entry carries a gateway-failure marker the writeback step
+    # uses to skip persistence + emit ``command_abandoned``.
+    dispatch_results: tuple[BrokerDispatchResult | None, ...] | None = None
+    abandoned_entries: tuple[_AbandonedCommandEntry, ...] = ()
+    if client is not None and queries is not None and execution_config is not None:
+        submission_results, dispatch_results, abandoned_entries = await _route_through_broker(
+            envelope=envelope,
+            submission_results=submission_results,
+            client=client,
+            queries=queries,
+            execution_config=execution_config,
+            invocation_id=state.invocation_id,
+            invocation_handle=invocation_handle,
+        )
+
+    # Step 5: append to submission log (post-broker outcome).
     state.submission_log = (
         *state.submission_log,
         SubmissionLogEntry(envelope=envelope, submission_results=submission_results),
     )
 
-    # Step 5: SQL writeback (opt-in via invocation_handle).
+    # Step 6: SQL writeback (opt-in via invocation_handle).
     if invocation_handle is not None:
         await _persist_envelope_outcome_via_phase2(
-            invocation_handle, envelope, submission_results, state_persistence_config
+            invocation_handle,
+            envelope,
+            submission_results,
+            state_persistence_config,
+            dispatch_results=dispatch_results,
         )
+        for abandoned in abandoned_entries:
+            await _emit_command_abandoned_via_phase2(
+                invocation_handle,
+                envelope_id=envelope.envelope_id,
+                command_id=abandoned.command_id,
+                originating_agent=envelope.source_provenance,
+                command_type=abandoned.command_type,
+                failure_reason=abandoned.failure_reason,
+                retry_attempt_count=abandoned.retry_attempt_count,
+            )
 
-    # Step 6: serialize.
+    # Step 7: serialize.
     return {
         "content": [
             {
@@ -510,6 +586,8 @@ async def _persist_envelope_outcome_via_phase2(
     envelope: PMEnvelope,
     submission_results: tuple[SubmissionResult, ...],
     state_persistence_config: Any | None,
+    *,
+    dispatch_results: tuple[BrokerDispatchResult | None, ...] | None = None,
 ) -> None:
     """Lazy import + dispatch to break the import cycle Phase 2 has on us."""
     # Import lazily so submit_envelope_mcp itself stays importable from
@@ -519,7 +597,44 @@ async def _persist_envelope_outcome_via_phase2(
     )
 
     config = state_persistence_config or _stub_state_persistence_config()
-    await persist_envelope_outcome(invocation_handle, envelope, submission_results, config=config)
+    await persist_envelope_outcome(
+        invocation_handle,
+        envelope,
+        submission_results,
+        config=config,
+        dispatch_results=dispatch_results,
+    )
+
+
+async def _emit_command_abandoned_via_phase2(
+    invocation_handle: Any,
+    *,
+    envelope_id: str,
+    command_id: str,
+    originating_agent: str,
+    command_type: Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"],
+    failure_reason: str,
+    retry_attempt_count: int,
+) -> None:
+    """Lazy-import dispatch for ``persist_command_abandoned``.
+
+    Used by the engine-stub coordinated swap (story 03e / ALP-390) when a
+    broker dispatch returns ``GatewaySubmissionFailed`` — the command's
+    writeback is skipped and the audit trail surfaces the failure.
+    """
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_command_abandoned,
+    )
+
+    await persist_command_abandoned(
+        invocation_handle,
+        envelope_id=envelope_id,
+        command_id=command_id,
+        originating_agent=originating_agent,
+        command_type=command_type,
+        failure_reason=failure_reason,
+        retry_attempt_count=retry_attempt_count,
+    )
 
 
 async def _persist_envelope_parse_failure_via_phase2(
@@ -960,4 +1075,511 @@ def _serialize_response(envelope_id: str, results: tuple[SubmissionResult, ...])
             "envelope_id": envelope_id,
             "submission_results": [r.model_dump(mode="json") for r in results],
         }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Broker-routing helpers (story 03e / ALP-390)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _AbandonedCommandEntry:
+    """Per-command broker-failure marker — drives the ``command_abandoned`` emit.
+
+    The OMS skips Phase 2 writeback for an abandoned command (no order rows
+    persisted) but still emits one ``command_abandoned`` activity-log entry
+    so post-hoc forensics can reconstruct why the command never reached the
+    broker.
+    """
+
+    command_id: str
+    command_type: Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"]
+    failure_reason: str
+    retry_attempt_count: int
+
+
+_COMMAND_TYPE_TO_LABEL: dict[str, Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"]] = {
+    "open": "OPEN",
+    "close": "CLOSE",
+    "adjust": "ADJUST",
+    "cancel": "CANCEL",
+    "add": "ADD",
+}
+
+
+async def _route_through_broker(
+    *,
+    envelope: PMEnvelope,
+    submission_results: tuple[SubmissionResult, ...],
+    client: TradingClient,
+    queries: AccountStateQueries,
+    execution_config: ExecutionConfig,
+    invocation_id: str,
+    invocation_handle: Any | None = None,
+) -> tuple[
+    tuple[SubmissionResult, ...],
+    tuple[BrokerDispatchResult | None, ...],
+    tuple[_AbandonedCommandEntry, ...],
+]:
+    """Dispatch each accepted command through the broker adapter.
+
+    Returns ``(updated_submission_results, dispatch_results, abandoned_entries)``.
+
+    For each command:
+    * Validator-rejected (already ``status="rejected"``) → unchanged, dispatch entry None.
+    * Validator-accepted + broker ``Submitted`` → unchanged, dispatch entry carries ack.
+    * Validator-accepted + broker ``GatewaySubmissionFailed`` → flipped to rejected
+      with a ``broker_gateway_failure`` rule; dispatch entry None;
+      ``_AbandonedCommandEntry`` appended for the writeback step.
+    * Validator-accepted + ``PermanentRejectionError`` raised → flipped to rejected
+      with the broker's ``PermanentRejection.code`` as the rule; dispatch entry None.
+    """
+    # Lazy imports — broker_dispatch transitively imports the broker_adapter
+    # package which in turn ships an alpaca-py dependency we don't want loaded
+    # for the legacy fixture-only path.
+    from alphamind.execution.broker_adapter import (
+        GatewaySubmissionFailed,
+        Submitted,
+    )
+    from alphamind.execution.broker_adapter.errors import classify_alpaca_error
+    from alphamind.execution.broker_adapter.order_options import (
+        PermanentRejectionError,
+    )
+    from alphamind.execution.oms.broker_dispatch import dispatch_command_to_broker
+
+    updated: list[SubmissionResult] = []
+    dispatches: list[BrokerDispatchResult | None] = []
+    abandoned: list[_AbandonedCommandEntry] = []
+
+    for result, command in zip(submission_results, envelope.commands, strict=True):
+        if result.status != "accepted":
+            updated.append(result)
+            dispatches.append(None)
+            continue
+        try:
+            context_kwargs = await _dispatcher_context_for(
+                command, invocation_handle=invocation_handle
+            )
+            outcome = await dispatch_command_to_broker(
+                command,
+                client=client,
+                queries=queries,
+                execution=execution_config,
+                client_order_id=result.command_id,
+                **context_kwargs,
+            )
+        except PermanentRejectionError as exc:
+            # Single-leg options translator wraps permanent rejections in this
+            # typed exception; surface the broker code in gateway_reason.
+            updated.append(_to_rejection(result, code=exc.rejection.code, reason=str(exc)))
+            dispatches.append(None)
+            continue
+        except Exception as exc:
+            # Equity / mleg translators re-raise the raw alpaca-py APIError on
+            # permanent failure; classify here so the engine-stub surfaces a
+            # uniform broker-rejection shape regardless of which translator
+            # produced the error. ``BaseException`` (CancelledError, etc.)
+            # propagates so external interruptions are never re-classified as
+            # broker rejections.
+            rejection = classify_alpaca_error(exc)
+            if rejection is None:
+                raise
+            updated.append(
+                _to_rejection(
+                    result,
+                    code=rejection.code,
+                    reason=(
+                        f"Alpaca rejected: code={rejection.code}, "
+                        f"http_status={rejection.http_status}, "
+                        f"message={rejection.alpaca_message!r}"
+                    ),
+                )
+            )
+            dispatches.append(None)
+            continue
+        if isinstance(outcome, GatewaySubmissionFailed):
+            reason = (
+                f"gateway_submission_failed: {outcome.reason} "
+                f"(last_error={outcome.last_error_class}, attempts={outcome.attempt_count})"
+            )
+            updated.append(_to_rejection(result, code="broker_gateway_failure", reason=reason))
+            dispatches.append(None)
+            abandoned.append(
+                _AbandonedCommandEntry(
+                    command_id=result.command_id,
+                    command_type=_COMMAND_TYPE_TO_LABEL[command.command_type],
+                    failure_reason=reason,
+                    retry_attempt_count=outcome.attempt_count,
+                )
+            )
+            continue
+        assert isinstance(outcome, Submitted)
+        # Replace the validator's synthetic order_id on the acknowledgment with
+        # the broker's real alpaca_order_id so the submission_log surface
+        # carries the broker-grade id.
+        updated.append(_with_real_order_id(result, outcome.payload.alpaca_order_id))
+        dispatches.append(outcome.payload)
+
+    # invocation_id retained on the signature for future provenance threading.
+    del invocation_id
+    return tuple(updated), tuple(dispatches), tuple(abandoned)
+
+
+async def _dispatcher_context_for(
+    command: OMSCommand, *, invocation_handle: Any | None
+) -> dict[str, Any]:
+    """Resolve the per-command kwargs the dispatcher needs.
+
+    For OPEN, the canonical command carries the instrument inline — no extra
+    context required. For CLOSE / ADD / ADJUST, the dispatcher needs portfolio-
+    state context (symbol / quantity / side / OCC / strategy legs); we read it
+    from the persisted position record under *invocation_handle*'s session.
+    For CANCEL, the dispatcher needs the target alpaca_order_id; we read it
+    from the order record. ``CancelCommand.order_id`` is the OMS order id —
+    we resolve it to the broker's alpaca_order_id via the persisted order row.
+    """
+    if isinstance(command, OpenCommand):
+        return {}
+    if invocation_handle is None:
+        msg = (
+            f"engine-stub broker-routing for {command.command_type!r} commands "
+            "requires invocation_handle to resolve portfolio state from the "
+            "persisted position record."
+        )
+        raise ValueError(msg)
+    if isinstance(command, CloseCommand):
+        return await _close_command_context(command, invocation_handle=invocation_handle)
+    if isinstance(command, AddCommand):
+        return await _add_command_context(command, invocation_handle=invocation_handle)
+    if isinstance(command, AdjustCommand):
+        return await _adjust_command_context(command, invocation_handle=invocation_handle)
+    if isinstance(command, CancelCommand):
+        return await _cancel_command_context(command, invocation_handle=invocation_handle)
+    msg = f"unsupported OMS command variant for broker routing: {type(command).__name__}"
+    raise NotImplementedError(msg)
+
+
+async def _close_command_context(
+    command: CloseCommand, *, invocation_handle: Any
+) -> dict[str, Any]:
+    """Resolve dispatcher context for a CLOSE command.
+
+    Reads the position record by id and projects asset-specific fields
+    (symbol/qty/side for equity; OCC/intent for options; legs/strategy_type
+    for strategy) the dispatcher needs.
+    """
+    position = await _read_position(command.position_id, invocation_handle=invocation_handle)
+    from alphamind.portfolio_state.records.positions import (
+        EquityPositionDetails,
+        OptionsPositionDetails,
+        StrategyPositionDetails,
+    )
+
+    if isinstance(position.details, EquityPositionDetails):
+        return {
+            "position_asset_type": "equity",
+            "position_symbol": position.details.ticker,
+            "position_qty": position.details.share_count,
+            "position_side": "long" if position.direction.value == "LONG" else "short",
+        }
+    if isinstance(position.details, OptionsPositionDetails):
+        # OptionsPositionDetails stores the contract fields rather than the OCC
+        # symbol; derive the OCC at the dispatcher boundary.
+        from alphamind.execution.broker_adapter.order_options import build_occ_symbol
+
+        occ = build_occ_symbol(
+            position.details.underlying_ticker,
+            position.details.expiration_date,
+            position.details.contract_type,
+            position.details.strike_price,
+        )
+        return {
+            "position_asset_type": "option",
+            "occ_symbol": occ,
+            "position_qty": position.details.contract_count,
+            "position_intent": (
+                "sell_to_close" if position.direction.value == "LONG" else "buy_to_close"
+            ),
+        }
+    if isinstance(position.details, StrategyPositionDetails):
+        # StrategyPositionDetails carries legs and a strategy_type_label; the
+        # broker translator needs the typed StrategyType, so we coerce here.
+        from alphamind.execution.oms.command_models import StrategyType
+
+        legs = _persisted_legs_to_mleg_acks(position.details.legs)
+        return {
+            "position_asset_type": "strategy",
+            "open_legs": legs,
+            "strategy_type": cast(StrategyType, position.details.strategy_type_label),
+            "position_units": None,
+        }
+    msg = f"CLOSE references position with unsupported details: {type(position.details).__name__}"
+    raise NotImplementedError(msg)
+
+
+async def _add_command_context(command: AddCommand, *, invocation_handle: Any) -> dict[str, Any]:
+    """Resolve dispatcher context for an ADD command.
+
+    Reads the position record by id; threads symbol/side for equity, the
+    embedded OptionInstrument for options, the open legs + strategy_type
+    for strategy.
+    """
+    position = await _read_position(command.position_id, invocation_handle=invocation_handle)
+    from alphamind.portfolio_state.records.positions import (
+        EquityPositionDetails,
+        OptionsPositionDetails,
+        StrategyPositionDetails,
+    )
+
+    if isinstance(position.details, EquityPositionDetails):
+        return {
+            "position_asset_type": "equity",
+            "position_symbol": position.details.ticker,
+            "position_side": "long" if position.direction.value == "LONG" else "short",
+        }
+    if isinstance(position.details, OptionsPositionDetails):
+        # Reconstruct the OptionInstrument the dispatcher needs from the
+        # persisted contract fields.
+        from alphamind.execution.oms.command_models import OptionInstrument
+
+        instrument = OptionInstrument(
+            asset_type="option",
+            underlying=position.details.underlying_ticker,
+            strike=position.details.strike_price,
+            expiration=position.details.expiration_date.isoformat(),
+            contract_type=("call" if position.details.contract_type.value == "CALL" else "put"),
+            direction="long" if position.direction.value == "LONG" else "short",
+        )
+        return {
+            "position_asset_type": "option",
+            "position_option_instrument": instrument,
+            "position_side": "long" if position.direction.value == "LONG" else "short",
+        }
+    if isinstance(position.details, StrategyPositionDetails):
+        from alphamind.execution.oms.command_models import StrategyType
+
+        legs = _persisted_legs_to_mleg_acks(position.details.legs)
+        return {
+            "position_asset_type": "strategy",
+            "open_legs": legs,
+            "strategy_type": cast(StrategyType, position.details.strategy_type_label),
+        }
+    msg = f"ADD references position with unsupported details: {type(position.details).__name__}"
+    raise NotImplementedError(msg)
+
+
+async def _adjust_command_context(
+    command: AdjustCommand, *, invocation_handle: Any
+) -> dict[str, Any]:
+    """Resolve dispatcher context for an ADJUST command.
+
+    Reads the bracket-side protective order being modified and surfaces its
+    alpaca_order_id + asset_class + order_class. The leg targeted matches
+    the change-field on the command (NewStopLevel → PRICE_STOP only;
+    NewTargetLevel → TAKE_PROFIT only; new_time_expiration → TIME_STOP) so
+    the broker mutation stays in lockstep with the OMS-state writeback in
+    :func:`_writeback_adjust`. The asset_class / order_class are derived
+    from the position's persisted details — equity routes to ``us_equity``,
+    options to ``us_option``, strategies to ``us_option_strategy / mleg``.
+    """
+    from sqlalchemy import select as _select
+
+    from alphamind.execution.state_persistence.tables.orders import OrderRow
+    from alphamind.portfolio_state.records.positions import (
+        EquityPositionDetails,
+        OptionsPositionDetails,
+        StrategyPositionDetails,
+    )
+
+    position = await _read_position(command.position_id, invocation_handle=invocation_handle)
+
+    if position.bracket_id is None:
+        msg = f"ADJUST references position {command.position_id!r} with no bracket"
+        raise ValueError(msg)
+
+    target_roles = _adjust_target_roles(command)
+    if not target_roles:
+        # Pure thesis-update / event-invalidation ADJUST — no broker mutation
+        # required. The dispatcher should not be invoked; surfacing this as a
+        # structural error prevents a silent no-op patch.
+        msg = (
+            f"ADJUST against position {command.position_id!r} carries no "
+            "protective change-fields (stop / target / time); no broker leg to replace"
+        )
+        raise ValueError(msg)
+
+    rows = (
+        (
+            await invocation_handle.session.execute(
+                _select(OrderRow).where(
+                    OrderRow.bracket_id == position.bracket_id,
+                    OrderRow.status == "PENDING",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    target = next((r for r in rows if r.order_role in target_roles), None)
+    if target is None:
+        msg = (
+            f"ADJUST against bracket {position.bracket_id!r} found no "
+            f"PENDING protective leg matching roles {sorted(target_roles)} to replace"
+        )
+        raise ValueError(msg)
+
+    # Derive broker asset_class / order_class from the position's details
+    # payload. Strategy positions submit as us_option_strategy/mleg; single-leg
+    # options as us_option/simple; equity as us_equity/simple. Bracket child
+    # legs on equity are themselves submitted as simple orders by Alpaca on
+    # cancel-and-replace (the bracket parent stays linked, the child replaces
+    # in place).
+    if isinstance(position.details, StrategyPositionDetails):
+        target_asset_class: ReplaceAssetClass = "us_option_strategy"
+        target_order_class: ReplaceOrderClass = "mleg"
+    elif isinstance(position.details, OptionsPositionDetails):
+        target_asset_class = "us_option"
+        target_order_class = "simple"
+    elif isinstance(position.details, EquityPositionDetails):
+        target_asset_class = "us_equity"
+        target_order_class = "simple"
+    else:
+        msg = (
+            f"ADJUST against position {command.position_id!r} carries unsupported "
+            f"details type {type(position.details).__name__}"
+        )
+        raise NotImplementedError(msg)
+
+    return {
+        "target_alpaca_order_id": target.alpaca_order_id,
+        "target_asset_class": target_asset_class,
+        "target_order_class": target_order_class,
+    }
+
+
+def _adjust_target_roles(command: AdjustCommand) -> frozenset[str]:
+    """Return the protective-leg role(s) the ADJUST's change-fields target.
+
+    Matches the writeback's :func:`_protective_roles_for_change_fields` so the
+    broker leg mutated and the OMS leg cancelled stay in lockstep. Returns
+    ``frozenset()`` when the ADJUST carries only thesis-component / event
+    updates and no broker mutation is required.
+    """
+    roles: set[str] = set()
+    if command.new_stop_level is not None:
+        roles.add("PRICE_STOP")
+    if command.new_target_level is not None:
+        roles.add("TAKE_PROFIT")
+    if command.new_time_expiration is not None:
+        roles.add("TIME_STOP")
+    return frozenset(roles)
+
+
+async def _cancel_command_context(
+    command: CancelCommand, *, invocation_handle: Any
+) -> dict[str, Any]:
+    """Resolve dispatcher context for a CANCEL command.
+
+    Reads the target order record by OMS id and surfaces its alpaca_order_id.
+    """
+    from alphamind.execution.state_persistence.tables.orders import OrderRow
+
+    order_row = await invocation_handle.session.get(OrderRow, command.order_id)
+    if order_row is None:
+        msg = f"CANCEL references missing order_id={command.order_id!r}"
+        raise ValueError(msg)
+    return {"target_alpaca_order_id": order_row.alpaca_order_id}
+
+
+async def _read_position(position_id: str, *, invocation_handle: Any) -> Any:
+    from alphamind.execution.state_persistence.tables.positions import PositionRow
+    from alphamind.execution.state_persistence.tables.positions_codec import (
+        row_to_record as position_row_to_record,
+    )
+
+    pos_row = await invocation_handle.session.get(PositionRow, position_id)
+    if pos_row is None:
+        msg = f"command references missing position_id={position_id!r}"
+        raise ValueError(msg)
+    return position_row_to_record(pos_row)
+
+
+def _persisted_legs_to_mleg_acks(legs: Any) -> tuple[Any, ...]:
+    """Translate a persisted strategy's legs into broker-adapter ``MLEGLegAck`` tuple.
+
+    The persisted ``StrategyLeg`` carries an embedded ``OptionsPositionDetails``
+    on its ``options`` field plus a per-leg ``direction``; we read the OCC
+    fields off ``leg.options`` and the side off ``leg.direction``.
+    Ratio is always 1 for the persisted shape — strategies persist legs as a
+    flat tuple at unit ratio, with proportional sizing carried at the
+    position level.
+    """
+    from alphamind.execution.broker_adapter import MLEGLegAck
+    from alphamind.execution.broker_adapter.order_options import build_occ_symbol
+
+    acks: list[Any] = []
+    for leg in legs:
+        opt = leg.options
+        occ = build_occ_symbol(
+            opt.underlying_ticker, opt.expiration_date, opt.contract_type, opt.strike_price
+        )
+        leg_direction = leg.direction
+        if leg_direction is None:
+            msg = f"persisted strategy leg {leg.leg_id!r} has no direction set"
+            raise ValueError(msg)
+        side: Literal["buy", "sell"] = "buy" if leg_direction.value == "LONG" else "sell"
+        intent: Literal["buy_to_open", "sell_to_open"] = (
+            "buy_to_open" if side == "buy" else "sell_to_open"
+        )
+        acks.append(
+            MLEGLegAck(
+                occ_symbol=occ,
+                side=side,
+                ratio_qty=1,
+                position_intent=intent,
+            )
+        )
+    return tuple(acks)
+
+
+def _to_rejection(result: SubmissionResult, *, code: str, reason: str) -> SubmissionResult:
+    """Flip an accepted result to a broker-rejected one.
+
+    The broker's rejection ``code`` flows into ``gateway_reason`` per the
+    coordinated-swap acceptance criteria (story 03e / ALP-390); the descriptive
+    ``reason`` lands in ``suggested_modification`` so the PM tool's feedback
+    loop sees the same shape as a guardrail-side rejection.
+    """
+    return SubmissionResult(
+        command_ordinal=result.command_ordinal,
+        status="rejected",
+        command_id=result.command_id,
+        rejection_payload=RejectionPayload(
+            rules_breached=(
+                _BreachedRule(
+                    rule=code,
+                    current=0.0,
+                    limit=0.0,
+                    overage=0.0,
+                    unit="ok",
+                ),
+            ),
+            suggested_modification=reason,
+            gateway_reason=code,
+        ),
+    )
+
+
+def _with_real_order_id(result: SubmissionResult, alpaca_order_id: str) -> SubmissionResult:
+    """Return a copy of *result* whose acknowledgment ``order_id`` is the broker's id."""
+    if result.acknowledgment is None:
+        return result
+    new_ack = result.acknowledgment.model_copy(update={"order_id": alpaca_order_id})
+    return SubmissionResult(
+        command_ordinal=result.command_ordinal,
+        status=result.status,
+        command_id=result.command_id,
+        acknowledgment=new_ack,
+        rejection_payload=result.rejection_payload,
     )

@@ -36,14 +36,9 @@ def test_analyst_entry_loads() -> None:
     entry = _load_analyst_entry()
     assert entry.model == "claude-opus-4-7"
     assert entry.prompt == "prompts/decision/analyst.md"
-    assert entry.latency_budget_seconds == 180
+    assert entry.latency_budget_seconds == 300
     assert entry.context_token_budget == 8000
-    # Each recommendation serializes to ~500-800 tokens with the rich nested
-    # shape (instrument + entry_order + position_size + target +
-    # invalidation_legs + 4 narrative fields + guardrail_validation_result
-    # mirror). 1-3 recommendations sit at 1500-2500 tokens with no headroom
-    # for retry or empty-day clarifications. 4000 leaves ~50% headroom.
-    assert entry.output_token_budget == 4000
+    assert entry.output_token_budget == 6000
 
 
 def test_analyst_prompt_path_exists() -> None:
@@ -89,9 +84,9 @@ class TestAgentsYamlPortfolioManagerEntry:
         entry = _load_pm_entry()
         assert entry.model == "claude-opus-4-7"
         assert entry.prompt == "prompts/decision/pm.md"
-        assert entry.latency_budget_seconds == 600
+        assert entry.latency_budget_seconds == 900
         assert entry.context_token_budget == 16000
-        assert entry.output_token_budget == 16000
+        assert entry.output_token_budget == 24000
 
     def test_pm_prompt_path_exists(self) -> None:
         """The `prompt:` field resolves to a readable file under the repo root."""

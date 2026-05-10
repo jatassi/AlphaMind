@@ -96,6 +96,7 @@ they read time-dependent DB state.
 | 1 | Data | bootstrap, ongoing_collection | No | ~5s |
 | 1b | Execution: state persistence | state_persistence | No | <5s |
 | 1c | Execution: OMS commands | oms_commands | No | <60s |
+| 1d | Execution: broker adapter | broker_adapter | No (live broker) | <2 min |
 | 2 | Distillation | distillation, regime_transition, calibration_mix | Yes (1 of 3) | ~30–60s |
 | 3 | Analysis: domain researchers | domain_researchers, domain_researcher_failure_modes | Yes (1 of 2) | ~30–60s |
 | 4 | Analysis: qualitative + adaptive | qualitative_researcher, adaptive_researcher | Yes | ~45–90s |
@@ -252,6 +253,57 @@ regression is a Phase 3 stub-constant reintroduction — the
 `capital_reserved.amount_usd=1000.0` failure means `_writeback_open` is
 again hard-coding a stub instead of reading
 `command.position_size.dollar_value`.
+
+## Phase 1d — Broker adapter (live paper environment)
+
+Live integration check against Alpaca's paper environment. No SDK calls
+(in the LLM sense), no LLM cost — but unlike phases 1b / 1c this one
+talks to the live broker over the network. Runs in under two minutes
+during US market hours; fill latency outside session can stretch the
+runtime.
+
+Phase 1d is the first verification step that exercises real broker
+submissions. State produced (positions / orders / activity-log entries)
+flows through to the OMS Phase 2 path, so the SQLite DB after this
+phase reflects real Alpaca paper-mode positions.
+
+```bash
+set -a && source .env && set +a  # source ALPACA_PAPER_KEY + SECRET
+mkdir -p /tmp/alphamind-verify-broker
+rm -f /tmp/alphamind-verify-broker/alphamind.db
+uv run alembic -c alembic.ini \
+    -x db=/tmp/alphamind-verify-broker/alphamind.db upgrade head
+DATABASE_PATH=/tmp/alphamind-verify-broker/alphamind.db \
+    uv run python -m alphamind.scripts.verify_broker_adapter
+```
+
+Phase 1d requires a **freshly-migrated tmp DB**, sourced Alpaca paper
+credentials, `config/main.yaml` set to `execution_mode: paper`, and US
+market hours for low-latency paper-mode fills (Phases 3 / 4 / 5 of the
+verify wait for fills via the trade_updates websocket; off-session
+latency exceeds the verify's per-phase budget).
+
+Verifies seven phases: adapter substrate (factory + retry helper +
+error classifier), account-state queries (every `AccountStateQueries`
+method against the live paper account), full equity / single-leg
+options / multi-leg strategy order lifecycles (OPEN → fill → CLOSE
+round-trips through the OMS engine-stub coordinated swap), venue
+configuration in isolation (constants check + calendar cache +
+account-state surfacer + settlement calculator), and the
+disconnect-recovery routine (`recover_missed_fills_since` over a 1-hour
+lookback). Phase 6 (venue config) prints the operator-relevant venue
+state — resolved margin-interest tier, day-trade headroom, PDT
+qualification — to the verbose output.
+
+**On failure:** read `scripts/RUNBOOK_broker_adapter.md` § Failure-mode
+triage. The FAIL output names the phase and a one-line diagnostic; the
+most common boot-time failure is missing credentials (`Alpaca paper
+credentials not set: environment variable(s) ['ALPACA_PAPER_KEY'] are
+unset or empty`) and the most common in-flight failure is paper-mode
+buying-power exhaustion on Phases 3 / 4 / 5. DEFERRED phases are not
+failures; the only operator action required for a `RESULT: PASS` line
+with deferrals is to confirm the deferral rationale (live-mode
+assertions in paper mode) matches the deferral message.
 
 ## Phase 2 — Distillation layer
 
@@ -833,6 +885,8 @@ update the runbook in the same change.
 
 - `scripts/RUNBOOK_position_thesis_model.md` — phase 0 failure triage (ALP-122 work tree).
 - `scripts/RUNBOOK_state_persistence.md` — phase 1b failure triage (ALP-119 work tree).
+- `scripts/RUNBOOK_oms_commands.md` — phase 1c failure triage (ALP-120 work tree).
+- `scripts/RUNBOOK_broker_adapter.md` — phase 1d failure triage (ALP-121 work tree).
 - `scripts/RUNBOOK_domain_researchers.md` — phase 3 failure triage.
 - `scripts/RUNBOOK_qualitative_researcher.md` — phase 4 failure triage.
 - `scripts/RUNBOOK_adaptive_researcher.md` — phase 4 failure triage.

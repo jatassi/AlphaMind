@@ -855,7 +855,7 @@ def test_agents_yaml_qualitative_researcher_carries_expected_tool_loop_shape() -
         "prediction_markets": 4,
         "earnings_commentary": 4,
     }
-    assert qualitative.output_token_budget == 16000
+    assert qualitative.output_token_budget == 20000
 
 
 def test_agents_accepts_qualitative_researcher_with_tool_loop_fields() -> None:

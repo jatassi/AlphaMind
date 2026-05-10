@@ -21,6 +21,7 @@ from sqlalchemy import select
 
 from alphamind.decision.portfolio_manager.models import PMEnvelope
 from alphamind.decision.portfolio_manager.validation import ValidationError as PMValidationError
+from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 from alphamind.execution.oms.command_models import (
     AddCommand,
     AdjustCommand,
@@ -176,15 +177,31 @@ async def persist_envelope_outcome(
     submission_results: tuple[SubmissionResult, ...],
     *,
     config: StatePersistenceConfig,
+    dispatch_results: tuple[BrokerDispatchResult | None, ...] | None = None,
 ) -> None:
-    """Persist per-command writebacks + one ``pm_decision`` for an accepted envelope."""
+    """Persist per-command writebacks + one ``pm_decision`` for an accepted envelope.
+
+    When ``dispatch_results`` is supplied (engine-stub coordinated swap,
+    story 03e / ALP-390), each accepted command's writeback consumes the
+    matching :class:`BrokerDispatchResult` so the persisted entry / close /
+    add / adjust order carries Alpaca's real ``alpaca_order_id`` rather than
+    the synthetic ``alp-{order_id}`` placeholder. ``None`` entries (legacy
+    callers and per-command failures) fall back to the synthetic id.
+    """
     del config  # No knobs consumed at this story; signature is forward-shaped.
 
+    if dispatch_results is None:
+        dispatch_results = tuple(None for _ in submission_results)
+
     accepted_command_ids: list[str] = []
-    for result, command in zip(submission_results, envelope.commands, strict=True):
+    for result, command, dispatch in zip(
+        submission_results, envelope.commands, dispatch_results, strict=True
+    ):
         if result.status != "accepted":
             continue
-        await _dispatch_command_writeback(handle, command=command, result=result)
+        await _dispatch_command_writeback(
+            handle, command=command, result=result, dispatch_result=dispatch
+        )
         accepted_command_ids.append(result.command_id)
 
     await _emit_pm_decision(handle, envelope=envelope, command_ids=tuple(accepted_command_ids))
@@ -278,6 +295,7 @@ async def persist_engine_envelope_outcome(
     close_command: CloseCommand,
     command_id: str,
     extra_metadata: dict[str, Any],
+    submitted_alpaca_order_id: str | None = None,
 ) -> None:
     """Persist the protective CLOSE for an engine-originated envelope.
 
@@ -288,6 +306,10 @@ async def persist_engine_envelope_outcome(
     context threaded through ``extra_metadata`` (cascade_id,
     position_selection_rationale, rule_breached) and ``EventSource.BRACKET_MANAGER``
     as the activity-log source per ``oms-commands.md § Command origins``.
+
+    When ``submitted_alpaca_order_id`` is supplied (engine-stub coordinated
+    swap, story 03e / ALP-390), the persisted close order carries the broker's
+    real Alpaca order id rather than the synthetic ``alp-{order_id}`` placeholder.
 
     The continuous monitor produced the envelope; the OMS owns persistence.
     The surrounding ``InvocationContext`` commits or rolls back atomically.
@@ -304,6 +326,7 @@ async def persist_engine_envelope_outcome(
         result=synthetic_result,
         extra_metadata=extra_metadata,
         source=EventSource.BRACKET_MANAGER,
+        submitted_alpaca_order_id=submitted_alpaca_order_id,
     )
     await stamp_phase_completion(handle, column="phase2_completed_at")
 
@@ -354,21 +377,31 @@ async def _dispatch_command_writeback(
     *,
     command: OMSCommand,
     result: SubmissionResult,
+    dispatch_result: BrokerDispatchResult | None = None,
 ) -> None:
+    submitted_id = dispatch_result.alpaca_order_id if dispatch_result is not None else None
     if isinstance(command, OpenCommand):
-        await _writeback_open(handle, command=command, result=result)
+        await _writeback_open(
+            handle, command=command, result=result, submitted_alpaca_order_id=submitted_id
+        )
         return
     if isinstance(command, CloseCommand):
-        await _writeback_close(handle, command=command, result=result)
+        await _writeback_close(
+            handle, command=command, result=result, submitted_alpaca_order_id=submitted_id
+        )
         return
     if isinstance(command, AdjustCommand):
-        await _writeback_adjust(handle, command=command, result=result)
+        await _writeback_adjust(
+            handle, command=command, result=result, submitted_alpaca_order_id=submitted_id
+        )
         return
     if isinstance(command, CancelCommand):
         await _writeback_cancel(handle, command=command, result=result)
         return
     if isinstance(command, AddCommand):
-        await _writeback_add(handle, command=command, result=result)
+        await _writeback_add(
+            handle, command=command, result=result, submitted_alpaca_order_id=submitted_id
+        )
         return
     msg = f"unsupported command variant: {type(command).__name__}"
     raise NotImplementedError(msg)
@@ -384,6 +417,7 @@ async def _writeback_open(
     *,
     command: OpenCommand,
     result: SubmissionResult,
+    submitted_alpaca_order_id: str | None = None,
 ) -> None:
     """OPEN: insert position (PENDING), thesis (ACTIVE w/ components), bracket
     (PENDING_ENTRY), entry order, take-profit + invalidation leg orders.
@@ -398,6 +432,11 @@ async def _writeback_open(
     * bracket protective legs ← ``command.invalidation_legs`` + ``command.target``
     * thesis summary + components ← ``command.thesis``
     * capital reservation amount ← ``command.position_size.dollar_value``
+
+    When ``submitted_alpaca_order_id`` is supplied (engine-stub coordinated
+    swap, story 03e / ALP-390), the persisted entry order carries the broker's
+    real Alpaca order id; protective leg orders keep the synthetic
+    ``alp-{order_id}`` placeholder until ``trade_updates`` ack each child leg.
     """
     ticker = _instrument_ticker_key(command.instrument)
     timestamp = datetime.now(UTC)
@@ -451,6 +490,7 @@ async def _writeback_open(
         pm_command_id=result.command_id,
         timestamp=timestamp,
         role=OrderRole.ENTRY,
+        alpaca_order_id_override=submitted_alpaca_order_id,
     )
     target_order = _build_take_profit_order(
         order_id=target_order_id,
@@ -544,6 +584,7 @@ async def _writeback_close(
     result: SubmissionResult,
     extra_metadata: dict[str, Any] | None = None,
     source: EventSource = EventSource.COMMAND_EXECUTOR,
+    submitted_alpaca_order_id: str | None = None,
 ) -> None:
     """CLOSE: insert close order (status PENDING). Emit order_submitted.
 
@@ -621,6 +662,7 @@ async def _writeback_close(
         price_parameters=price_parameters,
         pm_command_id=result.command_id,
         timestamp=timestamp,
+        alpaca_order_id_override=submitted_alpaca_order_id,
     )
     handle.session.add(order_record_to_row(close_order))
     # CLOSE-specific rationale metadata: close_rationale_type + invalidation_reason
@@ -678,6 +720,7 @@ async def _writeback_adjust(
     *,
     command: AdjustCommand,
     result: SubmissionResult,
+    submitted_alpaca_order_id: str | None = None,
 ) -> None:
     """ADJUST: insert new protective leg order(s) and/or thesis component
     updates per the change-field(s) set on the canonical command.
@@ -705,6 +748,11 @@ async def _writeback_adjust(
         handle,
         bracket_id=position.bracket_id,
         timestamp=timestamp,
+        target_roles=_protective_roles_for_change_fields(
+            new_stop_level=command.new_stop_level,
+            new_target_level=command.new_target_level,
+            new_time_expiration_present=command.new_time_expiration is not None,
+        ),
     )
     for cancelled in cancelled_orders:
         await _emit_order_cancelled(
@@ -721,6 +769,7 @@ async def _writeback_adjust(
         position=position,
         result=result,
         timestamp=timestamp,
+        alpaca_order_id_override=submitted_alpaca_order_id,
     )
     new_order_id: str
     if new_protective is not None:
@@ -818,6 +867,7 @@ def _build_replacement_protective_order(
     position: PositionRecord,
     result: SubmissionResult,
     timestamp: datetime,
+    alpaca_order_id_override: str | None = None,
 ) -> OrderRecord | None:
     """Build the replacement protective order for an ADJUST.
 
@@ -836,6 +886,7 @@ def _build_replacement_protective_order(
         position=position,
         pm_command_id=result.command_id,
         timestamp=timestamp,
+        alpaca_order_id_override=alpaca_order_id_override,
     )
 
 
@@ -848,6 +899,7 @@ def _build_replacement_order_for_change_fields(
     position: PositionRecord,
     pm_command_id: str,
     timestamp: datetime,
+    alpaca_order_id_override: str | None = None,
 ) -> OrderRecord | None:
     """Shared replacement-order construction used by ADJUST and ADD's
     optional ``bracket_adjustment``.
@@ -869,6 +921,7 @@ def _build_replacement_order_for_change_fields(
         "pm_command_id": pm_command_id,
         "thesis_id": position.thesis_id,
         "timestamp": timestamp,
+        "alpaca_order_id_override": alpaca_order_id_override,
     }
     if new_stop_level is not None:
         role, order_type, price_parameters = _new_stop_level_to_order_shape(new_stop_level)
@@ -1023,6 +1076,7 @@ async def _writeback_add(
     *,
     command: AddCommand,
     result: SubmissionResult,
+    submitted_alpaca_order_id: str | None = None,
 ) -> None:
     """ADD: insert add-entry order (PENDING). Append a new thesis component.
     Reserve capital. Optionally cancel + resubmit modified bracket legs.
@@ -1067,6 +1121,7 @@ async def _writeback_add(
         pm_command_id=result.command_id,
         timestamp=timestamp,
         role=OrderRole.ADD_ENTRY,
+        alpaca_order_id_override=submitted_alpaca_order_id,
     )
     handle.session.add(order_record_to_row(add_order))
     await _emit_order_submitted(
@@ -1129,7 +1184,14 @@ async def _apply_bracket_adjustment(
     if position.bracket_id is None:
         return
     cancelled = await _cancel_pending_protective_orders(
-        handle, bracket_id=position.bracket_id, timestamp=timestamp
+        handle,
+        bracket_id=position.bracket_id,
+        timestamp=timestamp,
+        target_roles=_protective_roles_for_change_fields(
+            new_stop_level=adjustment.new_stop_level,
+            new_target_level=adjustment.new_target_level,
+            new_time_expiration_present=adjustment.new_time_expiration is not None,
+        ),
     )
     for cancelled_order in cancelled:
         await _emit_order_cancelled(
@@ -1291,10 +1353,15 @@ async def _release_capital(
 # ---------------------------------------------------------------------------
 
 
-# Roles whose pending orders ADJUST and the entry-CANCEL path leave alone.
-# ADJUST replaces the protective legs but never touches an unfilled entry.
-# Entry-CANCEL has just CANCELLED the entry itself before this sweep runs.
-_NON_PROTECTIVE_ORDER_ROLES = frozenset({OrderRole.ENTRY.value, OrderRole.ADD_ENTRY.value})
+# All protective-leg roles. The dissolve-bracket path (entry CANCEL) sweeps
+# every protective leg; the ADJUST / BracketAdjustment paths narrow to the
+# specific role(s) the change-field set targets so a stop-only ADJUST does
+# not also CANCEL the take-profit leg in OMS state. Entry / add-entry roles
+# are deliberately omitted — ADJUST never touches them, and the entry-CANCEL
+# path cancels the entry itself separately before this sweep runs.
+_ALL_PROTECTIVE_ROLES: frozenset[str] = frozenset(
+    {OrderRole.PRICE_STOP.value, OrderRole.TAKE_PROFIT.value, OrderRole.TIME_STOP.value}
+)
 
 
 async def _cancel_pending_protective_orders(
@@ -1302,14 +1369,19 @@ async def _cancel_pending_protective_orders(
     *,
     bracket_id: str,
     timestamp: datetime,
-    skip_roles: frozenset[str] = _NON_PROTECTIVE_ORDER_ROLES,
+    target_roles: frozenset[str] = _ALL_PROTECTIVE_ROLES,
 ) -> tuple[OrderRecord, ...]:
-    """Mark every PENDING protective order on the bracket CANCELLED in place.
+    """Mark PENDING protective orders matching *target_roles* CANCELLED in place.
 
     Returns the typed records so callers can use the order_ids and other
-    fields for activity-log emission. Entry / add-entry roles are skipped:
-    ADJUST never touches them, and the CANCEL entry-path has already
-    cancelled the entry before this sweep runs.
+    fields for activity-log emission. *target_roles* defaults to every
+    protective leg role (used by the entry-CANCEL → dissolve-bracket path);
+    the ADJUST / BracketAdjustment paths narrow it via
+    :func:`_protective_roles_for_change_fields` so only the leg(s) the
+    change-field set targets transition to CANCELLED — leaving the other
+    protective legs PENDING at the broker. Entry / add-entry roles are
+    never touched here (the entry-CANCEL path cancels the entry separately
+    before this sweep runs).
     """
     stmt = (
         select(OrderRow)
@@ -1319,12 +1391,38 @@ async def _cancel_pending_protective_orders(
     rows = list((await handle.session.execute(stmt)).scalars())
     cancelled: list[OrderRecord] = []
     for row in rows:
-        if row.order_role in skip_roles:
+        if row.order_role not in target_roles:
             continue
         row.status = OrderStatus.CANCELLED.value
         row.last_update_timestamp = timestamp.isoformat()
         cancelled.append(order_row_to_record(row))
     return tuple(cancelled)
+
+
+def _protective_roles_for_change_fields(
+    *,
+    new_stop_level: NewStopLevel | None,
+    new_target_level: NewTargetLevel | None,
+    new_time_expiration_present: bool,
+) -> frozenset[str]:
+    """Return the set of protective-leg roles the change-fields target.
+
+    NewStopLevel → PRICE_STOP only; NewTargetLevel → TAKE_PROFIT only;
+    new_time_expiration → TIME_STOP only. The OMS-side broker dispatcher
+    (:func:`alphamind.execution.oms.submit_envelope_mcp._adjust_command_context`)
+    threads the matching protective leg's ``alpaca_order_id`` to
+    :func:`submit_replace`; this helper keeps the OMS-state writeback in
+    lockstep with the broker mutation so a stop-only ADJUST does not also
+    mark the take-profit leg CANCELLED in OMS state.
+    """
+    roles: set[str] = set()
+    if new_stop_level is not None:
+        roles.add(OrderRole.PRICE_STOP.value)
+    if new_target_level is not None:
+        roles.add(OrderRole.TAKE_PROFIT.value)
+    if new_time_expiration_present:
+        roles.add(OrderRole.TIME_STOP.value)
+    return frozenset(roles)
 
 
 async def _resolve_thesis_cancelled(
@@ -1480,6 +1578,7 @@ def _build_entry_order_from_command(  # noqa: PLR0913 — distinct ID, position,
     pm_command_id: str,
     timestamp: datetime,
     role: OrderRole,
+    alpaca_order_id_override: str | None = None,
 ) -> OrderRecord:
     """Build the persisted entry / add-entry order from a canonical EntryOrder."""
     persisted_order_type = _ENTRY_ORDER_TYPE_TO_PERSISTED[entry_order.type]
@@ -1499,6 +1598,7 @@ def _build_entry_order_from_command(  # noqa: PLR0913 — distinct ID, position,
         pm_command_id=pm_command_id,
         thesis_id=thesis_id,
         timestamp=timestamp,
+        alpaca_order_id_override=alpaca_order_id_override,
     )
 
 
@@ -1606,6 +1706,7 @@ def _build_close_order(  # noqa: PLR0913 — close construction threads ids + si
     price_parameters: PriceParameters,
     pm_command_id: str,
     timestamp: datetime,
+    alpaca_order_id_override: str | None = None,
 ) -> OrderRecord:
     return _build_pending_order(
         order_id=order_id,
@@ -1621,6 +1722,7 @@ def _build_close_order(  # noqa: PLR0913 — close construction threads ids + si
         thesis_id=thesis_id,
         timestamp=timestamp,
         quantity=quantity,
+        alpaca_order_id_override=alpaca_order_id_override,
     )
 
 
@@ -1639,7 +1741,16 @@ def _build_pending_order(  # noqa: PLR0913 — captures every NOT-NULL OrderReco
     thesis_id: str | None,
     timestamp: datetime,
     quantity: float,
+    alpaca_order_id_override: str | None = None,
 ) -> OrderRecord:
+    """Build a fresh PENDING :class:`OrderRecord`.
+
+    When ``alpaca_order_id_override`` is supplied (engine-stub coordinated
+    swap, story 03e / ALP-390), the persisted order carries the broker's real
+    ``alpaca_order_id``; otherwise it falls back to the synthetic
+    ``alp-{order_id}`` placeholder used by the legacy engine-stub path.
+    """
+    alpaca_id = alpaca_order_id_override or f"alp-{order_id}"
     return OrderRecord(
         order_id=order_id,
         position_id=position_id,
@@ -1653,8 +1764,8 @@ def _build_pending_order(  # noqa: PLR0913 — captures every NOT-NULL OrderReco
         quantity=quantity,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
-        alpaca_order_id=f"alp-{order_id}",
-        alpaca_order_id_chain=(f"alp-{order_id}",),
+        alpaca_order_id=alpaca_id,
+        alpaca_order_id_chain=(alpaca_id,),
         submission_timestamp=timestamp,
         last_update_timestamp=timestamp,
         filled_quantity=0.0,

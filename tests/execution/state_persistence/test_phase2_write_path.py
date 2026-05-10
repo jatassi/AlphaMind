@@ -1713,6 +1713,133 @@ async def test_adjust_command_cancels_old_protective_order_and_submits_new(
     assert EventType.PM_DECISION.value in types
 
 
+async def test_adjust_stop_only_leaves_take_profit_leg_pending(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """Stop-only ADJUST must CANCEL only the PRICE_STOP leg, leaving the
+    coexisting TAKE_PROFIT leg PENDING.
+
+    Regression: the writeback previously cancelled every PENDING protective
+    leg on the bracket whenever an ADJUST landed, but the broker dispatcher
+    only PATCHes the single targeted leg's alpaca_order_id. The result was an
+    OMS-vs-broker drift where the OMS believed the take-profit leg was
+    cancelled while the broker still held it live.
+    """
+    from alphamind.execution.state_persistence.write_paths.phase2 import (
+        persist_envelope_outcome,
+    )
+    from alphamind.portfolio_state.records.orders import (
+        EquityInstrumentSpec,
+        OrderClass,
+        OrderDirection,
+        OrderDuration,
+        OrderRecord,
+        OrderRole,
+        OrderStatus,
+        OrderType,
+        PriceParameters,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_cash_ledger(factory)
+
+    def _build(order_id: str, role: OrderRole, params: PriceParameters) -> OrderRecord:
+        return OrderRecord(
+            order_id=order_id,
+            position_id="POS-NVDA-001",
+            bracket_id="BRK-NVDA-1",
+            role=role,
+            instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+            direction=OrderDirection.SELL,
+            order_type=OrderType.STOP if role is OrderRole.PRICE_STOP else OrderType.LIMIT,
+            order_class=OrderClass.OTO,
+            price_parameters=params,
+            quantity=10.0,
+            duration=OrderDuration.DAY,
+            status=OrderStatus.PENDING,
+            alpaca_order_id=f"alp-{order_id}",
+            alpaca_order_id_chain=(f"alp-{order_id}",),
+            submission_timestamp=_NOW - timedelta(hours=1),
+            last_update_timestamp=_NOW - timedelta(hours=1),
+            filled_quantity=0.0,
+            avg_fill_price=None,
+            remaining_quantity=10.0,
+            modification_count=0,
+            originating_thesis_id="THE-NVDA-1",
+            originating_pm_command_id=None,
+            age_hours=1.0,
+        )
+
+    old_stop = _build(
+        "ord-old-stop", OrderRole.PRICE_STOP, PriceParameters(stop_trigger_price=140.0)
+    )
+    old_target = _build("ord-old-target", OrderRole.TAKE_PROFIT, PriceParameters(limit_price=200.0))
+    await _seed_position_cluster(
+        factory,
+        _open_position(),
+        _active_thesis(),
+        _active_bracket(),
+        old_stop,
+        old_target,
+    )
+
+    envelope = _make_strategist_envelope(commands=(_adjust_command(position_id="POS-NVDA-001"),))
+    results = (_accepted_result(command_ordinal=0, command_id=f"inv-{_INV_ID}.ENV-SA-1.0.0"),)
+
+    ctx, handle = await _open_handle(factory)
+    await persist_envelope_outcome(
+        handle, envelope, results, config=_make_state_persistence_config()
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        cancelled_stop = await sess.get(OrderRow, "ord-old-stop")
+        assert cancelled_stop is not None
+        assert cancelled_stop.status == "CANCELLED"
+
+        # The take-profit leg must remain PENDING — the ADJUST targeted only
+        # the stop, so the broker dispatcher PATCHed only the stop leg and the
+        # OMS state must mirror that.
+        untouched_target = await sess.get(OrderRow, "ord-old-target")
+        assert untouched_target is not None
+        assert untouched_target.status == "PENDING"
+
+        new_protective = (
+            (
+                await sess.execute(
+                    select(OrderRow).where(
+                        OrderRow.order_id.notin_(("ord-old-stop", "ord-old-target")),
+                        OrderRow.bracket_id == "BRK-NVDA-1",
+                        OrderRow.order_role == "PRICE_STOP",
+                        OrderRow.status == "PENDING",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # Exactly one new PRICE_STOP replacement; no second TAKE_PROFIT
+        # replacement was inserted.
+        assert len(new_protective) == 1
+        all_take_profit = (
+            (
+                await sess.execute(
+                    select(OrderRow).where(
+                        OrderRow.bracket_id == "BRK-NVDA-1",
+                        OrderRow.order_role == "TAKE_PROFIT",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        # The single pre-existing TAKE_PROFIT leg is the only one — no
+        # spurious replacement was created from the stop-only ADJUST.
+        assert len(all_take_profit) == 1
+        assert all_take_profit[0].order_id == "ord-old-target"
+
+
 async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:
