@@ -22,9 +22,19 @@ A feature name (e.g. `Configuration management`, `Collector`, `Portfolio state`)
 1. **Parent ALP-ID** via `mcp__linear-server__list_issues` filtered by `query=<feature name>` or by reading the project bullet in `docs/project-tracker.md` if needed.
 2. **Local archive path** at `docs/_archive/implementation/<layer>/<feature>/` — e.g. `foundation/configuration/`, `01-data-layer/collector/`, `06-risk-guardrails/breach-behavior/`. List with `ls` to confirm the directory exists and contains one `.md` per expected sub-issue.
 
-If the parent isn't in `Done` status, **stop** — the feature is in flight, sub-issues should not be deleted (orchestration may still need the dependency graph). Same if the local archive directory is missing — without local copies, deletion would lose the story content. In both cases, surface to the operator and exit.
+If the parent isn't in `Done` status, **stop** — the feature is in flight, sub-issues should not be deleted (orchestration may still need the dependency graph). Surface to the operator and exit.
+
+**If the local archive directory is missing, do NOT proceed to consolidation — but do NOT exit either.** Run Phase 1.5 (Materialize archives) first to back the sub-issues up locally before they're deleted. This is the most common drift between feature shipping and consolidation: features completed in long runs (typically execution-layer or analysis-layer waves) often skip the archive-move step that older features (foundation, data-layer, risk-guardrails) had. Without local archives, the rich `Goal` / `Reading` / `Scope` / `Acceptance criteria` / `Verification` content of every sub-issue is lost forever once the operator deletes in the UI — the parent body's `## Shipped stories` index only carries titles. See `## Hard rule 0` and Phase 1.5 below.
 
 ## Hard rules
+
+### 0. Local archives are mandatory before deletion
+
+The `## Shipped stories` index in the rolled-up parent body carries only titles + IDs. Every sub-issue's substantive content — the `Goal`, `Reading`, `Scope`, `Acceptance criteria`, `Verification` sections — lives only in the sub-issue body itself. Once the operator deletes the sub-issue, that content is gone with no recovery path (the MCP exposes no `restore_issue` tool, and Linear's auto-archive only fires on issues that haven't been deleted).
+
+The local archive at `docs/_archive/implementation/<layer>/<feature>/` is the *only* preservation surface. **Do not run Phase 4–6 against a feature whose archive directory is missing or sparse** — materialize archives first via Phase 1.5. The materialization step is mechanical (fetch each sub-issue body, write to disk) and only takes a minute or two for 10–30 stories, but skipping it permanently loses design content that took the operator hours to draft via `/draft-user-stories`.
+
+This is a one-shot guard: once sub-issues are deleted, you cannot retroactively materialize archives. The cost of getting it wrong is asymmetric — pause and verify, don't optimize.
 
 ### 1. Body MUST start with a non-bullet paragraph
 
@@ -55,6 +65,26 @@ Parity-checking 10–30 sub-issue bodies against local files is purely mechanica
 3. Fetch the parent body (`get_issue`) and the Done sub-issues (`list_issues parentId=ALP-X state=Done`) in parallel.
 4. List the local archive files (`ls`).
 5. Build an ID-to-filename mapping by user-story index (the local files use `01-…`, `02-…`, `03a-…` prefixes; Linear sub-issue titles start with `01 — `, `02 — `, etc.).
+
+### Phase 1.5 — Materialize missing archives (when needed)
+
+If `docs/_archive/implementation/<layer>/<feature>/` doesn't exist (or exists but contains fewer files than the Done sub-issue count), back the sub-issues up locally before continuing.
+
+**Procedure:**
+
+1. Create the directory: `mkdir -p docs/_archive/implementation/<layer>/<feature>/`. The `<layer>` segment must match the existing convention (`foundation`, `01-data-layer`, `02-distillation-layer`, `03-analysis-layer`, `04-decision-layer`, `05-execution-layer`, `06-risk-guardrails`) — list `docs/_archive/implementation/` first to confirm naming.
+2. Dispatch a Sonnet subagent with the explicit ALP-ID list and instructions to:
+   - For each ALP-ID, call `mcp__linear-server__get_issue` and capture the `description` field verbatim
+   - Derive the filename from the issue title — strip the `## ` heading and convert `01a — Bracket-thesis coverage cross-validator` → `01a-bracket-thesis-coverage-cross-validator.md` (lowercase, hyphens, drop punctuation that doesn't survive in filenames)
+   - Write each body via the `Write` tool to `docs/_archive/implementation/<layer>/<feature>/<filename>.md` — the body becomes the entire file content (no frontmatter, no wrapper); the `# 01a — Title` header inside the body is the file's own H1
+   - If `get_issue` returns a body containing the `...(truncated)` marker (rare — the MCP usually returns full bodies but occasionally clips at ~5KB), record the ALP-ID in a `TRUNCATED_IDS` list and continue
+   - Return a markdown table: `| ALP-ID | File | Bytes | Status |` with status = WRITTEN / TRUNCATED / FAILED
+3. Title the dispatch with `[Sonnet]` per the project's subagent-title convention.
+4. After the subagent returns, verify each file exists and is non-empty: `ls -la docs/_archive/implementation/<layer>/<feature>/ | wc -l` should equal the sub-issue count + 1 (for the dot-entry).
+5. **For each TRUNCATED_IDS entry**, the operator must paste the full body manually from the Linear web UI — the MCP cannot return more than its API gives. Surface the truncated ID list to the operator and pause until they confirm the file is complete.
+6. Once all archives exist locally, proceed to Phase 2 (or skip Phase 2 if the archives are sourced from the same Linear bodies — parity is trivially perfect by construction).
+
+**Skipping Phase 2 when archives were just materialized:** When the archives were freshly written from `get_issue` calls in Phase 1.5, there is no drift to detect — the local file *is* the Linear body verbatim. Phase 2 verification adds no signal in that case; jump directly to Phase 4 (drafting the parent body). The exception is if `get_issue` returned truncated bodies the operator restored manually — for those, run Phase 2 against the manually-restored files only.
 
 ### Phase 2 — Verify parity
 
