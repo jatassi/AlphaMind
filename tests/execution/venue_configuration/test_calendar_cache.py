@@ -12,6 +12,12 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from alphamind.execution.broker_adapter import (
+    AccountStateQueries,
+    CalendarDay,
+    MarketClock,
+)
+
 _ET = ZoneInfo("America/New_York")
 _UTC = dt.UTC
 
@@ -27,10 +33,8 @@ def _make_calendar_day(
     open_min: int = 30,
     close_hour: int = 16,
     close_min: int = 0,
-) -> object:
-    """Build a CalendarDay-compatible object with ET-aware open/close times."""
-    from alphamind.execution.broker_adapter import CalendarDay
-
+) -> CalendarDay:
+    """Build a CalendarDay with ET-aware open/close times."""
     session_open = dt.datetime(d.year, d.month, d.day, open_hour, open_min, tzinfo=_ET)
     session_close = dt.datetime(d.year, d.month, d.day, close_hour, close_min, tzinfo=_ET)
     return CalendarDay(
@@ -53,8 +57,12 @@ def _business_days_in_range(start: dt.date, end: dt.date) -> list[dt.date]:
     return days
 
 
-class FakeAccountStateQueries:
-    """Minimal fake for AccountStateQueries; tracks call counts."""
+class FakeAccountStateQueries(AccountStateQueries):
+    """Minimal fake for AccountStateQueries; tracks call counts.
+
+    Subclasses the real type so structural type-checks pass; deliberately
+    skips ``super().__init__`` (no TradingClient needed for these tests).
+    """
 
     def __init__(
         self,
@@ -62,6 +70,7 @@ class FakeAccountStateQueries:
         holiday_dates: set[dt.date] | None = None,
         fail_calendar: bool = False,
     ) -> None:
+        # Deliberately skip super().__init__ — no TradingClient needed.
         self.calendar_call_count = 0
         self.clock_call_count = 0
         self._holidays: set[dt.date] = holiday_dates or set()
@@ -72,7 +81,7 @@ class FakeAccountStateQueries:
         *,
         start: dt.date | None = None,
         end: dt.date | None = None,
-    ) -> tuple:
+    ) -> tuple[CalendarDay, ...]:
         if self._fail_calendar:
             msg = "calendar unavailable"
             raise RuntimeError(msg)
@@ -86,10 +95,8 @@ class FakeAccountStateQueries:
             if d not in self._holidays
         )
 
-    def get_clock(self) -> object:
+    def get_clock(self) -> MarketClock:
         self.clock_call_count += 1
-        from alphamind.execution.broker_adapter import MarketClock
-
         now = dt.datetime.now(tz=_UTC)
         return MarketClock(
             timestamp=now,
@@ -516,9 +523,9 @@ def test_get_market_clock_calls_get_clock_each_time() -> None:
     from alphamind.execution.venue_configuration import get_market_clock
 
     queries = FakeAccountStateQueries()
-    get_market_clock(queries)  # type: ignore[arg-type]
+    get_market_clock(queries)
     assert queries.clock_call_count == 1
-    get_market_clock(queries)  # type: ignore[arg-type]
+    get_market_clock(queries)
     assert queries.clock_call_count == 2
 
 
@@ -527,7 +534,7 @@ def test_get_market_clock_returns_snapshot() -> None:
     from alphamind.execution.venue_configuration import MarketClockSnapshot, get_market_clock
 
     queries = FakeAccountStateQueries()
-    snapshot = get_market_clock(queries)  # type: ignore[arg-type]
+    snapshot = get_market_clock(queries)
     assert isinstance(snapshot, MarketClockSnapshot)
 
 
@@ -536,7 +543,7 @@ def test_market_clock_snapshot_has_fetched_at() -> None:
     from alphamind.execution.venue_configuration import get_market_clock
 
     queries = FakeAccountStateQueries()
-    snapshot = get_market_clock(queries)  # type: ignore[arg-type]
+    snapshot = get_market_clock(queries)
     assert snapshot.fetched_at is not None
     assert isinstance(snapshot.fetched_at, dt.datetime)
 
