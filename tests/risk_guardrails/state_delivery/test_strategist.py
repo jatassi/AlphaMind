@@ -7,6 +7,7 @@ from itertools import pairwise
 
 import pytest
 
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.consumers.analyst import AnalystAbandonedOpening
 from alphamind.portfolio_state.consumers.strategist import (
@@ -275,7 +276,7 @@ def _make_options_position(
             expiration_date=datetime(2026, 6, 19, tzinfo=UTC).date(),
             contract_type=OptionContractType.CALL,
             contract_count=2.0,
-            contract_multiplier=100.0,
+            contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
             premium_paid_per_contract=2_000.0,
             greeks=OptionGreeks(delta=delta, gamma=0.05, theta=-0.10, vega=0.20),
         ),

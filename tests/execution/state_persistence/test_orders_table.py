@@ -31,6 +31,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.state_persistence.tables.orders import OrderRow
 from alphamind.execution.state_persistence.tables.orders_codec import (
     record_to_row,
@@ -99,7 +100,7 @@ def _options_spec() -> OptionsInstrumentSpec:
         strike=150.0,
         expiration=EXP,
         contract_type=OptionContractType.CALL,
-        contract_multiplier=100.0,
+        contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
     )
 
 
@@ -112,7 +113,7 @@ def _strategy_spec() -> StrategyInstrumentSpec:
                 strike=160.0,
                 expiration=EXP,
                 contract_type=OptionContractType.CALL,
-                contract_multiplier=100.0,
+                contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
             ),
         )
     )

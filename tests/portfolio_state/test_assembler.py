@@ -9,6 +9,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state import PortfolioStateConfig
 from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.freshness import AssembledSnapshot, SnapshotFreshness
@@ -390,7 +391,7 @@ def _make_options_position(
     underlying_ticker: str = "NVDA",
     premium_paid: float = 10.0,
     contract_count: float = 1.0,
-    contract_multiplier: float = 100.0,
+    contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
     delta: float = 0.5,
 ) -> PositionRecord:
     options = OptionsPositionDetails(
@@ -451,7 +452,7 @@ def _make_strategy_position(
         expiration_date=date(2025, 12, 31),
         contract_type=OptionContractType.CALL,
         contract_count=1.0,
-        contract_multiplier=100.0,
+        contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
         premium_paid_per_contract=premium1,
         greeks=OptionGreeks(delta=0.5, gamma=0.01, theta=-0.5, vega=0.2),
     )
@@ -461,7 +462,7 @@ def _make_strategy_position(
         expiration_date=date(2025, 12, 31),
         contract_type=OptionContractType.PUT,
         contract_count=1.0,
-        contract_multiplier=100.0,
+        contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
         premium_paid_per_contract=premium2,
         greeks=OptionGreeks(delta=-0.5, gamma=0.01, theta=-0.5, vega=0.2),
     )
@@ -471,15 +472,15 @@ def _make_strategy_position(
             StrategyLeg(leg_id="leg-1", options=leg1_options),
             StrategyLeg(leg_id="leg-2", options=leg2_options),
         ),
-        net_premium_usd=(premium1 + premium2) * 100.0,
+        net_premium_usd=(premium1 + premium2) * LISTED_OPTION_CONTRACT_MULTIPLIER,
         max_profit_usd=float("inf"),
-        max_loss_usd=(premium1 + premium2) * 100.0,
+        max_loss_usd=(premium1 + premium2) * LISTED_OPTION_CONTRACT_MULTIPLIER,
         breakeven_levels=(490.0, 520.0),
         strategy_greeks=OptionGreeks(delta=0.0, gamma=0.02, theta=-1.0, vega=0.4),
     )
     fill = PositionFill(
         fill_timestamp=_ENTRY_AT,
-        fill_price=(premium1 + premium2) * 100.0,
+        fill_price=(premium1 + premium2) * LISTED_OPTION_CONTRACT_MULTIPLIER,
         fill_quantity=1.0,
         slippage=0.0,
         fees=2.0,

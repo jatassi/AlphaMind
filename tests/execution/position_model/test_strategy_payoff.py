@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.position_model import (
     compute_strategy_breakeven_levels,
     compute_strategy_max_loss_usd,
@@ -35,7 +36,7 @@ def _leg(
     contract_type: OptionContractType,
     strike: float,
     contract_count: float = 1.0,
-    contract_multiplier: float = 100.0,
+    contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
     expiration_date: date = _EXP,
 ) -> StrategyLeg:
     return StrategyLeg(

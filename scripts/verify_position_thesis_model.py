@@ -938,6 +938,7 @@ def _wave2_01ij_order_and_rationale(now: datetime) -> list[dict[str, Any]]:
     """01i + 01j — 4 cases: OrderClass MLEG validator + position_size_rationale."""
     from pydantic import ValidationError
 
+    from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
     from alphamind.portfolio_state.records.orders import (
         EquityInstrumentSpec,
         OptionsInstrumentSpec,
@@ -962,7 +963,7 @@ def _wave2_01ij_order_and_rationale(now: datetime) -> list[dict[str, Any]]:
             strike=500.0,
             expiration=date(2026, 6, 20),
             contract_type=OptionContractType.CALL,
-            contract_multiplier=100.0,
+            contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
         )
         OrderRecord(
             order_id="ord1",

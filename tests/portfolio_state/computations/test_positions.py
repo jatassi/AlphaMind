@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.computations.positions import (
     MissingLegPriceError,
     compute_delta_adjusted_exposure_usd,
@@ -111,7 +112,7 @@ def _greeks(delta: float = 0.5) -> OptionGreeks:
 
 def _options_details(
     contract_count: float = 2.0,
-    contract_multiplier: float = 100.0,
+    contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
     delta: float = 0.5,
     contract_type: OptionContractType = OptionContractType.CALL,
 ) -> OptionsPositionDetails:
@@ -129,7 +130,7 @@ def _options_details(
 
 def _options_position(
     contract_count: float = 2.0,
-    contract_multiplier: float = 100.0,
+    contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
     delta: float = 0.5,
     contract_type: OptionContractType = OptionContractType.CALL,
     direction: Direction = Direction.LONG,
@@ -275,7 +276,7 @@ class TestComputeMarketValueUsd:
         assert result == pytest.approx(-1500.0)
 
     def test_options_market_value_uses_option_price(self) -> None:
-        pos = _options_position(contract_count=2.0, contract_multiplier=100.0)
+        pos = _options_position(contract_count=2.0)
         option_price = _price(8.0, ticker="AAPL")
         result = compute_market_value_usd(pos, option_price)
         # 2 contracts * 100 multiplier * $8 = $1600
@@ -559,7 +560,7 @@ class TestComputeNotionalExposureUsd:
         assert result == pytest.approx(1500.0)
 
     def test_options_uses_underlying_price(self) -> None:
-        pos = _options_position(contract_count=2.0, contract_multiplier=100.0)
+        pos = _options_position(contract_count=2.0)
         underlying_price = _price(200.0, ticker="AAPL")  # underlying price, not option premium
         result = compute_notional_exposure_usd(pos, underlying_price)
         # 2 * 100 * 200 = 40000
@@ -615,7 +616,7 @@ class TestComputeDeltaAdjustedExposureUsd:
         assert result == pytest.approx(-1500.0)
 
     def test_options_long_call_positive_delta(self) -> None:
-        pos = _options_position(contract_count=2.0, contract_multiplier=100.0, delta=0.5)
+        pos = _options_position(contract_count=2.0, delta=0.5)
         underlying_price = _price(200.0)
         result = compute_delta_adjusted_exposure_usd(pos, underlying_price)
         # 2 * 100 * 0.5 * 200 = 20000
@@ -625,7 +626,6 @@ class TestComputeDeltaAdjustedExposureUsd:
         # Puts have negative delta even for long positions
         pos = _options_position(
             contract_count=2.0,
-            contract_multiplier=100.0,
             delta=-0.4,
             contract_type=OptionContractType.PUT,
         )

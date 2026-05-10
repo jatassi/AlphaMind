@@ -18,6 +18,7 @@ from types import MappingProxyType
 
 import pytest
 
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.consumers.analyst import (
     AnalystAbandonedOpening,
@@ -602,7 +603,7 @@ def _build_option_position(
         expiration_date=date(2026, 6, 19),
         contract_type=OptionContractType.CALL,
         contract_count=2.0,
-        contract_multiplier=100.0,
+        contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
         premium_paid_per_contract=10.0,
         greeks=OptionGreeks(delta=0.5, gamma=0.05, theta=-0.10, vega=0.20),
     )

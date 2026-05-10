@@ -28,6 +28,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationContext,
@@ -235,7 +236,7 @@ def _make_options_spec(
     *,
     contract_type: OptionContractType,
     strike: float,
-    contract_multiplier: float = 100.0,
+    contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
 ) -> OptionsInstrumentSpec:
     return OptionsInstrumentSpec(
         underlying=_UNDERLYING,
@@ -252,7 +253,7 @@ def _make_options_details(
     strike: float,
     contract_count: float = 0.0,
     premium_paid_per_contract: float = 0.0,
-    contract_multiplier: float = 100.0,
+    contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
 ) -> OptionsPositionDetails:
     return OptionsPositionDetails(
         underlying_ticker=_UNDERLYING,
@@ -456,7 +457,7 @@ def _make_leg_order(
     status: OrderStatus = OrderStatus.PENDING,
     filled_quantity: float = 0.0,
     avg_fill_price: float | None = None,
-    contract_multiplier: float = 100.0,
+    contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
 ) -> OrderRecord:
     """Build a per-leg ``OrderRecord`` (``OptionsInstrumentSpec`` + ``SIMPLE``).
 

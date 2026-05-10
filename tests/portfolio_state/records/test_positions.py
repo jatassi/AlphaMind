@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime
 import pytest
 from pydantic import ValidationError
 
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -302,7 +303,7 @@ def _make_options_details(**overrides: object) -> OptionsPositionDetails:
         "expiration_date": _EXP,
         "contract_type": OptionContractType.CALL,
         "contract_count": 2.0,
-        "contract_multiplier": 100.0,
+        "contract_multiplier": LISTED_OPTION_CONTRACT_MULTIPLIER,
         "premium_paid_per_contract": 5.0,
         "greeks": _GREEKS,
     }
