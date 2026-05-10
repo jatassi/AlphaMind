@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
 from pydantic import TypeAdapter
@@ -130,6 +130,8 @@ from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
     LocateStatus,
+    OptionContractType,
+    OptionGreeks,
     OptionsPositionDetails,
     PositionRecord,
     PositionStatus,
@@ -142,6 +144,7 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
+from alphamind.risk_guardrails.guardrail_evaluation import Greeks
 
 # Verdict mapping from PMEnvelope literal to PMVerdict StrEnum the activity log uses.
 _VERDICT_TO_PM_VERDICT: dict[str, PMVerdict] = {
@@ -456,12 +459,16 @@ async def _writeback_open(
                 (wire_leg, f"ORD-{ticker}-inv{idx}-{_id_suffix(result.command_id)}")
             )
 
+    validation_greeks: Greeks | None = None
+    if result.acknowledgment is not None and result.acknowledgment.validation_metadata is not None:
+        validation_greeks = result.acknowledgment.validation_metadata.greeks
     position = _build_pending_position(
         position_id=ids["position_id"],
         thesis_id=ids["thesis_id"],
         bracket_id=ids["bracket_id"],
-        ticker=ticker,
+        instrument=command.instrument,
         direction=_direction_from_instrument(command.instrument),
+        validation_greeks=validation_greeks,
     )
     thesis = _build_active_thesis(
         thesis_id=ids["thesis_id"],
@@ -1783,31 +1790,79 @@ def _build_pending_order(  # noqa: PLR0913 — captures every NOT-NULL OrderReco
 # ---------------------------------------------------------------------------
 
 
+# Standard equity-options multiplier (100 shares per contract); the listed-options
+# convention has no exceptions on the underlyings AlphaMind trades.
+_DEFAULT_OPTION_MULTIPLIER = 100.0
+
+
 def _build_pending_position(
     *,
     position_id: str,
     thesis_id: str,
     bracket_id: str,
-    ticker: str,
+    instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
     direction: Direction,
+    validation_greeks: Greeks | None = None,
 ) -> PositionRecord:
-    """Build a PENDING position; fills happen in Phase 1, so share_count is 0.
+    """Build a PENDING position; fills happen in Phase 1, so size is 0.
 
-    The position record's ``share_count`` is always zero at OPEN time — the
-    record reflects state, not intent. The OPEN command's
-    ``position_size.quantity`` flows into the entry order; once the entry
-    fills, Phase 1 transitions the position to OPEN and writes the actual
-    share count from the fill.
+    The position record's ``share_count`` (equity) / ``contract_count``
+    (options) is always zero at OPEN time — the record reflects state, not
+    intent. The OPEN command's ``position_size.quantity`` flows into the
+    entry order; once the entry fills, Phase 1 transitions the position to
+    OPEN and writes the actual size from the fill.
+
+    Dispatches on instrument variant: :class:`EquityInstrument` lands an
+    :class:`EquityPositionDetails`; :class:`OptionInstrument` lands an
+    :class:`OptionsPositionDetails` carrying ``validation_greeks`` (the
+    per-leg greeks computed by the guardrail-evaluation library at
+    OPEN-validation time). Phase 1's ``_apply_options_entry_fill`` preserves
+    these greeks unchanged when the entry fills — refresh is the continuous
+    monitor's job (architecture.md § 4d).
     """
-    short_fields_present = direction == Direction.SHORT
-    details = EquityPositionDetails(
-        ticker=ticker,
-        share_count=0.0,
-        average_cost_basis_per_share=0.0,
-        borrow_rate_pct=0.0 if short_fields_present else None,
-        locate_status=LocateStatus.LOCATED if short_fields_present else None,
-        margin_held_usd=0.0 if short_fields_present else None,
-    )
+    if isinstance(instrument, OptionInstrument):
+        if validation_greeks is None:
+            msg = (
+                f"OPEN-options writeback requires validation_metadata.greeks "
+                f"on the Acknowledgment for instrument={instrument!r}; got None"
+            )
+            raise ValueError(msg)
+        details: EquityPositionDetails | OptionsPositionDetails = OptionsPositionDetails(
+            underlying_ticker=instrument.underlying,
+            strike_price=instrument.strike,
+            expiration_date=date.fromisoformat(instrument.expiration),
+            contract_type=(
+                OptionContractType.CALL
+                if instrument.contract_type == "call"
+                else OptionContractType.PUT
+            ),
+            contract_count=0.0,
+            contract_multiplier=_DEFAULT_OPTION_MULTIPLIER,
+            premium_paid_per_contract=0.0,
+            greeks=OptionGreeks(
+                delta=validation_greeks.delta,
+                gamma=validation_greeks.gamma,
+                theta=validation_greeks.theta,
+                vega=validation_greeks.vega,
+            ),
+        )
+    elif isinstance(instrument, EquityInstrument):
+        short_fields_present = direction == Direction.SHORT
+        details = EquityPositionDetails(
+            ticker=instrument.ticker,
+            share_count=0.0,
+            average_cost_basis_per_share=0.0,
+            borrow_rate_pct=0.0 if short_fields_present else None,
+            locate_status=LocateStatus.LOCATED if short_fields_present else None,
+            margin_held_usd=0.0 if short_fields_present else None,
+        )
+    else:
+        msg = (
+            f"OPEN writeback for instrument variant "
+            f"{type(instrument).__name__} is not yet supported; "
+            "extend _build_pending_position when adding STRATEGY support."
+        )
+        raise NotImplementedError(msg)
     return PositionRecord.model_validate(
         {
             "position_id": position_id,

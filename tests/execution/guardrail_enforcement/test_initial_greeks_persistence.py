@@ -18,16 +18,20 @@ expected flow is:
    field (delta / gamma / theta / vega) — to the Acknowledgment's
    ``validation_metadata.greeks``.
 
-Per ALP-397 § Acceptance criteria — **gap protocol**: if this test fails (the
-Phase-2 writeback does not carry validation-time greeks through to the
-persisted PositionRecord), the agent surfaces the gap to the operator rather
-than extending ``phase2.py`` to add greek persistence. Per the parent issue's
-pre-resolved decision (B), persistence-layer changes are an ALP-119 follow-up
-scope question. The test is therefore marked ``xfail(strict=True)`` with an
-explicit ALP-119 reference until the operator decides to extend scope.
+Per ALP-397 (extended scope per operator decision), the chain closing this
+test asserts is now implemented end-to-end. Three gaps were closed:
 
-If the test starts passing (XPASS) under ``strict=True``, pytest will fail —
-that signals the gap has closed and the xfail marker should be removed.
+1. ``submit_envelope_mcp._build_constructive_request_from_open`` propagates
+   ``strike`` / ``expiration`` / ``contract_type`` from ``OptionInstrument``
+   to ``ValidationInstrument`` so OPTIONS validation does not raise on the
+   missing fields before an Acknowledgment is built.
+2. ``phase2._build_pending_position`` dispatches on the OPEN command's
+   instrument variant — equity OPENs land an ``EquityPositionDetails``;
+   options OPENs land an ``OptionsPositionDetails``.
+3. ``phase2._writeback_open`` reads
+   ``SubmissionResult.acknowledgment.validation_metadata.greeks`` and threads
+   it through to ``OptionsPositionDetails.greeks`` so the four greek values
+   round-trip identically.
 """
 
 from __future__ import annotations
@@ -532,28 +536,6 @@ async def _invoke_submit_envelope(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "ALP-119 follow-up: parent issue ALP-125 pre-resolved decision (B) "
-        "marks initial-greeks persistence as out-of-scope for the guardrail "
-        "enforcement work tree. The OPEN-options "
-        "Acknowledgment.validation_metadata.greeks → "
-        "OptionsPositionDetails.greeks contract is not implemented end-to-end. "
-        "Three known gaps in the chain (story 03b / ALP-397 report): "
-        "(1) src/alphamind/execution/oms/submit_envelope_mcp.py "
-        "_build_constructive_request_from_open does not propagate strike / "
-        "expiration / contract_type from OptionInstrument to "
-        "ValidationInstrument, so validation fails before the Acknowledgment "
-        "is built; (2) phase2._writeback_open / _build_pending_position "
-        "always builds EquityPositionDetails regardless of the command's "
-        "instrument type, so OPEN-options never reaches an "
-        "OptionsPositionDetails persisted shape; (3) phase2.py has no plumbing "
-        "to read SubmissionResult.acknowledgment.validation_metadata.greeks "
-        "and forward it to the persisted PositionRecord. Remove this xfail "
-        "when the chain closes."
-    ),
-)
 @pytest.mark.asyncio
 async def test_open_options_acknowledgment_greeks_match_persisted_position_greeks(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
