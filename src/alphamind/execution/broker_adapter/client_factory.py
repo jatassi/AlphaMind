@@ -14,6 +14,7 @@ import os
 from dataclasses import dataclass
 from typing import Literal
 
+from alpaca.data.historical.corporate_actions import CorporateActionsClient
 from alpaca.trading.client import TradingClient
 from alpaca.trading.stream import TradingStream
 
@@ -93,4 +94,18 @@ class AlpacaClientFactory:
             secret_key=self._credentials.api_secret,
             paper=(self._credentials.mode == "paper"),
             url_override=self._credentials.ws_url,
+        )
+
+    def build_corporate_actions_client(self) -> CorporateActionsClient:
+        """Return a fresh ``CorporateActionsClient`` bound to the resolved credentials.
+
+        The v1beta1 Corporate Actions Market Data API uses the same API key /
+        secret as the Trading API (no separate market-data credential), and
+        targets the documented Data API base URL so we pass no
+        ``url_override``.
+        """
+        return CorporateActionsClient(
+            api_key=self._credentials.api_key,
+            secret_key=self._credentials.api_secret,
+            raw_data=False,
         )

@@ -93,6 +93,12 @@ _RECOVERY_SYMBOLS: frozenset[str] = frozenset(
     }
 )
 
+_CORPORATE_ACTIONS_SYMBOLS: frozenset[str] = frozenset(
+    {
+        "CorporateActionsQueries",
+    }
+)
+
 _REQUIRED_SYMBOLS: frozenset[str] = (
     _SUBSTRATE_SYMBOLS
     | _QUERIES_SYMBOLS
@@ -102,6 +108,7 @@ _REQUIRED_SYMBOLS: frozenset[str] = (
     | _MLEG_SYMBOLS
     | _MODIFY_SYMBOLS
     | _RECOVERY_SYMBOLS
+    | _CORPORATE_ACTIONS_SYMBOLS
 )
 
 
@@ -245,3 +252,9 @@ def test_recovery_symbols_directly_importable() -> None:
     )
 
     _ = (order_snapshot_to_fill_reports, recover_missed_fills_since)
+
+
+def test_corporate_actions_symbols_directly_importable() -> None:
+    from alphamind.execution.broker_adapter import CorporateActionsQueries
+
+    _ = (CorporateActionsQueries,)
