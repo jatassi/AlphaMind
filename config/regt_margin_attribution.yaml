@@ -1,0 +1,77 @@
+# Reg T Margin Attribution — IBKR-mirror v1 config snapshot
+#
+# pm_model_version: ibkr_mirror_v1_2026Q2
+#   Version string embedded in every per-fill attribution record so aggregates
+#   are filterable when the methodology snapshot is refreshed.
+#
+# IBKR disclosure research status: design-doc defaults applied — IBKR research deferred
+#   Attempted source: https://www.interactivebrokers.com/en/trading/margin-stocks.php
+#   Access date: 2026-05-10
+#   Result: HTTP 403 Forbidden; page was not reachable during research.
+#   All per_symbol_overrides below are design-doc defaults per
+#   regt-margin-attribution.md § Portfolio-margin reference model:
+#     SPY, QQQ, DIA, VOO → 0.15 (high-cap index ETF default)
+#     IWM → 0.20 (small-cap index ETF default)
+#   Sector SPDR and top S&P 500 entries below use the asset-class defaults
+#   (high_cap_equity: 0.15) per design-doc guidance for symbols not
+#   individually researchable from IBKR's disclosure.
+#
+# Operator refresh contract: when IBKR's margin-methodology disclosure is
+#   accessible, re-research each symbol in the minimum coverage list, update
+#   per_symbol_overrides with researched values (recording source URL +
+#   access date in a comment alongside each entry), bump pm_model_version,
+#   and filter historical aggregates by version when comparing across snapshots.
+
+pm_model_version: "ibkr_mirror_v1_2026Q2"
+
+# Annualised risk-free rate reference.
+# Source: US 3-month T-bill yield as of 2026-05-10 (design-doc reference value).
+# Update alongside pm_model_version on each operator-driven snapshot refresh.
+risk_free_rate_annual: 0.0425
+
+iv_shock:
+  # IV rises on a down-shock (multiplier >= 1.0); falls or holds on an up-shock (multiplier <= 1.0).
+  # Values per parent ALP-126 pre-resolved configuration decision (B).
+  worst_down_multiplier: 1.20
+  worst_up_multiplier: 0.95
+
+shock_parameters:
+  # Asset-class defaults per parent ALP-126 pre-resolved configuration decision (C).
+  # All values in decimal form: 0.15 = ±15%, 0.20 = ±20%.
+  high_cap_equity: 0.15    # ±15% — IBKR high-cap S&P 500 equity default
+  small_cap_equity: 0.20   # ±20% — IBKR small-cap equity default
+  unmapped_default: 0.20   # ±20% — conservative fallback for unmapped symbols
+
+  per_symbol_overrides:
+    # Major US-equity ETFs — design-doc defaults (IBKR research deferred; see header)
+    SPY: 0.15   # S&P 500 ETF — high-cap index, design-doc default
+    QQQ: 0.15   # Nasdaq-100 ETF — high-cap index, design-doc default
+    IWM: 0.20   # Russell 2000 ETF — small-cap index, design-doc default
+    DIA: 0.15   # Dow Jones ETF — high-cap index, design-doc default
+    VTI: 0.15   # Total Market ETF — broad market, design-doc default (high-cap weight)
+    VOO: 0.15   # S&P 500 ETF (Vanguard) — high-cap index, design-doc default
+
+    # Sector SPDR ETFs — design-doc defaults (high_cap_equity applies; IBKR research deferred)
+    XLF: 0.15   # Financial Select Sector SPDR
+    XLE: 0.15   # Energy Select Sector SPDR
+    XLK: 0.15   # Technology Select Sector SPDR
+    XLV: 0.15   # Health Care Select Sector SPDR
+    XLY: 0.15   # Consumer Discretionary Select Sector SPDR
+    XLP: 0.15   # Consumer Staples Select Sector SPDR
+    XLU: 0.15   # Utilities Select Sector SPDR
+    XLI: 0.15   # Industrials Select Sector SPDR
+    XLB: 0.15   # Materials Select Sector SPDR
+    XLRE: 0.15  # Real Estate Select Sector SPDR
+    XLC: 0.15   # Communication Services Select Sector SPDR
+
+    # Top S&P 500 names by market cap — design-doc defaults (IBKR research deferred)
+    AAPL: 0.15   # Apple Inc.
+    MSFT: 0.15   # Microsoft Corp.
+    NVDA: 0.15   # NVIDIA Corp.
+    GOOGL: 0.15  # Alphabet Inc. (Class A)
+    AMZN: 0.15   # Amazon.com Inc.
+    META: 0.15   # Meta Platforms Inc.
+    BRK.B: 0.15  # Berkshire Hathaway Inc. (Class B)
+    TSLA: 0.20   # Tesla Inc. — higher volatility; using small_cap_equity default
+    JPM: 0.15    # JPMorgan Chase & Co.
+    UNH: 0.15    # UnitedHealth Group Inc.
