@@ -268,17 +268,19 @@ _FREDAPI_RETRYABLE_MESSAGES: tuple[str, ...] = (
 )
 
 
+def _is_transient_status(code: int) -> bool:
+    """429 and all 5xx HTTP statuses are retryable; auth/permission 4xx are not."""
+    return code == 429 or code >= 500
+
+
 def _is_retryable(exc: BaseException) -> bool:
     """Return True when ``exc`` is a transient error worth retrying."""
     if isinstance(exc, httpx.TimeoutException):
         return True
     if isinstance(exc, httpx.HTTPStatusError):
-        status = exc.response.status_code
-        # 429 and all 5xx are retryable; auth/permission 4xx are not
-        return status == 429 or status >= 500
+        return _is_transient_status(exc.response.status_code)
     if isinstance(exc, urllib.error.HTTPError):
-        # fredapi may raise urllib.error.HTTPError directly; mirror the httpx rule
-        return exc.code == 429 or exc.code >= 500
+        return _is_transient_status(exc.code)
     if isinstance(exc, urllib.error.URLError | ConnectionResetError):
         # Connection-reset / refused / DNS failure surface as URLError (or a
         # bare ConnectionResetError) without an HTTP status. Treat as
@@ -286,10 +288,11 @@ def _is_retryable(exc: BaseException) -> bool:
         # them is the same idempotent GET.
         return True
     if isinstance(exc, ValueError):
-        # fredapi catches urllib.HTTPError internally and re-raises as ValueError
-        # carrying the FRED API's text status. Match the standard 5xx/429 names.
-        msg = str(exc).lower()
-        return any(p in msg for p in _FREDAPI_RETRYABLE_MESSAGES)
+        # fredapi wraps urllib.HTTPError as ValueError; original is on __context__.
+        cause = exc.__context__
+        return any(p in str(exc).lower() for p in _FREDAPI_RETRYABLE_MESSAGES) or (
+            isinstance(cause, urllib.error.HTTPError) and _is_transient_status(cause.code)
+        )
     return False
 
 

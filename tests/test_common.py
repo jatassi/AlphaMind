@@ -38,6 +38,17 @@ def _no_sleep(_seconds: float) -> None:
     """Stand-in for time.sleep used by retry decorators."""
 
 
+def _make_http_error(*, code: int, msg: str) -> urllib.error.HTTPError:
+    """Construct a urllib.error.HTTPError with test-fixture defaults."""
+    return urllib.error.HTTPError(
+        url="https://api.stlouisfed.org/fred/series",
+        code=code,
+        msg=msg,
+        hdrs=None,  # type: ignore[arg-type]
+        fp=None,
+    )
+
+
 class _FakeRunRepo:
     """In-memory stand-in for the persistence layer used by track_run."""
 
@@ -289,13 +300,7 @@ class TestWithRetriesCritical:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
-                raise urllib.error.HTTPError(
-                    url="https://api.stlouisfed.org/fred/series",
-                    code=500,
-                    msg="Internal Server Error",
-                    hdrs=None,  # type: ignore[arg-type]
-                    fp=None,
-                )
+                raise _make_http_error(code=500, msg="Internal Server Error")
             return "ok"
 
         result = server_error()
@@ -310,13 +315,7 @@ class TestWithRetriesCritical:
         def unauthorized() -> str:
             nonlocal call_count
             call_count += 1
-            raise urllib.error.HTTPError(
-                url="https://api.stlouisfed.org/fred/series",
-                code=401,
-                msg="Unauthorized",
-                hdrs=None,  # type: ignore[arg-type]
-                fp=None,
-            )
+            raise _make_http_error(code=401, msg="Unauthorized")
 
         with pytest.raises(urllib.error.HTTPError):
             unauthorized()
@@ -351,6 +350,26 @@ class TestWithRetriesCritical:
         with pytest.raises(ValueError):
             bad_input()
         assert call_count == 1
+
+    def test_critical_retries_on_fredapi_value_error_none_with_502_context(self) -> None:
+        # When FRED is fronted by a CDN that returns an HTML 5xx error page,
+        # fredapi cannot parse a `message` field and raises `ValueError(None)`
+        # with the underlying HTTPError on `__context__`. Matcher must retry.
+        call_count = 0
+
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def cdn_502() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                val_err = ValueError(None)
+                val_err.__context__ = _make_http_error(code=502, msg="Bad Gateway")
+                raise val_err
+            return "ok"
+
+        result = cdn_502()
+        assert result == "ok"
+        assert call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -494,13 +513,7 @@ class TestWithRetriesVendorOutageExtended:
             nonlocal call_count
             call_count += 1
             if call_count < 3:
-                raise urllib.error.HTTPError(
-                    url="https://api.stlouisfed.org/fred/series",
-                    code=502,
-                    msg="Bad Gateway",
-                    hdrs=None,  # type: ignore[arg-type]
-                    fp=None,
-                )
+                raise _make_http_error(code=502, msg="Bad Gateway")
             return "ok"
 
         assert server_error() == "ok"
