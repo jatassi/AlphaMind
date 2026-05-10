@@ -43,6 +43,8 @@ _IMPLEMENTED_TYPES = {
     CorporateActionType.SPLIT,
     CorporateActionType.CASH_DIVIDEND_LONG,
     CorporateActionType.CASH_DIVIDEND_SHORT,
+    CorporateActionType.CASH_MERGER,
+    CorporateActionType.STOCK_MERGER,
     CorporateActionType.SPIN_OFF,
 }
 _STUB_TYPES = [t for t in CorporateActionType if t not in _IMPLEMENTED_TYPES]
