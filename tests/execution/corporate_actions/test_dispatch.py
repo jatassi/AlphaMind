@@ -39,7 +39,8 @@ def test_handlers_dict_covers_all_enum_members() -> None:
 # ---------------------------------------------------------------------------
 
 
-_NON_SPLIT_TYPES = [t for t in CorporateActionType if t != CorporateActionType.SPLIT]
+_IMPLEMENTED_TYPES = {CorporateActionType.SPLIT, CorporateActionType.SPIN_OFF}
+_NON_SPLIT_TYPES = [t for t in CorporateActionType if t not in _IMPLEMENTED_TYPES]
 
 
 @pytest.mark.parametrize("action_type", _NON_SPLIT_TYPES, ids=[t.value for t in _NON_SPLIT_TYPES])

@@ -158,17 +158,6 @@ async def handle_stock_merger(
     raise NotImplementedError(msg)
 
 
-async def handle_spin_off(
-    handle: InvocationHandle,
-    activity: CorporateActionActivity,
-    _: AlpacaPositionLookup | None = None,
-) -> None:
-    """Stub — raises ``NotImplementedError`` until story 03d lands."""
-    del handle, activity
-    msg = "CA action_type='SPIN_OFF' not yet supported by Phase 1"
-    raise NotImplementedError(msg)
-
-
 async def handle_symbol_change(
     handle: InvocationHandle,
     activity: CorporateActionActivity,
@@ -185,7 +174,6 @@ __all__ = [
     "handle_cash_dividend_short",
     "handle_cash_merger",
     "handle_reverse_split",
-    "handle_spin_off",
     "handle_split",
     "handle_stock_dividend",
     "handle_stock_merger",

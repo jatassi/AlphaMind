@@ -258,6 +258,7 @@ async def _apply_signed_cash_movement(
 __all__ = [
     "_apply_signed_cash_movement",
     "_cancel_bracket_for_corporate_action",
+    "_emit",
     "_emit_corporate_action_applied",
     "_persist_position_update",
 ]
