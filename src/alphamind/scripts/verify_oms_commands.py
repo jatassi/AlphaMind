@@ -656,14 +656,107 @@ def _phase_3_envelope() -> Any:
     )
 
 
+def _load_progressive_tiers() -> Any:
+    """Load the cumulative-drawdown progressive tiers from ``config/guardrails.yaml``.
+
+    Mirrors the inline loader in ``tests/execution/guardrail_enforcement/_helpers.py``
+    so the verify script consumes the same canonical tier sequence the
+    enforcement orchestrator (story 02 / ALP-395) reads at runtime.
+    """
+    from typing import cast
+
+    import yaml
+
+    from alphamind.config.models.guardrails import GuardrailsConfig
+
+    raw = cast(dict[str, Any], yaml.safe_load(Path("config/guardrails.yaml").read_text()))
+    config = GuardrailsConfig.model_validate(raw)
+    rule = next(r for r in config.rules if r.id == "cumulative_drawdown_pct")
+    assert rule.progressive_tiers is not None
+    return tuple(rule.progressive_tiers)
+
+
+def _phase_3_active_risk_parameters() -> Any:
+    """Compose the Phase-3 ``ActiveRiskParameterSet`` via the enforcement orchestrator.
+
+    Builds a synthetic ``RegimeAdaptationOutput`` wrapping an empty-entries
+    normal-regime baseline, plus a zero-drawdown ``DrawdownState`` so the
+    progressive-tier override is a no-op (``compose_active_risk_parameters``
+    returns the input parameters unchanged when ``current_drawdown_pct == 0``).
+    The result preserves the prior inline construction's values while routing
+    through the canonical Phase-1 entry point.
+    """
+    from alphamind.config.models.regimes import Regime
+    from alphamind.execution.guardrail_enforcement import compose_phase_1_enforcement
+    from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+    from alphamind.portfolio_state.records.capital import (
+        ActiveRiskParameterSet,
+        RegimeLabel,
+        RegimeTransitionState,
+    )
+    from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+    from alphamind.risk_guardrails.regime_adaptation import (
+        RegimeAdaptationOutput,
+        RegimeAdaptationState,
+    )
+
+    baseline = ActiveRiskParameterSet(
+        regime_label=RegimeLabel.NORMAL,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        parameter_change_flag=False,
+        entries=(),
+        active_overlays=(),
+    )
+    regime_state = RegimeAdaptationState(
+        as_of=_NOW.isoformat().replace("+00:00", "Z"),
+        invocation_id=_PHASE_3_INVOCATION_ID,
+        active_regime=Regime.normal,
+        prior_regime=None,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        transition_started_invocation_id=None,
+        transition_origin_regime=None,
+        active_overlays=(),
+        distillation_regime_label="vol_expansion",
+        distillation_vix_level=18.5,
+        regime_skip_emergency=False,
+    )
+    regime_output = RegimeAdaptationOutput(
+        runtime_dimensions_active_regime=Regime.normal,
+        runtime_dimensions_active_overlays=(),
+        overlay_activation_decisions=(),
+        effective_limits={},
+        active_risk_parameter_set=baseline,
+        regime_transition_breaches=(),
+        regime_skip_emergency=False,
+        new_persisted_state=regime_state,
+        audit_log_entries=(),
+    )
+    drawdown = DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=100_000.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
+    )
+    result = compose_phase_1_enforcement(
+        regime_output=regime_output,
+        drawdown_state=drawdown,
+        progressive_tiers=_load_progressive_tiers(),
+    )
+    return result.active_risk_parameters
+
+
 def _phase_3_validation_state() -> Any:
     """Build the cumulative ValidationToolState the engine-stub re-runs guardrail
     checks against. Sized so the OPEN command's $5,000 stays well under all
     per-rule headroom on a $100k portfolio."""
     from alphamind.portfolio_state.records.capital import (
-        ActiveRiskParameterSet,
-        RegimeLabel,
-        RegimeTransitionState,
         RiskBudgetConsumption,
     )
     from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -752,14 +845,7 @@ def _phase_3_validation_state() -> Any:
             invocation_id=_PHASE_3_INVOCATION_ID,
             starting_snapshot=snapshot,
             starting_risk_budget=RiskBudgetConsumption(entries=()),
-            starting_active_risk_parameters=ActiveRiskParameterSet(
-                regime_label=RegimeLabel.NORMAL,
-                transition_state=RegimeTransitionState.STABLE,
-                transition_invocations_remaining=0,
-                parameter_change_flag=False,
-                entries=(),
-                active_overlays=(),
-            ),
+            starting_active_risk_parameters=_phase_3_active_risk_parameters(),
             profile_feature_flags=library_config.feature_flags,
             library_config=library_config,
             library_market=market,

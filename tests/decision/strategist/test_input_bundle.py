@@ -166,6 +166,8 @@ def _make_param_entry(
 
 def _make_active_risk_parameters() -> ActiveRiskParameterSet:
     """Active parameter set with all rules required by the strategist header renderer."""
+    from tests.decision.conftest import compose_active_risk_parameters_via_orchestrator
+
     entries = (
         _make_param_entry(
             rule_id="position_max_size_pct",
@@ -183,7 +185,7 @@ def _make_active_risk_parameters() -> ActiveRiskParameterSet:
             value=10.0,
         ),
     )
-    return ActiveRiskParameterSet(
+    return compose_active_risk_parameters_via_orchestrator(
         regime_label=RegimeLabel.NORMAL,
         transition_state=RegimeTransitionState.STABLE,
         transition_invocations_remaining=0,
