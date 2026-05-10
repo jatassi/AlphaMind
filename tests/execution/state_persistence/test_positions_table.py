@@ -23,6 +23,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.state_persistence.tables.positions import PositionRow
 from alphamind.execution.state_persistence.tables.positions_codec import (
     record_to_row,
@@ -151,7 +152,7 @@ def _options_position(*, position_id: str = "pos-opt-1") -> PositionRecord:
             expiration_date=date(2026, 6, 19),
             contract_type=OptionContractType.CALL,
             contract_count=5.0,
-            contract_multiplier=100.0,
+            contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
             premium_paid_per_contract=8.75,
             greeks=greeks,
         ),
@@ -181,7 +182,7 @@ def _strategy_position(*, position_id: str = "pos-strat-1") -> PositionRecord:
             expiration_date=date(2026, 6, 19),
             contract_type=OptionContractType.CALL,
             contract_count=10.0,
-            contract_multiplier=100.0,
+            contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
             premium_paid_per_contract=4.20,
             greeks=OptionGreeks(delta=0.45, gamma=0.04, theta=-0.03, vega=0.20),
         ),
@@ -195,7 +196,7 @@ def _strategy_position(*, position_id: str = "pos-strat-1") -> PositionRecord:
             expiration_date=date(2026, 6, 19),
             contract_type=OptionContractType.CALL,
             contract_count=10.0,
-            contract_multiplier=100.0,
+            contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
             premium_paid_per_contract=2.10,
             greeks=OptionGreeks(delta=0.30, gamma=0.03, theta=-0.025, vega=0.18),
         ),

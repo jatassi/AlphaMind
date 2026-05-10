@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.computations.exposure import (
     SectorResolver,
     compute_directional_exposure,
@@ -147,7 +148,7 @@ def _make_long_option(
         expiration_date=date(2025, 12, 31),
         contract_type=OptionContractType.PUT,
         contract_count=2.0,
-        contract_multiplier=100.0,
+        contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
         premium_paid_per_contract=5.0,
         greeks=greeks,
     )

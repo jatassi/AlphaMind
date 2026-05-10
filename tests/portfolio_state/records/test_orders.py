@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime
 import pytest
 from pydantic import ValidationError
 
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegEnforcement,
@@ -53,7 +54,7 @@ def _options_spec() -> OptionsInstrumentSpec:
         strike=150.0,
         expiration=TODAY,
         contract_type=OptionContractType.CALL,
-        contract_multiplier=100.0,
+        contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
     )
 
 

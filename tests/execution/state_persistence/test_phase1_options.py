@@ -24,6 +24,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationContext,
@@ -215,7 +216,7 @@ def _make_options_spec(
     *,
     contract_type: OptionContractType = OptionContractType.CALL,
     strike: float = 420.0,
-    contract_multiplier: float = 100.0,
+    contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
 ) -> OptionsInstrumentSpec:
     return OptionsInstrumentSpec(
         underlying=_UNDERLYING,
@@ -239,7 +240,7 @@ def _make_pending_options_entry_order(
     position_id: str | None = None,
     contract_type: OptionContractType = OptionContractType.CALL,
     strike: float = 420.0,
-    contract_multiplier: float = 100.0,
+    contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
 ) -> OrderRecord:
     return OrderRecord.model_validate(
         {
@@ -297,7 +298,7 @@ def _make_pending_options_position(
     strike: float = 420.0,
     contract_count: float = 0.0,
     premium_paid_per_contract: float = 0.0,
-    contract_multiplier: float = 100.0,
+    contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
     greeks: OptionGreeks | None = None,
 ) -> PositionRecord:
     """Build a PENDING options position; Greeks default to validation-time values."""
@@ -339,7 +340,7 @@ def _make_open_options_position(
     strike: float = 420.0,
     contract_count: float = 5.0,
     premium_paid_per_contract: float = 8.75,
-    contract_multiplier: float = 100.0,
+    contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
     fill_price: float = 8.75,
     greeks: OptionGreeks | None = None,
 ) -> PositionRecord:

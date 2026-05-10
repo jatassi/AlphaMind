@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 # Pre-resolve the latent cycle between submit_envelope_mcp and PM models.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.oms.command_models import (
     BracketOrderParameters,
     CloseCommand,
@@ -1139,7 +1140,7 @@ def _options_open_position(
         expiration_date=_date(2026, 6, 19),
         contract_type=OptionContractType.CALL,
         contract_count=2.0,
-        contract_multiplier=100.0,
+        contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
         premium_paid_per_contract=8.75,
         greeks=OptionGreeks(
             delta=0.5,
@@ -1205,7 +1206,7 @@ def _strategy_open_position(
             expiration_date=expiration,
             contract_type=OptionContractType.CALL,
             contract_count=1.0,
-            contract_multiplier=100.0,
+            contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
             premium_paid_per_contract=8.75,
             greeks=OptionGreeks(
                 delta=0.5,
@@ -1225,7 +1226,7 @@ def _strategy_open_position(
             expiration_date=expiration,
             contract_type=OptionContractType.CALL,
             contract_count=1.0,
-            contract_multiplier=100.0,
+            contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
             premium_paid_per_contract=5.25,
             greeks=OptionGreeks(
                 delta=0.4,

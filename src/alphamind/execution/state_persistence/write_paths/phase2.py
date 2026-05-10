@@ -21,6 +21,7 @@ from sqlalchemy import select
 
 from alphamind.decision.portfolio_manager.models import PMEnvelope
 from alphamind.decision.portfolio_manager.validation import ValidationError as PMValidationError
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 from alphamind.execution.oms.command_models import (
     AddCommand,
@@ -1793,11 +1794,6 @@ def _build_pending_order(  # noqa: PLR0913 — captures every NOT-NULL OrderReco
 # ---------------------------------------------------------------------------
 
 
-# Standard equity-options multiplier (100 shares per contract); the listed-options
-# convention has no exceptions on the underlyings AlphaMind trades.
-_DEFAULT_OPTION_MULTIPLIER = 100.0
-
-
 def _build_pending_position(
     *,
     position_id: str,
@@ -1846,7 +1842,7 @@ def _build_pending_position(
                 else OptionContractType.PUT
             ),
             contract_count=0.0,
-            contract_multiplier=_DEFAULT_OPTION_MULTIPLIER,
+            contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
             premium_paid_per_contract=0.0,
             greeks=OptionGreeks(
                 delta=validation_greeks.delta,

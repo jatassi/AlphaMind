@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state import PortfolioStateConfig
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.pricing import PriceQuote, PriceSource
@@ -506,7 +507,7 @@ def _make_options_position(
         expiration_date=date(2026, 1, 16),
         contract_type=contract_type,
         contract_count=2.0,
-        contract_multiplier=100.0,
+        contract_multiplier=LISTED_OPTION_CONTRACT_MULTIPLIER,
         premium_paid_per_contract=premium,
         greeks=OptionGreeks(delta=delta, gamma=0.01, theta=-0.5, vega=0.2),
     )
