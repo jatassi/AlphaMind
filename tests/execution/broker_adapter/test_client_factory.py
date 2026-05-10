@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
+from alpaca.data.historical.corporate_actions import CorporateActionsClient
 from alpaca.trading.client import TradingClient
 from alpaca.trading.stream import TradingStream
 
@@ -185,6 +186,38 @@ def test_build_trading_stream_returns_stream_instance(
     stream = factory.build_trading_stream()
 
     assert isinstance(stream, TradingStream)
+
+
+def test_build_corporate_actions_client_returns_paper_client(
+    monkeypatch: pytest.MonkeyPatch, venue: VenueConfig
+) -> None:
+    """``build_corporate_actions_client`` mints a v1beta1 client bound to paper creds."""
+    from alphamind.execution.broker_adapter import AlpacaClientFactory
+
+    monkeypatch.setenv("ALPACA_PAPER_KEY", "paper-key")
+    monkeypatch.setenv("ALPACA_PAPER_SECRET", "paper-secret")
+
+    factory = AlpacaClientFactory(venue, mode="paper")
+    client = factory.build_corporate_actions_client()
+
+    assert isinstance(client, CorporateActionsClient)
+    assert cast(Any, client)._api_key == "paper-key"
+
+
+def test_build_corporate_actions_client_returns_live_client_when_mode_live(
+    monkeypatch: pytest.MonkeyPatch, venue: VenueConfig
+) -> None:
+    """``build_corporate_actions_client`` honors live-mode credentials."""
+    from alphamind.execution.broker_adapter import AlpacaClientFactory
+
+    monkeypatch.setenv("ALPACA_LIVE_KEY", "live-key")
+    monkeypatch.setenv("ALPACA_LIVE_SECRET", "live-secret")
+
+    factory = AlpacaClientFactory(venue, mode="live")
+    client = factory.build_corporate_actions_client()
+
+    assert isinstance(client, CorporateActionsClient)
+    assert cast(Any, client)._api_key == "live-key"
 
 
 def test_factory_credentials_are_frozen(
