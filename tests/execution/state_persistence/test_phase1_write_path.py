@@ -22,6 +22,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind.execution.broker_adapter.queries import (
+    PositionSnapshot,
+    TradeAccountSnapshot,
+)
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationContext,
@@ -1470,3 +1474,265 @@ async def test_phase1_stamps_completion_timestamp_on_invocation_row(
         parsed = datetime.fromisoformat(row.phase1_completed_at)
         assert parsed.tzinfo is not None
         assert parsed.utcoffset() == timedelta(0)
+
+
+# ---------------------------------------------------------------------------
+# ALP-415: chronological fill + CA merge + reconciliation
+# ---------------------------------------------------------------------------
+
+
+def _alpaca_account_snapshot(*, cash: float = 100_000.0) -> TradeAccountSnapshot:
+    """Build a typed ``TradeAccountSnapshot`` for the new entry-point signature."""
+    return TradeAccountSnapshot(
+        account_id="alp-account-1",
+        cash=cash,
+        equity=cash,
+        buying_power=cash * 2.0,
+        regt_buying_power=cash * 2.0,
+        daytrading_buying_power=cash * 4.0,
+        maintenance_margin=0.0,
+        daytrade_count=0,
+        pattern_day_trader=False,
+        status="ACTIVE",
+    )
+
+
+def _alpaca_equity_snapshot(*, symbol: str = "AAPL", qty: float = 10.0) -> PositionSnapshot:
+    """Build a typed ``PositionSnapshot`` for the new entry-point signature."""
+    return PositionSnapshot(
+        symbol=symbol,
+        asset_class="us_equity",
+        qty=qty,
+        avg_entry_price=150.0,
+        market_value=qty * 150.0,
+        cost_basis=qty * 150.0,
+        unrealized_pl=0.0,
+        unrealized_plpc=0.0,
+        current_price=150.0,
+        side="long",
+    )
+
+
+async def test_summary_carries_reconciliation_alert_count(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """``Phase1Summary`` exposes ``reconciliation_alerts`` and the count reflects
+    one ``RECONCILIATION_ALERT`` per unexplained delta."""
+    from alphamind.execution.state_persistence.write_paths.phase1 import (
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position_order_thesis_bracket(
+        factory,
+        _make_open_position(share_count=10.0),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_active_bracket(),
+    )
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+
+    ctx, handle = await _open_handle(factory)
+    summary = await process_unprocessed_fills(
+        handle,
+        ca_activities=(),
+        # 10 shares local vs 9 shares Alpaca produces one position-delta alert;
+        # cash mismatch produces a second.
+        alpaca_positions=(_alpaca_equity_snapshot(qty=9.0),),
+        alpaca_account=_alpaca_account_snapshot(cash=50_000.0),
+        config=_make_state_persistence_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    assert summary.reconciliation_alerts == 2
+
+
+async def test_fill_before_ca_reflects_pre_action_quantity_at_fill(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A fill timestamped before a CA's transaction_time integrates first.
+
+    Setup: OPEN position with 10 shares. Add fill (BUY +5 shares) at T-30min.
+    A SPLIT 2-for-1 CA at T-10min applies after. Post-state:
+      * pre-CA share_count = 10 + 5 = 15 (entry+add fill applied first)
+      * post-CA share_count = 15 * 2 = 30 (split applied second)
+    """
+    from alphamind.execution.state_persistence.write_paths.phase1 import (
+        CorporateActionActivity,
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    # Open position with 10 shares + an entry order already filled.
+    add_order = _make_pending_entry_order(
+        order_id="ord-add-1",
+        role=OrderRole.ADD_ENTRY,
+        position_id="pos-1",
+        quantity=5.0,
+    )
+    from tests.execution.state_persistence._fk_substrate import stub_order_row
+
+    entry_order = _make_pending_entry_order()
+    thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
+    bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
+    leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
+    seeded_order_ids = {entry_order.order_id, add_order.order_id}
+    async with factory() as sess:
+        sess.add(position_record_to_row(_make_open_position(share_count=10.0)))
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        sess.add(order_record_to_row(entry_order))
+        sess.add(order_record_to_row(add_order))
+        for oid in leg_order_ids:
+            if oid not in seeded_order_ids:
+                sess.add(stub_order_row(oid, bracket_row.bracket_id))
+                seeded_order_ids.add(oid)
+        sess.add(bracket_row)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        await sess.commit()
+    await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=100_000.0))
+    await _seed_drawdown_state(factory)
+    # Fill at T-30min (before CA at T-10min).
+    fill_ts = _NOW - timedelta(minutes=30)
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(
+            fill_id="fill-add-1",
+            order_id="ord-add-1",
+            fill_quantity=5.0,
+            fill_price=150.0,
+            fill_timestamp=fill_ts,
+            remaining_quantity_after=0.0,
+            order_status_after=OrderStatus.FILLED,
+        ),
+    )
+
+    ca = CorporateActionActivity(
+        alpaca_activity_id="ca-split-merge-1",
+        action_type=CorporateActionType.SPLIT,
+        ticker="AAPL",
+        new_ticker=None,
+        ratio_or_amount=2.0,  # 2-for-1 split.
+        position_id="pos-1",
+        signed_cash_impact_usd=0.0,
+        transaction_time=_NOW - timedelta(minutes=10),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await process_unprocessed_fills(
+        handle,
+        ca_activities=(ca,),
+        alpaca_positions=(),
+        alpaca_account=None,
+        config=_make_state_persistence_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert isinstance(pos.details, EquityPositionDetails)
+        # Fill applied first: 10 + 5 = 15. Then SPLIT 2x: 15 * 2 = 30.
+        assert pos.details.share_count == pytest.approx(30.0)
+
+
+async def test_fill_after_ca_reflects_post_action_quantity_at_fill(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A fill timestamped after a CA's transaction_time integrates after.
+
+    Setup: OPEN position with 10 shares. SPLIT 2-for-1 CA at T-30min, then
+    an ADD fill (+5 shares) at T-10min. Post-state:
+      * post-CA share_count = 10 * 2 = 20
+      * post-fill share_count = 20 + 5 = 25
+    """
+    from alphamind.execution.state_persistence.write_paths.phase1 import (
+        CorporateActionActivity,
+        process_unprocessed_fills,
+    )
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    add_order = _make_pending_entry_order(
+        order_id="ord-add-2",
+        role=OrderRole.ADD_ENTRY,
+        position_id="pos-1",
+        quantity=5.0,
+    )
+    from tests.execution.state_persistence._fk_substrate import stub_order_row
+
+    entry_order = _make_pending_entry_order()
+    thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
+    bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
+    leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
+    seeded_order_ids = {entry_order.order_id, add_order.order_id}
+    async with factory() as sess:
+        sess.add(position_record_to_row(_make_open_position(share_count=10.0)))
+        sess.add(thesis_row)
+        for crow in component_rows:
+            sess.add(crow)
+        sess.add(order_record_to_row(entry_order))
+        sess.add(order_record_to_row(add_order))
+        for oid in leg_order_ids:
+            if oid not in seeded_order_ids:
+                sess.add(stub_order_row(oid, bracket_row.bracket_id))
+                seeded_order_ids.add(oid)
+        sess.add(bracket_row)
+        await sess.flush()
+        for lrow in leg_rows:
+            sess.add(lrow)
+        await sess.commit()
+    await _seed_cash_ledger(factory, _make_cash_ledger(current_cash_usd=100_000.0))
+    await _seed_drawdown_state(factory)
+    # Fill at T-10min (after the CA at T-30min).
+    fill_ts = _NOW - timedelta(minutes=10)
+    await _append_fill(
+        factory,
+        _make_unprocessed_fill(
+            fill_id="fill-add-2",
+            order_id="ord-add-2",
+            fill_quantity=5.0,
+            fill_price=75.0,  # post-split price.
+            fill_timestamp=fill_ts,
+            remaining_quantity_after=0.0,
+            order_status_after=OrderStatus.FILLED,
+        ),
+    )
+
+    ca = CorporateActionActivity(
+        alpaca_activity_id="ca-split-merge-2",
+        action_type=CorporateActionType.SPLIT,
+        ticker="AAPL",
+        new_ticker=None,
+        ratio_or_amount=2.0,
+        position_id="pos-1",
+        signed_cash_impact_usd=0.0,
+        transaction_time=_NOW - timedelta(minutes=30),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await process_unprocessed_fills(
+        handle,
+        ca_activities=(ca,),
+        alpaca_positions=(),
+        alpaca_account=None,
+        config=_make_state_persistence_config(),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        pos_row = (
+            await sess.execute(select(PositionRow).where(PositionRow.position_id == "pos-1"))
+        ).scalar_one()
+        pos = position_row_to_record(pos_row)
+        assert isinstance(pos.details, EquityPositionDetails)
+        # Split applied first: 10 * 2 = 20. Then fill: 20 + 5 = 25.
+        assert pos.details.share_count == pytest.approx(25.0)

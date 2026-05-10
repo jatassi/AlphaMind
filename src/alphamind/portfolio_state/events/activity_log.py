@@ -25,6 +25,7 @@ class EventGroup(StrEnum):
     PM_DECISION = "PM_DECISION"
     CORPORATE_ACTION = "CORPORATE_ACTION"
     CONFIGURATION = "CONFIGURATION"
+    RECONCILIATION = "RECONCILIATION"
 
 
 class EventType(StrEnum):
@@ -82,6 +83,9 @@ class EventType(StrEnum):
 
     # Corporate action events
     CORPORATE_ACTION_APPLIED = "CORPORATE_ACTION_APPLIED"
+
+    # Reconciliation events
+    RECONCILIATION_ALERT = "RECONCILIATION_ALERT"
 
     # Configuration events
     DISTILLATION_CONFIG_CHANGE = "DISTILLATION_CONFIG_CHANGE"
@@ -694,7 +698,40 @@ class CorporateActionAppliedDetail(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Type alias — covers all 35 detail-payload classes
+# Per-event-type detail-payload classes — Reconciliation events (ALP-415)
+# ---------------------------------------------------------------------------
+
+
+class ReconciliationAlertDetail(BaseModel):
+    """Detail payload for ``RECONCILIATION_ALERT`` events.
+
+    Emitted by the post-Phase-1 reconciliation step when local state diverges
+    from Alpaca's authoritative ``GET /v2/positions`` / ``GET /v2/account``
+    snapshot beyond the documented tolerance. One entry per unexplained delta;
+    local state is *not* mutated to match Alpaca — auto-correction is deferred
+    to the continuous monitor's reconciliation pass (ALP-123).
+
+    ``domain`` discriminates the source of the delta: ``"position"`` for
+    equity-position quantity mismatches, ``"cash"`` for ``cash_ledger`` /
+    ``TradeAccount.cash`` mismatches, and ``"buying_power"`` for the
+    ``buying_power`` mapping when surfaced. ``field_name`` carries the local
+    field that mismatched (``share_count`` / ``contract_count`` /
+    ``current_cash_usd``). ``local_value`` and ``alpaca_value`` carry the
+    compared scalars and ``delta_description`` carries the operator-facing
+    summary.
+    """
+
+    model_config = {"frozen": True}
+
+    domain: Literal["position", "cash", "buying_power"]
+    field_name: str
+    local_value: float
+    alpaca_value: float
+    delta_description: str
+
+
+# ---------------------------------------------------------------------------
+# Type alias — covers all detail-payload classes
 # ---------------------------------------------------------------------------
 
 AnyDetailType = (
@@ -735,6 +772,7 @@ AnyDetailType = (
     | EnvelopeParseFailedDetail
     | EnvelopeRejectionDetail
     | CorporateActionAppliedDetail
+    | ReconciliationAlertDetail
     | DistillationConfigChangeDetail
 )
 
@@ -780,6 +818,7 @@ EVENT_TYPE_TO_DETAIL_CLASS: dict[EventType, type] = {
     EventType.ENVELOPE_PARSE_FAILED: EnvelopeParseFailedDetail,
     EventType.ENVELOPE_REJECTED: EnvelopeRejectionDetail,
     EventType.CORPORATE_ACTION_APPLIED: CorporateActionAppliedDetail,
+    EventType.RECONCILIATION_ALERT: ReconciliationAlertDetail,
     EventType.DISTILLATION_CONFIG_CHANGE: DistillationConfigChangeDetail,
 }
 
@@ -821,6 +860,7 @@ EVENT_TYPE_TO_GROUP: dict[EventType, EventGroup] = {
     EventType.ENVELOPE_PARSE_FAILED: EventGroup.PM_DECISION,
     EventType.ENVELOPE_REJECTED: EventGroup.PM_DECISION,
     EventType.CORPORATE_ACTION_APPLIED: EventGroup.CORPORATE_ACTION,
+    EventType.RECONCILIATION_ALERT: EventGroup.RECONCILIATION,
     EventType.DISTILLATION_CONFIG_CHANGE: EventGroup.CONFIGURATION,
 }
 
