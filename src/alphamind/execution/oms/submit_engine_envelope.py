@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from alphamind.execution.oms.command_ids import (
     derive_engine_command_id,
@@ -324,6 +324,7 @@ async def _dispatch_engine_close(
         GatewaySubmissionFailed,
         Submitted,
     )
+    from alphamind.execution.broker_adapter.errors import classify_alpaca_error
     from alphamind.execution.broker_adapter.order_options import (
         PermanentRejectionError,
     )
@@ -332,9 +333,6 @@ async def _dispatch_engine_close(
     from alphamind.execution.state_persistence.tables.positions_codec import (
         row_to_record as position_row_to_record,
     )
-    from alphamind.portfolio_state.records.positions import (
-        EquityPositionDetails,
-    )
 
     pos_row = await handle.session.get(PositionRow, close_command.position_id)
     if pos_row is None:
@@ -342,16 +340,7 @@ async def _dispatch_engine_close(
         raise ValueError(msg)
     position = position_row_to_record(pos_row)
 
-    if not isinstance(position.details, EquityPositionDetails):
-        # Options / strategy engine-CLOSE routing requires OCC + intent threading.
-        # The continuous monitor (ALP-123) wires those once it lands; until then
-        # a non-equity engine close is not supported in the broker-routed path.
-        msg = (
-            f"engine CLOSE on position {close_command.position_id!r} carries "
-            f"non-equity details ({type(position.details).__name__}); "
-            "broker-routed engine close currently supports equity only"
-        )
-        raise NotImplementedError(msg)
+    dispatch_kwargs = _engine_close_dispatch_kwargs(position, position_id=close_command.position_id)
 
     try:
         outcome = await dispatch_command_to_broker(
@@ -360,13 +349,23 @@ async def _dispatch_engine_close(
             queries=queries,
             execution=execution_config,
             client_order_id=client_order_id,
-            position_asset_type="equity",
-            position_symbol=position.details.ticker,
-            position_qty=position.details.share_count,
-            position_side="long" if position.direction.value == "LONG" else "short",
+            **dispatch_kwargs,
         )
     except PermanentRejectionError as exc:
         return _BrokerFailure(reason=f"permanent_rejection: code={exc.rejection.code}")
+    except Exception as exc:
+        # Equity / mleg translators re-raise the raw alpaca-py APIError on
+        # permanent failure rather than wrapping in PermanentRejectionError.
+        # Mirror the PM-side ``_route_through_broker`` and translate via
+        # ``classify_alpaca_error`` so the engine envelope path returns a
+        # uniform broker-rejection shape regardless of which translator
+        # produced the error. ``BaseException`` (CancelledError, etc.)
+        # propagates so external interruptions are never re-classified as
+        # broker rejections.
+        rejection = classify_alpaca_error(exc)
+        if rejection is None:
+            raise
+        return _BrokerFailure(reason=f"permanent_rejection: code={rejection.code}")
 
     if isinstance(outcome, GatewaySubmissionFailed):
         return _BrokerFailure(
@@ -377,6 +376,92 @@ async def _dispatch_engine_close(
         )
     assert isinstance(outcome, Submitted)
     return outcome.payload.alpaca_order_id
+
+
+def _engine_close_dispatch_kwargs(
+    position: Any,
+    *,
+    position_id: str,
+) -> dict[str, Any]:
+    """Project the persisted *position* into the dispatcher's per-asset kwargs.
+
+    Equity → symbol/qty/side. Options → OCC + sell-to-close intent. Strategy
+    → open_legs + strategy_type + units. Mirrors the per-asset routing the
+    PM-side ``_close_command_context`` performs; surfaces engine-close on
+    options / strategy positions so the substrate (``submit_options_close`` /
+    ``submit_mleg_close``) is exercised end-to-end rather than blocked behind
+    a hardcoded ``NotImplementedError``.
+    """
+    from typing import cast as _cast
+
+    from alphamind.execution.broker_adapter import MLEGLegAck
+    from alphamind.execution.broker_adapter.order_options import build_occ_symbol
+    from alphamind.execution.oms.command_models import StrategyType
+    from alphamind.portfolio_state.records.positions import (
+        EquityPositionDetails,
+        OptionsPositionDetails,
+        StrategyPositionDetails,
+    )
+
+    if isinstance(position.details, EquityPositionDetails):
+        return {
+            "position_asset_type": "equity",
+            "position_symbol": position.details.ticker,
+            "position_qty": position.details.share_count,
+            "position_side": "long" if position.direction.value == "LONG" else "short",
+        }
+    if isinstance(position.details, OptionsPositionDetails):
+        occ = build_occ_symbol(
+            position.details.underlying_ticker,
+            position.details.expiration_date,
+            position.details.contract_type,
+            position.details.strike_price,
+        )
+        return {
+            "position_asset_type": "option",
+            "occ_symbol": occ,
+            "position_qty": position.details.contract_count,
+            "position_intent": (
+                "sell_to_close" if position.direction.value == "LONG" else "buy_to_close"
+            ),
+        }
+    if isinstance(position.details, StrategyPositionDetails):
+        legs: list[Any] = []
+        for leg in position.details.legs:
+            opt = leg.options
+            occ = build_occ_symbol(
+                opt.underlying_ticker, opt.expiration_date, opt.contract_type, opt.strike_price
+            )
+            leg_direction = leg.direction
+            if leg_direction is None:
+                msg = (
+                    f"engine CLOSE on strategy position {position_id!r} has leg "
+                    f"{leg.leg_id!r} with no direction set"
+                )
+                raise ValueError(msg)
+            side: Literal["buy", "sell"] = "buy" if leg_direction.value == "LONG" else "sell"
+            intent: Literal["buy_to_open", "sell_to_open"] = (
+                "buy_to_open" if side == "buy" else "sell_to_open"
+            )
+            legs.append(
+                MLEGLegAck(
+                    occ_symbol=occ,
+                    side=side,
+                    ratio_qty=1,
+                    position_intent=intent,
+                )
+            )
+        return {
+            "position_asset_type": "strategy",
+            "open_legs": tuple(legs),
+            "strategy_type": _cast(StrategyType, position.details.strategy_type_label),
+            "position_units": None,
+        }
+    msg = (
+        f"engine CLOSE on position {position_id!r} carries unsupported details "
+        f"type {type(position.details).__name__}"
+    )
+    raise NotImplementedError(msg)
 
 
 @dataclass(frozen=True)

@@ -1033,6 +1033,477 @@ async def test_pm_envelope_permanent_rejection_carries_code_in_gateway_reason(
         await async_engine.dispose()
 
 
+# ---------------------------------------------------------------------------
+# _engine_close_dispatch_kwargs — engine-CLOSE on options / strategy positions
+# is no longer blocked behind a hardcoded NotImplementedError. The helper
+# projects the persisted position's details into the per-asset kwargs the
+# dispatcher needs (OCC + intent for options; legs + strategy_type for
+# strategy). Regression coverage for the S6 fix.
+# ---------------------------------------------------------------------------
+
+
+def test_engine_close_dispatch_kwargs_routes_options_position() -> None:
+    """Engine CLOSE on an options position threads OCC + sell-to-close intent.
+
+    Regression: the helper used to raise ``NotImplementedError`` for any
+    non-equity position, blocking the ALP-123 continuous monitor from
+    closing options positions through the broker-routed engine path.
+    """
+    from alphamind.execution.broker_adapter.order_options import build_occ_symbol
+    from alphamind.execution.oms.submit_engine_envelope import (
+        _engine_close_dispatch_kwargs,
+    )
+    from alphamind.portfolio_state.records.positions import OptionsPositionDetails
+
+    position = _options_open_position()
+    kwargs = _engine_close_dispatch_kwargs(position, position_id=position.position_id)
+
+    assert kwargs["position_asset_type"] == "option"
+    assert kwargs["position_intent"] == "sell_to_close"
+    assert kwargs["position_qty"] == 2.0
+    assert isinstance(position.details, OptionsPositionDetails)
+    expected_occ = build_occ_symbol(
+        position.details.underlying_ticker,
+        position.details.expiration_date,
+        position.details.contract_type,
+        position.details.strike_price,
+    )
+    assert kwargs["occ_symbol"] == expected_occ
+
+
+def test_engine_close_dispatch_kwargs_routes_strategy_position() -> None:
+    """Engine CLOSE on a strategy position threads open_legs + strategy_type."""
+    from alphamind.execution.oms.submit_engine_envelope import (
+        _engine_close_dispatch_kwargs,
+    )
+
+    position = _strategy_open_position()
+    kwargs = _engine_close_dispatch_kwargs(position, position_id=position.position_id)
+
+    assert kwargs["position_asset_type"] == "strategy"
+    assert kwargs["strategy_type"] == "vertical_spread"
+    open_legs = kwargs["open_legs"]
+    assert len(open_legs) == 2
+    # Long leg buy_to_open, short leg sell_to_open.
+    assert open_legs[0].side == "buy"
+    assert open_legs[0].position_intent == "buy_to_open"
+    assert open_legs[1].side == "sell"
+    assert open_legs[1].position_intent == "sell_to_open"
+
+
+def test_engine_close_dispatch_kwargs_equity_unchanged() -> None:
+    """Equity routing remains symbol/qty/side — same as the prior behavior."""
+    from alphamind.execution.oms.submit_engine_envelope import (
+        _engine_close_dispatch_kwargs,
+    )
+
+    position = _open_position()
+    kwargs = _engine_close_dispatch_kwargs(position, position_id=position.position_id)
+
+    assert kwargs == {
+        "position_asset_type": "equity",
+        "position_symbol": "NVDA",
+        "position_qty": 10.0,
+        "position_side": "long",
+    }
+
+
+# ---------------------------------------------------------------------------
+# _adjust_command_context — derives target_asset_class / target_order_class
+# from the persisted position's details, and targets the protective leg whose
+# role matches the ADJUST's change-fields. Regression coverage for the
+# previously-hardcoded ``us_equity`` / ``simple`` plus the silent-drift
+# scenario where an ADJUST against options/strategy was sent to the
+# replace-order surface with the wrong asset class.
+# ---------------------------------------------------------------------------
+
+
+def _options_open_position(
+    position_id: str = "POS-OPT-001",
+    *,
+    bracket_id: str | None = "BRK-OPT-1",
+) -> PositionRecord:
+    """Build an OPEN options position with a single CALL leg."""
+    from datetime import date as _date
+
+    from alphamind.portfolio_state.records.positions import (
+        OptionContractType,
+        OptionGreeks,
+        OptionsPositionDetails,
+        PositionFill,
+    )
+
+    details = OptionsPositionDetails(
+        underlying_ticker="NVDA",
+        strike_price=420.0,
+        expiration_date=_date(2026, 6, 19),
+        contract_type=OptionContractType.CALL,
+        contract_count=2.0,
+        contract_multiplier=100.0,
+        premium_paid_per_contract=8.75,
+        greeks=OptionGreeks(
+            delta=0.5,
+            gamma=0.02,
+            theta=-0.1,
+            vega=0.3,
+            iv_used=0.25,
+        ),
+    )
+    history = (
+        PositionFill(
+            fill_timestamp=_NOW - timedelta(hours=2),
+            fill_price=8.75,
+            fill_quantity=2.0,
+            slippage=0.0,
+            fees=0.0,
+        ),
+    )
+    return PositionRecord.model_validate(
+        {
+            "position_id": position_id,
+            "thesis_id": "THE-OPT-1",
+            "bracket_id": bracket_id,
+            "status": PositionStatus.OPEN,
+            "direction": Direction.LONG,
+            "entry_timestamp": _NOW - timedelta(hours=2),
+            "details": details,
+            "execution_history": history,
+            "realized_pnl_to_date_usd": None,
+            "corporate_action_adjustment_needed": False,
+            "parent_position_id": None,
+            "origin": None,
+        }
+    )
+
+
+def _strategy_open_position(
+    position_id: str = "POS-STRAT-001",
+    *,
+    bracket_id: str | None = "BRK-STRAT-1",
+) -> PositionRecord:
+    """Build an OPEN 2-leg vertical-spread strategy position."""
+    from datetime import date as _date
+
+    from alphamind.portfolio_state.records.positions import (
+        OptionContractType,
+        OptionGreeks,
+        OptionsPositionDetails,
+        PositionFill,
+        StrategyPositionDetails,
+    )
+    from alphamind.portfolio_state.records.positions import (
+        StrategyLeg as PersistedStrategyLeg,
+    )
+
+    expiration = _date(2026, 6, 19)
+    long_leg = PersistedStrategyLeg(
+        leg_id="leg-1",
+        direction=Direction.LONG,
+        options=OptionsPositionDetails(
+            underlying_ticker="NVDA",
+            strike_price=420.0,
+            expiration_date=expiration,
+            contract_type=OptionContractType.CALL,
+            contract_count=1.0,
+            contract_multiplier=100.0,
+            premium_paid_per_contract=8.75,
+            greeks=OptionGreeks(
+                delta=0.5,
+                gamma=0.02,
+                theta=-0.1,
+                vega=0.3,
+                iv_used=0.25,
+            ),
+        ),
+    )
+    short_leg = PersistedStrategyLeg(
+        leg_id="leg-2",
+        direction=Direction.SHORT,
+        options=OptionsPositionDetails(
+            underlying_ticker="NVDA",
+            strike_price=425.0,
+            expiration_date=expiration,
+            contract_type=OptionContractType.CALL,
+            contract_count=1.0,
+            contract_multiplier=100.0,
+            premium_paid_per_contract=5.25,
+            greeks=OptionGreeks(
+                delta=0.4,
+                gamma=0.02,
+                theta=-0.08,
+                vega=0.25,
+                iv_used=0.22,
+            ),
+        ),
+    )
+    details = StrategyPositionDetails(
+        strategy_type_label="vertical_spread",
+        legs=(long_leg, short_leg),
+        net_premium_usd=350.0,
+        max_profit_usd=500.0,
+        max_loss_usd=350.0,
+        breakeven_levels=(423.5,),
+        strategy_greeks=OptionGreeks(
+            delta=0.1,
+            gamma=0.0,
+            theta=-0.02,
+            vega=0.05,
+            iv_used=0.23,
+        ),
+    )
+    history = (
+        PositionFill(
+            fill_timestamp=_NOW - timedelta(hours=2),
+            fill_price=3.5,
+            fill_quantity=1.0,
+            slippage=0.0,
+            fees=0.0,
+        ),
+    )
+    return PositionRecord.model_validate(
+        {
+            "position_id": position_id,
+            "thesis_id": "THE-STRAT-1",
+            "bracket_id": bracket_id,
+            "status": PositionStatus.OPEN,
+            "direction": Direction.LONG,
+            "entry_timestamp": _NOW - timedelta(hours=2),
+            "details": details,
+            "execution_history": history,
+            "realized_pnl_to_date_usd": None,
+            "corporate_action_adjustment_needed": False,
+            "parent_position_id": None,
+            "origin": None,
+        }
+    )
+
+
+def _seed_pending_protective_orders(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    bracket_id: str,
+    position_id: str,
+    thesis_id: str,
+) -> Any:
+    """Seed PENDING PRICE_STOP + TAKE_PROFIT rows on *bracket_id*.
+
+    Returns a coroutine (callers ``await`` it). Mirrors the seeding pattern
+    in test_phase2_write_path's adjust tests but trimmed to the rows needed
+    by ``_adjust_command_context``.
+    """
+    from alphamind.execution.state_persistence.tables.orders_codec import (
+        record_to_row as order_record_to_row,
+    )
+    from alphamind.portfolio_state.records.orders import (
+        EquityInstrumentSpec,
+        OrderClass,
+        OrderDirection,
+        OrderDuration,
+        OrderRecord,
+        OrderRole,
+        OrderStatus,
+        OrderType,
+        PriceParameters,
+    )
+
+    def _build(order_id: str, role: OrderRole, params: PriceParameters) -> OrderRecord:
+        return OrderRecord(
+            order_id=order_id,
+            position_id=position_id,
+            bracket_id=bracket_id,
+            role=role,
+            instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+            direction=OrderDirection.SELL,
+            order_type=OrderType.STOP if role is OrderRole.PRICE_STOP else OrderType.LIMIT,
+            order_class=OrderClass.OTO,
+            price_parameters=params,
+            quantity=10.0,
+            duration=OrderDuration.DAY,
+            status=OrderStatus.PENDING,
+            alpaca_order_id=f"alp-{order_id}",
+            alpaca_order_id_chain=(f"alp-{order_id}",),
+            submission_timestamp=_NOW - timedelta(hours=1),
+            last_update_timestamp=_NOW - timedelta(hours=1),
+            filled_quantity=0.0,
+            avg_fill_price=None,
+            remaining_quantity=10.0,
+            modification_count=0,
+            originating_thesis_id=thesis_id,
+            originating_pm_command_id=None,
+            age_hours=1.0,
+        )
+
+    rows = (
+        _build("ord-stop", OrderRole.PRICE_STOP, PriceParameters(stop_trigger_price=140.0)),
+        _build("ord-target", OrderRole.TAKE_PROFIT, PriceParameters(limit_price=200.0)),
+    )
+
+    async def _seed() -> None:
+        async with factory() as sess:
+            for r in rows:
+                sess.add(order_record_to_row(r))
+            await sess.commit()
+
+    return _seed()
+
+
+def _adjust_stop_command(position_id: str) -> Any:
+    """Build an ADJUST command targeting only the stop leg."""
+    from alphamind.execution.oms.command_models import AdjustCommand, NewStopLevel
+
+    return AdjustCommand(
+        command_type="adjust",
+        position_id=position_id,
+        adjustment_rationale="Tighten stop.",
+        new_stop_level=NewStopLevel(trigger_price=145.0, order_type="stop", limit_price=None),
+        new_target_level=None,
+        new_time_expiration=None,
+        new_event_invalidation=None,
+        thesis_component_updates=None,
+    )
+
+
+def _adjust_target_command(position_id: str) -> Any:
+    """Build an ADJUST command targeting only the take-profit leg."""
+    from alphamind.execution.oms.command_models import AdjustCommand, NewTargetLevel
+
+    return AdjustCommand(
+        command_type="adjust",
+        position_id=position_id,
+        adjustment_rationale="Raise target.",
+        new_stop_level=None,
+        new_target_level=NewTargetLevel(price=210.0, order_type="limit"),
+        new_time_expiration=None,
+        new_event_invalidation=None,
+        thesis_component_updates=None,
+    )
+
+
+async def test_adjust_command_context_options_position_routes_us_option_simple(
+    tmp_path: Path,
+) -> None:
+    """ADJUST against an options position derives ``us_option`` / ``simple``
+    from the position's details, not the previously-hardcoded equity values.
+    """
+    from alphamind.execution.oms.submit_envelope_mcp import _adjust_command_context
+
+    async_engine, factory = _build_db_factory(tmp_path)
+    try:
+        await _seed_invocation_substrate(factory)
+        await _seed_cash_ledger(factory)
+        await _seed_position_cluster(
+            factory,
+            _options_open_position(),
+            _active_thesis(thesis_id="THE-OPT-1", position_id="POS-OPT-001"),
+            _active_bracket(bracket_id="BRK-OPT-1", position_id="POS-OPT-001"),
+        )
+        await _seed_pending_protective_orders(
+            factory,
+            bracket_id="BRK-OPT-1",
+            position_id="POS-OPT-001",
+            thesis_id="THE-OPT-1",
+        )
+
+        ctx, handle = await _open_handle(factory)
+        try:
+            kwargs = await _adjust_command_context(
+                _adjust_stop_command("POS-OPT-001"), invocation_handle=handle
+            )
+        finally:
+            await ctx.__aexit__(None, None, None)
+
+        assert kwargs["target_asset_class"] == "us_option"
+        assert kwargs["target_order_class"] == "simple"
+        assert kwargs["target_alpaca_order_id"] == "alp-ord-stop"
+    finally:
+        await async_engine.dispose()
+
+
+async def test_adjust_command_context_strategy_position_routes_mleg(
+    tmp_path: Path,
+) -> None:
+    """ADJUST against a strategy position derives ``us_option_strategy`` /
+    ``mleg`` from the position's details. Regression: the previously
+    hardcoded ``us_equity`` / ``simple`` would have produced a
+    field-out-of-surface ValueError or silently mis-routed at the broker.
+    """
+    from alphamind.execution.oms.submit_envelope_mcp import _adjust_command_context
+
+    async_engine, factory = _build_db_factory(tmp_path)
+    try:
+        await _seed_invocation_substrate(factory)
+        await _seed_cash_ledger(factory)
+        await _seed_position_cluster(
+            factory,
+            _strategy_open_position(),
+            _active_thesis(thesis_id="THE-STRAT-1", position_id="POS-STRAT-001"),
+            _active_bracket(bracket_id="BRK-STRAT-1", position_id="POS-STRAT-001"),
+        )
+        await _seed_pending_protective_orders(
+            factory,
+            bracket_id="BRK-STRAT-1",
+            position_id="POS-STRAT-001",
+            thesis_id="THE-STRAT-1",
+        )
+
+        ctx, handle = await _open_handle(factory)
+        try:
+            kwargs = await _adjust_command_context(
+                _adjust_stop_command("POS-STRAT-001"), invocation_handle=handle
+            )
+        finally:
+            await ctx.__aexit__(None, None, None)
+
+        assert kwargs["target_asset_class"] == "us_option_strategy"
+        assert kwargs["target_order_class"] == "mleg"
+        assert kwargs["target_alpaca_order_id"] == "alp-ord-stop"
+    finally:
+        await async_engine.dispose()
+
+
+async def test_adjust_command_context_targets_take_profit_when_target_change(
+    tmp_path: Path,
+) -> None:
+    """A target-only ADJUST resolves to the TAKE_PROFIT leg's alpaca_order_id,
+    not the PRICE_STOP leg's. Regression: the old "first protective leg"
+    selection silently sent the wrong order ID to ``submit_replace`` whenever
+    the bracket's PRICE_STOP appeared first in the result set.
+    """
+    from alphamind.execution.oms.submit_envelope_mcp import _adjust_command_context
+
+    async_engine, factory = _build_db_factory(tmp_path)
+    try:
+        await _seed_invocation_substrate(factory)
+        await _seed_cash_ledger(factory)
+        await _seed_position_cluster(
+            factory,
+            _open_position(),
+            _active_thesis(),
+            _active_bracket(),
+        )
+        await _seed_pending_protective_orders(
+            factory,
+            bracket_id="BRK-NVDA-1",
+            position_id="POS-NVDA-001",
+            thesis_id="THE-NVDA-1",
+        )
+
+        ctx, handle = await _open_handle(factory)
+        try:
+            kwargs = await _adjust_command_context(
+                _adjust_target_command("POS-NVDA-001"), invocation_handle=handle
+            )
+        finally:
+            await ctx.__aexit__(None, None, None)
+
+        assert kwargs["target_alpaca_order_id"] == "alp-ord-target"
+        # Equity position keeps the simple/us_equity routing.
+        assert kwargs["target_asset_class"] == "us_equity"
+        assert kwargs["target_order_class"] == "simple"
+    finally:
+        await async_engine.dispose()
+
+
 # Suppress unused-import warning.
 _ = (
     BracketOrderParameters,

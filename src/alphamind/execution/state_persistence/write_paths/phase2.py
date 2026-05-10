@@ -748,6 +748,11 @@ async def _writeback_adjust(
         handle,
         bracket_id=position.bracket_id,
         timestamp=timestamp,
+        target_roles=_protective_roles_for_change_fields(
+            new_stop_level=command.new_stop_level,
+            new_target_level=command.new_target_level,
+            new_time_expiration_present=command.new_time_expiration is not None,
+        ),
     )
     for cancelled in cancelled_orders:
         await _emit_order_cancelled(
@@ -1179,7 +1184,14 @@ async def _apply_bracket_adjustment(
     if position.bracket_id is None:
         return
     cancelled = await _cancel_pending_protective_orders(
-        handle, bracket_id=position.bracket_id, timestamp=timestamp
+        handle,
+        bracket_id=position.bracket_id,
+        timestamp=timestamp,
+        target_roles=_protective_roles_for_change_fields(
+            new_stop_level=adjustment.new_stop_level,
+            new_target_level=adjustment.new_target_level,
+            new_time_expiration_present=adjustment.new_time_expiration is not None,
+        ),
     )
     for cancelled_order in cancelled:
         await _emit_order_cancelled(
@@ -1341,10 +1353,15 @@ async def _release_capital(
 # ---------------------------------------------------------------------------
 
 
-# Roles whose pending orders ADJUST and the entry-CANCEL path leave alone.
-# ADJUST replaces the protective legs but never touches an unfilled entry.
-# Entry-CANCEL has just CANCELLED the entry itself before this sweep runs.
-_NON_PROTECTIVE_ORDER_ROLES = frozenset({OrderRole.ENTRY.value, OrderRole.ADD_ENTRY.value})
+# All protective-leg roles. The dissolve-bracket path (entry CANCEL) sweeps
+# every protective leg; the ADJUST / BracketAdjustment paths narrow to the
+# specific role(s) the change-field set targets so a stop-only ADJUST does
+# not also CANCEL the take-profit leg in OMS state. Entry / add-entry roles
+# are deliberately omitted — ADJUST never touches them, and the entry-CANCEL
+# path cancels the entry itself separately before this sweep runs.
+_ALL_PROTECTIVE_ROLES: frozenset[str] = frozenset(
+    {OrderRole.PRICE_STOP.value, OrderRole.TAKE_PROFIT.value, OrderRole.TIME_STOP.value}
+)
 
 
 async def _cancel_pending_protective_orders(
@@ -1352,14 +1369,19 @@ async def _cancel_pending_protective_orders(
     *,
     bracket_id: str,
     timestamp: datetime,
-    skip_roles: frozenset[str] = _NON_PROTECTIVE_ORDER_ROLES,
+    target_roles: frozenset[str] = _ALL_PROTECTIVE_ROLES,
 ) -> tuple[OrderRecord, ...]:
-    """Mark every PENDING protective order on the bracket CANCELLED in place.
+    """Mark PENDING protective orders matching *target_roles* CANCELLED in place.
 
     Returns the typed records so callers can use the order_ids and other
-    fields for activity-log emission. Entry / add-entry roles are skipped:
-    ADJUST never touches them, and the CANCEL entry-path has already
-    cancelled the entry before this sweep runs.
+    fields for activity-log emission. *target_roles* defaults to every
+    protective leg role (used by the entry-CANCEL → dissolve-bracket path);
+    the ADJUST / BracketAdjustment paths narrow it via
+    :func:`_protective_roles_for_change_fields` so only the leg(s) the
+    change-field set targets transition to CANCELLED — leaving the other
+    protective legs PENDING at the broker. Entry / add-entry roles are
+    never touched here (the entry-CANCEL path cancels the entry separately
+    before this sweep runs).
     """
     stmt = (
         select(OrderRow)
@@ -1369,12 +1391,38 @@ async def _cancel_pending_protective_orders(
     rows = list((await handle.session.execute(stmt)).scalars())
     cancelled: list[OrderRecord] = []
     for row in rows:
-        if row.order_role in skip_roles:
+        if row.order_role not in target_roles:
             continue
         row.status = OrderStatus.CANCELLED.value
         row.last_update_timestamp = timestamp.isoformat()
         cancelled.append(order_row_to_record(row))
     return tuple(cancelled)
+
+
+def _protective_roles_for_change_fields(
+    *,
+    new_stop_level: NewStopLevel | None,
+    new_target_level: NewTargetLevel | None,
+    new_time_expiration_present: bool,
+) -> frozenset[str]:
+    """Return the set of protective-leg roles the change-fields target.
+
+    NewStopLevel → PRICE_STOP only; NewTargetLevel → TAKE_PROFIT only;
+    new_time_expiration → TIME_STOP only. The OMS-side broker dispatcher
+    (:func:`alphamind.execution.oms.submit_envelope_mcp._adjust_command_context`)
+    threads the matching protective leg's ``alpaca_order_id`` to
+    :func:`submit_replace`; this helper keeps the OMS-state writeback in
+    lockstep with the broker mutation so a stop-only ADJUST does not also
+    mark the take-profit leg CANCELLED in OMS state.
+    """
+    roles: set[str] = set()
+    if new_stop_level is not None:
+        roles.add(OrderRole.PRICE_STOP.value)
+    if new_target_level is not None:
+        roles.add(OrderRole.TAKE_PROFIT.value)
+    if new_time_expiration_present:
+        roles.add(OrderRole.TIME_STOP.value)
+    return frozenset(roles)
 
 
 async def _resolve_thesis_cancelled(

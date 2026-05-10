@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
@@ -36,6 +36,12 @@ if TYPE_CHECKING:
 
     from alphamind.config.models.execution import ExecutionConfig
     from alphamind.execution.broker_adapter import AccountStateQueries
+    from alphamind.execution.broker_adapter.order_modify import (
+        AssetClass as ReplaceAssetClass,
+    )
+    from alphamind.execution.broker_adapter.order_modify import (
+        OrderClass as ReplaceOrderClass,
+    )
     from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
@@ -1169,11 +1175,13 @@ async def _route_through_broker(
             updated.append(_to_rejection(result, code=exc.rejection.code, reason=str(exc)))
             dispatches.append(None)
             continue
-        except BaseException as exc:
+        except Exception as exc:
             # Equity / mleg translators re-raise the raw alpaca-py APIError on
             # permanent failure; classify here so the engine-stub surfaces a
             # uniform broker-rejection shape regardless of which translator
-            # produced the error.
+            # produced the error. ``BaseException`` (CancelledError, etc.)
+            # propagates so external interruptions are never re-classified as
+            # broker rejections.
             rejection = classify_alpaca_error(exc)
             if rejection is None:
                 raise
@@ -1297,8 +1305,6 @@ async def _close_command_context(
     if isinstance(position.details, StrategyPositionDetails):
         # StrategyPositionDetails carries legs and a strategy_type_label; the
         # broker translator needs the typed StrategyType, so we coerce here.
-        from typing import cast
-
         from alphamind.execution.oms.command_models import StrategyType
 
         legs = _persisted_legs_to_mleg_acks(position.details.legs)
@@ -1351,8 +1357,6 @@ async def _add_command_context(command: AddCommand, *, invocation_handle: Any) -
             "position_side": "long" if position.direction.value == "LONG" else "short",
         }
     if isinstance(position.details, StrategyPositionDetails):
-        from typing import cast
-
         from alphamind.execution.oms.command_models import StrategyType
 
         legs = _persisted_legs_to_mleg_acks(position.details.legs)
@@ -1371,19 +1375,40 @@ async def _adjust_command_context(
     """Resolve dispatcher context for an ADJUST command.
 
     Reads the bracket-side protective order being modified and surfaces its
-    alpaca_order_id + asset_class + order_class. ADJUST against a position
-    with no protective leg is a structural error.
+    alpaca_order_id + asset_class + order_class. The leg targeted matches
+    the change-field on the command (NewStopLevel → PRICE_STOP only;
+    NewTargetLevel → TAKE_PROFIT only; new_time_expiration → TIME_STOP) so
+    the broker mutation stays in lockstep with the OMS-state writeback in
+    :func:`_writeback_adjust`. The asset_class / order_class are derived
+    from the position's persisted details — equity routes to ``us_equity``,
+    options to ``us_option``, strategies to ``us_option_strategy / mleg``.
     """
-    position = await _read_position(command.position_id, invocation_handle=invocation_handle)
     from sqlalchemy import select as _select
 
     from alphamind.execution.state_persistence.tables.orders import OrderRow
+    from alphamind.portfolio_state.records.positions import (
+        EquityPositionDetails,
+        OptionsPositionDetails,
+        StrategyPositionDetails,
+    )
+
+    position = await _read_position(command.position_id, invocation_handle=invocation_handle)
 
     if position.bracket_id is None:
         msg = f"ADJUST references position {command.position_id!r} with no bracket"
         raise ValueError(msg)
 
-    # Pick the first ACTIVE protective leg's order id.
+    target_roles = _adjust_target_roles(command)
+    if not target_roles:
+        # Pure thesis-update / event-invalidation ADJUST — no broker mutation
+        # required. The dispatcher should not be invoked; surfacing this as a
+        # structural error prevents a silent no-op patch.
+        msg = (
+            f"ADJUST against position {command.position_id!r} carries no "
+            "protective change-fields (stop / target / time); no broker leg to replace"
+        )
+        raise ValueError(msg)
+
     rows = (
         (
             await invocation_handle.session.execute(
@@ -1396,18 +1421,59 @@ async def _adjust_command_context(
         .scalars()
         .all()
     )
-    target = next((r for r in rows if r.order_role in ("PRICE_STOP", "TAKE_PROFIT")), None)
+    target = next((r for r in rows if r.order_role in target_roles), None)
     if target is None:
         msg = (
             f"ADJUST against bracket {position.bracket_id!r} found no "
-            "PENDING protective leg to replace"
+            f"PENDING protective leg matching roles {sorted(target_roles)} to replace"
         )
         raise ValueError(msg)
+
+    # Derive broker asset_class / order_class from the position's details
+    # payload. Strategy positions submit as us_option_strategy/mleg; single-leg
+    # options as us_option/simple; equity as us_equity/simple. Bracket child
+    # legs on equity are themselves submitted as simple orders by Alpaca on
+    # cancel-and-replace (the bracket parent stays linked, the child replaces
+    # in place).
+    if isinstance(position.details, StrategyPositionDetails):
+        target_asset_class: ReplaceAssetClass = "us_option_strategy"
+        target_order_class: ReplaceOrderClass = "mleg"
+    elif isinstance(position.details, OptionsPositionDetails):
+        target_asset_class = "us_option"
+        target_order_class = "simple"
+    elif isinstance(position.details, EquityPositionDetails):
+        target_asset_class = "us_equity"
+        target_order_class = "simple"
+    else:
+        msg = (
+            f"ADJUST against position {command.position_id!r} carries unsupported "
+            f"details type {type(position.details).__name__}"
+        )
+        raise NotImplementedError(msg)
+
     return {
         "target_alpaca_order_id": target.alpaca_order_id,
-        "target_asset_class": "us_equity",
-        "target_order_class": "simple",
+        "target_asset_class": target_asset_class,
+        "target_order_class": target_order_class,
     }
+
+
+def _adjust_target_roles(command: AdjustCommand) -> frozenset[str]:
+    """Return the protective-leg role(s) the ADJUST's change-fields target.
+
+    Matches the writeback's :func:`_protective_roles_for_change_fields` so the
+    broker leg mutated and the OMS leg cancelled stay in lockstep. Returns
+    ``frozenset()`` when the ADJUST carries only thesis-component / event
+    updates and no broker mutation is required.
+    """
+    roles: set[str] = set()
+    if command.new_stop_level is not None:
+        roles.add("PRICE_STOP")
+    if command.new_target_level is not None:
+        roles.add("TAKE_PROFIT")
+    if command.new_time_expiration is not None:
+        roles.add("TIME_STOP")
+    return frozenset(roles)
 
 
 async def _cancel_command_context(
