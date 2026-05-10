@@ -152,7 +152,42 @@ If you discover a new decision *during* Phase 7 drafting (you didn't catch it in
 
 ### Phase 7 — Create the parent Issue and draft sub-issues
 
-This is the actual Linear work. Two stages.
+This is the actual Linear work. A pre-flight cap check, then two stages.
+
+#### Pre-flight: Linear free-tier cap check
+
+Linear's free tier caps the workspace at roughly 250 active (non-archived) issues. Hitting the cap mid-drafting leaves the work tree in a half-state — some sub-issues saved, others not, the operator must run the consolidation rollup before you can resume, and your dispatch is paused until both happen. Catch the risk before any writes.
+
+Probe the active issue count:
+
+```
+mcp__linear-server__list_issues(
+    team="AlphaMind",
+    limit=250,
+    includeArchived=false,
+)
+```
+
+Read the response with `python3 -c "import json,pathlib; d=json.loads(pathlib.Path('<saved-result-path>').read_text()); print(len(d['issues']), d.get('hasNextPage'))"` — the result is too large to inline, so the harness saves it to a temp file and prints the path; slice the JSON locally.
+
+Interpret:
+
+- `hasNextPage == false` → exact `count = len(issues)`; `buffer = 250 - count`.
+- `hasNextPage == true` → `count >= 250`; treat `buffer` as 0 or negative — you're already at or over the cap and creates may fail immediately.
+
+Compute `required`:
+
+- `needed_sub_issues` = number of stories from your Phase 5 sequence.
+- Add 1 if the parent Issue doesn't already exist (you'll create it in 7a).
+- Add a 2-issue safety margin for retries and any concurrent agent activity.
+- `required = needed_sub_issues + (1 if parent absent else 0) + 2`.
+
+Decision:
+
+- **`buffer >= required`** — cap risk is low. Note the count in your working memory and proceed to 7a.
+- **`buffer < required`** — surface to the operator *before any writes*. Report: current active count (or "≥ 250"), buffer, needed count, required including margin. Recommend running the consolidation rollup per the `project_linear_consolidation` memory. Ask whether to (a) pause for rollup, (b) proceed accepting that the cap may fire mid-drafting (you will catch the error gracefully and surface the remaining drafts inline as a hand-off), or (c) trim story count if you can identify a fold.
+
+The cap is occasionally enforced at counts above 250 — Linear's exact threshold depends on workspace age and account state. Treat the probe as early-warning, not exact predictor. If a create fails despite a pre-flight `pass`, fall through to the "drafting did not complete cleanly" branch in 7b's tracker-commit guidance and inline the remaining drafts in the operator hand-off.
 
 #### 7a. Parent Issue
 
