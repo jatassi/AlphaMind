@@ -432,7 +432,7 @@ async def test_diagnostic_archive_written_on_success(
     assert (diag_dir / "response.md").exists()
     assert (diag_dir / "errors.json").exists()
     assert (diag_dir / "metadata.json").exists()
-    assert (diag_dir / "response.md").read_text() == _SYNTHESIS_TEXT
+    assert (diag_dir / "response.md").read_text(encoding="utf-8") == _SYNTHESIS_TEXT
 
 
 # ---------------------------------------------------------------------------
@@ -464,7 +464,7 @@ async def test_diagnostic_archive_written_on_failure(
     assert (diag_dir / "response.md").exists()
     assert (diag_dir / "errors.json").exists()
     assert (diag_dir / "metadata.json").exists()
-    meta = json.loads((diag_dir / "metadata.json").read_text())
+    meta = json.loads((diag_dir / "metadata.json").read_text(encoding="utf-8"))
     assert meta["success"] is False
 
 
@@ -493,7 +493,7 @@ async def test_metadata_json_carries_required_fields(
     )
 
     meta_path = archive_root / "invocations" / "inv-meta-001" / "analysis" / "synthesizer"
-    meta = json.loads((meta_path / "metadata.json").read_text())
+    meta = json.loads((meta_path / "metadata.json").read_text(encoding="utf-8"))
     assert meta["tool_calls_used"] == 2
     assert "tokens_used" in meta
     assert isinstance(meta["tokens_used"], dict)

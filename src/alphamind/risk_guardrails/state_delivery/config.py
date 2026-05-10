@@ -5,8 +5,9 @@ from __future__ import annotations
 import pathlib
 from typing import Annotated, Any
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field
+
+from alphamind.config.loaders import read_yaml_file
 
 
 class StateDeliveryConfig(BaseModel):
@@ -37,5 +38,4 @@ def _flatten_state_delivery_yaml(raw: dict[str, Any]) -> dict[str, Any]:
 
 def load_state_delivery_config(path: pathlib.Path) -> StateDeliveryConfig:
     """Parse *path* as YAML and return a validated :class:`StateDeliveryConfig`."""
-    raw: dict[str, Any] = yaml.safe_load(path.read_text())
-    return StateDeliveryConfig.model_validate(_flatten_state_delivery_yaml(raw))
+    return StateDeliveryConfig.model_validate(_flatten_state_delivery_yaml(read_yaml_file(path)))

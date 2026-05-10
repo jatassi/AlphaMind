@@ -301,10 +301,10 @@ def _build_looser_candidate(tmp_path: Path) -> LoadedCandidateConfig:
     """Return a candidate-config snapshot with a substantially looser volume sigma."""
     import yaml
 
-    raw = yaml.safe_load(CANONICAL_CONFIG_PATH.read_text())
+    raw = yaml.safe_load(CANONICAL_CONFIG_PATH.read_text(encoding="utf-8"))
     raw["anomaly_detection"]["volume_anomaly_sigma"] = 5.0
     looser_path = tmp_path / "looser_distillation.yaml"
-    looser_path.write_text(yaml.safe_dump(raw))
+    looser_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     return load_candidate_config(looser_path)
 
 

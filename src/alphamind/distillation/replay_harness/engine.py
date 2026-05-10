@@ -24,6 +24,7 @@ the design contract this module implements.
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import shutil
 import sqlite3
@@ -175,6 +176,14 @@ def _migrate_isolated_db(db_path: Path) -> None:
     command.upgrade(cfg, "head")
 
 
+# Worst-case wait under exponential backoff is ~1.3s (10ms+20+40+80+160+200*5);
+# in practice the first ``gc.collect()`` resolves the lock by forcing alembic's
+# transient pooled connection to finalize, so most callers exit on attempt 1.
+_RMTREE_MAX_ATTEMPTS = 10
+_RMTREE_BASE_DELAY_S = 0.01
+_RMTREE_MAX_DELAY_S = 0.2
+
+
 def _rmtree_with_retry(path: Path) -> None:
     """Recursively remove ``path``, tolerating Windows post-dispose share-locks.
 
@@ -182,14 +191,19 @@ def _rmtree_with_retry(path: Path) -> None:
     holding a mandatory share-lock that surfaces as
     ``PermissionError [WinError 32]`` when ``shutil.rmtree`` calls ``os.unlink``.
     POSIX never enters this branch — unlink succeeds against open files.
+
+    ``gc.collect()`` between attempts forces alembic's transient engine
+    (created inside ``command.upgrade`` and not exposed to us) to finalize
+    its pooled connection so the next ``rmtree`` sees the file unlocked.
     """
     last_error: PermissionError | None = None
-    for _ in range(5):
+    for attempt in range(_RMTREE_MAX_ATTEMPTS):
         try:
             shutil.rmtree(path)
         except PermissionError as exc:
             last_error = exc
-            time.sleep(0.1)
+            gc.collect()
+            time.sleep(min(_RMTREE_BASE_DELAY_S * 2**attempt, _RMTREE_MAX_DELAY_S))
         else:
             return
     assert last_error is not None

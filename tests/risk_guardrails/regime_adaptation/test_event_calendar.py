@@ -7,6 +7,7 @@ the staleness reporter declared in
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -161,9 +162,14 @@ def test_duplicate_event_type_and_timestamp_rejected(tmp_path: Path) -> None:
 
 
 def test_missing_file_raises_with_path(tmp_path: Path) -> None:
-    """A non-existent path raises ``EventCalendarParseError`` mentioning the path."""
+    """A non-existent path raises ``EventCalendarParseError`` mentioning the path.
+
+    ``re.escape`` keeps Windows ``C:\\Users\\...``-style paths from being
+    interpreted as regex escapes (e.g. ``\\U`` would otherwise raise
+    ``re.error: incomplete escape``).
+    """
     missing = tmp_path / "does_not_exist.yaml"
-    with pytest.raises(EventCalendarParseError, match=str(missing)):
+    with pytest.raises(EventCalendarParseError, match=re.escape(str(missing))):
         load_event_calendar(missing)
 
 

@@ -79,14 +79,20 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     """Run migrations against a live connection."""
     engine = make_engine(_resolve_db_path())
-    with engine.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            compare_type=True,
-        )
-        with context.begin_transaction():
-            context.run_migrations()
+    try:
+        with engine.connect() as connection:
+            context.configure(
+                connection=connection,
+                target_metadata=target_metadata,
+                compare_type=True,
+            )
+            with context.begin_transaction():
+                context.run_migrations()
+    finally:
+        # Without explicit disposal the pooled SQLite connection outlives the
+        # alembic call and keeps a Windows file handle on the DB, blocking
+        # ``shutil.rmtree`` of replay-harness temp dirs (ALP-408).
+        engine.dispose()
 
 
 if context.is_offline_mode():

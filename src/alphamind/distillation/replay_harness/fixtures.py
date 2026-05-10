@@ -124,7 +124,7 @@ def load_slice_manifest(slice_dir: Path) -> SliceManifest:
     if not manifest_path.is_file():
         raise FixtureNotFoundError(f"manifest file not found at {manifest_path}")
     try:
-        return SliceManifest.model_validate_json(manifest_path.read_text())
+        return SliceManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
     except ValidationError as exc:
         raise FixtureManifestError(f"invalid manifest at {manifest_path}: {exc}") from exc
 

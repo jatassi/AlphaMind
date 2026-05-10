@@ -126,7 +126,7 @@ def _rewrite_active_profile(main_yaml_path: Path, new_profile: Profile) -> None:
     """
     yaml_rt = YAML(typ="rt")
     yaml_rt.preserve_quotes = True
-    document = yaml_rt.load(main_yaml_path.read_text())
+    document = yaml_rt.load(main_yaml_path.read_text(encoding="utf-8"))
     document["active_profile"] = new_profile.value
 
     buffer = io.StringIO()

@@ -64,7 +64,7 @@ def test_unknown_regime_label_exits_one_with_clear_message(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     candidate_yaml = tmp_path / "cand.yaml"
-    candidate_yaml.write_text("not validated yet")
+    candidate_yaml.write_text("not validated yet", encoding="utf-8")
     code = main(
         _cli_args(tmp_path=tmp_path, candidate_config=candidate_yaml, regimes="definitely_unknown")
     )
@@ -90,7 +90,7 @@ def test_malformed_candidate_config_exits_one_with_validation_error(
     bad_yaml = tmp_path / "bad.yaml"
     # Valid YAML but missing the required nested distillation-config sections
     # — Pydantic's validator rejects with a field-by-field error message.
-    bad_yaml.write_text("anomaly_detection:\n  volume_anomaly_sigma: 3.0\n")
+    bad_yaml.write_text("anomaly_detection:\n  volume_anomaly_sigma: 3.0\n", encoding="utf-8")
     code = main(_cli_args(tmp_path=tmp_path, candidate_config=bad_yaml))
     captured = capsys.readouterr()
     assert code == EXIT_ERROR
@@ -127,10 +127,10 @@ def _seed_low_vol_slice(tmp_path: Path) -> None:
 
 def _write_looser_config(tmp_path: Path) -> Path:
     """Return a path to a candidate config with a looser volume-anomaly sigma."""
-    raw = yaml.safe_load(CANONICAL_CONFIG_PATH.read_text())
+    raw = yaml.safe_load(CANONICAL_CONFIG_PATH.read_text(encoding="utf-8"))
     raw["anomaly_detection"]["volume_anomaly_sigma"] = 5.0
     looser_path = tmp_path / "looser_distillation.yaml"
-    looser_path.write_text(yaml.safe_dump(raw))
+    looser_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
     return looser_path
 
 
@@ -146,7 +146,7 @@ def test_single_mode_writes_report_prints_path_and_exits_zero(
     assert written_path.exists()
     assert written_path.name == "report.md"
     assert written_path.parent.parent == (tmp_path / "reports").resolve()
-    body = written_path.read_text()
+    body = written_path.read_text(encoding="utf-8")
     assert written_path.parent.name in body  # report_id appears in header
 
 
@@ -159,7 +159,7 @@ def test_diff_mode_renders_baseline_config_header_rows(
     captured = capsys.readouterr()
     assert code == EXIT_OK, captured.err
     written_path = Path(captured.out.removeprefix("wrote report: ").strip())
-    body = written_path.read_text()
+    body = written_path.read_text(encoding="utf-8")
     assert "**baseline_config_path:**" in body
     assert "**baseline_config_sha256:**" in body
 
@@ -233,7 +233,7 @@ def test_discovery_warnings_appear_on_stderr_but_run_succeeds(
     # Inject a malformed slice (manifest exists but is invalid JSON).
     bad_slice = tmp_path / "fixtures" / "low_vol" / "broken_slice"
     bad_slice.mkdir(parents=True)
-    (bad_slice / "manifest.json").write_text("{ this is not valid json")
+    (bad_slice / "manifest.json").write_text("{ this is not valid json", encoding="utf-8")
 
     code = main(_cli_args(tmp_path=tmp_path))
     captured = capsys.readouterr()
@@ -266,7 +266,7 @@ def test_git_sha_fallback_when_subprocess_fails(
     captured = capsys.readouterr()
     assert code == EXIT_OK, captured.err
     written_path = Path(captured.out.removeprefix("wrote report: ").strip())
-    body = written_path.read_text()
+    body = written_path.read_text(encoding="utf-8")
     assert "(not in a git checkout)" in body
 
 

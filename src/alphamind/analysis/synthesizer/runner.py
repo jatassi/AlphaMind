@@ -200,7 +200,7 @@ def load_synthesizer_agent_config(
     verification script can override via ``agents_yaml_path``.
     """
     path = agents_yaml_path or _AGENTS_YAML
-    with path.open() as fh:
+    with path.open(encoding="utf-8") as fh:
         data = yaml.safe_load(fh)
     cfg = AgentsConfig.model_validate(data)
     return cfg.agents[AgentName.synthesizer]

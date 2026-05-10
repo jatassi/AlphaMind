@@ -839,7 +839,7 @@ async def test_diagnostic_files_written_when_archive_root_provided(
     assert (diag_dir / "metadata.json").exists()
     # No retry → no retry response file.
     assert not (diag_dir / "response_retry.md").exists()
-    meta = json.loads((diag_dir / "metadata.json").read_text())
+    meta = json.loads((diag_dir / "metadata.json").read_text(encoding="utf-8"))
     assert meta["tool_calls_used"] == 0
     assert meta["retry_count"] == 0
 
@@ -908,14 +908,14 @@ async def test_diagnostic_files_include_retry_on_corrective_loop(
     )
 
     diag_dir = archive_root / "invocations" / "inv-retry-001" / "analysis" / "adaptive_researcher"
-    initial_text = (diag_dir / "response_initial.md").read_text()
-    retry_text = (diag_dir / "response_retry.md").read_text()
+    initial_text = (diag_dir / "response_initial.md").read_text(encoding="utf-8")
+    retry_text = (diag_dir / "response_retry.md").read_text(encoding="utf-8")
     # The initial attempt's structured_output was None — the diagnostic
     # records the rendered placeholder. The retry succeeded with the JSON
     # payload, which renders to a dict containing the AR-1 thread.
     assert "structured_output not populated" in initial_text
     assert "AR-1" in retry_text
-    errors = json.loads((diag_dir / "errors.json").read_text())
+    errors = json.loads((diag_dir / "errors.json").read_text(encoding="utf-8"))
     assert any(e.get("attempt") == 1 for e in errors)
 
 
