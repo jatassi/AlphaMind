@@ -900,9 +900,9 @@ async def test_diagnostic_files_written_when_archive_root_provided(
     # No retry → no retry response file.
     assert not (diag_dir / "response_retry.md").exists()
     # Errors list is empty on the happy path.
-    errors = json.loads((diag_dir / "errors.json").read_text())
+    errors = json.loads((diag_dir / "errors.json").read_text(encoding="utf-8"))
     assert errors == []
-    meta = json.loads((diag_dir / "metadata.json").read_text())
+    meta = json.loads((diag_dir / "metadata.json").read_text(encoding="utf-8"))
     assert meta["invocation_id"] == "inv-diag-001"
     assert meta["mode"] == "normal"
     assert meta["model"] == agent_config.model.value
@@ -937,11 +937,11 @@ async def test_diagnostic_files_include_retry_on_corrective_loop(
 
     diag_dir = archive_root / "invocations" / "inv-retry-001" / "decision" / "strategist"
     assert (diag_dir / "response_retry.md").exists()
-    initial_text = (diag_dir / "response_initial.md").read_text()
-    retry_text = (diag_dir / "response_retry.md").read_text()
+    initial_text = (diag_dir / "response_initial.md").read_text(encoding="utf-8")
+    retry_text = (diag_dir / "response_retry.md").read_text(encoding="utf-8")
     assert "structured_output not populated" in initial_text
     assert "normal" in retry_text
-    errors = json.loads((diag_dir / "errors.json").read_text())
+    errors = json.loads((diag_dir / "errors.json").read_text(encoding="utf-8"))
     assert any(e.get("attempt") == 1 and e.get("kind") == "parse" for e in errors)
 
 
