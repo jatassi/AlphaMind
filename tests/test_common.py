@@ -38,6 +38,17 @@ def _no_sleep(_seconds: float) -> None:
     """Stand-in for time.sleep used by retry decorators."""
 
 
+def _make_http_error(*, code: int, msg: str) -> urllib.error.HTTPError:
+    """Construct a urllib.error.HTTPError with test-fixture defaults."""
+    return urllib.error.HTTPError(
+        url="https://api.stlouisfed.org/fred/series",
+        code=code,
+        msg=msg,
+        hdrs=None,  # type: ignore[arg-type]
+        fp=None,
+    )
+
+
 class _FakeRunRepo:
     """In-memory stand-in for the persistence layer used by track_run."""
 
@@ -289,13 +300,7 @@ class TestWithRetriesCritical:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
-                raise urllib.error.HTTPError(
-                    url="https://api.stlouisfed.org/fred/series",
-                    code=500,
-                    msg="Internal Server Error",
-                    hdrs=None,  # type: ignore[arg-type]
-                    fp=None,
-                )
+                raise _make_http_error(code=500, msg="Internal Server Error")
             return "ok"
 
         result = server_error()
@@ -310,13 +315,7 @@ class TestWithRetriesCritical:
         def unauthorized() -> str:
             nonlocal call_count
             call_count += 1
-            raise urllib.error.HTTPError(
-                url="https://api.stlouisfed.org/fred/series",
-                code=401,
-                msg="Unauthorized",
-                hdrs=None,  # type: ignore[arg-type]
-                fp=None,
-            )
+            raise _make_http_error(code=401, msg="Unauthorized")
 
         with pytest.raises(urllib.error.HTTPError):
             unauthorized()
@@ -363,15 +362,8 @@ class TestWithRetriesCritical:
             nonlocal call_count
             call_count += 1
             if call_count < 2:
-                http_err = urllib.error.HTTPError(
-                    url="https://api.stlouisfed.org/fred/series",
-                    code=502,
-                    msg="Bad Gateway",
-                    hdrs=None,  # type: ignore[arg-type]
-                    fp=None,
-                )
                 val_err = ValueError(None)
-                val_err.__context__ = http_err
+                val_err.__context__ = _make_http_error(code=502, msg="Bad Gateway")
                 raise val_err
             return "ok"
 
@@ -521,13 +513,7 @@ class TestWithRetriesVendorOutageExtended:
             nonlocal call_count
             call_count += 1
             if call_count < 3:
-                raise urllib.error.HTTPError(
-                    url="https://api.stlouisfed.org/fred/series",
-                    code=502,
-                    msg="Bad Gateway",
-                    hdrs=None,  # type: ignore[arg-type]
-                    fp=None,
-                )
+                raise _make_http_error(code=502, msg="Bad Gateway")
             return "ok"
 
         assert server_error() == "ok"
