@@ -460,9 +460,10 @@ async def _writeback_open(
             )
 
     validation_greeks: Greeks | None = None
+    validation_iv: float | None = None
     if result.acknowledgment is not None and result.acknowledgment.validation_metadata is not None:
-        # validation_metadata.implied_volatility plumbing tracked separately as ALP-399.
         validation_greeks = result.acknowledgment.validation_metadata.greeks
+        validation_iv = result.acknowledgment.validation_metadata.implied_volatility
     position = _build_pending_position(
         position_id=ids["position_id"],
         thesis_id=ids["thesis_id"],
@@ -470,6 +471,7 @@ async def _writeback_open(
         instrument=command.instrument,
         direction=_direction_from_instrument(command.instrument),
         validation_greeks=validation_greeks,
+        validation_iv=validation_iv,
     )
     thesis = _build_active_thesis(
         thesis_id=ids["thesis_id"],
@@ -1804,6 +1806,7 @@ def _build_pending_position(
     instrument: EquityInstrument | OptionInstrument | StrategyInstrument,
     direction: Direction,
     validation_greeks: Greeks | None = None,
+    validation_iv: float | None = None,
 ) -> PositionRecord:
     """Build a PENDING position; fills happen in Phase 1, so size is 0.
 
@@ -1817,9 +1820,12 @@ def _build_pending_position(
     :class:`EquityPositionDetails`; :class:`OptionInstrument` lands an
     :class:`OptionsPositionDetails` carrying ``validation_greeks`` (the
     per-leg greeks computed by the guardrail-evaluation library at
-    OPEN-validation time). Phase 1's ``_apply_options_entry_fill`` preserves
-    these greeks unchanged when the entry fills — refresh is the continuous
-    monitor's job (architecture.md § 4d).
+    OPEN-validation time) plus ``validation_iv`` (the IV the library
+    consumed; surfaced through ``Acknowledgment.validation_metadata.implied_volatility``,
+    persisted as ``OptionGreeks.iv_used`` per ALP-399). Phase 1's
+    ``_apply_options_entry_fill`` preserves these greeks unchanged when the
+    entry fills — refresh is the continuous monitor's job (architecture.md
+    § 4d).
     """
     if isinstance(instrument, OptionInstrument):
         if validation_greeks is None:
@@ -1845,6 +1851,7 @@ def _build_pending_position(
                 gamma=validation_greeks.gamma,
                 theta=validation_greeks.theta,
                 vega=validation_greeks.vega,
+                iv_used=validation_iv,
             ),
         )
     elif isinstance(instrument, EquityInstrument):
