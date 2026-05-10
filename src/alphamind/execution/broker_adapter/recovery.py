@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import Any, Final, Literal, Protocol
+from typing import Any, Final, Literal, Protocol, cast
 
 from alphamind.execution.broker_adapter.fill_stream import (
     FillReport,
@@ -103,12 +103,23 @@ async def recover_missed_fills_since(
     translates each :class:`OrderSnapshot` into one or more
     :class:`FillReport` records via :func:`order_snapshot_to_fill_reports`.
 
-    Reports are buffered and emitted in fill_timestamp ascending order with
-    the parent's ``alpaca_order_id`` as the tiebreak (string ordering); mleg
-    children stay attached after their parent in original translation order.
-    Sorting is necessary because Alpaca's ``GET /v2/orders`` cursor is
-    submitted_at-ordered, not terminal-event-ordered, so two orders with
-    different submission times can have terminal events in opposite order.
+    **Buffer-then-sort, not streaming.** This routine intentionally consumes
+    the full ``get_orders`` page set into memory before yielding the first
+    report so the output can be sorted by terminal-event timestamp. Alpaca's
+    ``GET /v2/orders`` cursor is ``submitted_at``-ordered, not
+    terminal-event-ordered, so two orders with different submission times
+    can have their terminal events in opposite order — surfacing them in
+    cursor order would corrupt the OMS's idempotency guarantees on the fill
+    sequence. Streaming would also require a per-event ``Heap`` since
+    Alpaca's API doesn't expose ``filled_at``-ordered cursors. The routine
+    is callable in this buffered shape because recovery windows are designed
+    to be brief (the continuous monitor invokes it only after a websocket
+    disconnect, lookback typically under an hour); a multi-day backfill is
+    out of scope for this primitive.
+
+    Reports are emitted in fill_timestamp ascending order with the parent's
+    ``alpaca_order_id`` as the tiebreak (string ordering); mleg children
+    stay attached after their parent in original translation order.
 
     *until* defaults to ``datetime.now(UTC)`` when ``None`` and is also
     forwarded as the upper bound on the get_orders cursor; orders submitted
@@ -270,8 +281,8 @@ def _position_intent_for(leg: OrderLegSnapshot) -> PositionIntentLiteral | None:
     """Coerce :class:`OrderLegSnapshot`'s str field to the OMS literal."""
     raw = leg.position_intent
     if raw in _POSITION_INTENTS:
-        # Cast through Literal — runtime check above is exhaustive.
-        return raw  # type: ignore[return-value]
+        # Runtime membership check above narrows to the Literal alphabet.
+        return cast(PositionIntentLiteral, raw)
     return None
 
 

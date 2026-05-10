@@ -13,6 +13,7 @@ modification`` for the full contract.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -201,7 +202,7 @@ def _build_replace_request(fields: ReplaceFields) -> ReplaceOrderRequest:
 # ---------------------------------------------------------------------------
 
 
-def _is_transient(exc: BaseException) -> bool:
+def _is_transient(exc: Exception) -> bool:
     """Return ``True`` if *exc* is a retriable transient error.
 
     Returning ``False`` for permanent 4xx rejections causes ``submit_with_retry``
@@ -242,12 +243,20 @@ async def submit_replace(
     replace_request = _build_replace_request(fields)
 
     async def _submit() -> ReplacementAck:
+        # alpaca-py's ``replace_order_by_id`` is sync (httpx-backed); offload to a
+        # worker thread so the caller's event loop keeps draining other tasks
+        # while the HTTP round-trip runs. Mirrors the equity / options / mleg
+        # submission paths.
         # alpaca-py typing declares Union[Order, Dict]; cast to Order — the
         # dict-return path only occurs for internal SDK error responses, which
         # surface as APIError exceptions before the return value is used.
         response = cast(
             Order,
-            client.replace_order_by_id(target_alpaca_order_id, order_data=replace_request),
+            await asyncio.to_thread(
+                client.replace_order_by_id,
+                target_alpaca_order_id,
+                order_data=replace_request,
+            ),
         )
         return ReplacementAck(
             new_alpaca_order_id=str(response.id),
@@ -282,7 +291,11 @@ async def submit_cancel(
     """
 
     async def _submit() -> CancellationAck:
-        client.cancel_order_by_id(target_alpaca_order_id)
+        # alpaca-py's ``cancel_order_by_id`` is sync (httpx-backed); offload to a
+        # worker thread so the caller's event loop keeps draining other tasks
+        # while the HTTP round-trip runs. Mirrors the equity / options / mleg
+        # submission paths.
+        await asyncio.to_thread(client.cancel_order_by_id, target_alpaca_order_id)
         return CancellationAck(alpaca_order_id=target_alpaca_order_id, accepted=True)
 
     return await submit_with_retry(

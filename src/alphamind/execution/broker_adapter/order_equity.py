@@ -17,7 +17,6 @@ Public API:
 from __future__ import annotations
 
 import asyncio
-import re
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -40,6 +39,7 @@ from alphamind.execution.broker_adapter.retry import (
     Submitted,
     submit_with_retry,
 )
+from alphamind.execution.oms.command_ids import is_engine_originated, is_pm_originated
 from alphamind.execution.oms.command_models import (
     AddCommand,
     CloseCommand,
@@ -47,9 +47,6 @@ from alphamind.execution.oms.command_models import (
     OpenCommand,
     PriceLeg,
 )
-
-# Pattern per oms-command-ids.md: PM-originated ("inv-…") or engine-originated ("MON.")
-_CLIENT_ORDER_ID_PATTERN: re.Pattern[str] = re.compile(r"^(inv-|MON\.)")
 
 
 def _require_equity_instrument(instrument: object, *, command_kind: str) -> EquityInstrument:
@@ -223,15 +220,20 @@ async def submit_equity_close(
 def _validate_client_order_id(client_order_id: str) -> None:
     """Raise :exc:`ValueError` if *client_order_id* does not match the OMS format.
 
-    Per ``oms-command-ids.md``: PM-originated IDs begin with ``inv-``; engine-
-    originated IDs begin with ``MON.``. Any other prefix (or empty string) is
-    a caller contract violation.
+    Delegates to :func:`oms.command_ids.is_pm_originated` /
+    :func:`is_engine_originated` so the broker adapter shares one pattern
+    definition with the OMS intake.
     """
-    if not client_order_id or not _CLIENT_ORDER_ID_PATTERN.match(client_order_id):
-        raise ValueError(
-            f"client_order_id {client_order_id!r} must be non-empty and match "
-            r"'^(inv-|MON\.)' per oms-command-ids.md"
+    if not client_order_id:
+        msg = "client_order_id must be non-empty"
+        raise ValueError(msg)
+    if not (is_pm_originated(client_order_id) or is_engine_originated(client_order_id)):
+        msg = (
+            f"client_order_id {client_order_id!r} does not match the canonical "
+            f"OMS command-ID pattern (PM-originated 'inv-...' or "
+            f"engine-originated 'MON....')"
         )
+        raise ValueError(msg)
 
 
 def _entry_side(direction: str) -> OrderSide:

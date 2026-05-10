@@ -67,7 +67,7 @@ async def submit_with_retry[T](
     submit: Callable[[], Awaitable[T]],
     *,
     window_seconds: float,
-    transient_classifier: Callable[[BaseException], bool] | None = None,
+    transient_classifier: Callable[[Exception], bool] | None = None,
 ) -> SubmissionOutcome[T]:
     """Run ``submit()`` with bounded exponential-backoff retry.
 
@@ -79,17 +79,21 @@ async def submit_with_retry[T](
       re-raise so the caller can translate them to a synchronous OMS rejection.
     * The default ``transient_classifier`` is
       :func:`alphamind.execution.broker_adapter.errors.is_transient`.
+
+    ``BaseException`` subclasses (``asyncio.CancelledError``, ``KeyboardInterrupt``,
+    ``SystemExit``) propagate unchanged — they signal external interruption and
+    must never be retried as if they were transient broker failures.
     """
     classifier = transient_classifier or is_transient
     deadline = time.monotonic() + window_seconds
     attempt = 0
-    last_exc: BaseException | None = None
+    last_exc: Exception | None = None
 
     while True:
         attempt += 1
         try:
             payload = await submit()
-        except BaseException as exc:
+        except Exception as exc:
             if not classifier(exc):
                 raise
             last_exc = exc

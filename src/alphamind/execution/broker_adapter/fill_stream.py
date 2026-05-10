@@ -26,7 +26,7 @@ import asyncio
 import contextlib
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
-from typing import Any, Final, Literal, Protocol
+from typing import Any, Final, Literal, Protocol, cast
 
 from alpaca.trading.models import Order, TradeUpdate
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -236,8 +236,8 @@ def _position_intent_for(leg: Order) -> PositionIntentLiteral | None:
         return None
     raw = getattr(intent, "value", intent)
     if raw in {"buy_to_open", "sell_to_open", "buy_to_close", "sell_to_close"}:
-        # Cast through Literal — runtime check above is exhaustive.
-        return raw  # type: ignore[return-value]
+        # Runtime membership check above narrows to the Literal alphabet.
+        return cast(PositionIntentLiteral, raw)
     return None
 
 

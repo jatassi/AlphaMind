@@ -600,6 +600,87 @@ async def test_submit_cancel_retry_exhaustion_returns_gateway_submission_failed(
 
 
 # ---------------------------------------------------------------------------
+# Sync SDK calls run on the worker thread pool — both replace and cancel
+# (regression: alpaca-py's REST methods are sync; calling them inline on the
+# event loop blocks every other coroutine for the duration of the HTTP RTT).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_submit_replace_runs_sdk_call_on_worker_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``client.replace_order_by_id`` runs via ``asyncio.to_thread``.
+
+    Tracks ``threading.current_thread()`` inside the SDK callable and asserts
+    it is NOT the main thread the test runs on. Mirrors the equity / options /
+    mleg sibling pattern; the regression we guard against is calling the sync
+    SDK directly from the coroutine.
+    """
+    import threading
+
+    main_thread = threading.current_thread()
+    observed: dict[str, threading.Thread] = {}
+
+    def _capturing_replace(*args: Any, **kwargs: Any) -> Any:
+        observed["thread"] = threading.current_thread()
+        return _mock_alpaca_order(str(uuid4()))
+
+    client = _make_client()
+    client.replace_order_by_id.side_effect = _capturing_replace
+    execution = _make_execution_config()
+    fields = ReplaceFields(limit_price=100.0)
+
+    result = await submit_replace(
+        client=client,
+        execution=execution,
+        target_alpaca_order_id="orig-id",
+        target_asset_class="us_equity",
+        target_order_class="simple",
+        fields=fields,
+    )
+
+    assert isinstance(result, Submitted)
+    assert "thread" in observed
+    assert observed["thread"] is not main_thread, (
+        f"replace_order_by_id ran on the main thread {main_thread.name!r}; "
+        f"expected a worker-pool thread (asyncio.to_thread offload)."
+    )
+
+
+@pytest.mark.asyncio
+async def test_submit_cancel_runs_sdk_call_on_worker_thread() -> None:
+    """``client.cancel_order_by_id`` runs via ``asyncio.to_thread``.
+
+    Same regression-guard as the replace counterpart.
+    """
+    import threading
+
+    main_thread = threading.current_thread()
+    observed: dict[str, threading.Thread] = {}
+
+    def _capturing_cancel(*args: Any, **kwargs: Any) -> None:
+        observed["thread"] = threading.current_thread()
+
+    client = _make_client()
+    client.cancel_order_by_id.side_effect = _capturing_cancel
+    execution = _make_execution_config()
+
+    result = await submit_cancel(
+        client=client,
+        execution=execution,
+        target_alpaca_order_id="some-id",
+    )
+
+    assert isinstance(result, Submitted)
+    assert "thread" in observed
+    assert observed["thread"] is not main_thread, (
+        f"cancel_order_by_id ran on the main thread {main_thread.name!r}; "
+        f"expected a worker-pool thread (asyncio.to_thread offload)."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Cancellation does not require client_order_id
 # ---------------------------------------------------------------------------
 

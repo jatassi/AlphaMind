@@ -27,7 +27,7 @@ class _PermanentError(Exception):
     """Synthetic permanent — classified as non-retriable."""
 
 
-def _is_transient(exc: BaseException) -> bool:
+def _is_transient(exc: Exception) -> bool:
     return isinstance(exc, _TransientError)
 
 
@@ -157,9 +157,9 @@ async def test_permanent_rejection_reraises() -> None:
 @pytest.mark.asyncio
 async def test_default_classifier_is_is_transient(monkeypatch: pytest.MonkeyPatch) -> None:
     """When no classifier is passed, the helper falls back to ``is_transient``."""
-    calls: list[BaseException] = []
+    calls: list[Exception] = []
 
-    def fake_is_transient(exc: BaseException) -> bool:
+    def fake_is_transient(exc: Exception) -> bool:
         calls.append(exc)
         return True
 
@@ -188,6 +188,77 @@ async def test_default_classifier_is_is_transient(monkeypatch: pytest.MonkeyPatc
     assert outcome.payload == "ok"
     assert len(calls) == 1
     assert isinstance(calls[0], RuntimeError)
+
+
+# ---------------------------------------------------------------------------
+# BaseException propagation — CancelledError / KeyboardInterrupt / SystemExit
+# must NOT enter the transient-classifier path; they are external interruptions
+# (event-loop teardown, operator interrupt) that the retry helper must surface
+# unchanged regardless of what the classifier would say about an Exception of
+# the same status-code shape.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancelled_error_propagates_without_retry() -> None:
+    """``asyncio.CancelledError`` propagates through ``submit_with_retry``.
+
+    Regression: a permissive ``except BaseException`` clause routed
+    ``CancelledError`` through ``is_transient`` (which returned ``True`` because
+    the exception lacks a status_code), turning event-loop cancellation into a
+    silent retry storm.
+    """
+    import asyncio
+
+    classifier_calls: list[BaseException] = []
+
+    def _accepting_classifier(exc: Exception) -> bool:
+        classifier_calls.append(exc)
+        return True
+
+    async def submit() -> str:
+        raise asyncio.CancelledError("operator cancelled")
+
+    with pytest.raises(asyncio.CancelledError):
+        await submit_with_retry(
+            submit,
+            window_seconds=5,
+            transient_classifier=_accepting_classifier,
+        )
+
+    assert classifier_calls == [], (
+        "CancelledError should propagate without consulting the transient "
+        f"classifier; got {len(classifier_calls)} classifier call(s)."
+    )
+
+
+@pytest.mark.asyncio
+async def test_keyboard_interrupt_propagates_without_retry() -> None:
+    """``KeyboardInterrupt`` propagates through ``submit_with_retry``.
+
+    Same regression as ``CancelledError``; operator Ctrl-C must abort, not
+    retry.
+    """
+    classifier_calls: list[BaseException] = []
+
+    def _accepting_classifier(exc: Exception) -> bool:
+        classifier_calls.append(exc)
+        return True
+
+    async def submit() -> str:
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        await submit_with_retry(
+            submit,
+            window_seconds=5,
+            transient_classifier=_accepting_classifier,
+        )
+
+    assert classifier_calls == [], (
+        "KeyboardInterrupt should propagate without consulting the transient "
+        f"classifier; got {len(classifier_calls)} classifier call(s)."
+    )
 
 
 # ---------------------------------------------------------------------------

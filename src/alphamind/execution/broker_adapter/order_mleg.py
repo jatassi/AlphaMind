@@ -43,6 +43,7 @@ from alphamind.execution.broker_adapter.retry import (
     Submitted,
     submit_with_retry,
 )
+from alphamind.execution.oms.command_ids import is_engine_originated, is_pm_originated
 from alphamind.execution.oms.command_models import (
     AddCommand,
     CloseCommand,
@@ -126,23 +127,21 @@ _CONTRACT_TYPE_ENUM: dict[str, OptionContractType] = {
 # ---------------------------------------------------------------------------
 
 
-_VALID_CLIENT_ORDER_ID_PREFIXES: tuple[str, ...] = ("inv-", "MON.")
-
-
 def _validate_client_order_id(client_order_id: str) -> None:
     """Reject malformed ``client_order_id`` per ``oms-command-ids.md``.
 
-    PM-originated IDs start with ``inv-``; engine-originated IDs start with
-    ``MON.``. Field-level pattern enforcement is the OMS intake layer's job;
-    this helper guards the caller's surface.
+    Delegates to :func:`oms.command_ids.is_pm_originated` /
+    :func:`is_engine_originated` so the broker adapter shares one pattern
+    definition with the OMS intake.
     """
     if not client_order_id:
         msg = "client_order_id must be non-empty"
         raise ValueError(msg)
-    if not client_order_id.startswith(_VALID_CLIENT_ORDER_ID_PREFIXES):
+    if not (is_pm_originated(client_order_id) or is_engine_originated(client_order_id)):
         msg = (
-            f"client_order_id must start with one of "
-            f"{_VALID_CLIENT_ORDER_ID_PREFIXES!r}; got {client_order_id!r}"
+            f"client_order_id {client_order_id!r} does not match the canonical "
+            f"OMS command-ID pattern (PM-originated 'inv-...' or "
+            f"engine-originated 'MON....')"
         )
         raise ValueError(msg)
 

@@ -1168,6 +1168,61 @@ class TestGetOptionContracts:
         with pytest.raises((TypeError, ValidationError)):
             snap.strike = 200.0
 
+    def test_paginates_through_next_page_token(self) -> None:
+        """Heavily-listed underlyings (SPY/QQQ) routinely surface > 100
+        contracts per expiration. The wrapper must follow ``next_page_token``
+        until exhaustion so the caller receives the complete chain rather
+        than the silently truncated first page.
+        """
+        from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+        # Three pages of 100, 100, and 50 contracts; chain has 250 total
+        # strikes.
+        page_one = [_make_option_contract(strike=100.0 + i) for i in range(100)]
+        page_two = [_make_option_contract(strike=200.0 + i) for i in range(100)]
+        page_three = [_make_option_contract(strike=300.0 + i) for i in range(50)]
+        responses = [
+            _make_option_contracts_response(page_one, next_page_token="cursor-2"),
+            _make_option_contracts_response(page_two, next_page_token="cursor-3"),
+            _make_option_contracts_response(page_three, next_page_token=None),
+        ]
+
+        client = _fake_client()
+        client.get_option_contracts.side_effect = responses
+
+        qs = AccountStateQueries(client)
+        result = qs.get_option_contracts(underlying="SPY", expiration=date(2026, 6, 19))
+
+        assert len(result) == 250, (
+            f"expected 250 contracts (3 pages of 100/100/50); "
+            f"got {len(result)} — pagination did not exhaust next_page_token"
+        )
+        assert client.get_option_contracts.call_count == 3
+        # Cursor advances on subsequent calls.
+        first_request = client.get_option_contracts.call_args_list[0][0][0]
+        second_request = client.get_option_contracts.call_args_list[1][0][0]
+        third_request = client.get_option_contracts.call_args_list[2][0][0]
+        assert first_request.page_token is None
+        assert second_request.page_token == "cursor-2"
+        assert third_request.page_token == "cursor-3"
+
+    def test_pagination_terminates_on_empty_token(self) -> None:
+        """Single-page responses (next_page_token None or empty) terminate
+        cleanly without an extra fetch.
+        """
+        from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+        client = _fake_client()
+        client.get_option_contracts.return_value = _make_option_contracts_response(
+            [_make_option_contract(strike=100.0)], next_page_token=None
+        )
+
+        qs = AccountStateQueries(client)
+        result = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+
+        assert len(result) == 1
+        assert client.get_option_contracts.call_count == 1
+
 
 # ---------------------------------------------------------------------------
 # 11. Public surface re-exports

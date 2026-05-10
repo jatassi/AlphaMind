@@ -41,7 +41,7 @@ class PermanentRejection:
     alpaca_message: str
 
 
-def classify_alpaca_error(exc: BaseException) -> PermanentRejection | None:
+def classify_alpaca_error(exc: Exception) -> PermanentRejection | None:
     """Return :class:`PermanentRejection` if *exc* is non-retriable; else ``None``.
 
     ``None`` routes the caller's retry loop to retry — network errors, timeouts,
@@ -63,7 +63,7 @@ def classify_alpaca_error(exc: BaseException) -> PermanentRejection | None:
     )
 
 
-def is_transient(exc: BaseException) -> bool:
+def is_transient(exc: Exception) -> bool:
     """Default transient classifier for :func:`submit_with_retry`.
 
     Equivalent to ``classify_alpaca_error(exc) is None``.
@@ -76,7 +76,7 @@ def is_transient(exc: BaseException) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _http_status(exc: BaseException) -> int | None:
+def _http_status(exc: Exception) -> int | None:
     """Extract HTTP status from an exception, or ``None`` if unavailable.
 
     ``APIError`` exposes ``.status_code`` directly. Other exceptions
@@ -88,7 +88,7 @@ def _http_status(exc: BaseException) -> int | None:
     return status if isinstance(status, int) else None
 
 
-def _alpaca_message(exc: BaseException) -> str:
+def _alpaca_message(exc: Exception) -> str:
     """Extract Alpaca's error message text, falling back to ``str(exc)``.
 
     ``APIError.message`` is a property that decodes the JSON body; a malformed

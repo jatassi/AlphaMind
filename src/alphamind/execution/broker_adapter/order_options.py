@@ -383,7 +383,10 @@ async def _submit(
             _do_submit,
             window_seconds=execution.submission_retry_window_seconds,
         )
-    except BaseException as exc:
+    except Exception as exc:
+        # ``BaseException`` (CancelledError, KeyboardInterrupt, SystemExit)
+        # propagates so external interruptions are never re-classified as
+        # broker rejections.
         rejection = classify_alpaca_error(exc)
         if rejection is not None:
             raise PermanentRejectionError(rejection) from exc

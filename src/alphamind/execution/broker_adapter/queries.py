@@ -225,6 +225,24 @@ def _to_aware(ts: dt.datetime | None) -> dt.datetime | None:
     return ts
 
 
+def _require_aware(ts: dt.datetime | None, *, field_name: str) -> dt.datetime:
+    """Like :func:`_to_aware` but raises ``ValueError`` when *ts* is ``None``.
+
+    Used at boundaries where the upstream alpaca-py field is typed
+    ``Optional[datetime]`` but our snapshot model declares the field
+    non-nullable (``submitted_at`` on orders, ``timestamp`` / ``next_open`` /
+    ``next_close`` on the clock). A ``None`` here means the SDK returned a
+    malformed payload — surface it explicitly rather than masking with a
+    type-checker suppression.
+    """
+    if ts is None:
+        msg = f"alpaca-py response missing required tz-aware datetime: {field_name!r}"
+        raise ValueError(msg)
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=dt.UTC)
+    return ts
+
+
 def _localize_naive(ts: dt.datetime) -> dt.datetime:
     """Attach America/New_York timezone to a naive datetime (calendar open/close)."""
     if ts.tzinfo is None:
@@ -264,7 +282,7 @@ def _convert_order(order: Order) -> OrderSnapshot:
         time_in_force=_enum_str(order.time_in_force),
         order_class=_enum_str(order.order_class),
         status=_enum_str(order.status),
-        submitted_at=_to_aware(order.submitted_at),  # type: ignore[arg-type]
+        submitted_at=_require_aware(order.submitted_at, field_name="Order.submitted_at"),
         filled_at=_to_aware(order.filled_at),
         canceled_at=_to_aware(order.canceled_at),
         expired_at=_to_aware(order.expired_at),
@@ -532,10 +550,10 @@ class AccountStateQueries:
             msg = "get_clock returned unexpected raw-data response"
             raise TypeError(msg)
         return MarketClock(
-            timestamp=_to_aware(result.timestamp),  # type: ignore[arg-type]
+            timestamp=_require_aware(result.timestamp, field_name="Clock.timestamp"),
             is_open=bool(result.is_open),
-            next_open=_to_aware(result.next_open),  # type: ignore[arg-type]
-            next_close=_to_aware(result.next_close),  # type: ignore[arg-type]
+            next_open=_require_aware(result.next_open, field_name="Clock.next_open"),
+            next_close=_require_aware(result.next_close, field_name="Clock.next_close"),
         )
 
     def get_option_contracts(
@@ -547,27 +565,35 @@ class AccountStateQueries:
         """Return active call contracts on *underlying* expiring on *expiration*.
 
         Wraps ``TradingClient.get_option_contracts`` via
-        ``GetOptionContractsRequest(type=CALL, status=ACTIVE)``. Results are
-        sorted by strike ascending so callers can pick by index (median, ATM,
-        etc.). The verify-script strike-picker uses this surface to avoid
-        hardcoding strikes that may not be listed for the picked expiration.
+        ``GetOptionContractsRequest(type=CALL, status=ACTIVE)`` and paginates
+        through ``next_page_token`` until exhaustion — heavily-listed
+        underlyings (SPY, QQQ) routinely surface > 100 contracts per
+        expiration, which is Alpaca's default ``limit``. Results are sorted
+        by strike ascending so callers can pick by index (median, ATM, etc.).
 
         ``OptionContractsResponse.option_contracts`` is ``Optional[List]`` in
         the SDK; the wrapper coerces ``None`` to an empty tuple so callers can
         treat "no listed contracts for this expiration" as data, not a missing
         field.
         """
-        request = GetOptionContractsRequest(
-            underlying_symbols=[underlying],
-            expiration_date=expiration,
-            type=ContractType.CALL,
-            status=AssetStatus.ACTIVE,
-        )
-        result = self._client.get_option_contracts(request)
-        if not isinstance(result, OptionContractsResponse):
-            msg = "get_option_contracts returned unexpected raw-data response"
-            raise TypeError(msg)
-        contracts: list[OptionContract] = list(result.option_contracts or [])
+        contracts: list[OptionContract] = []
+        page_token: str | None = None
+        while True:
+            request = GetOptionContractsRequest(
+                underlying_symbols=[underlying],
+                expiration_date=expiration,
+                type=ContractType.CALL,
+                status=AssetStatus.ACTIVE,
+                page_token=page_token,
+            )
+            result = self._client.get_option_contracts(request)
+            if not isinstance(result, OptionContractsResponse):
+                msg = "get_option_contracts returned unexpected raw-data response"
+                raise TypeError(msg)
+            contracts.extend(result.option_contracts or [])
+            page_token = result.next_page_token
+            if not page_token:
+                break
         snapshots = sorted(
             (
                 OptionContractSnapshot(
