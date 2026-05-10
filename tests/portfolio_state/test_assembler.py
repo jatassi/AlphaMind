@@ -1334,6 +1334,43 @@ def test_assemble_snapshot_returns_assembled_snapshot_bundle() -> None:
     assert "POS-NVDA" in assembled.freshness.position_ids_priced_fresh
 
 
+def test_assemble_snapshot_exposes_materialized_price_map() -> None:
+    """``assemble_snapshot`` surfaces the assembler-internal price_map on
+    the AssembledSnapshot bundle so downstream callers can reuse the
+    quotes it already fetched (ALP-407).
+
+    Verifies the returned ``price_map`` mirrors the ticker→PriceQuote
+    mapping the provider returned, keyed by the same tickers the
+    assembler enumerated when fetching prices.
+    """
+    pos_a = _make_open_equity_position("POS-A", "NVDA", 10.0, 500.0)
+    pos_b = _make_open_equity_position("POS-B", "AAPL", 20.0, 150.0)
+    fixture = _make_fixture(
+        open_positions=(pos_a, pos_b),
+        cash_ledger=_make_cash_ledger(current_cash=0.0),
+    )
+    repo = StubPortfolioStateRepository(fixture)
+    nvda_quote = _make_fresh_quote("NVDA", 520.0)
+    aapl_quote = _make_fresh_quote("AAPL", 155.0)
+    provider = StubCurrentPriceProvider({"NVDA": nvda_quote, "AAPL": aapl_quote}, _NOW)
+
+    assembled = _run(
+        assemble_snapshot(
+            repository=repo,
+            price_provider=provider,
+            sector_resolver=_null_sector_resolver,
+            config=_make_config(),
+            now=_NOW,
+        )
+    )
+
+    assert set(assembled.price_map.keys()) == {"NVDA", "AAPL"}
+    assert assembled.price_map["NVDA"].price_usd == pytest.approx(520.0)
+    assert assembled.price_map["AAPL"].price_usd == pytest.approx(155.0)
+    # The values are the materialized PriceQuote objects from the provider.
+    assert isinstance(assembled.price_map["NVDA"], PriceQuote)
+
+
 def test_assembler_recomputes_available_buying_power_from_canonical_formula() -> None:
     """``available_buying_power_usd`` is a derived field — the assembler
     overwrites whatever the cash_ledger row carries with the canonical

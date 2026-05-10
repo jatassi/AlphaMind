@@ -842,6 +842,57 @@ def test_pre_processor_receives_outputs_from_parallel_branch(
 
 
 # ---------------------------------------------------------------------------
+# Price-provider reuse (ALP-407)
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_does_not_double_fetch_quotes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The composition reuses the assembler's materialized ``price_map``
+    instead of re-fetching quotes for the strategist + PM lookup, so a
+    single decision-pipeline invocation hits ``get_quotes`` exactly once
+    (ALP-407).
+    """
+    from alphamind.portfolio_state.pricing import (
+        PriceQuote,
+        StubCurrentPriceProvider,
+    )
+
+    class _CountingPriceProvider:
+        def __init__(self, inner: StubCurrentPriceProvider) -> None:
+            self._inner = inner
+            self.get_quotes_calls = 0
+
+        async def get_quote(self, ticker: str, *, freshness_threshold_seconds: float) -> PriceQuote:
+            return await self._inner.get_quote(
+                ticker, freshness_threshold_seconds=freshness_threshold_seconds
+            )
+
+        async def get_quotes(
+            self,
+            tickers: tuple[str, ...],
+            *,
+            freshness_threshold_seconds: float,
+        ) -> dict[str, PriceQuote]:
+            self.get_quotes_calls += 1
+            return await self._inner.get_quotes(
+                tickers, freshness_threshold_seconds=freshness_threshold_seconds
+            )
+
+    log = _CallLog()
+    _patch_runners(monkeypatch, log=log)
+
+    inputs = _make_minimal_inputs()
+    counting = _CountingPriceProvider(inputs["price_provider"])
+    inputs["price_provider"] = counting
+
+    from alphamind.pipeline.decision import run_decision_pipeline
+
+    asyncio.run(run_decision_pipeline(**inputs))
+
+    assert counting.get_quotes_calls == 1
+
+
+# ---------------------------------------------------------------------------
 # Result dataclass shape
 # ---------------------------------------------------------------------------
 

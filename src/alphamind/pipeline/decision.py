@@ -62,6 +62,7 @@ from alphamind.portfolio_state.consumers.portfolio_manager import (
     project_portfolio_manager_view,
 )
 from alphamind.portfolio_state.consumers.strategist import project_strategist_view
+from alphamind.portfolio_state.freshness import AssembledSnapshot
 from alphamind.portfolio_state.library_snapshot import (
     LibrarySnapshot,
     to_library_snapshot,
@@ -277,11 +278,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     analyst_mode = _ANALYST_MODE_FOR_PIPELINE[mode]
     strategist_mode = _STRATEGIST_MODE_FOR_PIPELINE[mode]
     available_capital_usd = pydantic_snapshot.cash_ledger.true_deployable_capital_usd
-    current_price_lookup = await _build_price_lookup(
-        snapshot=pydantic_snapshot,
-        price_provider=price_provider,
-        freshness_threshold_seconds=portfolio_state_config.snapshot_freshness_max_price_age_seconds,
-    )
+    current_price_lookup = _price_lookup_from_assembled(assembled)
     analyst_result, strategist_result = await asyncio.gather(
         run_analyst(
             mode=analyst_mode,
@@ -431,48 +428,20 @@ def _adapt_sector_resolver_for_assembler(
 # ---------------------------------------------------------------------------
 
 
-async def _build_price_lookup(
-    *,
-    snapshot: PortfolioStateSnapshot,
-    price_provider: CurrentPriceProvider,
-    freshness_threshold_seconds: float,
-) -> Callable[[str], float]:
-    """Build a synchronous ticker→price lookup for the strategist and PM input
-    bundles.
+def _price_lookup_from_assembled(assembled: AssembledSnapshot) -> Callable[[str], float]:
+    """Build a synchronous ticker→price lookup over the assembler-materialized
+    ``price_map`` (ALP-407).
 
-    Pre-fetches every underlying ticker referenced by the snapshot's open
-    and pending positions through the provider, then closes over the
-    materialized dict. The 0.0 fallback in the closure is unreachable in
-    practice — every ticker referenced by the snapshot's open and pending
-    positions is enumerated above and its quote is fetched, so the agents
-    only ever ask about held positions whose tickers are guaranteed to be
-    in the lookup. The strategist's input-bundle renderer raises
+    The 0.0 fallback in the closure is unreachable in practice — every
+    ticker referenced by the snapshot's open and pending positions was
+    enumerated by the assembler and its quote is in ``price_map``, so the
+    agents only ever ask about held positions whose tickers are guaranteed
+    to be present. The strategist's input-bundle renderer raises
     ``ValueError`` on a ``KeyError`` from this callable, so the fallback
     exists only to satisfy the ``Callable[[str], float]`` signature
     without requiring callers to handle ``KeyError``.
     """
-    from alphamind.portfolio_state.records.positions import (
-        EquityPositionDetails,
-        OptionsPositionDetails,
-        StrategyPositionDetails,
-    )
-
-    seen: dict[str, None] = {}  # preserves insertion order
-    for pos in (*snapshot.open_positions, *snapshot.pending_positions):
-        details = pos.record.details
-        if isinstance(details, EquityPositionDetails):
-            seen[details.ticker] = None
-        elif isinstance(details, OptionsPositionDetails):
-            seen[details.underlying_ticker] = None
-        elif isinstance(details, StrategyPositionDetails):
-            for leg in details.legs:
-                seen[leg.options.underlying_ticker] = None
-
-    quotes = await price_provider.get_quotes(
-        tickers=tuple(seen),
-        freshness_threshold_seconds=freshness_threshold_seconds,
-    )
-    by_ticker = {ticker: quote.price_usd for ticker, quote in quotes.items()}
+    by_ticker = {ticker: quote.price_usd for ticker, quote in assembled.price_map.items()}
 
     def _lookup(ticker: str) -> float:
         return by_ticker.get(ticker, 0.0)

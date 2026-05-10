@@ -782,7 +782,7 @@ def test_compute_snapshot_freshness_threshold_boundary() -> None:
 
 
 def test_assembled_snapshot_constructs() -> None:
-    """AssembledSnapshot bundles snapshot and freshness correctly."""
+    """AssembledSnapshot bundles snapshot, freshness, and price_map correctly."""
     snapshot = _make_snapshot()
     outcomes = PriceFetchOutcomes(
         position_ids_priced_fresh=frozenset(),
@@ -791,13 +791,14 @@ def test_assembled_snapshot_constructs() -> None:
         oldest_price_as_of=None,
     )
     freshness = compute_snapshot_freshness(snapshot, fetch_outcomes=outcomes, config=_make_config())
-    assembled = AssembledSnapshot(snapshot=snapshot, freshness=freshness)
+    assembled = AssembledSnapshot(snapshot=snapshot, freshness=freshness, price_map={})
     assert assembled.snapshot is snapshot
     assert assembled.freshness is freshness
+    assert assembled.price_map == {}
 
 
 def test_assembled_snapshot_is_frozen() -> None:
-    """Mutating snapshot or freshness field raises an error."""
+    """Mutating snapshot, freshness, or price_map raises an error."""
     snapshot = _make_snapshot()
     outcomes = PriceFetchOutcomes(
         position_ids_priced_fresh=frozenset(),
@@ -806,8 +807,10 @@ def test_assembled_snapshot_is_frozen() -> None:
         oldest_price_as_of=None,
     )
     freshness = compute_snapshot_freshness(snapshot, fetch_outcomes=outcomes, config=_make_config())
-    assembled = AssembledSnapshot(snapshot=snapshot, freshness=freshness)
+    assembled = AssembledSnapshot(snapshot=snapshot, freshness=freshness, price_map={})
     with pytest.raises(ValidationError):
         assembled.snapshot = _make_snapshot()
     with pytest.raises(ValidationError):
         assembled.freshness = freshness
+    with pytest.raises(ValidationError):
+        assembled.price_map = {}
