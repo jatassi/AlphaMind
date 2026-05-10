@@ -147,12 +147,13 @@ _NEWS_OUTLETS_YAML = "outlets:\n  Reuters: {tier: tier_1}\n"
 
 def _seed_canonical_config_dir(tmp_path: Path) -> None:
     """Drop a minimal valid YAML tree covering every file ``load_config`` reads."""
-    (tmp_path / "data_sources.yaml").write_text(_DATA_SOURCES_YAML)
-    (tmp_path / "collector_schedule.yaml").write_text(_COLLECTOR_SCHEDULE_YAML)
-    (tmp_path / "news_outlets.yaml").write_text(_NEWS_OUTLETS_YAML)
+    (tmp_path / "data_sources.yaml").write_text(_DATA_SOURCES_YAML, encoding="utf-8")
+    (tmp_path / "collector_schedule.yaml").write_text(_COLLECTOR_SCHEDULE_YAML, encoding="utf-8")
+    (tmp_path / "news_outlets.yaml").write_text(_NEWS_OUTLETS_YAML, encoding="utf-8")
     repo_root = Path(__file__).parent.parent
     (tmp_path / "distillation.yaml").write_text(
-        (repo_root / "config" / "distillation.yaml").read_text()
+        (repo_root / "config" / "distillation.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
     )
 
 

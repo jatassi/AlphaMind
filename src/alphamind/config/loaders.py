@@ -46,10 +46,14 @@ def read_yaml_file(path: Path) -> dict[str, Any]:
     Raises ``FileNotFoundError`` with a tagged message if the file is missing
     so the loader fails closed at invocation start. Returns an empty dict if
     the file is empty (matching ``yaml.safe_load`` semantics for empty input).
+
+    Reads as UTF-8 explicitly — config files are authored UTF-8 (em-dashes,
+    smart quotes in comments) and Windows' cp1252 default would otherwise
+    mojibake the contents.
     """
     if not path.exists():
         raise FileNotFoundError(f"Required configuration file not found: {path}")
-    return cast(dict[str, Any], yaml.safe_load(path.read_text()) or {})
+    return cast(dict[str, Any], yaml.safe_load(path.read_text(encoding="utf-8")) or {})
 
 
 def load_profiles(config_dir: Path) -> Mapping[Profile, ProfileConfig]:

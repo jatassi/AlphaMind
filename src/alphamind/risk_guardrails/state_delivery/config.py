@@ -37,5 +37,5 @@ def _flatten_state_delivery_yaml(raw: dict[str, Any]) -> dict[str, Any]:
 
 def load_state_delivery_config(path: pathlib.Path) -> StateDeliveryConfig:
     """Parse *path* as YAML and return a validated :class:`StateDeliveryConfig`."""
-    raw: dict[str, Any] = yaml.safe_load(path.read_text())
+    raw: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
     return StateDeliveryConfig.model_validate(_flatten_state_delivery_yaml(raw))

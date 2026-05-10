@@ -245,7 +245,7 @@ async def run_strategist(  # noqa: PLR0913 — signature dictated by ALP-308 spe
         )
 
     resolved_config = agent_config or load_strategist_agent_config(agents_config_path)
-    system_prompt = (_REPO_ROOT / resolved_config.prompt).read_text()
+    system_prompt = (_REPO_ROOT / resolved_config.prompt).read_text(encoding="utf-8")
 
     initial_validation_state = build_initial_validation_state(
         invocation_id=invocation_id,

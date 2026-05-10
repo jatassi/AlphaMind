@@ -181,7 +181,7 @@ def test_fixture_not_found_error_subclasses_file_not_found() -> None:
 def _write_manifest(slice_dir: pathlib.Path, payload: dict[str, object]) -> pathlib.Path:
     slice_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = slice_dir / "manifest.json"
-    manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return manifest_path
 
 

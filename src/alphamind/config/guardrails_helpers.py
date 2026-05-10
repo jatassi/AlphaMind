@@ -41,7 +41,7 @@ def load_cumulative_drawdown_progressive_tiers() -> tuple[ProgressiveTier, ...]:
     consumer (production orchestrator, verify scripts, test fixture state)
     pointed at the same tuple object so identity comparisons hold.
     """
-    raw = cast(dict[str, Any], yaml.safe_load(_GUARDRAILS_YAML.read_text()))
+    raw = cast(dict[str, Any], yaml.safe_load(_GUARDRAILS_YAML.read_text(encoding="utf-8")))
     config = GuardrailsConfig.model_validate(raw)
     rule = next(r for r in config.rules if r.id == _CUMULATIVE_DRAWDOWN_RULE_ID)
     assert rule.progressive_tiers is not None

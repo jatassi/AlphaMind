@@ -51,7 +51,7 @@ def _resolve_path(path: str | None) -> str:
 
         config_file = Path(__file__).parents[3] / "config" / "main.yaml"
         if config_file.exists():
-            with config_file.open() as fh:
+            with config_file.open(encoding="utf-8") as fh:
                 cfg: dict[str, Any] = yaml.safe_load(fh) or {}
             db_path: str | None = cfg.get("paths", {}).get("database")
             if db_path:

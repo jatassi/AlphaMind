@@ -50,5 +50,5 @@ def _flatten_portfolio_state_yaml(raw: dict[str, Any]) -> dict[str, Any]:
 
 def load_portfolio_state_config(path: pathlib.Path) -> PortfolioStateConfig:
     """Parse *path* as YAML and return a validated :class:`PortfolioStateConfig`."""
-    raw: dict[str, Any] = yaml.safe_load(path.read_text())
+    raw: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
     return PortfolioStateConfig.model_validate(_flatten_portfolio_state_yaml(raw))
