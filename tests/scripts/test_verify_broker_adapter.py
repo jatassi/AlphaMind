@@ -1016,6 +1016,8 @@ class _FakeStream:
     ``tests/execution/broker_adapter/test_fill_stream.py``. Captures the
     handler so tests can inject ``TradeUpdate`` events; ``_run_forever`` parks
     until cancelled so ``subscribe_trade_updates`` can drain the queue.
+    Tracks ``subscribe_call_count`` so tests can assert the lifecycle
+    subscribes exactly once across both fills (not per-fill).
     """
 
     def __init__(self) -> None:
@@ -1023,10 +1025,12 @@ class _FakeStream:
 
         self.handler: Any = None
         self.run_cancelled = False
+        self.subscribe_call_count = 0
         self._park = _asyncio.Event()
 
     def subscribe_trade_updates(self, handler: Any) -> None:
         self.handler = handler
+        self.subscribe_call_count += 1
 
     async def inject(self, update: Any) -> None:
         assert self.handler is not None
@@ -1208,6 +1212,14 @@ async def test_phase_3_happy_path_equity_open_fill_close(tmp_path: Path) -> None
     assert result.deferred is False
     # Two submit_order calls — OPEN and CLOSE.
     assert len(submitted) == 2
+    # ``subscribe_trade_updates`` must be called exactly once per lifecycle —
+    # one subscriber drained across both the OPEN and CLOSE fills. Two
+    # subscribers on the same stream race for events from the underlying
+    # queue and occasionally cause spurious close-fill timeouts.
+    assert stream.subscribe_call_count == 1, (
+        f"_drive_lifecycle subscribed {stream.subscribe_call_count} times; "
+        "expected exactly 1 (single subscriber drained across OPEN + CLOSE fills)."
+    )
 
 
 async def test_phase_3_timeout_when_fill_never_arrives(

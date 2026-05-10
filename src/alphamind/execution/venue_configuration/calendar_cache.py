@@ -289,9 +289,16 @@ class TradingCalendarCache:
         raise RuntimeError(msg)
 
     def iter_business_days(self, start: dt.date, end: dt.date) -> tuple[dt.date, ...]:
-        """Return business days in [start, end] inclusive."""
+        """Return business days in [start, end] inclusive, ascending.
+
+        ``self._days`` is a dict keyed by date; iterating it preserves
+        insertion order, which is fetch order. After interleaved backward +
+        forward window extensions the cache's insertion order can diverge
+        from chronological order, so we sort explicitly to keep the
+        contract.
+        """
         self._ensure_range_cached(start, end)
-        return tuple(d for d in self._days if start <= d <= end)
+        return tuple(sorted(d for d in self._days if start <= d <= end))
 
     def refresh(self) -> None:
         """Force-refetch the calendar window and reset refresh_after."""

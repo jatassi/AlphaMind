@@ -507,11 +507,23 @@ async def phase_3_equity_order_lifecycle(ctx: VerifyContext) -> PhaseResult:
 async def _drive_lifecycle(ctx: VerifyContext, plan: _LifecyclePlan) -> PhaseResult:
     """Drive the OPEN→fill→CLOSE round-trip described by *plan*.
 
+    Opens a single ``subscribe_trade_updates`` generator before dispatching
+    the OPEN and drains it across both the OPEN and CLOSE fills. Two
+    subscribers on the same stream race for events from the underlying
+    queue — whichever generator's coroutine wakes first consumes the event
+    and the other receives nothing, occasionally causing the close-fill
+    wait to time out spuriously.
+
     Wraps in try/finally so any mid-flight failure triggers a best-effort
     CANCEL on a still-pending OPEN or a CLOSE on an opened-but-not-closed
-    position.
+    position. The single subscriber is closed in the same finally so it
+    cannot leak after the phase returns.
     """
-    from alphamind.execution.broker_adapter import GatewaySubmissionFailed, Submitted
+    from alphamind.execution.broker_adapter import (
+        GatewaySubmissionFailed,
+        Submitted,
+        subscribe_trade_updates,
+    )
     from alphamind.execution.oms.broker_dispatch import dispatch_command_to_broker
 
     client = ctx.factory.build_trading_client()
@@ -519,6 +531,7 @@ async def _drive_lifecycle(ctx: VerifyContext, plan: _LifecyclePlan) -> PhaseRes
 
     open_alpaca_id: str | None = None
     position_opened: bool = False
+    fill_stream = subscribe_trade_updates(stream)
 
     try:
         open_outcome = await dispatch_command_to_broker(
@@ -536,8 +549,8 @@ async def _drive_lifecycle(ctx: VerifyContext, plan: _LifecyclePlan) -> PhaseRes
         assert isinstance(open_outcome, Submitted)
         open_alpaca_id = open_outcome.payload.alpaca_order_id
 
-        wait_open = await _wait_for_fill(
-            stream,
+        wait_open = await _wait_for_fill_on_stream(
+            fill_stream,
             alpaca_order_id=open_alpaca_id,
             timeout_seconds=plan.fill_timeout_seconds,
             label="OPEN entry",
@@ -568,8 +581,8 @@ async def _drive_lifecycle(ctx: VerifyContext, plan: _LifecyclePlan) -> PhaseRes
             )
         assert isinstance(close_outcome, Submitted)
 
-        wait_close = await _wait_for_fill(
-            stream,
+        wait_close = await _wait_for_fill_on_stream(
+            fill_stream,
             alpaca_order_id=close_outcome.payload.alpaca_order_id,
             timeout_seconds=plan.fill_timeout_seconds,
             label="CLOSE exit",
@@ -579,6 +592,7 @@ async def _drive_lifecycle(ctx: VerifyContext, plan: _LifecyclePlan) -> PhaseRes
         position_opened = False
         return PhaseResult.passed(plan.label)
     finally:
+        await fill_stream.aclose()
         await _cleanup_residue(
             ctx=ctx,
             client=client,
@@ -702,43 +716,41 @@ def _client_order_id_for_phase(role: str) -> str:
     )
 
 
-async def _wait_for_fill(
-    stream: Any,
+async def _wait_for_fill_on_stream(
+    fill_stream: Any,
     *,
     alpaca_order_id: str,
     timeout_seconds: float,
     label: str,
 ) -> str | None:
-    """Drain ``subscribe_trade_updates`` until a fill matching *alpaca_order_id*.
+    """Drain *fill_stream* until a fill matching *alpaca_order_id* arrives.
 
-    Returns ``None`` on success or a diagnostic string on timeout. Iterates
-    the async generator with a per-event ``asyncio.wait_for`` budget so the
-    overall wait is bounded.
+    The caller owns the generator's lifecycle (one subscriber per lifecycle,
+    drained across both the OPEN and CLOSE fills) so this function does NOT
+    open or close the generator — closing twice would double-cancel the
+    background ``stream._run_forever()`` task. Returns ``None`` on success
+    or a diagnostic string on timeout. Each ``__anext__`` is bounded by
+    ``asyncio.wait_for`` so the overall wait stays under
+    ``timeout_seconds``.
     """
-    from alphamind.execution.broker_adapter import subscribe_trade_updates
-
-    gen = subscribe_trade_updates(stream)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_seconds
     timeout_diagnostic = (
         f"{label} fill never arrived for alpaca_order_id={alpaca_order_id!r} "
         f"within {timeout_seconds:.0f}s"
     )
-    try:
-        while True:
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                return timeout_diagnostic
-            try:
-                report = await asyncio.wait_for(gen.__anext__(), timeout=remaining)
-            except TimeoutError:
-                return timeout_diagnostic
-            except StopAsyncIteration:
-                return f"{label} stream closed before fill arrived"
-            if report.alpaca_order_id == alpaca_order_id and report.event_type == "filled":
-                return None
-    finally:
-        await gen.aclose()
+    while True:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return timeout_diagnostic
+        try:
+            report = await asyncio.wait_for(fill_stream.__anext__(), timeout=remaining)
+        except TimeoutError:
+            return timeout_diagnostic
+        except StopAsyncIteration:
+            return f"{label} stream closed before fill arrived"
+        if report.alpaca_order_id == alpaca_order_id and report.event_type == "filled":
+            return None
 
 
 # ---------------------------------------------------------------------------

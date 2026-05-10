@@ -402,6 +402,39 @@ def test_iter_business_days_returns_tuple() -> None:
     assert result == (dt.date(2026, 5, 7),)
 
 
+def test_iter_business_days_returns_ascending_after_interleaved_extensions() -> None:
+    """iter_business_days returns dates ascending even when the cache's
+    underlying _days dict was populated via interleaved backward + forward
+    window extensions.
+
+    Regression: ``self._days`` is dict-keyed by date; iteration preserves
+    insertion order. After a backward extension following a forward extension
+    (or vice versa) the dict keys are no longer in chronological order, so
+    ``tuple(d for d in self._days if ...)`` would surface the dates in
+    fetch order rather than ascending.
+    """
+    from alphamind.execution.venue_configuration import TradingCalendarCache
+
+    queries = FakeAccountStateQueries()
+    cache = TradingCalendarCache(queries, fetch_window_days=10)
+
+    # Prime the cache around a center date — initial window is 10 days
+    # centered on 2026-06-15 (so 2026-06-10 .. 2026-06-20).
+    cache.iter_business_days(dt.date(2026, 6, 15), dt.date(2026, 6, 15))
+    # Force a forward extension by querying past the window's right edge.
+    cache.iter_business_days(dt.date(2026, 7, 10), dt.date(2026, 7, 10))
+    # Force a backward extension by querying past the window's left edge.
+    cache.iter_business_days(dt.date(2026, 5, 1), dt.date(2026, 5, 1))
+
+    # Now enumerate a range that spans all three extensions.
+    result = cache.iter_business_days(dt.date(2026, 5, 1), dt.date(2026, 7, 10))
+
+    assert list(result) == sorted(result), (
+        f"iter_business_days returned dates out of order after interleaved "
+        f"window extensions. First five: {result[:5]}, last five: {result[-5:]}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 8. Cache hit — no re-fetch on second call within window
 # ---------------------------------------------------------------------------

@@ -270,6 +270,20 @@ fake any wire — every assertion reads what the production code path
 actually wrote. If a phase fails because a producer didn't emit
 something it should have, the fix is the producer, not the verify.
 
+**Broker-roundtrip scope only — no OMS persistence integration.**
+Phases 3 / 4 / 5 dispatch directly through `dispatch_command_to_broker`
+and assert the round-trip completed at the broker (OPEN order
+acknowledged → fill arrives → CLOSE order acknowledged → exit fill
+arrives). They do **not** thread an `InvocationHandle` through the
+OMS Phase 2 writeback machinery — the `--db` arg is a tmp DB the
+phases require for the broker dispatcher's own preconditions, not a
+target the verify writes a full OMS-side activity-log trail into. End-
+to-end coverage of the OMS's `persist_envelope_outcome` integration
+with real broker submissions is e2e-harness territory
+(`scripts/RUNBOOK_end_to_end_verification.md` /
+`verify_state_persistence.py`); this verify proves only the wiring
+layer beneath it.
+
 ## References
 
 - `scripts/RUNBOOK_end_to_end_verification.md` — central e2e runbook;
