@@ -28,7 +28,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -55,6 +54,7 @@ from alphamind.distillation.orchestrator import (
     DistillationOutputs,
     run_external_distillation,
 )
+from alphamind.pipeline._shared import apply_agent_overrides
 from alphamind.portfolio_state.consumers.synthesizer import (
     SynthesizerPortfolioStateReader,
 )
@@ -85,37 +85,6 @@ class AnalysisPipelineResult:
     qualitative_result: QualitativeResearcherResult
     adaptive_result: AdaptiveResearcherResult
     synthesizer_result: SynthesizerResult
-
-
-# ---------------------------------------------------------------------------
-# Per-trigger override application
-# ---------------------------------------------------------------------------
-
-
-def apply_agent_overrides(
-    agents_config: Mapping[AgentName, BaseAgentConfig],
-    agent_overrides: Mapping[AgentName, Mapping[str, Any]],
-) -> dict[str, BaseAgentConfig]:
-    """Layer per-trigger budget overrides onto base agent configs.
-
-    For each agent in ``agents_config``, applies any matching override
-    via Pydantic ``model_copy(update=...)`` so the resulting config
-    carries the trigger-specific budget knobs from
-    ``config/run_types/<trigger>.yaml``. Returns a string-keyed mapping
-    ready for the analysis-layer runners (which key on the agent's
-    ``AgentName`` string value).
-
-    Override keys must match attribute names on the target agent's
-    Pydantic model — ``RunTypeConfig.AgentsSection`` already restricts
-    them to the documented allow-list at parse time, so no field
-    validation is repeated here.
-    """
-    return {
-        name.value: (
-            cfg.model_copy(update=dict(agent_overrides[name])) if name in agent_overrides else cfg
-        )
-        for name, cfg in agents_config.items()
-    }
 
 
 # ---------------------------------------------------------------------------
