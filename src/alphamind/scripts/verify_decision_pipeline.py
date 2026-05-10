@@ -410,6 +410,7 @@ def _make_risk_budget() -> RiskBudgetConsumption:
             _entry("sector_concentration_energy", "Energy sector concentration"),
             _entry("net_long_pct", "Net long exposure"),
             _entry("gross_exposure_pct", "Gross exposure"),
+            _entry("daily_drawdown_pct", "Daily drawdown limit"),
         )
     )
 
