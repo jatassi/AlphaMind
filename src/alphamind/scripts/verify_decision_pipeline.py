@@ -141,7 +141,7 @@ __all__ = [
 ]
 
 
-_AGENT_NAME = AgentName.portfolio_manager.value
+_PIPELINE_LABEL = "decision-pipeline"
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _AGENTS_YAML_DEFAULT = _REPO_ROOT / "config" / "agents.yaml"
 _PORTFOLIO_STATE_YAML_DEFAULT = _REPO_ROOT / "config" / "portfolio_state.yaml"
@@ -699,7 +699,17 @@ def validate_pipeline_result(
     # AnalystOutput's Pydantic validator already enforces the mode-conditional
     # invariant (mode=normal => recommendations is a tuple, mode=watchlist =>
     # watchlist is a tuple) — if the runner returned successfully, the output
-    # is structurally well-formed. No explicit re-check needed here.
+    # is structurally well-formed. The verify script only runs the ``normal``
+    # scenario, so both agents must echo that mode back; a mismatch indicates
+    # a wiring drift the operator must triage before trusting the run.
+    for label, mode in (
+        ("analyst", result.analyst_result.output.mode),
+        ("strategist", result.strategist_result.output.mode),
+    ):
+        if mode != "normal":
+            errors.append(
+                f"{label} output: mode={mode!r} does not match the requested 'normal' scenario"
+            )
 
     # Strategist must have at least one position assessment for a non-empty book.
     if not result.strategist_result.output.position_assessments:
@@ -872,9 +882,12 @@ def _render_success_report(
 def _render_failure_report(
     *,
     invocation_id: str,
-    failure: Exception,
+    failure: AnalystHarnessFailure | StrategistHarnessFailure | PMHarnessFailure | SDKFailure,
     verdict: Verdict,
 ) -> str:
+    # All four caught HarnessFailure subclasses (analyst, strategist, PM,
+    # plus the pre-flight SDKFailure) carry ``agent_name`` and ``invocation_id``
+    # per the harness contract — read them directly without getattr fallbacks.
     return (
         "\n".join(
             [
@@ -884,8 +897,8 @@ def _render_failure_report(
                 "",
                 "--- Harness failure ---",
                 f"type: {type(failure).__name__}",
-                f"agent_name: {getattr(failure, 'agent_name', _AGENT_NAME)}",
-                f"invocation_id: {getattr(failure, 'invocation_id', invocation_id)}",
+                f"agent_name: {failure.agent_name}",
+                f"invocation_id: {failure.invocation_id}",
                 f"message: {failure}",
                 "",
                 f"--- Verdict: {verdict.value} ---",
@@ -914,7 +927,9 @@ def _check_oauth_token_set(invocation_id: str) -> None:
             "real-SDK decision-pipeline verification cannot run without it. "
             "Generate a token via `claude setup-token` per "
             "docs/architecture/llm-integration.md § Authentication, then re-run.",
-            agent_name=_AGENT_NAME,
+            # The pre-flight check runs before any agent dispatch, so the
+            # which-agent-failed context is unknown — label as the pipeline.
+            agent_name=_PIPELINE_LABEL,
             invocation_id=invocation_id,
         )
 
@@ -1052,8 +1067,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 1
 
-    verdict, errors = validate_pipeline_result(result)
+    # Serialize first so the archive lands even if validation raises; this
+    # keeps FAIL debugging cheap by guaranteeing the operator has the full
+    # result.json on disk before any validator-side surprise.
     serialize_pipeline_result(result, result_path)
+    verdict, errors = validate_pipeline_result(result)
     print(
         _render_success_report(
             invocation_id=invocation_id,

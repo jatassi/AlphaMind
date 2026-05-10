@@ -406,7 +406,7 @@ def test_portfolio_value_cash_reserved_scalars() -> None:
         market_value_usd=5_500.0,
         notional_usd=5_500.0,
         delta_adjusted_usd=-5_500.0,
-        position_weight_pct=-5.5,
+        position_weight_pct=5.5,
     )
 
     snapshot = _make_pydantic_snapshot(
@@ -579,7 +579,7 @@ def test_existing_positions_map_keys() -> None:
         market_value_usd=5_500.0,
         notional_usd=5_500.0,
         delta_adjusted_usd=-5_500.0,
-        position_weight_pct=-5.5,
+        position_weight_pct=5.5,
     )
     snapshot = _make_pydantic_snapshot(open_positions=[pos1, pos2])
     lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)
@@ -631,7 +631,7 @@ def test_short_equity_borrow_cost() -> None:
         market_value_usd=5_500.0,
         notional_usd=5_500.0,
         delta_adjusted_usd=-5_500.0,
-        position_weight_pct=-5.5,
+        position_weight_pct=5.5,
     )
     # Only open position + cash => portfolio_value = 5500 + 80000
     snapshot = _make_pydantic_snapshot(open_positions=[pos])
@@ -645,9 +645,11 @@ def test_short_equity_borrow_cost() -> None:
     assert ep.daily_borrow_cost_usd is not None
     assert ep.daily_borrow_cost_usd == pytest.approx(5.0)  # _borrow_cost_resolver("XOM") = 5.0
 
-    # daily_borrow_cost_pct = sum(borrow costs) / (portfolio_value * 100)
+    # daily_borrow_cost_pct = sum(borrow costs) / portfolio_value * 100 — must match
+    # the library's _borrow_cost_contribute formula (cost_usd / portfolio_value * 100.0)
+    # so the read scale matches the write scale exactly.
     portfolio_value = 5_500.0 + 80_000.0
-    expected_pct = 5.0 / (portfolio_value * 100)
+    expected_pct = 5.0 / portfolio_value * 100
     assert lib.daily_borrow_cost_pct == pytest.approx(expected_pct)
 
 
@@ -661,7 +663,7 @@ def test_short_equity_no_borrow_resolver() -> None:
         market_value_usd=5_500.0,
         notional_usd=5_500.0,
         delta_adjusted_usd=-5_500.0,
-        position_weight_pct=-5.5,
+        position_weight_pct=5.5,
     )
     snapshot = _make_pydantic_snapshot(open_positions=[pos])
     lib = to_library_snapshot(snapshot, sector_resolver=_sector_resolver)  # no resolver
@@ -722,7 +724,7 @@ def test_total_short_pct_and_single_short_max_pct() -> None:
         market_value_usd=5_500.0,
         notional_usd=5_500.0,
         delta_adjusted_usd=-5_500.0,
-        position_weight_pct=-5.5,  # negative = short
+        position_weight_pct=5.5,  # always-positive (compute_position_weight_pct uses abs)
     )
     pos_jpm = _make_equity_position_view(
         "POS-JPM",
@@ -732,7 +734,7 @@ def test_total_short_pct_and_single_short_max_pct() -> None:
         market_value_usd=5_000.0,
         notional_usd=5_000.0,
         delta_adjusted_usd=-5_000.0,
-        position_weight_pct=-2.0,
+        position_weight_pct=2.0,
     )
     sector_entries = [
         SectorExposureEntry(
@@ -918,7 +920,7 @@ def test_full_normal_scenario() -> None:
         market_value_usd=5_500.0,
         notional_usd=5_500.0,
         delta_adjusted_usd=-5_500.0,
-        position_weight_pct=-5.5,
+        position_weight_pct=5.5,
     )
     nvda_opt = _make_options_position_view(
         "POS-NVDA-OPT",
@@ -1060,8 +1062,8 @@ def test_full_normal_scenario() -> None:
     assert lib.total_short_pct == pytest.approx(5.79)
     assert lib.single_short_max_pct == pytest.approx(5.5)
 
-    # Borrow cost pct
-    expected_borrow_pct = 5.0 / (expected_pv * 100)
+    # Borrow cost pct — matches library's _borrow_cost_contribute scale
+    expected_borrow_pct = 5.0 / expected_pv * 100
     assert lib.daily_borrow_cost_pct == pytest.approx(expected_borrow_pct)
 
 

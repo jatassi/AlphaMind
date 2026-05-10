@@ -174,13 +174,11 @@ def to_library_snapshot(
 
     total_short_pct = sum(e.short_pct_of_portfolio for e in snapshot.sector_exposure)
 
-    # single_short_max_pct: absolute maximum weight among SHORT positions (open only per spec §2)
+    # single_short_max_pct: max weight among SHORT positions (open only per spec §2).
+    # ``compute_position_weight_pct`` derives ``position_weight_pct`` from
+    # ``abs(position_market_value_usd)``, so the field is always >= 0; no abs() needed.
     single_short_max_pct = max(
-        (
-            abs(p.position_weight_pct)
-            for p in snapshot.open_positions
-            if p.direction == Direction.SHORT
-        ),
+        (p.position_weight_pct for p in snapshot.open_positions if p.direction == Direction.SHORT),
         default=0.0,
     )
 
@@ -239,11 +237,12 @@ def to_library_snapshot(
             portfolio_theta_pct_per_day += t_contrib
             portfolio_vega_pct_per_iv_point += v_contrib
 
-        # Daily borrow cost accumulation
+        # Daily borrow cost accumulation — must mirror the library's
+        # _borrow_cost_contribute formula (cost_usd / portfolio_value * 100.0)
+        # so the read scale matches the write scale exactly. See
+        # src/alphamind/risk_guardrails/guardrail_evaluation/rules/shorts.py:108.
         if is_short_equity and borrow_cost_resolver is not None and portfolio_value_usd > 0.0:
-            daily_borrow_cost_pct += borrow_cost_resolver(underlying) / (
-                portfolio_value_usd * 100.0
-            )
+            daily_borrow_cost_pct += borrow_cost_resolver(underlying) / portfolio_value_usd * 100.0
 
         # ExistingPosition construction
         current_greeks: Greeks | None = (

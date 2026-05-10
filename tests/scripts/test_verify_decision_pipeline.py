@@ -28,7 +28,6 @@ import pytest
 
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
-from alphamind.config.models.agents import AgentName
 from alphamind.decision.analyst.runner import AnalystResult
 from alphamind.decision.portfolio_manager.runner import PMResult
 from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
@@ -45,9 +44,6 @@ from alphamind.scripts.verify_decision_pipeline import (
     serialize_pipeline_result,
     validate_pipeline_result,
 )
-
-_AGENT_NAME = AgentName.portfolio_manager.value
-
 
 # ---------------------------------------------------------------------------
 # Missing-auth pre-flight check
@@ -383,6 +379,62 @@ def test_validate_pipeline_result_fails_on_envelopes_count_mismatch() -> None:
     verdict, errors = validate_pipeline_result(result)
     assert verdict is Verdict.FAIL
     assert any("envelopes_submitted" in err for err in errors)
+
+
+def test_validate_pipeline_result_fails_on_analyst_mode_mismatch() -> None:
+    """The validator surfaces a clear error when the analyst's output mode
+    drifts from the requested ``normal`` scenario.
+
+    This guards against an analyst that silently flips to ``"watchlist"``
+    without raising — the wiring expects mode parity end-to-end so the
+    downstream pre-processor + PM see the right modal payload.
+    """
+    from types import SimpleNamespace
+
+    from alphamind.decision.analyst.models import (
+        AnalystOutput,
+        WatchlistEntry,
+    )
+
+    submission_log = (
+        SimpleNamespace(envelope=SimpleNamespace(envelope_id="env-1"), submission_results=()),
+    )
+    result = _stub_pipeline_result(
+        submission_log=submission_log,
+        envelopes_submitted=1,
+        position_assessments_count=4,
+    )
+    # Replace the analyst output with a watchlist-mode payload — the
+    # decision-pipeline wiring is normal-scenario-only, so this must be
+    # surfaced as a validation error.
+    watchlist_output = AnalystOutput(
+        invocation_id=result.analyst_result.output.invocation_id,
+        timestamp=result.analyst_result.output.timestamp,
+        mode="watchlist",
+        recommendations=None,
+        watchlist=(
+            WatchlistEntry(
+                ticker="AAPL",
+                sector="tech",
+                thesis_summary="placeholder thesis",
+                estimated_conviction=2,
+            ),
+        ),
+    )
+    drifted_analyst = result.analyst_result.model_copy(update={"output": watchlist_output})
+    drifted_result = DecisionPipelineResult(
+        pydantic_snapshot=result.pydantic_snapshot,
+        library_snapshot=result.library_snapshot,
+        analyst_result=drifted_analyst,
+        strategist_result=result.strategist_result,
+        pre_processor_bundle=result.pre_processor_bundle,
+        pm_result=result.pm_result,
+    )
+    verdict, errors = validate_pipeline_result(drifted_result)
+    assert verdict is Verdict.FAIL
+    assert any("analyst" in err and "mode" in err for err in errors), (
+        f"expected an analyst-mode validation error; got {errors!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

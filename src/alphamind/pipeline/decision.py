@@ -67,8 +67,10 @@ from alphamind.portfolio_state.library_snapshot import (
     to_library_snapshot,
 )
 from alphamind.portfolio_state.pricing import CurrentPriceProvider
+from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.portfolio_state.repository import PortfolioStateRepository
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
+from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -221,6 +223,15 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     propagates immediately. ``asyncio.gather(..., return_exceptions=False)``
     on the analyst+strategist branch cancels the in-flight sibling when
     one raises.
+
+    The two clock-shaped kwargs serve different roles: ``now`` flows only
+    into :func:`assemble_snapshot` as the assembler-side clock for
+    freshness checks against the price provider; ``timestamp`` flows into
+    each of the four agent runners as the per-invocation timestamp the
+    agents stamp into their structured outputs. Callers typically pass
+    the same ``datetime`` for both, but the runner keeps them separate so
+    a deterministic-replay harness can pin the snapshot clock to a
+    fixture without disturbing the agent-side timestamp.
     """
     # Halt-mode requires a halt_state. Surface the gap with a clear message
     # before the parallel branch starts so callers don't wait on a runner
@@ -395,7 +406,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
 
 def _adapt_sector_resolver_for_assembler(
     sector_resolver: Callable[[str], str],
-) -> Callable[[Any], str | None]:
+) -> Callable[[PositionRecord | PositionView], str | None]:
     """Adapt a ticker→sector resolver to the position-based shape the
     assembler and analyst-view projector consume.
 
@@ -408,7 +419,7 @@ def _adapt_sector_resolver_for_assembler(
     """
     from alphamind.portfolio_state.consumers.synthesizer import _ticker_from_position
 
-    def _adapter(position: Any) -> str | None:
+    def _adapter(position: PositionRecord | PositionView) -> str | None:
         ticker = _ticker_from_position(position)
         return sector_resolver(ticker) if ticker else None
 
@@ -431,8 +442,14 @@ async def _build_price_lookup(
 
     Pre-fetches every underlying ticker referenced by the snapshot's open
     and pending positions through the provider, then closes over the
-    materialized dict. Returning 0.0 for an unknown ticker matches the
-    input-bundle renderer's missing-price contract.
+    materialized dict. The 0.0 fallback in the closure is unreachable in
+    practice — every ticker referenced by the snapshot's open and pending
+    positions is enumerated above and its quote is fetched, so the agents
+    only ever ask about held positions whose tickers are guaranteed to be
+    in the lookup. The strategist's input-bundle renderer raises
+    ``ValueError`` on a ``KeyError`` from this callable, so the fallback
+    exists only to satisfy the ``Callable[[str], float]`` signature
+    without requiring callers to handle ``KeyError``.
     """
     from alphamind.portfolio_state.records.positions import (
         EquityPositionDetails,

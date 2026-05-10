@@ -102,11 +102,11 @@ they read time-dependent DB state.
 | 4 | Analysis: qualitative + adaptive | qualitative_researcher, adaptive_researcher | Yes | ~45–90s |
 | 5 | Analysis: synthesizer | synthesizer | Yes | ~10–30s |
 | 5b | Execution: guardrail enforcement | guardrail_enforcement | No | <1s |
-| 5c | Decision: pipeline composition | decision_pipeline (normal scenario) | Yes (Opus, x4 agents) | ~3–10 min |
 | 6 | Decision: analyst | analyst (normal + halt scenarios) | Yes (Opus) | ~30–90s |
 | 7 | Decision: strategist | strategist (normal + defensive_posture + emergency scenarios) | Yes (Opus) | ~10–15 min |
 | 8 | Decision: proposal pre-processor | proposal_pre_processor (4 scenarios) | No | <1s |
 | 9 | Decision: portfolio manager | pm (normal + halt + emergency + synchronous_rejection scenarios) | Yes (Opus) | ~20–30 min |
+| 9c | Decision: pipeline composition | decision_pipeline (normal scenario) | Yes (Opus, x4 agents) | ~3–10 min |
 | 10 | Reporting | build_e2e_report (HTML render of the archive) | No | <2s |
 
 ## Phase 0 — Type-layer self-check
@@ -585,54 +585,6 @@ Don't proceed to Phase 6 — if the guardrail-enforcement layer is broken,
 the decision-layer agents will consume a malformed parameter set and
 either reject correct proposals or accept invalid ones.
 
-## Phase 5c — Decision-pipeline composition
-
-Live-SDK end-to-end check of the decision-layer composition runner
-(`alphamind.pipeline.decision.run_decision_pipeline`). Runs all four
-decision-layer agents (analyst + strategist in parallel, then proposal
-pre-processor, then PM) end-to-end against the real SDK in a single
-composition, and validates the returned `DecisionPipelineResult` against
-the parent issue's wiring invariants.
-
-```bash
-uv run python -m alphamind.scripts.verify_decision_pipeline \
-    --archive-root "$ARCHIVE_ROOT"
-```
-
-Verifies, in normal-mode only (halt and emergency are deferred per
-parent decision G; the per-agent verifies in Phases 6 / 7 / 9 cover
-modal coverage): pipeline returns a `DecisionPipelineResult`; analyst
-output is structurally valid; strategist `position_assessments` covers
-held positions; pre-processor `aggregate_observations` carries
-populated `combined_set_impact` / `conviction_distribution` /
-`book_health_summary` sub-blocks; PM `submission_log` is non-empty;
-`pm_result.output.envelopes_submitted == len(submission_log)`. Exits 0
-on PASS, 1 on FAIL (validation failure or any `HarnessFailure` from any
-of the four agents).
-
-The verify script supplies its own pre-recorded synthesizer text and a
-fixture `RetrievalStore` rather than reading the live phase-5 archive
-— **live synthesizer→decision chaining is the trigger layer's job and
-is out of scope for this story**. A clean PASS at Phase 5c proves the
-decision-layer wiring; it does not prove the cross-pipeline chain.
-
-The serialized `DecisionPipelineResult` lands at
-`<archive-root>/decision_pipeline/normal/result.json`; each per-agent
-diagnostic archive lands at
-`<archive-root>/invocations/<inv-id>/decision/<agent>/` (same shape
-the per-agent verify scripts produce).
-
-Runbook: `scripts/RUNBOOK_decision_pipeline.md`.
-
-**On failure:** read the runbook's failure-mode triage section. The
-failure block names the failing stage and any underlying agent; consult
-the per-agent runbook (`RUNBOOK_analyst.md`, `RUNBOOK_strategist.md`,
-or `RUNBOOK_pm.md`) for agent-specific triage. Phase 5c failures do
-not block Phases 6 / 7 / 9 — those still cover per-agent modal
-coverage independently — but a 5c FAIL flags a wiring-level regression
-that should be triaged before relying on the composition runner in
-production.
-
 ## Phase 6 — Analyst (decision layer)
 
 The first decision-layer agent. The analyst consumes the synthesizer's
@@ -823,6 +775,60 @@ consumed by the decision-layer pipeline-composition wiring once
 **Cost.** Four Opus invocations; ~40K input + ~30K output tokens.
 
 **See:** [`RUNBOOK_pm.md`](RUNBOOK_pm.md)
+
+## Phase 9c — Decision-pipeline composition
+
+Live-SDK end-to-end check of the decision-layer composition runner
+(`alphamind.pipeline.decision.run_decision_pipeline`). Runs all four
+decision-layer agents (analyst + strategist in parallel, then proposal
+pre-processor, then PM) end-to-end against the real SDK in a single
+composition, and validates the returned `DecisionPipelineResult` against
+the parent issue's wiring invariants.
+
+This phase runs **after** the per-agent verifies (Phases 6 / 7 / 9) so
+the cheaper per-agent runs isolate any agent-side regression before the
+~$1–3 composition spend lands. A per-agent FAIL upstream lets the
+operator fix and re-run that one agent in seconds rather than discover
+the regression mid-composition.
+
+```bash
+uv run python -m alphamind.scripts.verify_decision_pipeline \
+    --archive-root "$ARCHIVE_ROOT"
+```
+
+Verifies, in normal-mode only (halt and emergency are deferred per
+parent decision G; the per-agent verifies in Phases 6 / 7 / 9 cover
+modal coverage): pipeline returns a `DecisionPipelineResult`; analyst
+output is structurally valid; strategist `position_assessments` covers
+held positions; pre-processor `aggregate_observations` carries
+populated `combined_set_impact` / `conviction_distribution` /
+`book_health_summary` sub-blocks; PM `submission_log` is non-empty;
+`pm_result.output.envelopes_submitted == len(submission_log)`. Exits 0
+on PASS, 1 on FAIL (validation failure or any `HarnessFailure` from any
+of the four agents).
+
+The verify script supplies its own pre-recorded synthesizer text and a
+fixture `RetrievalStore` rather than reading the live phase-5 archive
+— **live synthesizer→decision chaining is the trigger layer's job and
+is out of scope for this story**. A clean PASS at Phase 9c proves the
+decision-layer wiring; it does not prove the cross-pipeline chain.
+
+The serialized `DecisionPipelineResult` lands at
+`<archive-root>/decision_pipeline/normal/result.json`; each per-agent
+diagnostic archive lands at
+`<archive-root>/invocations/<inv-id>/decision/<agent>/` (same shape
+the per-agent verify scripts produce).
+
+Runbook: `scripts/RUNBOOK_decision_pipeline.md`.
+
+**On failure:** read the runbook's failure-mode triage section. The
+failure block names the failing stage and any underlying agent; consult
+the per-agent runbook (`RUNBOOK_analyst.md`, `RUNBOOK_strategist.md`,
+or `RUNBOOK_pm.md`) for agent-specific triage. Phase 9c failures do
+not block subsequent runs of the per-agent verifies — those cover
+per-agent modal coverage independently — but a 9c FAIL flags a
+wiring-level regression that should be triaged before relying on the
+composition runner in production.
 
 ## When complete
 
