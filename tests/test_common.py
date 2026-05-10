@@ -352,6 +352,33 @@ class TestWithRetriesCritical:
             bad_input()
         assert call_count == 1
 
+    def test_critical_retries_on_fredapi_value_error_none_with_502_context(self) -> None:
+        # When FRED is fronted by a CDN that returns an HTML 5xx error page,
+        # fredapi cannot parse a `message` field and raises `ValueError(None)`
+        # with the underlying HTTPError on `__context__`. Matcher must retry.
+        call_count = 0
+
+        @with_retries(RetryShape.critical, _sleep=_no_sleep)
+        def cdn_502() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                http_err = urllib.error.HTTPError(
+                    url="https://api.stlouisfed.org/fred/series",
+                    code=502,
+                    msg="Bad Gateway",
+                    hdrs=None,  # type: ignore[arg-type]
+                    fp=None,
+                )
+                val_err = ValueError(None)
+                val_err.__context__ = http_err
+                raise val_err
+            return "ok"
+
+        result = cdn_502()
+        assert result == "ok"
+        assert call_count == 2
+
 
 # ---------------------------------------------------------------------------
 # AC: with_retries — important shape (limited attempts)

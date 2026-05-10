@@ -286,10 +286,16 @@ def _is_retryable(exc: BaseException) -> bool:
         # them is the same idempotent GET.
         return True
     if isinstance(exc, ValueError):
-        # fredapi catches urllib.HTTPError internally and re-raises as ValueError
-        # carrying the FRED API's text status. Match the standard 5xx/429 names.
+        # fredapi catches urllib.HTTPError internally and re-raises as
+        # `ValueError(root.get('message'))`. When FRED's response carries a
+        # JSON `message` field, match the standard 5xx/429 names. When FRED is
+        # fronted by a CDN that returns an HTML 5xx error page, `message` is
+        # None — walk `__context__` to recover the original HTTPError.
         msg = str(exc).lower()
-        return any(p in msg for p in _FREDAPI_RETRYABLE_MESSAGES)
+        cause = exc.__context__
+        return any(p in msg for p in _FREDAPI_RETRYABLE_MESSAGES) or (
+            isinstance(cause, urllib.error.HTTPError) and (cause.code == 429 or cause.code >= 500)
+        )
     return False
 
 
