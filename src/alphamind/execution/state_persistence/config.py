@@ -15,6 +15,8 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from alphamind.execution.corporate_actions.config import CorporateActionsConfig
+
 
 class StatePersistenceConfig(BaseModel):
     """Operator-tunable knobs for the state-persistence primitives."""
@@ -25,6 +27,7 @@ class StatePersistenceConfig(BaseModel):
     snapshot_read_timeout_seconds: Annotated[float, Field(gt=0.0)]
     pip_freeze_snapshot_root: str
     invocation_provenance_root: str
+    corporate_actions: CorporateActionsConfig = CorporateActionsConfig()
 
 
 def load_state_persistence_config(main_config_yaml: dict[str, Any]) -> StatePersistenceConfig:
