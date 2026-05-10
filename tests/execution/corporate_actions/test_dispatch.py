@@ -38,11 +38,26 @@ def test_handlers_dict_covers_all_enum_members() -> None:
 # Non-SPLIT stubs raise NotImplementedError
 # ---------------------------------------------------------------------------
 
+# Story 03a (ALP-411) implemented REVERSE_SPLIT, STOCK_DIVIDEND, and
+# SYMBOL_CHANGE; their dispatch entries now route to real handlers rather
+# than the NotImplementedError stubs.  Stories 03b, 03c, and 03d implement
+# the remaining members.
+_UNIMPLEMENTED_TYPES = [
+    t
+    for t in CorporateActionType
+    if t
+    not in {
+        CorporateActionType.SPLIT,
+        CorporateActionType.REVERSE_SPLIT,
+        CorporateActionType.STOCK_DIVIDEND,
+        CorporateActionType.SYMBOL_CHANGE,
+    }
+]
 
-_NON_SPLIT_TYPES = [t for t in CorporateActionType if t != CorporateActionType.SPLIT]
 
-
-@pytest.mark.parametrize("action_type", _NON_SPLIT_TYPES, ids=[t.value for t in _NON_SPLIT_TYPES])
+@pytest.mark.parametrize(
+    "action_type", _UNIMPLEMENTED_TYPES, ids=[t.value for t in _UNIMPLEMENTED_TYPES]
+)
 @pytest.mark.asyncio
 async def test_non_split_handler_raises_not_implemented(
     action_type: CorporateActionType,
@@ -85,7 +100,9 @@ async def test_non_split_handler_raises_not_implemented(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("action_type", _NON_SPLIT_TYPES, ids=[t.value for t in _NON_SPLIT_TYPES])
+@pytest.mark.parametrize(
+    "action_type", _UNIMPLEMENTED_TYPES, ids=[t.value for t in _UNIMPLEMENTED_TYPES]
+)
 @pytest.mark.asyncio
 async def test_non_split_message_contains_action_type_name(
     action_type: CorporateActionType,

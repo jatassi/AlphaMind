@@ -1,11 +1,13 @@
-"""Equity SPLIT handler and stubs for all other CA action types (ALP-409).
+"""Equity SPLIT handler and remaining CA action-type stubs (ALP-409, ALP-411).
 
 The SPLIT handler is the full implementation moved from
 ``state_persistence.write_paths.phase1._integrate_one_ca_activity``.
 
-Every other ``CorporateActionType`` member maps to a stub that raises
-``NotImplementedError`` with the standard message; stories 03a-03d replace
-these stubs with real implementations.
+Reverse-split, stock-dividend, and symbol-change handlers (story 03a)
+have moved to dedicated modules
+(``reverse_splits.py`` / ``stock_dividends.py`` / ``ticker_changes.py``);
+the cash-dividend, merger, and spin-off stubs remain here until stories
+03b, 03c, and 03d land.
 """
 
 from __future__ import annotations
@@ -92,28 +94,6 @@ async def handle_split(
     )
 
 
-async def handle_reverse_split(
-    handle: InvocationHandle,
-    activity: CorporateActionActivity,
-    _: AlpacaPositionLookup | None = None,
-) -> None:
-    """Stub — raises ``NotImplementedError`` until story 03a lands."""
-    del handle, activity
-    msg = "CA action_type='REVERSE_SPLIT' not yet supported by Phase 1"
-    raise NotImplementedError(msg)
-
-
-async def handle_stock_dividend(
-    handle: InvocationHandle,
-    activity: CorporateActionActivity,
-    _: AlpacaPositionLookup | None = None,
-) -> None:
-    """Stub — raises ``NotImplementedError`` until story 03a lands."""
-    del handle, activity
-    msg = "CA action_type='STOCK_DIVIDEND' not yet supported by Phase 1"
-    raise NotImplementedError(msg)
-
-
 async def handle_cash_dividend_long(
     handle: InvocationHandle,
     activity: CorporateActionActivity,
@@ -169,25 +149,11 @@ async def handle_spin_off(
     raise NotImplementedError(msg)
 
 
-async def handle_symbol_change(
-    handle: InvocationHandle,
-    activity: CorporateActionActivity,
-    _: AlpacaPositionLookup | None = None,
-) -> None:
-    """Stub — raises ``NotImplementedError`` until story 03a lands."""
-    del handle, activity
-    msg = "CA action_type='SYMBOL_CHANGE' not yet supported by Phase 1"
-    raise NotImplementedError(msg)
-
-
 __all__ = [
     "handle_cash_dividend_long",
     "handle_cash_dividend_short",
     "handle_cash_merger",
-    "handle_reverse_split",
     "handle_spin_off",
     "handle_split",
-    "handle_stock_dividend",
     "handle_stock_merger",
-    "handle_symbol_change",
 ]
