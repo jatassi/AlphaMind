@@ -19,6 +19,7 @@ exercised here.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 from pathlib import Path
 from typing import Any
@@ -860,3 +861,737 @@ async def test_phase_1_idempotent() -> None:
     second = await phase_1_adapter_substrate(ctx)
     assert first.ok == second.ok
     assert first.label == second.label
+
+
+# ---------------------------------------------------------------------------
+# Phases 3, 4, 5 — conditional deferral on missing db_path
+#
+# When no DB path is threaded through the VerifyContext, the phase should
+# defer with a clear diagnostic naming the missing prerequisite. This is the
+# subagent-run path (creds may or may not be set; DB is intentionally absent).
+# ---------------------------------------------------------------------------
+
+
+async def test_phase_3_defers_when_db_path_missing_with_clear_reason() -> None:
+    """When ``ctx.db_path is None`` the equity-lifecycle phase defers with a
+    diagnostic naming the missing DB path so the operator knows what to wire."""
+    from alphamind.scripts.verify_broker_adapter import phase_3_equity_order_lifecycle
+
+    ctx = _make_context()  # db_path defaults to None
+    result = await phase_3_equity_order_lifecycle(ctx)
+    assert result.ok is True
+    assert result.deferred is True
+    assert "db" in (result.detail or "").lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 happy path — equity OPEN→fill→CLOSE round-trip with mocked broker
+# ---------------------------------------------------------------------------
+
+
+class _FakeStream:
+    """Minimal alpaca-py-shaped TradingStream stub.
+
+    Mirrors the fixture pattern in
+    ``tests/execution/broker_adapter/test_fill_stream.py``. Captures the
+    handler so tests can inject ``TradeUpdate`` events; ``_run_forever`` parks
+    until cancelled so ``subscribe_trade_updates`` can drain the queue.
+    """
+
+    def __init__(self) -> None:
+        import asyncio as _asyncio
+
+        self.handler: Any = None
+        self.run_cancelled = False
+        self._park = _asyncio.Event()
+
+    def subscribe_trade_updates(self, handler: Any) -> None:
+        self.handler = handler
+
+    async def inject(self, update: Any) -> None:
+        assert self.handler is not None
+        await self.handler(update)
+
+    async def _run_forever(self) -> None:
+        import asyncio as _asyncio
+
+        try:
+            await self._park.wait()
+        except _asyncio.CancelledError:
+            self.run_cancelled = True
+            raise
+
+
+def _build_alpaca_order(
+    *,
+    order_class: Any | None = None,
+    status: Any | None = None,
+    client_order_id: str = "client-id-stub",
+    order_id: Any | None = None,
+    asset_class: Any | None = None,
+) -> Any:
+    """Build a MagicMock alpaca-py Order for ``submit_order`` returns."""
+    import uuid as _uuid
+
+    from alpaca.trading.enums import AssetClass, OrderClass
+    from alpaca.trading.enums import OrderStatus as _OrderStatus
+
+    order = MagicMock()
+    order.id = order_id if order_id is not None else _uuid.uuid4()
+    order.client_order_id = client_order_id
+    order.status = status if status is not None else _OrderStatus.ACCEPTED
+    order.order_class = order_class if order_class is not None else OrderClass.SIMPLE
+    order.asset_class = asset_class if asset_class is not None else AssetClass.US_EQUITY
+    return order
+
+
+def _build_trade_update_fill(
+    *,
+    order_id: Any,
+    client_order_id: str,
+    symbol: str = "NVDA",
+    asset_class: Any | None = None,
+    order_class: Any | None = None,
+    qty: str = "1",
+    legs: list[Any] | None = None,
+) -> Any:
+    """Build a ``fill`` TradeUpdate referencing ``order_id`` / ``client_order_id``."""
+    from alpaca.trading.enums import (
+        AssetClass,
+        OrderClass,
+        OrderSide,
+        OrderType,
+        TimeInForce,
+    )
+    from alpaca.trading.enums import OrderStatus as AlpacaOrderStatus
+    from alpaca.trading.models import Order, TradeUpdate
+
+    order = Order(
+        id=order_id,
+        client_order_id=client_order_id,
+        created_at=dt.datetime.now(dt.UTC),
+        updated_at=dt.datetime.now(dt.UTC),
+        submitted_at=dt.datetime.now(dt.UTC),
+        symbol=symbol,
+        asset_class=asset_class if asset_class is not None else AssetClass.US_EQUITY,
+        order_class=order_class if order_class is not None else OrderClass.SIMPLE,
+        order_type=OrderType.MARKET,
+        type=OrderType.MARKET,
+        side=OrderSide.BUY,
+        time_in_force=TimeInForce.DAY,
+        status=AlpacaOrderStatus.FILLED,
+        extended_hours=False,
+        qty=qty,
+        filled_qty=qty,
+        legs=legs,
+    )
+    return TradeUpdate(
+        event="fill",
+        order=order,
+        timestamp=dt.datetime.now(dt.UTC),
+        price=150.0,
+        qty=float(qty),
+    )
+
+
+def _make_context_with_db(tmp_path: Path, *, mode: str = "paper", verbose: bool = False) -> Any:
+    """Build a VerifyContext threading a tmp DB path."""
+    from alphamind.scripts.verify_broker_adapter import VerifyContext
+
+    factory = _fake_factory(mode=mode)
+    queries = _fake_queries()
+    return VerifyContext(
+        factory=factory,
+        queries=queries,
+        execution=_execution_config(),
+        venue=_venue_config(),
+        mode=mode,  # type: ignore[arg-type]
+        verbose=verbose,
+        db_path=tmp_path / "alphamind.db",
+    )
+
+
+async def test_phase_3_happy_path_equity_open_fill_close(tmp_path: Path) -> None:
+    """When creds + DB path are available, phase 3 drives a real equity
+    OPEN→fill→CLOSE round-trip against the mocked broker.
+
+    Mocked: ``TradingClient.submit_order`` returns an alpaca-py Order; the
+    factory's ``build_trading_stream`` returns a ``_FakeStream`` we inject
+    fill events into to simulate the trade_updates websocket.
+    """
+    from alphamind.scripts.verify_broker_adapter import phase_3_equity_order_lifecycle
+
+    # Two submit_order calls expected (OPEN entry, then CLOSE exit). Track ids
+    # so we can fabricate matching fill events.
+    open_order = _build_alpaca_order(client_order_id="will-be-overwritten")
+    close_order = _build_alpaca_order(client_order_id="will-be-overwritten")
+    submitted: list[Any] = []
+
+    def _submit_order(req: Any) -> Any:
+        coid = getattr(req, "client_order_id", "")
+        target = open_order if len(submitted) == 0 else close_order
+        target.client_order_id = coid
+        submitted.append(req)
+        return target
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit_order)
+
+    stream = _FakeStream()
+    ctx = _make_context_with_db(tmp_path)
+    ctx.factory.build_trading_client.return_value = client
+    ctx.factory.build_trading_stream.return_value = stream
+
+    # Drive the phase; while it's awaiting the OPEN fill, inject the
+    # corresponding TradeUpdate. Same for the CLOSE fill.
+    import asyncio as _asyncio
+
+    async def _injector() -> None:
+        # Wait for handler registration + first submit_order call
+        for _ in range(50):
+            await _asyncio.sleep(0.01)
+            if stream.handler is not None and len(submitted) >= 1:
+                break
+        await stream.inject(
+            _build_trade_update_fill(
+                order_id=open_order.id, client_order_id=open_order.client_order_id
+            )
+        )
+        # Wait for second submit_order (CLOSE)
+        for _ in range(200):
+            await _asyncio.sleep(0.01)
+            if len(submitted) >= 2:
+                break
+        await stream.inject(
+            _build_trade_update_fill(
+                order_id=close_order.id, client_order_id=close_order.client_order_id
+            )
+        )
+
+    injector_task = _asyncio.create_task(_injector())
+    try:
+        result = await phase_3_equity_order_lifecycle(ctx)
+    finally:
+        injector_task.cancel()
+        with contextlib.suppress(_asyncio.CancelledError, Exception):
+            await injector_task
+
+    assert result.ok is True, result.detail
+    assert result.deferred is False
+    # Two submit_order calls — OPEN and CLOSE.
+    assert len(submitted) == 2
+
+
+async def test_phase_3_timeout_when_fill_never_arrives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the OPEN fill never arrives within the timeout, the phase fails with
+    a diagnostic naming the missing fill. Cleanup runs the CANCEL on the
+    pending order so the paper account isn't left with a hung order."""
+    import alphamind.scripts.verify_broker_adapter as module
+
+    # Tighten the equity timeout so the test runs sub-second.
+    monkeypatch.setattr(module, "_PHASE_3_FILL_TIMEOUT_SECONDS", 0.2)
+
+    open_order = _build_alpaca_order()
+    submitted: list[Any] = []
+
+    def _submit_order(req: Any) -> Any:
+        coid = getattr(req, "client_order_id", "")
+        open_order.client_order_id = coid
+        submitted.append(req)
+        return open_order
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit_order)
+    client.cancel_order_by_id = MagicMock(return_value=None)
+
+    stream = _FakeStream()
+    ctx = _make_context_with_db(tmp_path)
+    ctx.factory.build_trading_client.return_value = client
+    ctx.factory.build_trading_stream.return_value = stream
+
+    result = await module.phase_3_equity_order_lifecycle(ctx)
+    assert result.ok is False
+    assert "fill never arrived" in (result.detail or "").lower()
+    # Cleanup: CANCEL submitted on the pending OPEN.
+    client.cancel_order_by_id.assert_called_once_with(str(open_order.id))
+
+
+async def test_phase_3_cleanup_close_after_open_filled_but_close_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the OPEN fills but the CLOSE fill never arrives, the cleanup path
+    submits a residual CLOSE so the paper account isn't left holding the
+    position. Asserts the cleanup CLOSE reached ``submit_order``."""
+    import asyncio as _asyncio
+
+    import alphamind.scripts.verify_broker_adapter as module
+
+    monkeypatch.setattr(module, "_PHASE_3_FILL_TIMEOUT_SECONDS", 0.5)
+
+    open_order = _build_alpaca_order(client_order_id="will-be-overwritten")
+    close_order = _build_alpaca_order(client_order_id="will-be-overwritten")
+    cleanup_order = _build_alpaca_order(client_order_id="will-be-overwritten")
+    submitted: list[Any] = []
+
+    def _submit_order(req: Any) -> Any:
+        coid = getattr(req, "client_order_id", "")
+        targets = [open_order, close_order, cleanup_order]
+        target = targets[len(submitted)] if len(submitted) < len(targets) else cleanup_order
+        target.client_order_id = coid
+        submitted.append(req)
+        return target
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit_order)
+    client.cancel_order_by_id = MagicMock(return_value=None)
+
+    stream = _FakeStream()
+    ctx = _make_context_with_db(tmp_path)
+    ctx.factory.build_trading_client.return_value = client
+    ctx.factory.build_trading_stream.return_value = stream
+
+    async def _injector() -> None:
+        # Wait for OPEN submission, then inject only the OPEN fill — never the
+        # CLOSE fill. The CLOSE wait should time out and trigger cleanup.
+        for _ in range(50):
+            await _asyncio.sleep(0.01)
+            if stream.handler is not None and len(submitted) >= 1:
+                break
+        await stream.inject(
+            _build_trade_update_fill(
+                order_id=open_order.id, client_order_id=open_order.client_order_id
+            )
+        )
+
+    injector_task = _asyncio.create_task(_injector())
+    try:
+        result = await module.phase_3_equity_order_lifecycle(ctx)
+    finally:
+        injector_task.cancel()
+        with contextlib.suppress(_asyncio.CancelledError, Exception):
+            await injector_task
+
+    assert result.ok is False
+    assert "fill never arrived" in (result.detail or "").lower()
+    # OPEN + CLOSE + cleanup CLOSE = 3 submit_order calls.
+    assert len(submitted) == 3, f"expected 3 submit_order calls, got {len(submitted)}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — single-leg options OPEN→fill→CLOSE round-trip
+# ---------------------------------------------------------------------------
+
+
+def _build_options_calendar_client(today: dt.date | None = None) -> MagicMock:
+    """Build a TradingClient whose get_calendar returns Fridays in the next
+    45 days — the verify script picks the first Friday ≥ 7 days out as the
+    options expiration so re-runs don't go stale."""
+    anchor = today or dt.datetime.now(dt.UTC).date()
+    days: list[Calendar] = []
+    for offset in range(60):
+        d = anchor + dt.timedelta(days=offset)
+        if d.weekday() < 5:  # Mon-Fri are business days
+            days.append(
+                Calendar.model_validate({"date": d.isoformat(), "open": "09:30", "close": "16:00"})
+            )
+
+    def _filter(*, filters: Any | None = None) -> list[Calendar]:
+        if filters is None:
+            return days
+        start = getattr(filters, "start", None)
+        end = getattr(filters, "end", None)
+        return [
+            d for d in days if (start is None or d.date >= start) and (end is None or d.date <= end)
+        ]
+
+    client = MagicMock(spec=TradingClient)
+    client.get_calendar.side_effect = _filter
+    return client
+
+
+def _make_context_with_db_and_calendar(
+    tmp_path: Path, *, mode: str = "paper", verbose: bool = False
+) -> Any:
+    """Build a VerifyContext whose queries' get_calendar honors filters.
+
+    Phases 4 / 5 read the trading calendar to pick a near-term option
+    expiration; tests need a queries object whose calendar surface returns
+    enough business days for that pick to succeed.
+    """
+    from alphamind.execution.broker_adapter import AccountStateQueries
+    from alphamind.scripts.verify_broker_adapter import VerifyContext
+
+    sdk_client = _build_options_calendar_client()
+    queries = AccountStateQueries(sdk_client)
+    factory = _fake_factory(mode=mode)
+    return VerifyContext(
+        factory=factory,
+        queries=queries,
+        execution=_execution_config(),
+        venue=_venue_config(),
+        mode=mode,  # type: ignore[arg-type]
+        verbose=verbose,
+        db_path=tmp_path / "alphamind.db",
+    )
+
+
+async def test_phase_4_defers_when_db_path_missing() -> None:
+    """When ``ctx.db_path is None`` the options-lifecycle phase defers."""
+    from alphamind.scripts.verify_broker_adapter import phase_4_options_order_lifecycle
+
+    ctx = _make_context()
+    result = await phase_4_options_order_lifecycle(ctx)
+    assert result.ok is True
+    assert result.deferred is True
+    assert "db" in (result.detail or "").lower()
+
+
+async def test_phase_4_happy_path_options_open_fill_close(tmp_path: Path) -> None:
+    """When creds + DB are available, phase 4 drives a 1-contract options
+    OPEN→fill→CLOSE round-trip via the broker dispatcher."""
+    import asyncio as _asyncio
+
+    from alpaca.trading.enums import AssetClass
+
+    open_order = _build_alpaca_order(asset_class=AssetClass.US_OPTION)
+    close_order = _build_alpaca_order(asset_class=AssetClass.US_OPTION)
+    submitted: list[Any] = []
+
+    def _submit_order(req: Any) -> Any:
+        coid = getattr(req, "client_order_id", "")
+        target = open_order if len(submitted) == 0 else close_order
+        target.client_order_id = coid
+        submitted.append(req)
+        return target
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit_order)
+
+    stream = _FakeStream()
+    ctx = _make_context_with_db_and_calendar(tmp_path)
+    ctx.factory.build_trading_client.return_value = client
+    ctx.factory.build_trading_stream.return_value = stream
+
+    async def _injector() -> None:
+        for _ in range(50):
+            await _asyncio.sleep(0.01)
+            if stream.handler is not None and len(submitted) >= 1:
+                break
+        await stream.inject(
+            _build_trade_update_fill(
+                order_id=open_order.id,
+                client_order_id=open_order.client_order_id,
+                asset_class=AssetClass.US_OPTION,
+                symbol="NVDA  260619C00900000",
+            )
+        )
+        for _ in range(200):
+            await _asyncio.sleep(0.01)
+            if len(submitted) >= 2:
+                break
+        await stream.inject(
+            _build_trade_update_fill(
+                order_id=close_order.id,
+                client_order_id=close_order.client_order_id,
+                asset_class=AssetClass.US_OPTION,
+                symbol="NVDA  260619C00900000",
+            )
+        )
+
+    from alphamind.scripts.verify_broker_adapter import phase_4_options_order_lifecycle
+
+    injector_task = _asyncio.create_task(_injector())
+    try:
+        result = await phase_4_options_order_lifecycle(ctx)
+    finally:
+        injector_task.cancel()
+        with contextlib.suppress(_asyncio.CancelledError, Exception):
+            await injector_task
+
+    assert result.ok is True, result.detail
+    assert result.deferred is False
+    assert len(submitted) == 2
+
+
+async def test_phase_4_timeout_when_fill_never_arrives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the OPEN options fill never arrives, the phase fails and cleanup
+    cancels the pending order."""
+    from alpaca.trading.enums import AssetClass
+
+    import alphamind.scripts.verify_broker_adapter as module
+
+    monkeypatch.setattr(module, "_PHASE_4_FILL_TIMEOUT_SECONDS", 0.2)
+
+    open_order = _build_alpaca_order(asset_class=AssetClass.US_OPTION)
+    submitted: list[Any] = []
+
+    def _submit_order(req: Any) -> Any:
+        coid = getattr(req, "client_order_id", "")
+        open_order.client_order_id = coid
+        submitted.append(req)
+        return open_order
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit_order)
+    client.cancel_order_by_id = MagicMock(return_value=None)
+
+    stream = _FakeStream()
+    ctx = _make_context_with_db_and_calendar(tmp_path)
+    ctx.factory.build_trading_client.return_value = client
+    ctx.factory.build_trading_stream.return_value = stream
+
+    result = await module.phase_4_options_order_lifecycle(ctx)
+    assert result.ok is False
+    assert "fill never arrived" in (result.detail or "").lower()
+    client.cancel_order_by_id.assert_called_once_with(str(open_order.id))
+
+
+async def test_phase_4_cleanup_close_after_open_filled_but_close_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the OPEN options fill arrives but CLOSE fill never does, cleanup
+    submits a residual CLOSE."""
+    import asyncio as _asyncio
+
+    from alpaca.trading.enums import AssetClass
+
+    import alphamind.scripts.verify_broker_adapter as module
+
+    monkeypatch.setattr(module, "_PHASE_4_FILL_TIMEOUT_SECONDS", 0.5)
+
+    open_order = _build_alpaca_order(asset_class=AssetClass.US_OPTION)
+    close_order = _build_alpaca_order(asset_class=AssetClass.US_OPTION)
+    cleanup_order = _build_alpaca_order(asset_class=AssetClass.US_OPTION)
+    submitted: list[Any] = []
+
+    def _submit_order(req: Any) -> Any:
+        coid = getattr(req, "client_order_id", "")
+        targets = [open_order, close_order, cleanup_order]
+        target = targets[len(submitted)] if len(submitted) < len(targets) else cleanup_order
+        target.client_order_id = coid
+        submitted.append(req)
+        return target
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit_order)
+    client.cancel_order_by_id = MagicMock(return_value=None)
+
+    stream = _FakeStream()
+    ctx = _make_context_with_db_and_calendar(tmp_path)
+    ctx.factory.build_trading_client.return_value = client
+    ctx.factory.build_trading_stream.return_value = stream
+
+    async def _injector() -> None:
+        for _ in range(50):
+            await _asyncio.sleep(0.01)
+            if stream.handler is not None and len(submitted) >= 1:
+                break
+        await stream.inject(
+            _build_trade_update_fill(
+                order_id=open_order.id,
+                client_order_id=open_order.client_order_id,
+                asset_class=AssetClass.US_OPTION,
+                symbol="NVDA  260619C00900000",
+            )
+        )
+
+    injector_task = _asyncio.create_task(_injector())
+    try:
+        result = await module.phase_4_options_order_lifecycle(ctx)
+    finally:
+        injector_task.cancel()
+        with contextlib.suppress(_asyncio.CancelledError, Exception):
+            await injector_task
+
+    assert result.ok is False
+    assert "fill never arrived" in (result.detail or "").lower()
+    assert len(submitted) == 3
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — multi-leg vertical-spread OPEN→fill→CLOSE round-trip
+# ---------------------------------------------------------------------------
+
+
+async def test_phase_5_defers_when_db_path_missing() -> None:
+    """When ``ctx.db_path is None`` the mleg-lifecycle phase defers."""
+    from alphamind.scripts.verify_broker_adapter import phase_5_mleg_order_lifecycle
+
+    ctx = _make_context()
+    result = await phase_5_mleg_order_lifecycle(ctx)
+    assert result.ok is True
+    assert result.deferred is True
+    assert "db" in (result.detail or "").lower()
+
+
+async def test_phase_5_happy_path_mleg_open_fill_close(tmp_path: Path) -> None:
+    """When creds + DB are available, phase 5 drives a 1-contract vertical
+    spread OPEN→fill→CLOSE round-trip via the broker dispatcher."""
+    import asyncio as _asyncio
+
+    from alpaca.trading.enums import AssetClass, OrderClass
+
+    open_order = _build_alpaca_order(order_class=OrderClass.MLEG, asset_class=AssetClass.US_OPTION)
+    close_order = _build_alpaca_order(order_class=OrderClass.MLEG, asset_class=AssetClass.US_OPTION)
+    submitted: list[Any] = []
+
+    def _submit_order(req: Any) -> Any:
+        coid = getattr(req, "client_order_id", "")
+        target = open_order if len(submitted) == 0 else close_order
+        target.client_order_id = coid
+        submitted.append(req)
+        return target
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit_order)
+
+    stream = _FakeStream()
+    ctx = _make_context_with_db_and_calendar(tmp_path)
+    ctx.factory.build_trading_client.return_value = client
+    ctx.factory.build_trading_stream.return_value = stream
+
+    async def _injector() -> None:
+        for _ in range(50):
+            await _asyncio.sleep(0.01)
+            if stream.handler is not None and len(submitted) >= 1:
+                break
+        await stream.inject(
+            _build_trade_update_fill(
+                order_id=open_order.id,
+                client_order_id=open_order.client_order_id,
+                asset_class=AssetClass.US_OPTION,
+                order_class=OrderClass.MLEG,
+                symbol="NVDA  260619C00900000",
+            )
+        )
+        for _ in range(200):
+            await _asyncio.sleep(0.01)
+            if len(submitted) >= 2:
+                break
+        await stream.inject(
+            _build_trade_update_fill(
+                order_id=close_order.id,
+                client_order_id=close_order.client_order_id,
+                asset_class=AssetClass.US_OPTION,
+                order_class=OrderClass.MLEG,
+                symbol="NVDA  260619C00900000",
+            )
+        )
+
+    from alphamind.scripts.verify_broker_adapter import phase_5_mleg_order_lifecycle
+
+    injector_task = _asyncio.create_task(_injector())
+    try:
+        result = await phase_5_mleg_order_lifecycle(ctx)
+    finally:
+        injector_task.cancel()
+        with contextlib.suppress(_asyncio.CancelledError, Exception):
+            await injector_task
+
+    assert result.ok is True, result.detail
+    assert result.deferred is False
+    assert len(submitted) == 2
+
+
+async def test_phase_5_timeout_when_fill_never_arrives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the OPEN mleg fill never arrives, the phase fails and cleanup
+    cancels the pending order."""
+    from alpaca.trading.enums import AssetClass, OrderClass
+
+    import alphamind.scripts.verify_broker_adapter as module
+
+    monkeypatch.setattr(module, "_PHASE_5_FILL_TIMEOUT_SECONDS", 0.2)
+
+    open_order = _build_alpaca_order(order_class=OrderClass.MLEG, asset_class=AssetClass.US_OPTION)
+    submitted: list[Any] = []
+
+    def _submit_order(req: Any) -> Any:
+        coid = getattr(req, "client_order_id", "")
+        open_order.client_order_id = coid
+        submitted.append(req)
+        return open_order
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit_order)
+    client.cancel_order_by_id = MagicMock(return_value=None)
+
+    stream = _FakeStream()
+    ctx = _make_context_with_db_and_calendar(tmp_path)
+    ctx.factory.build_trading_client.return_value = client
+    ctx.factory.build_trading_stream.return_value = stream
+
+    result = await module.phase_5_mleg_order_lifecycle(ctx)
+    assert result.ok is False
+    assert "fill never arrived" in (result.detail or "").lower()
+    client.cancel_order_by_id.assert_called_once_with(str(open_order.id))
+
+
+async def test_phase_5_cleanup_close_after_open_filled_but_close_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If OPEN mleg fills but CLOSE fill never does, cleanup submits a
+    residual CLOSE."""
+    import asyncio as _asyncio
+
+    from alpaca.trading.enums import AssetClass, OrderClass
+
+    import alphamind.scripts.verify_broker_adapter as module
+
+    monkeypatch.setattr(module, "_PHASE_5_FILL_TIMEOUT_SECONDS", 0.5)
+
+    open_order = _build_alpaca_order(order_class=OrderClass.MLEG, asset_class=AssetClass.US_OPTION)
+    close_order = _build_alpaca_order(order_class=OrderClass.MLEG, asset_class=AssetClass.US_OPTION)
+    cleanup_order = _build_alpaca_order(
+        order_class=OrderClass.MLEG, asset_class=AssetClass.US_OPTION
+    )
+    submitted: list[Any] = []
+
+    def _submit_order(req: Any) -> Any:
+        coid = getattr(req, "client_order_id", "")
+        targets = [open_order, close_order, cleanup_order]
+        target = targets[len(submitted)] if len(submitted) < len(targets) else cleanup_order
+        target.client_order_id = coid
+        submitted.append(req)
+        return target
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit_order)
+    client.cancel_order_by_id = MagicMock(return_value=None)
+
+    stream = _FakeStream()
+    ctx = _make_context_with_db_and_calendar(tmp_path)
+    ctx.factory.build_trading_client.return_value = client
+    ctx.factory.build_trading_stream.return_value = stream
+
+    async def _injector() -> None:
+        for _ in range(50):
+            await _asyncio.sleep(0.01)
+            if stream.handler is not None and len(submitted) >= 1:
+                break
+        await stream.inject(
+            _build_trade_update_fill(
+                order_id=open_order.id,
+                client_order_id=open_order.client_order_id,
+                asset_class=AssetClass.US_OPTION,
+                order_class=OrderClass.MLEG,
+                symbol="NVDA  260619C00900000",
+            )
+        )
+
+    injector_task = _asyncio.create_task(_injector())
+    try:
+        result = await module.phase_5_mleg_order_lifecycle(ctx)
+    finally:
+        injector_task.cancel()
+        with contextlib.suppress(_asyncio.CancelledError, Exception):
+            await injector_task
+
+    assert result.ok is False
+    assert "fill never arrived" in (result.detail or "").lower()
+    assert len(submitted) == 3

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import datetime as dt
 import sys
 from collections.abc import Callable, Coroutine, Sequence
@@ -48,6 +49,22 @@ from alphamind.execution.broker_adapter import (
     classify_alpaca_error,
     recover_missed_fills_since,
     submit_with_retry,
+)
+from alphamind.execution.oms.command_models import (
+    BracketOrderParameters,
+    CloseCommand,
+    EntryOrder,
+    EquityInstrument,
+    OpenCommand,
+    OptionInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    StrategyInstrument,
+    StrategyLeg,
+    Target,
+    Thesis,
+    ThesisComponent,
 )
 
 __all__ = [
@@ -120,6 +137,12 @@ class VerifyContext:
     operator-tunable execution knobs. ``mode`` records the operator's selected
     paper/live mode (only ``paper`` is in scope for the verify script's
     end-to-end live drives — live-mode assertions DEFER per the spec).
+
+    ``db_path`` is the optional SQLite file the operator threads through for
+    Phases 3 / 4 / 5 — the equity / options / mleg lifecycles need a writable
+    DB to record the OMS-side activity-log entries that prove the round-trip
+    completed. When ``None``, those phases DEFER with a precise reason; when
+    set, they drive a real Alpaca paper round-trip via the broker dispatcher.
     """
 
     factory: AlpacaClientFactory
@@ -128,6 +151,7 @@ class VerifyContext:
     venue: VenueConfig
     mode: VerifyMode
     verbose: bool
+    db_path: Path | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -372,77 +396,573 @@ async def _phase_2_check_orders(queries: AccountStateQueries) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 3 — Equity order lifecycle
+# Phase 3 / 4 / 5 — shared lifecycle orchestrator
+#
+# Each lifecycle drives the same five-step shape: dispatch OPEN, wait for
+# entry fill, dispatch CLOSE, wait for exit fill, run cleanup on any
+# residue. The phase-specific knobs (label, fill-wait budget, OPEN command,
+# CLOSE-context kwargs) ride on a frozen ``_LifecyclePlan``; the orchestrator
+# below is the single shared driver.
 # ---------------------------------------------------------------------------
+
+
+# Per-phase fill-wait budgets. Equity 30s; options 60s; mleg 120s (multi-leg
+# fill latency is variable on paper).
+_PHASE_3_FILL_TIMEOUT_SECONDS: float = 30.0
+_PHASE_4_FILL_TIMEOUT_SECONDS: float = 60.0
+_PHASE_5_FILL_TIMEOUT_SECONDS: float = 120.0
+
+
+@dataclass(frozen=True)
+class _LifecyclePlan:
+    """Phase-specific knobs the shared lifecycle orchestrator consumes.
+
+    ``open_command`` is the canonical OPEN to dispatch. ``close_context`` is
+    the kwargs dict the CLOSE dispatch needs (asset-type-specific —
+    equity threads symbol/qty/side; options threads occ_symbol + intent;
+    strategy threads open_legs + strategy_type). ``cleanup_position_id`` is
+    the synthetic position id used on residual CLOSE / CANCEL paths.
+    """
+
+    label: str
+    fill_timeout_seconds: float
+    role_prefix: str
+    open_command: OpenCommand
+    close_context: dict[str, Any]
+    cleanup_position_id: str
+
+
+def _deferred_no_db(label: str, lifecycle: str) -> PhaseResult:
+    """Build the standard "no db_path threaded" deferral result."""
+    return PhaseResult.skipped(
+        label,
+        (
+            f"DEFERRED: no DB path threaded through VerifyContext. "
+            f"The {lifecycle} OPEN→fill→CLOSE round-trip requires a writable DB to "
+            "record OMS-side activity-log entries; operator drives this via the "
+            "runbook."
+        ),
+    )
 
 
 _PHASE_3_LABEL = "Phase 3 — Equity order lifecycle"
-
-
-async def phase_3_equity_order_lifecycle(_ctx: VerifyContext) -> PhaseResult:
-    """Drive an OPEN → fill → CLOSE round-trip on a paper-mode equity bracket.
-
-    DEFERRED for the in-process subagent run because the live drive requires:
-    1. Real Alpaca paper credentials with sufficient buying power.
-    2. A persistent SQLite DB and full OMS engine-stub wiring (story 03e).
-    3. Time to wait for paper-mode fills (typically seconds, but variable).
-
-    The operator runs this against a configured paper account per the runbook.
-    """
-    return PhaseResult.skipped(
-        _PHASE_3_LABEL,
-        (
-            "DEFERRED: equity OPEN→fill→CLOSE round-trip requires live paper credentials "
-            "and a persistent OMS DB. Operator drives this end-to-end per the runbook."
-        ),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Phase 4 — Options order lifecycle
-# ---------------------------------------------------------------------------
-
-
 _PHASE_4_LABEL = "Phase 4 — Options order lifecycle"
-
-
-async def phase_4_options_order_lifecycle(_ctx: VerifyContext) -> PhaseResult:
-    """Drive an OPEN → fill → CLOSE round-trip on a paper-mode single-leg option.
-
-    DEFERRED for the in-process subagent run for the same reason as Phase 3 —
-    requires live paper credentials, SQLite DB, OMS wiring, and time for fills.
-    Additionally requires options-level approval on the Alpaca paper account.
-    """
-    return PhaseResult.skipped(
-        _PHASE_4_LABEL,
-        (
-            "DEFERRED: single-leg option OPEN→fill→CLOSE round-trip requires live paper "
-            "credentials with options approval and a persistent OMS DB. Operator drives "
-            "this end-to-end per the runbook."
-        ),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Phase 5 — Multi-leg strategy lifecycle
-# ---------------------------------------------------------------------------
-
-
 _PHASE_5_LABEL = "Phase 5 — Mleg strategy lifecycle"
 
+# Verify-script underlying — same NVDA across phases keeps the operator's
+# paper account in one underlying. NVDA also matches Phase 2's known-symbol
+# probe (one less moving part).
+_VERIFY_UNDERLYING: str = "NVDA"
 
-async def phase_5_mleg_order_lifecycle(_ctx: VerifyContext) -> PhaseResult:
+# Reference strikes for the option / vertical-spread fixtures. The script
+# never consults live quotes — picks placeholder strikes and lets the paper
+# account fill at market. 900 / 910 keep NVDA's calls OTM at typical ranges
+# without straying so far they can't fill on paper.
+_PHASE_4_STRIKE: float = 900.0
+_PHASE_5_LONG_STRIKE: float = 900.0
+_PHASE_5_SHORT_STRIKE: float = 910.0
+
+
+async def phase_3_equity_order_lifecycle(ctx: VerifyContext) -> PhaseResult:
+    """Drive an OPEN → fill → CLOSE round-trip on a paper-mode equity bracket.
+
+    Defers when ``ctx.db_path`` is None (subagent runs lack a writable DB).
+    Otherwise dispatches a 1-share OPEN bracket via the broker dispatcher,
+    waits for the entry fill via ``subscribe_trade_updates``, then submits a
+    CLOSE and confirms the close fill. Wraps in try/finally so a mid-flight
+    timeout triggers cleanup (CANCEL on pending order, CLOSE on opened
+    position).
+    """
+    if ctx.db_path is None:
+        return _deferred_no_db(_PHASE_3_LABEL, "equity")
+    plan = _LifecyclePlan(
+        label=_PHASE_3_LABEL,
+        fill_timeout_seconds=_PHASE_3_FILL_TIMEOUT_SECONDS,
+        role_prefix="phase3",
+        open_command=_build_equity_open_command(_VERIFY_UNDERLYING),
+        close_context={
+            "position_asset_type": "equity",
+            "position_symbol": _VERIFY_UNDERLYING,
+            "position_qty": 1.0,
+            "position_side": "long",
+        },
+        cleanup_position_id=f"verify-cleanup-{_VERIFY_UNDERLYING}",
+    )
+    return await _drive_lifecycle(ctx, plan)
+
+
+async def _drive_lifecycle(ctx: VerifyContext, plan: _LifecyclePlan) -> PhaseResult:
+    """Drive the OPEN→fill→CLOSE round-trip described by *plan*.
+
+    Wraps in try/finally so any mid-flight failure triggers a best-effort
+    CANCEL on a still-pending OPEN or a CLOSE on an opened-but-not-closed
+    position.
+    """
+    from alphamind.execution.broker_adapter import GatewaySubmissionFailed, Submitted
+    from alphamind.execution.oms.broker_dispatch import dispatch_command_to_broker
+
+    client = ctx.factory.build_trading_client()
+    stream = ctx.factory.build_trading_stream()
+
+    open_alpaca_id: str | None = None
+    position_opened: bool = False
+
+    try:
+        open_outcome = await dispatch_command_to_broker(
+            plan.open_command,
+            client=client,
+            queries=ctx.queries,
+            execution=ctx.execution,
+            client_order_id=_client_order_id_for_phase(f"{plan.role_prefix}-open"),
+        )
+        if isinstance(open_outcome, GatewaySubmissionFailed):
+            return PhaseResult.failed(
+                plan.label,
+                f"OPEN gateway-submission failed: {open_outcome.reason}",
+            )
+        assert isinstance(open_outcome, Submitted)
+        open_alpaca_id = open_outcome.payload.alpaca_order_id
+
+        wait_open = await _wait_for_fill(
+            stream,
+            alpaca_order_id=open_alpaca_id,
+            timeout_seconds=plan.fill_timeout_seconds,
+            label="OPEN entry",
+        )
+        if wait_open is not None:
+            return PhaseResult.failed(plan.label, wait_open)
+        position_opened = True
+
+        close_command = CloseCommand(
+            command_type="close",
+            position_id=f"verify-{plan.role_prefix}-{open_alpaca_id}",
+            quantity="all",
+            order_type="market",
+            close_rationale_type="target_reached",
+        )
+        close_outcome = await dispatch_command_to_broker(
+            close_command,
+            client=client,
+            queries=ctx.queries,
+            execution=ctx.execution,
+            client_order_id=_client_order_id_for_phase(f"{plan.role_prefix}-close"),
+            **plan.close_context,
+        )
+        if isinstance(close_outcome, GatewaySubmissionFailed):
+            return PhaseResult.failed(
+                plan.label,
+                f"CLOSE gateway-submission failed: {close_outcome.reason}",
+            )
+        assert isinstance(close_outcome, Submitted)
+
+        wait_close = await _wait_for_fill(
+            stream,
+            alpaca_order_id=close_outcome.payload.alpaca_order_id,
+            timeout_seconds=plan.fill_timeout_seconds,
+            label="CLOSE exit",
+        )
+        if wait_close is not None:
+            return PhaseResult.failed(plan.label, wait_close)
+        position_opened = False
+        return PhaseResult.passed(plan.label)
+    finally:
+        await _cleanup_residue(
+            ctx=ctx,
+            client=client,
+            plan=plan,
+            pending_alpaca_order_id=open_alpaca_id if not position_opened else None,
+            position_opened=position_opened,
+        )
+
+
+async def _cleanup_residue(
+    *,
+    ctx: VerifyContext,
+    client: Any,
+    plan: _LifecyclePlan,
+    pending_alpaca_order_id: str | None,
+    position_opened: bool,
+) -> None:
+    """Best-effort cleanup of any pending order + opened position from a failed run.
+
+    Each cleanup call is suppressed so cleanup errors don't mask the original
+    failure diagnostic the phase already returned. Called from the phase's
+    ``finally`` so a mid-flight timeout doesn't leave the paper account in a
+    half-open state.
+    """
+    from alphamind.execution.broker_adapter import submit_cancel
+    from alphamind.execution.oms.broker_dispatch import dispatch_command_to_broker
+
+    if pending_alpaca_order_id is not None:
+        with contextlib.suppress(Exception):
+            await submit_cancel(
+                client=client,
+                execution=ctx.execution,
+                target_alpaca_order_id=pending_alpaca_order_id,
+            )
+
+    if position_opened:
+        cleanup_close = CloseCommand(
+            command_type="close",
+            position_id=plan.cleanup_position_id,
+            quantity="all",
+            order_type="market",
+            close_rationale_type="risk_management",
+            risk_management_subtype="pm_directed",
+        )
+        with contextlib.suppress(Exception):
+            await dispatch_command_to_broker(
+                cleanup_close,
+                client=client,
+                queries=ctx.queries,
+                execution=ctx.execution,
+                client_order_id=_client_order_id_for_phase(f"{plan.role_prefix}-cleanup"),
+                **plan.close_context,
+            )
+
+
+def _build_equity_open_command(ticker: str) -> OpenCommand:
+    """Build a 1-share long market OPEN bracket on *ticker*.
+
+    Uses a very-wide stop (1¢ trigger) and a very-far target ($10k limit)
+    so neither bracket leg fires before the verify closes the position; the
+    BRACKET shape exercises the full bracket-class translation but the entry
+    fills immediately at market.
+    """
+    return OpenCommand(
+        command_type="open",
+        instrument=EquityInstrument(asset_type="equity", ticker=ticker, direction="long"),
+        entry_order=EntryOrder(type="market"),
+        position_size=PositionSize(quantity=1.0, dollar_value=1.0),
+        target=Target(target_type="absolute_price", price=10_000.0, order_type="limit"),
+        invalidation_legs=(
+            PriceLeg(
+                type="price",
+                is_hard=True,
+                condition=PriceCondition(
+                    underlying_trigger=ticker,
+                    comparator="<=",
+                    trigger_price=0.01,
+                ),
+                order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+            ),
+        ),
+        thesis=_verify_thesis(ticker, "equity OPEN"),
+    )
+
+
+def _verify_thesis(ticker: str, summary_suffix: str) -> Thesis:
+    """Build the placeholder thesis attached to verify-script OPEN commands."""
+    return Thesis(
+        summary=f"verify-script {summary_suffix} — proves broker round-trip wiring",
+        components=(
+            ThesisComponent(
+                component_type="entry_rationale",
+                linked_leg="entry",
+                instrument_reference=ticker,
+                narrative="verify script smoke",
+                key_assumptions=("paper-mode marketability",),
+            ),
+        ),
+    )
+
+
+def _client_order_id_for_phase(role: str) -> str:
+    """Build a verify-script client_order_id matching ``oms-command-ids.md``.
+
+    Canonical PM-originated pattern is
+    ``inv-{invocation_id}.{envelope_id}.{command_ordinal}.{attempt_seq}``.
+    Each call gets a fresh microsecond-suffixed invocation_id so consecutive
+    OPEN / CLOSE / cleanup submissions don't collide against an Alpaca-side
+    dedup window.
+    """
+    from alphamind.execution.oms.command_ids import derive_pm_command_id
+
+    now = dt.datetime.now(dt.UTC)
+    stamp = now.strftime("%Y%m%dT%H%M%S")
+    invocation = f"verify-{stamp}-{role}-{now.microsecond:06d}"
+    return derive_pm_command_id(
+        invocation_id=invocation,
+        envelope_id="ENV-REC-1",
+        command_ordinal=0,
+        attempt_seq=0,
+    )
+
+
+async def _wait_for_fill(
+    stream: Any,
+    *,
+    alpaca_order_id: str,
+    timeout_seconds: float,
+    label: str,
+) -> str | None:
+    """Drain ``subscribe_trade_updates`` until a fill matching *alpaca_order_id*.
+
+    Returns ``None`` on success or a diagnostic string on timeout. Iterates
+    the async generator with a per-event ``asyncio.wait_for`` budget so the
+    overall wait is bounded.
+    """
+    from alphamind.execution.broker_adapter import subscribe_trade_updates
+
+    gen = subscribe_trade_updates(stream)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_seconds
+    timeout_diagnostic = (
+        f"{label} fill never arrived for alpaca_order_id={alpaca_order_id!r} "
+        f"within {timeout_seconds:.0f}s"
+    )
+    try:
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return timeout_diagnostic
+            try:
+                report = await asyncio.wait_for(gen.__anext__(), timeout=remaining)
+            except TimeoutError:
+                return timeout_diagnostic
+            except StopAsyncIteration:
+                return f"{label} stream closed before fill arrived"
+            if report.alpaca_order_id == alpaca_order_id and report.event_type == "filled":
+                return None
+    finally:
+        await gen.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Single-leg options order lifecycle
+# ---------------------------------------------------------------------------
+
+
+async def phase_4_options_order_lifecycle(ctx: VerifyContext) -> PhaseResult:
+    """Drive an OPEN → fill → CLOSE round-trip on a paper-mode single-leg option.
+
+    Defers when ``ctx.db_path`` is None. Otherwise picks the nearest
+    expiration ≥ 7 days out via the live calendar, submits a 1-contract
+    long-call OPEN, waits for the fill, then submits a CLOSE. Wraps in
+    try/finally so a mid-flight timeout triggers cleanup.
+    """
+    if ctx.db_path is None:
+        return _deferred_no_db(_PHASE_4_LABEL, "single-leg options")
+    try:
+        expiration = _pick_near_term_expiration(ctx.queries, days_out_min=7)
+    except Exception as exc:
+        return PhaseResult.failed(
+            _PHASE_4_LABEL,
+            f"could not pick options expiration from live calendar: {exc!s}",
+        )
+    occ_symbol = _build_occ(_VERIFY_UNDERLYING, expiration, _PHASE_4_STRIKE)
+    plan = _LifecyclePlan(
+        label=_PHASE_4_LABEL,
+        fill_timeout_seconds=_PHASE_4_FILL_TIMEOUT_SECONDS,
+        role_prefix="phase4",
+        open_command=_build_options_open_command(
+            underlying=_VERIFY_UNDERLYING,
+            strike=_PHASE_4_STRIKE,
+            expiration=expiration,
+        ),
+        close_context={
+            "position_asset_type": "option",
+            "occ_symbol": occ_symbol,
+            "position_qty": 1.0,
+            "position_intent": "sell_to_close",
+        },
+        cleanup_position_id=f"verify-cleanup-options-{occ_symbol}",
+    )
+    return await _drive_lifecycle(ctx, plan)
+
+
+def _build_options_open_command(
+    *, underlying: str, strike: float, expiration: dt.date
+) -> OpenCommand:
+    """Build a 1-contract long-call OPEN on *underlying* / *expiration*."""
+    return OpenCommand(
+        command_type="open",
+        instrument=OptionInstrument(
+            asset_type="option",
+            underlying=underlying,
+            strike=strike,
+            expiration=expiration.isoformat(),
+            contract_type="call",
+            direction="long",
+        ),
+        entry_order=EntryOrder(type="market"),
+        position_size=PositionSize(quantity=1.0, dollar_value=1.0),
+        target=Target(target_type="absolute_price", price=10_000.0, order_type="limit"),
+        invalidation_legs=(
+            PriceLeg(
+                type="price",
+                is_hard=True,
+                condition=PriceCondition(
+                    underlying_trigger=underlying,
+                    comparator="<=",
+                    trigger_price=0.01,
+                ),
+                order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+            ),
+        ),
+        thesis=_verify_thesis(underlying, "options OPEN"),
+    )
+
+
+def _pick_near_term_expiration(queries: AccountStateQueries, *, days_out_min: int) -> dt.date:
+    """Pick the first business-day expiration ≥ ``days_out_min`` from today.
+
+    Reads ``queries.get_calendar`` over a 60-day window; returns the first
+    business day at-or-after ``today + days_out_min``. Listed options expire
+    on Fridays, but Alpaca's paper venue accepts any business day; picking the
+    first business day past the threshold keeps re-runs deterministic and
+    avoids day-of-week brittleness.
+    """
+    today = _today_utc()
+    start = today + dt.timedelta(days=days_out_min)
+    end = today + dt.timedelta(days=60)
+    calendar = queries.get_calendar(start=start, end=end)
+    if not calendar:
+        msg = (
+            f"calendar fetch returned no business days between {start.isoformat()} "
+            f"and {end.isoformat()}"
+        )
+        raise RuntimeError(msg)
+    return calendar[0].date
+
+
+def _build_occ(underlying: str, expiration: dt.date, strike: float) -> str:
+    """Wrap ``build_occ_symbol`` to keep the call sites short."""
+    from alphamind.execution.broker_adapter import build_occ_symbol
+
+    return build_occ_symbol(underlying, expiration, _OPT_CALL, strike)
+
+
+# ``OptionContractType.CALL`` is the canonical enum ``build_occ_symbol``
+# consumes; resolved at module-import via the portfolio_state records package.
+def _opt_call_enum() -> Any:
+    from alphamind.portfolio_state.records.positions import OptionContractType
+
+    return OptionContractType.CALL
+
+
+_OPT_CALL = _opt_call_enum()
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Multi-leg vertical-spread lifecycle
+# ---------------------------------------------------------------------------
+
+
+async def phase_5_mleg_order_lifecycle(ctx: VerifyContext) -> PhaseResult:
     """Drive an OPEN → all-legs-fill → CLOSE round-trip on a 2-leg vertical spread.
 
-    DEFERRED for the in-process subagent run for the same reason as Phases 3/4.
+    Defers when ``ctx.db_path`` is None. Otherwise picks the nearest
+    expiration ≥ 7 days out via the live calendar, submits a 1-unit long
+    call vertical spread, waits for the parent fill, then submits a CLOSE
+    that inverts each leg's intent. Wraps in try/finally so a mid-flight
+    timeout triggers cleanup.
     """
-    return PhaseResult.skipped(
-        _PHASE_5_LABEL,
-        (
-            "DEFERRED: 2-leg vertical-spread OPEN→fill→CLOSE round-trip requires live "
-            "paper credentials with options approval and a persistent OMS DB. Operator "
-            "drives this end-to-end per the runbook."
+    if ctx.db_path is None:
+        return _deferred_no_db(_PHASE_5_LABEL, "2-leg vertical-spread")
+    try:
+        expiration = _pick_near_term_expiration(ctx.queries, days_out_min=7)
+    except Exception as exc:
+        return PhaseResult.failed(
+            _PHASE_5_LABEL,
+            f"could not pick options expiration from live calendar: {exc!s}",
+        )
+    open_legs = _build_mleg_open_legs(_VERIFY_UNDERLYING, expiration)
+    plan = _LifecyclePlan(
+        label=_PHASE_5_LABEL,
+        fill_timeout_seconds=_PHASE_5_FILL_TIMEOUT_SECONDS,
+        role_prefix="phase5",
+        open_command=_build_mleg_open_command(
+            underlying=_VERIFY_UNDERLYING,
+            long_strike=_PHASE_5_LONG_STRIKE,
+            short_strike=_PHASE_5_SHORT_STRIKE,
+            expiration=expiration,
         ),
+        close_context={
+            "position_asset_type": "strategy",
+            "open_legs": open_legs,
+            "strategy_type": "vertical_spread",
+            "position_units": 1.0,
+        },
+        cleanup_position_id="verify-cleanup-mleg",
+    )
+    return await _drive_lifecycle(ctx, plan)
+
+
+def _build_mleg_open_legs(underlying: str, expiration: dt.date) -> tuple[Any, ...]:
+    """Build the open-side ``MLEGLegAck`` tuple the close dispatcher inverts.
+
+    Mirrors the persisted ``StrategyPositionDetails`` → MLEGLegAck translation
+    in ``submit_envelope_mcp._persisted_legs_to_mleg_acks``: long the
+    lower-strike call (``buy_to_open``), short the higher-strike call
+    (``sell_to_open``).
+    """
+    from alphamind.execution.broker_adapter import MLEGLegAck
+
+    return (
+        MLEGLegAck(
+            occ_symbol=_build_occ(underlying, expiration, _PHASE_5_LONG_STRIKE),
+            side="buy",
+            ratio_qty=1,
+            position_intent="buy_to_open",
+        ),
+        MLEGLegAck(
+            occ_symbol=_build_occ(underlying, expiration, _PHASE_5_SHORT_STRIKE),
+            side="sell",
+            ratio_qty=1,
+            position_intent="sell_to_open",
+        ),
+    )
+
+
+def _build_mleg_open_command(
+    *,
+    underlying: str,
+    long_strike: float,
+    short_strike: float,
+    expiration: dt.date,
+) -> OpenCommand:
+    """Build a 1-unit long call vertical spread OPEN on *underlying*."""
+    expiration_iso = expiration.isoformat()
+    return OpenCommand(
+        command_type="open",
+        instrument=StrategyInstrument(
+            asset_type="strategy",
+            strategy_type="vertical_spread",
+            underlying=underlying,
+            legs=(
+                StrategyLeg(
+                    strike=long_strike,
+                    expiration=expiration_iso,
+                    contract_type="call",
+                    direction="long",
+                    quantity_ratio=1,
+                ),
+                StrategyLeg(
+                    strike=short_strike,
+                    expiration=expiration_iso,
+                    contract_type="call",
+                    direction="short",
+                    quantity_ratio=1,
+                ),
+            ),
+        ),
+        entry_order=EntryOrder(type="market"),
+        position_size=PositionSize(quantity=1.0, dollar_value=1.0),
+        target=Target(target_type="absolute_price", price=10_000.0, order_type="limit"),
+        invalidation_legs=(
+            PriceLeg(
+                type="price",
+                is_hard=True,
+                condition=PriceCondition(
+                    underlying_trigger=underlying,
+                    comparator="<=",
+                    trigger_price=0.01,
+                ),
+                order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
+            ),
+        ),
+        thesis=_verify_thesis(underlying, "vertical-spread OPEN"),
     )
 
 
