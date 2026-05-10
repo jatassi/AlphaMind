@@ -35,19 +35,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import pathlib
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from functools import cache
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-import yaml
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from alphamind.config.models.guardrails import GuardrailsConfig, ProgressiveTier
+from alphamind.config.guardrails_helpers import (
+    load_cumulative_drawdown_progressive_tiers,
+)
+from alphamind.config.models.guardrails import ProgressiveTier
 from alphamind.config.models.regimes import Regime
 from alphamind.execution.guardrail_enforcement import (
     Phase1EnforcementResult,
@@ -131,27 +131,6 @@ class PhaseResult:
 _NOW = datetime(2026, 5, 9, 14, 30, 0, tzinfo=UTC)
 _PROCESS_ID = "verify-guardrail-enforcement-proc"
 _INV_ID_BASE = "verify-guardrail-enforcement-inv"
-_GUARDRAILS_YAML = pathlib.Path("config/guardrails.yaml")
-_CUMULATIVE_DRAWDOWN_RULE_ID = "cumulative_drawdown_pct"
-
-
-@cache
-def _load_progressive_tiers() -> tuple[ProgressiveTier, ...]:
-    """Read the cumulative-drawdown progressive tiers from ``config/guardrails.yaml``.
-
-    Mirrors the inline loader in ``tests/execution/guardrail_enforcement/_helpers.py``
-    so the verify script consumes the same canonical tier sequence the
-    enforcement orchestrator (story 02 / ALP-395) reads at runtime.
-
-    Cached — every phase reads the same tier sequence from the same file; the
-    YAML round-trip is sub-millisecond but caching keeps phase output
-    independent of file-read ordering.
-    """
-    raw = cast(dict[str, Any], yaml.safe_load(_GUARDRAILS_YAML.read_text()))
-    config = GuardrailsConfig.model_validate(raw)
-    rule = next(r for r in config.rules if r.id == _CUMULATIVE_DRAWDOWN_RULE_ID)
-    assert rule.progressive_tiers is not None
-    return tuple(rule.progressive_tiers)
 
 
 def _baseline_normal_parameters() -> ActiveRiskParameterSet:
@@ -282,7 +261,7 @@ def run_phase_1_composition_primitive() -> PhaseResult:
     semantics. Tier triggers loaded from ``config/guardrails.yaml`` so this
     phase exercises the same data the production orchestrator consumes.
     """
-    tiers = _load_progressive_tiers()
+    tiers = load_cumulative_drawdown_progressive_tiers()
     baseline = _baseline_normal_parameters()
     for current_pct, expected_tier, label in _tier_cases(tiers):
         params, tier = compose_active_risk_parameters(
@@ -332,7 +311,7 @@ def run_phase_2_orchestrator() -> PhaseResult:
     ``Phase1EnforcementResult`` carries the expected tier and parameters that
     match the underlying primitive's output.
     """
-    tiers = _load_progressive_tiers()
+    tiers = load_cumulative_drawdown_progressive_tiers()
     baseline = _baseline_normal_parameters()
     regime_out = _regime_output(parameters=baseline)
     for current_pct, expected_tier, label in _tier_cases(tiers):
@@ -417,7 +396,7 @@ def _phase_3_enforcement_result() -> Phase1EnforcementResult:
     return compose_phase_1_enforcement(
         regime_output=_regime_output(parameters=_baseline_normal_parameters()),
         drawdown_state=_drawdown_state(current_drawdown_pct=0.0),
-        progressive_tiers=_load_progressive_tiers(),
+        progressive_tiers=load_cumulative_drawdown_progressive_tiers(),
     )
 
 

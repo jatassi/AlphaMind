@@ -1,19 +1,22 @@
 """Shared test helpers for the guardrail-enforcement work tree.
 
-Centralizes the progressive-tier loader, baseline parameter-set builder,
-entry lookup, and determinism guard used by both ``test_composition.py``
-(story 01) and ``test_orchestrator.py`` (story 02).
+Centralizes the baseline parameter-set builder, entry lookup, determinism
+guard, and the read-once tier-snapshot constants used by both
+``test_composition.py`` (story 01) and ``test_orchestrator.py`` (story 02).
+
+The cumulative-drawdown progressive-tier loader itself lives in
+``alphamind.config.guardrails_helpers``; this module just re-exposes its
+read-once tuple under the existing ``TIERS`` / ``NON_HALT_TIERS`` /
+``FULL_HALT_TIER`` names so the test surface keeps the same imports.
 """
 
 from __future__ import annotations
 
-import pathlib
 from collections.abc import Callable
-from typing import Any, cast
 
-import yaml
-
-from alphamind.config.models.guardrails import GuardrailsConfig, ProgressiveTier
+from alphamind.config.guardrails_helpers import (
+    load_cumulative_drawdown_progressive_tiers,
+)
 from alphamind.portfolio_state.records.capital import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
@@ -24,22 +27,10 @@ from tests.risk_guardrails.breach_behavior.fixtures import make_active_risk_para
 _REPETITIONS = 5
 """Determinism guard repetition count."""
 
-_GUARDRAILS_YAML = pathlib.Path("config/guardrails.yaml")
-_CUMULATIVE_DRAWDOWN_RULE_ID = "cumulative_drawdown_pct"
-
-
-def load_progressive_tiers() -> tuple[ProgressiveTier, ...]:
-    """Load the cumulative-drawdown progressive tiers from the shipped guardrails config."""
-    raw = cast(dict[str, Any], yaml.safe_load(_GUARDRAILS_YAML.read_text()))
-    config = GuardrailsConfig.model_validate(raw)
-    rule = next(r for r in config.rules if r.id == _CUMULATIVE_DRAWDOWN_RULE_ID)
-    assert rule.progressive_tiers is not None
-    return tuple(rule.progressive_tiers)
-
 
 # Read-once module-level snapshot — every consumer references this rather
 # than re-reading and re-validating the shipped YAML on each call.
-TIERS = load_progressive_tiers()
+TIERS = load_cumulative_drawdown_progressive_tiers()
 NON_HALT_TIERS = tuple(t for t in TIERS if not t.full_halt)
 FULL_HALT_TIER = next(t for t in TIERS if t.full_halt)
 
