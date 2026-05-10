@@ -39,11 +39,16 @@ def test_handlers_dict_covers_all_enum_members() -> None:
 # ---------------------------------------------------------------------------
 
 
-_IMPLEMENTED_TYPES = {CorporateActionType.SPLIT, CorporateActionType.SPIN_OFF}
-_NON_SPLIT_TYPES = [t for t in CorporateActionType if t not in _IMPLEMENTED_TYPES]
+_IMPLEMENTED_TYPES = {
+    CorporateActionType.SPLIT,
+    CorporateActionType.CASH_DIVIDEND_LONG,
+    CorporateActionType.CASH_DIVIDEND_SHORT,
+    CorporateActionType.SPIN_OFF,
+}
+_STUB_TYPES = [t for t in CorporateActionType if t not in _IMPLEMENTED_TYPES]
 
 
-@pytest.mark.parametrize("action_type", _NON_SPLIT_TYPES, ids=[t.value for t in _NON_SPLIT_TYPES])
+@pytest.mark.parametrize("action_type", _STUB_TYPES, ids=[t.value for t in _STUB_TYPES])
 @pytest.mark.asyncio
 async def test_non_split_handler_raises_not_implemented(
     action_type: CorporateActionType,
@@ -86,7 +91,7 @@ async def test_non_split_handler_raises_not_implemented(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("action_type", _NON_SPLIT_TYPES, ids=[t.value for t in _NON_SPLIT_TYPES])
+@pytest.mark.parametrize("action_type", _STUB_TYPES, ids=[t.value for t in _STUB_TYPES])
 @pytest.mark.asyncio
 async def test_non_split_message_contains_action_type_name(
     action_type: CorporateActionType,
