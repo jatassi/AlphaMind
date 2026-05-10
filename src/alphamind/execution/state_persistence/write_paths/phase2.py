@@ -461,6 +461,7 @@ async def _writeback_open(
 
     validation_greeks: Greeks | None = None
     if result.acknowledgment is not None and result.acknowledgment.validation_metadata is not None:
+        # validation_metadata.implied_volatility plumbing tracked separately as ALP-399.
         validation_greeks = result.acknowledgment.validation_metadata.greeks
     position = _build_pending_position(
         position_id=ids["position_id"],

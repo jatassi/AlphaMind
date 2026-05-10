@@ -25,10 +25,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+import yaml
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind.config.models.guardrails import GuardrailsConfig, ProgressiveTier
 from alphamind.decision.portfolio_manager.models import (
     CriterionAssessment,
     OpenCommand,
@@ -1157,21 +1159,14 @@ def _phase_e_validate_sql_row(
 # ---------------------------------------------------------------------------
 
 
-def _load_progressive_tiers() -> Any:
+def _load_progressive_tiers() -> tuple[ProgressiveTier, ...]:
     """Read the cumulative-drawdown progressive tiers from ``config/guardrails.yaml``.
 
     Mirrors ``GuardrailsConfig`` validation; selects the
     ``cumulative_drawdown_pct`` rule (the only rule that carries
     ``progressive_tiers``) and returns its tier sequence.
     """
-    import pathlib
-    from typing import cast
-
-    import yaml
-
-    from alphamind.config.models.guardrails import GuardrailsConfig
-
-    raw = cast(dict[str, Any], yaml.safe_load(pathlib.Path("config/guardrails.yaml").read_text()))
+    raw = cast(dict[str, Any], yaml.safe_load(Path("config/guardrails.yaml").read_text()))
     config = GuardrailsConfig.model_validate(raw)
     rule = next(r for r in config.rules if r.id == "cumulative_drawdown_pct")
     assert rule.progressive_tiers is not None

@@ -37,8 +37,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
+import yaml
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -49,6 +50,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 # ``tests/execution/oms/test_submit_engine_envelope.py``; without this the
 # transitive harness-side imports race with the lazy submodule load.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
+from alphamind.config.models.guardrails import GuardrailsConfig, ProgressiveTier
 from alphamind.execution.oms.command_ids import (
     compute_attempt_seq,
     derive_engine_command_id,
@@ -656,19 +658,13 @@ def _phase_3_envelope() -> Any:
     )
 
 
-def _load_progressive_tiers() -> Any:
+def _load_progressive_tiers() -> tuple[ProgressiveTier, ...]:
     """Load the cumulative-drawdown progressive tiers from ``config/guardrails.yaml``.
 
     Mirrors the inline loader in ``tests/execution/guardrail_enforcement/_helpers.py``
     so the verify script consumes the same canonical tier sequence the
     enforcement orchestrator (story 02 / ALP-395) reads at runtime.
     """
-    from typing import cast
-
-    import yaml
-
-    from alphamind.config.models.guardrails import GuardrailsConfig
-
     raw = cast(dict[str, Any], yaml.safe_load(Path("config/guardrails.yaml").read_text()))
     config = GuardrailsConfig.model_validate(raw)
     rule = next(r for r in config.rules if r.id == "cumulative_drawdown_pct")
