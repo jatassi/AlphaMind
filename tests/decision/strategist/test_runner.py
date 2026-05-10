@@ -73,7 +73,9 @@ _IV = 0.30
 _PORTFOLIO_VALUE = 1_000_000.0
 _AVAILABLE_FOR_NEW_POSITIONS_USD = 200_000.0
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_STRATEGIST_PROMPT_TEXT = (_REPO_ROOT / "prompts" / "decision" / "strategist.md").read_text()
+_STRATEGIST_PROMPT_TEXT = (_REPO_ROOT / "prompts" / "decision" / "strategist.md").read_text(
+    encoding="utf-8"
+)
 
 
 def _zones() -> EscalationZones:
