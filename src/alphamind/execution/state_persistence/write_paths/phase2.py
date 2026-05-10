@@ -1828,10 +1828,12 @@ def _build_pending_position(
     § 4d).
     """
     if isinstance(instrument, OptionInstrument):
-        if validation_greeks is None:
+        if validation_greeks is None or validation_iv is None:
             msg = (
                 f"OPEN-options writeback requires validation_metadata.greeks "
-                f"on the Acknowledgment for instrument={instrument!r}; got None"
+                f"and .implied_volatility on the Acknowledgment for "
+                f"instrument={instrument!r}; got greeks={validation_greeks}, "
+                f"iv={validation_iv}"
             )
             raise ValueError(msg)
         details: EquityPositionDetails | OptionsPositionDetails = OptionsPositionDetails(

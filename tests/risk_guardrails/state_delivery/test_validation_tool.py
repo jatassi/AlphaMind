@@ -931,6 +931,8 @@ def test_strategy_action_returns_populated_greeks(monkeypatch: pytest.MonkeyPatc
         (proj,),
         signed_notional_usd=1_000.0,
         greeks=greeks,
+        iv_source=IvSource.SURFACE,
+        iv_used=0.28,
     )
     request = ValidationRequest(
         instrument=ValidationInstrument(
@@ -961,6 +963,9 @@ def test_strategy_action_returns_populated_greeks(monkeypatch: pytest.MonkeyPatc
     )
     result = validate_guardrail(request=request, state=_state())
     assert result.greeks == greeks
+    # ALP-399: multi-leg strategy IV surfaces via the same _mean_iv path;
+    # locked here so future strategy-writeback support inherits a tested contract.
+    assert result.implied_volatility == 0.28
 
 
 # ---------------------------------------------------------------------------
