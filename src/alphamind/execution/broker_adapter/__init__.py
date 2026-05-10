@@ -30,6 +30,9 @@ from alphamind.execution.broker_adapter.client_factory import (
     ExecutionMode,
     ResolvedCredentials,
 )
+from alphamind.execution.broker_adapter.corporate_actions_queries import (
+    CorporateActionsQueries,
+)
 from alphamind.execution.broker_adapter.errors import (
     PermanentRejection,
     PermanentRejectionCode,
@@ -99,6 +102,7 @@ __all__ = [
     "AssetSnapshot",
     "CalendarDay",
     "CancellationAck",
+    "CorporateActionsQueries",
     "EquitySubmission",
     "ExecutionMode",
     "FillReport",

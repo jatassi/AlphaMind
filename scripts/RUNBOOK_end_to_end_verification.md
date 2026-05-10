@@ -97,6 +97,7 @@ they read time-dependent DB state.
 | 1b | Execution: state persistence | state_persistence | No | <5s |
 | 1c | Execution: OMS commands | oms_commands | No | <60s |
 | 1d | Execution: broker adapter | broker_adapter | No (live broker) | <2 min |
+| 1e | Execution: corporate actions | corporate_actions | No | <2s |
 | 2 | Distillation | distillation, regime_transition, calibration_mix | Yes (1 of 3) | ~30–60s |
 | 3 | Analysis: domain researchers | domain_researchers, domain_researcher_failure_modes | Yes (1 of 2) | ~30–60s |
 | 4 | Analysis: qualitative + adaptive | qualitative_researcher, adaptive_researcher | Yes | ~45–90s |
@@ -306,6 +307,42 @@ buying-power exhaustion on Phases 3 / 4 / 5. DEFERRED phases are not
 failures; the only operator action required for a `RESULT: PASS` line
 with deferrals is to confirm the deferral rationale (live-mode
 assertions in paper mode) matches the deferral message.
+
+## Phase 1e — Corporate actions
+
+Pure in-process integration check against the corporate-actions pipeline
+(ALP-124 work tree). The script drains nine synthetic
+`CorporateActionActivity` records — one per `CorporateActionType` member —
+through `process_unprocessed_fills` inside an `InvocationContext`, and
+asserts the post-state matches the per-action-type matrix from
+`docs/design/05-execution-layer/corporate-actions.md` (quantity, cost
+basis, ticker, status, cash impact, `corporate_action_adjustment_needed`
+flag, one `corporate_action_integration_ledger` row per
+`alpaca_activity_id`). A tenth check supplies a deliberately-offset
+`PositionSnapshot` so the post-merge reconciliation step emits exactly one
+`RECONCILIATION_ALERT`. No SDK calls, no live broker contact — synthetic
+`PositionSnapshot` / `TradeAccountSnapshot` records stand in for Alpaca.
+Sub-second runtime.
+
+```bash
+uv run python -m alphamind.scripts.verify_corporate_actions
+```
+
+Expected output is a 9-row pass/fail table (one per `CorporateActionType`
+member) plus a reconciliation-summary line showing `alerts emitted=1,
+expected=1`. Exit code `0` on full pass, `1` on any failure. The
+cross-tree handoff: the chronological-merge step exercised here depends on
+State persistence (Phase 1b) and Broker adapter (Phase 1d) being verified
+clean upstream — the same `InvocationContext` substrate from 1b and the
+same `PositionSnapshot` / `TradeAccountSnapshot` types from 1d are what
+the corporate-actions handlers consume.
+
+**On failure:** read `scripts/RUNBOOK_corporate_actions.md` § Failure-mode
+triage. The FAIL output names the action row and a one-line diagnostic;
+match the row label to its row in the triage table. Live integration of
+the corporate-actions pipeline (real Alpaca v1beta1 fetch + Phase 1
+drain against a production-shaped position set) belongs with ALP-123
+(continuous monitor) when it lands.
 
 ## Phase 2 — Distillation layer
 
@@ -989,6 +1026,7 @@ update the runbook in the same change.
 - `scripts/RUNBOOK_state_persistence.md` — phase 1b failure triage (ALP-119 work tree).
 - `scripts/RUNBOOK_oms_commands.md` — phase 1c failure triage (ALP-120 work tree).
 - `scripts/RUNBOOK_broker_adapter.md` — phase 1d failure triage (ALP-121 work tree).
+- `scripts/RUNBOOK_corporate_actions.md` — phase 1e failure triage (ALP-124 work tree).
 - `scripts/RUNBOOK_domain_researchers.md` — phase 3 failure triage.
 - `scripts/RUNBOOK_qualitative_researcher.md` — phase 4 failure triage.
 - `scripts/RUNBOOK_adaptive_researcher.md` — phase 4 failure triage.

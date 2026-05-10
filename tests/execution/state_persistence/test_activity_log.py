@@ -73,6 +73,7 @@ from alphamind.portfolio_state.events import (
     PMVerdict,
     PositionOpenedDetail,
     PositionOpenMechanism,
+    ReconciliationAlertDetail,
     ThesisCreatedDetail,
 )
 
@@ -554,6 +555,23 @@ def _all_event_group_entries(invocation_id: str) -> list[ActivityLogEntry]:
                 git_sha="a" * 40,
             ),
             source=EventSource.CONFIG_RELOAD,
+        ),
+        # RECONCILIATION
+        _entry(
+            entry_id="entry-recon",
+            invocation_id=invocation_id,
+            timestamp=_T0,
+            event_type=EventType.RECONCILIATION_ALERT,
+            event_group=EventGroup.RECONCILIATION,
+            detail=ReconciliationAlertDetail(
+                domain="position",
+                field_name="share_count",
+                local_value=10.0,
+                alpaca_value=9.5,
+                delta_description="AAPL: local share_count=10.0 vs Alpaca qty=9.5",
+            ),
+            position_id="pos-1",
+            source=EventSource.CORPORATE_ACTION_PROCESSOR,
         ),
     ]
 

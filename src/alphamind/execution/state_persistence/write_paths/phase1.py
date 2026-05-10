@@ -18,9 +18,18 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 
+from alphamind.execution.broker_adapter.queries import (
+    PositionSnapshot,
+    TradeAccountSnapshot,
+)
+from alphamind.execution.corporate_actions import integrate_ca_activity
+from alphamind.execution.corporate_actions.reconciliation import reconcile
+from alphamind.execution.corporate_actions.types import (
+    AlpacaPositionLookup,
+    CorporateActionActivity,
+)
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.activity_log import (
     append_activity_log_entry,
@@ -55,9 +64,6 @@ from alphamind.execution.state_persistence.tables.positions_codec import (
     row_to_record as position_row_to_record,
 )
 from alphamind.execution.state_persistence.tables.theses import ThesisRow
-from alphamind.execution.state_persistence.write_paths.ca_integration_ledger import (
-    mark_ca_activity_processed,
-)
 from alphamind.execution.state_persistence.write_paths.records import (
     FillProcessingStatus,
     FillRecord,
@@ -66,7 +72,6 @@ from alphamind.portfolio_state.events.activity_log import (
     EVENT_TYPE_TO_GROUP,
     ActivityLogEntry,
     BracketActivatedDetail,
-    BracketCancelledCorporateActionDetail,
     BracketDissolvedDetail,
     BracketIncompleteWarningDetail,
     CapitalReleasedDetail,
@@ -74,8 +79,6 @@ from alphamind.portfolio_state.events.activity_log import (
     CashCreditReason,
     CashDebitedDetail,
     CashDebitReason,
-    CorporateActionAppliedDetail,
-    CorporateActionType,
     EventSource,
     EventType,
     OrderFilledDetail,
@@ -152,54 +155,77 @@ class _FillIntegrationOutcome:
     strategy_incomplete_legs: tuple[str, ...] = ()
 
 
+class _SnapshotLookup:
+    """``AlpacaPositionLookup`` backed by the ``alpaca_positions`` tuple.
+
+    The same positions feed reconciliation; constructing the lookup from them
+    avoids a second Alpaca fetch and keeps handler-side reads consistent with
+    the snapshot the reconciler will compare against.
+    """
+
+    def __init__(self, positions: tuple[PositionSnapshot, ...]) -> None:
+        self._by_symbol: dict[str, PositionSnapshot] = {p.symbol: p for p in positions}
+
+    def get_position(self, symbol: str) -> PositionSnapshot | None:
+        return self._by_symbol.get(symbol)
+
+
 @dataclass(frozen=True)
 class Phase1Summary:
     """Outcome of one ``process_unprocessed_fills`` invocation.
 
-    ``reconciliation_deltas`` is reserved for the broker-reconciliation step
-    surfaced in :issue:`ALP-119` Pre-resolved decision (E); for now this
-    story emits an empty mapping.
+    ``reconciliation_alerts`` counts the ``RECONCILIATION_ALERT`` activity-log
+    entries emitted by the post-merge reconciliation step (ALP-415). Local
+    state is preserved as-is — auto-correction is deferred to the continuous
+    monitor (ALP-123).
     """
 
     fills_processed: int
     fills_quarantined: int
     ca_activities_processed: int
-    reconciliation_deltas: dict[str, float]
-
-
-class CorporateActionActivity(BaseModel):
-    """Typed handle for a single Alpaca CA activity awaiting integration.
-
-    Phase 1 integrates one ``CorporateActionActivity`` per row drained from
-    Alpaca's ``GET /v2/account/activities``. The continuous-monitor work
-    that produces these isn't built (:issue:`ALP-123`); tests construct
-    instances directly until that lands.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    alpaca_activity_id: str
-    action_type: CorporateActionType
-    ticker: str
-    new_ticker: str | None
-    ratio_or_amount: float
-    position_id: str
-    signed_cash_impact_usd: float
-    transaction_time: datetime
+    reconciliation_alerts: int
 
 
 async def process_unprocessed_fills(
     handle: InvocationHandle,
+    ca_activities: tuple[CorporateActionActivity, ...] = (),
+    alpaca_positions: tuple[PositionSnapshot, ...] = (),
+    alpaca_account: TradeAccountSnapshot | None = None,
     *,
     config: StatePersistenceConfig,
-    ca_activities: tuple[CorporateActionActivity, ...] = (),
 ) -> Phase1Summary:
     """Drain every unprocessed fill + CA activity and integrate them atomically.
 
+    Per ``corporate-actions.md § Phase 1 integration sequence``, fills and CA
+    activities are interleaved by timestamp ascending so the post-state at
+    each event reflects the chronologically correct quantity / cost basis. On
+    exact-timestamp ties, fills resolve before CAs — fills are intra-day
+    precise datetimes; CA activities are EOD-posted with midnight-UTC anchors
+    on the ex-date; the ordering matches market reality and yields
+    determinism. After all events apply, the reconciliation step compares
+    local state to ``alpaca_positions`` / ``alpaca_account`` and emits one
+    ``RECONCILIATION_ALERT`` per unexplained delta. Auto-correction is
+    deferred to ALP-123.
+
     All state mutations and activity-log emissions join the open
     ``handle.session`` transaction; the surrounding ``InvocationContext``
-    commits on clean exit and rolls back on exception, leaving fills
-    unprocessed for the next invocation's Phase 1 to retry.
+    commits on clean exit and rolls back on exception, leaving fills and CA
+    activities unprocessed for the next invocation's Phase 1 to retry.
+
+    Args:
+        handle: Open ``InvocationHandle`` from the surrounding
+            ``InvocationContext``.
+        ca_activities: Tuple of typed CA activities to interleave with fills.
+            Defaults to empty so pre-04 unit tests keep working unchanged;
+            production callers always pass the fetcher's output.
+        alpaca_positions: Tuple of typed Alpaca position snapshots for the
+            reconciliation step. Defaults to empty (no positional alerts
+            emitted); production callers pass ``AccountStateQueries.get_positions()``.
+        alpaca_account: Typed Alpaca account snapshot for the cash-reconciliation
+            step. Defaults to ``None`` (no cash alert emitted); production
+            callers pass ``AccountStateQueries.get_account()``.
+        config: State-persistence configuration knobs (currently unused; the
+            signature is forward-shaped).
     """
     del config  # No knobs consumed at this story; signature is forward-shaped.
 
@@ -209,14 +235,26 @@ async def process_unprocessed_fills(
 
     valid_fills, quarantined_count = _quarantine_invalid(handle, fills, rows_by_fill_id)
 
-    fills_processed = 0
-    for fill in valid_fills:
-        await _integrate_one_fill(handle, fill)
-        _mark_processed(rows_by_fill_id[fill.fill_id], handle.invocation_id)
-        fills_processed += 1
+    # Build a per-symbol lookup the handlers consult for post-adjustment Alpaca
+    # state on the CA types that need it (STOCK_MERGER, SPIN_OFF, and the
+    # options / strategy branches of REVERSE_SPLIT / STOCK_DIVIDEND). The same
+    # positions feed reconciliation below, so the lookup is free.
+    alpaca_lookup = _SnapshotLookup(alpaca_positions) if alpaca_positions else None
 
-    for activity in ca_activities:
-        await _integrate_one_ca_activity(handle, activity)
+    fills_processed = 0
+    for event in _iter_merged_events(valid_fills, ca_activities):
+        if isinstance(event, FillRecord):
+            await _integrate_one_fill(handle, event)
+            _mark_processed(rows_by_fill_id[event.fill_id], handle.invocation_id)
+            fills_processed += 1
+        else:
+            await _integrate_one_ca_activity(handle, event, alpaca_lookup)
+
+    reconciliation_alerts = await reconcile(
+        handle,
+        alpaca_positions=alpaca_positions,
+        alpaca_account=alpaca_account,
+    )
 
     await stamp_phase_completion(handle, column="phase1_completed_at")
 
@@ -224,8 +262,34 @@ async def process_unprocessed_fills(
         fills_processed=fills_processed,
         fills_quarantined=quarantined_count,
         ca_activities_processed=len(ca_activities),
-        reconciliation_deltas={},
+        reconciliation_alerts=reconciliation_alerts,
     )
+
+
+def _iter_merged_events(
+    fills: tuple[FillRecord, ...],
+    ca_activities: tuple[CorporateActionActivity, ...],
+) -> tuple[FillRecord | CorporateActionActivity, ...]:
+    """Return fills + CA activities interleaved by timestamp ascending.
+
+    Per ``corporate-actions.md § Phase 1 integration sequence`` step 2:
+    "Sort ascending. Ordering matters when a fill straddles an ex-date — fills
+    before the CA reflect pre-action quantities, fills after reflect
+    post-action."
+
+    On exact-timestamp ties, fills come before CAs (sort-key 0 vs 1). CA
+    activities are typically EOD-posted (Alpaca anchors them at midnight UTC
+    on the ex-date); intra-day fills on the same calendar date carry precise
+    sub-day timestamps and arrive strictly before midnight UTC of the next
+    day. The tie-break preserves market reality (a 9:30 AM fill on the
+    ex-date sees the pre-CA share count) and yields deterministic ordering.
+    """
+    events: list[tuple[datetime, int, FillRecord | CorporateActionActivity]] = [
+        (fill.fill_timestamp, 0, fill) for fill in fills
+    ]
+    events.extend((activity.transaction_time, 1, activity) for activity in ca_activities)
+    events.sort(key=lambda triple: (triple[0], triple[1]))
+    return tuple(event for _ts, _kind, event in events)
 
 
 # ---------------------------------------------------------------------------
@@ -473,21 +537,6 @@ def _apply_fill_to_equity_position(
         msg = "SHORT entry fills not yet supported by Phase 1; supported direction is LONG only."
         raise NotImplementedError(msg)
     return _apply_exit_fill(position, details, fill)
-
-
-def _require_equity_details(position: PositionRecord, label: str) -> EquityPositionDetails:
-    """Narrow ``PositionRecord.details`` to ``EquityPositionDetails``.
-
-    Used by the corporate-action integration path which still ships only
-    equity coverage (per-action-type matrix for options lands with
-    ALP-124). Phase 1 fill integration handles equity + options via
-    discriminator-based dispatch in ``_apply_fill_to_position``.
-    """
-    details = position.details
-    if not isinstance(details, EquityPositionDetails):
-        msg = f"{label} currently supports equity positions only; got {details.instrument_type!r}"
-        raise NotImplementedError(msg)
-    return details
 
 
 def _apply_fill_to_options_position(
@@ -1478,137 +1527,20 @@ def _ticker_of(position: PositionRecord) -> str:
 
 
 async def _integrate_one_ca_activity(
-    handle: InvocationHandle, activity: CorporateActionActivity
+    handle: InvocationHandle,
+    activity: CorporateActionActivity,
+    alpaca_position_lookup: AlpacaPositionLookup | None,
 ) -> None:
-    """Apply the per-action-type matrix for one CA activity.
+    """Thin shim: delegate to the ``corporate_actions`` package dispatcher.
 
-    This story implements the SPLIT path end-to-end (covers the test
-    surface) and registers the dedupe anchor. Per-action-type variants
-    extend here in follow-up stories without touching the surrounding
-    atomicity contract.
+    The ``corporate_actions`` package owns the full implementation; this shim
+    preserves the existing call site in ``process_unprocessed_fills`` without
+    change. ``alpaca_position_lookup`` is built from the same
+    ``alpaca_positions`` snapshot that feeds the reconciliation step (see
+    :class:`_SnapshotLookup`); it is ``None`` only when the caller supplied an
+    empty ``alpaca_positions`` tuple.
     """
-    pos_row = await handle.session.get(PositionRow, activity.position_id)
-    if pos_row is None:
-        msg = (
-            f"CA activity {activity.alpaca_activity_id!r} references missing "
-            f"position_id={activity.position_id!r}"
-        )
-        raise ValueError(msg)
-    position = position_row_to_record(pos_row)
-    details = _require_equity_details(position, "CA integration")
-
-    pre_qty = details.share_count
-    pre_basis = details.average_cost_basis_per_share
-    new_qty, new_basis = _apply_ca_to_quantity_and_basis(
-        activity, pre_qty=pre_qty, pre_basis=pre_basis
-    )
-
-    new_details = details.model_copy(
-        update={"share_count": new_qty, "average_cost_basis_per_share": new_basis}
-    )
-    updated = position.model_copy(
-        update={"details": new_details, "corporate_action_adjustment_needed": True}
-    )
-    _persist_position_update(pos_row, updated)
-
-    await _emit_corporate_action_applied(
-        handle,
-        activity=activity,
-        position=updated,
-        pre_qty=pre_qty,
-        post_qty=new_qty,
-        pre_basis=pre_basis,
-        post_basis=new_basis,
-    )
-    await _cancel_bracket_for_corporate_action(handle, position.bracket_id, activity)
-    await mark_ca_activity_processed(
-        handle,
-        activity.alpaca_activity_id,
-        processing_timestamp=activity.transaction_time,
-    )
-
-
-def _apply_ca_to_quantity_and_basis(
-    activity: CorporateActionActivity,
-    *,
-    pre_qty: float,
-    pre_basis: float,
-) -> tuple[float, float]:
-    """Project the new (quantity, cost_basis) per the per-action-type matrix."""
-    if activity.action_type == CorporateActionType.SPLIT:
-        return pre_qty * activity.ratio_or_amount, pre_basis / activity.ratio_or_amount
-    msg = f"CA action_type={activity.action_type!r} not yet supported by Phase 1"
-    raise NotImplementedError(msg)
-
-
-async def _cancel_bracket_for_corporate_action(
-    handle: InvocationHandle,
-    bracket_id: str | None,
-    activity: CorporateActionActivity,
-) -> None:
-    """Mark the position's bracket DISSOLVED and emit the cancellation entry."""
-    if bracket_id is None:
-        return
-    bracket_row = await handle.session.get(BracketRow, bracket_id)
-    if bracket_row is None:
-        msg = (
-            f"position {activity.position_id!r} references bracket {bracket_id!r}, "
-            "but bracket row is missing"
-        )
-        raise StateInconsistencyError(msg)
-    cancellation_reason = f"corporate_action_{activity.action_type.value.lower()}"
-    bracket_row.status = BracketStatus.DISSOLVED.value
-    bracket_row.corporate_action_cancellation_reason = cancellation_reason
-    leg_ids = await _bracket_leg_order_ids(handle, bracket_id)
-    await _emit(
-        handle,
-        event_type=EventType.BRACKET_CANCELLED_CORPORATE_ACTION,
-        order_id=None,
-        position_id=activity.position_id,
-        thesis_id=None,
-        timestamp=activity.transaction_time,
-        detail=BracketCancelledCorporateActionDetail(
-            bracket_id=bracket_id,
-            cancellation_reason=cancellation_reason,
-            cancelled_leg_order_ids=leg_ids,
-        ),
-        source=EventSource.CORPORATE_ACTION_PROCESSOR,
-    )
-
-
-async def _emit_corporate_action_applied(
-    handle: InvocationHandle,
-    *,
-    activity: CorporateActionActivity,
-    position: PositionRecord,
-    pre_qty: float,
-    post_qty: float,
-    pre_basis: float,
-    post_basis: float,
-) -> None:
-    await _emit(
-        handle,
-        event_type=EventType.CORPORATE_ACTION_APPLIED,
-        order_id=None,
-        position_id=position.position_id,
-        thesis_id=None,
-        timestamp=activity.transaction_time,
-        detail=CorporateActionAppliedDetail(
-            action_type=activity.action_type,
-            alpaca_activity_id=activity.alpaca_activity_id,
-            ticker=activity.ticker,
-            new_ticker=activity.new_ticker,
-            ratio_or_amount=activity.ratio_or_amount,
-            pre_action_quantity=pre_qty,
-            post_action_quantity=post_qty,
-            pre_action_cost_basis=pre_basis,
-            post_action_cost_basis=post_basis,
-            signed_cash_impact_usd=activity.signed_cash_impact_usd,
-            parent_position_id=None,
-            resulting_position_status=position.status.value,
-        ),
-        source=EventSource.CORPORATE_ACTION_PROCESSOR,
-    )
+    await integrate_ca_activity(handle, activity, alpaca_position_lookup=alpaca_position_lookup)
 
 
 __all__ = [

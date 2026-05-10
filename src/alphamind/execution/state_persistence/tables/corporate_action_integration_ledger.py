@@ -6,9 +6,10 @@ Parallels the fill records' ``processing_status`` mechanism — on Phase 1 retry
 activities already present here are skipped.
 
 Only one terminal status: ``"processed"``. The full activity record is not
-persisted locally; ``GET /v2/account/activities`` is the authoritative store
-and the activity-log entry written at integration time captures everything
-needed for audit. See ``corporate-actions.md`` for the integration spec.
+persisted locally; ``GET /v1/corporate-actions`` (v1beta1 Corporate Actions
+Market Data API) is the authoritative store and the activity-log entry written
+at integration time captures everything needed for audit. See
+``corporate-actions.md`` for the integration spec.
 """
 
 from __future__ import annotations

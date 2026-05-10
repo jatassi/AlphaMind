@@ -114,14 +114,15 @@ class TestEnumMembers:
             "PM_DECISION",
             "CORPORATE_ACTION",
             "CONFIGURATION",
+            "RECONCILIATION",
         }
         assert {m.name for m in EventGroup} == expected
 
     def test_event_type_is_str_enum(self) -> None:
         assert issubclass(EventType, StrEnum)
 
-    def test_event_type_has_exactly_38_members(self) -> None:
-        assert len(EventType) == 38
+    def test_event_type_has_exactly_39_members(self) -> None:
+        assert len(EventType) == 39
 
     def test_event_type_position_lifecycle_members(self) -> None:
         for name in ("POSITION_OPENED", "POSITION_CLOSED", "POSITION_ADDED", "POSITION_REDUCED"):
@@ -300,11 +301,11 @@ class TestMappingExhaustiveness:
 
 
 class TestAnyDetailTypeAlias:
-    """AnyDetailType is exported and covers all 35 detail-payload classes."""
+    """AnyDetailType is exported and covers all detail-payload classes."""
 
-    def test_any_detail_type_has_38_members(self) -> None:
+    def test_any_detail_type_has_39_members(self) -> None:
         members = get_args(AnyDetailType)
-        assert len(members) == 38
+        assert len(members) == 39
 
     def test_any_detail_type_covers_all_detail_classes(self) -> None:
         members = set(get_args(AnyDetailType))
@@ -1701,3 +1702,95 @@ class TestEnvelopeRejectionDetail:
             detail=detail,
         )
         assert entry.event_type == EventType.ENVELOPE_REJECTED
+
+
+# ---------------------------------------------------------------------------
+# ALP-415: RECONCILIATION_ALERT event type — registration round-trip
+# ---------------------------------------------------------------------------
+
+
+class TestReconciliationAlertEvent:
+    """``RECONCILIATION_ALERT`` round-trips through the typed activity-log machinery."""
+
+    def test_event_type_member_present(self) -> None:
+        from alphamind.portfolio_state.events.activity_log import EventType as _EventType
+
+        assert _EventType.RECONCILIATION_ALERT.value == "RECONCILIATION_ALERT"
+
+    def test_event_group_member_present(self) -> None:
+        from alphamind.portfolio_state.events.activity_log import EventGroup as _EventGroup
+
+        assert _EventGroup.RECONCILIATION.value == "RECONCILIATION"
+
+    def test_event_type_to_group_lookup(self) -> None:
+        from alphamind.portfolio_state.events.activity_log import (
+            EVENT_TYPE_TO_GROUP as _MAP,
+        )
+        from alphamind.portfolio_state.events.activity_log import EventGroup as _EventGroup
+        from alphamind.portfolio_state.events.activity_log import EventType as _EventType
+
+        assert _MAP[_EventType.RECONCILIATION_ALERT] == _EventGroup.RECONCILIATION
+
+    def test_event_type_to_detail_class_lookup(self) -> None:
+        from alphamind.portfolio_state.events.activity_log import (
+            EVENT_TYPE_TO_DETAIL_CLASS as _MAP,
+        )
+        from alphamind.portfolio_state.events.activity_log import EventType as _EventType
+        from alphamind.portfolio_state.events.activity_log import (
+            ReconciliationAlertDetail,
+        )
+
+        assert _MAP[_EventType.RECONCILIATION_ALERT] is ReconciliationAlertDetail
+
+    def test_any_detail_type_includes_reconciliation_alert(self) -> None:
+        from alphamind.portfolio_state.events.activity_log import (
+            AnyDetailType as _AnyDetail,
+        )
+        from alphamind.portfolio_state.events.activity_log import (
+            ReconciliationAlertDetail,
+        )
+
+        assert ReconciliationAlertDetail in get_args(_AnyDetail)
+
+    def test_detail_round_trips_through_activity_log_entry(self) -> None:
+        from alphamind.portfolio_state.events.activity_log import EventGroup as _EventGroup
+        from alphamind.portfolio_state.events.activity_log import EventType as _EventType
+        from alphamind.portfolio_state.events.activity_log import (
+            ReconciliationAlertDetail,
+        )
+
+        detail = ReconciliationAlertDetail(
+            domain="position",
+            field_name="share_count",
+            local_value=100.0,
+            alpaca_value=99.5,
+            delta_description="local 100.0 vs Alpaca 99.5",
+        )
+        entry = ActivityLogEntry(
+            entry_id="eid-rec-1",
+            invocation_id="inv-001",
+            timestamp=_UTC_TS,
+            event_type=_EventType.RECONCILIATION_ALERT,
+            event_group=_EventGroup.RECONCILIATION,
+            position_id="pos-1",
+            order_id=None,
+            thesis_id=None,
+            source=EventSource.CORPORATE_ACTION_PROCESSOR,
+            detail=detail,
+        )
+        assert entry.event_type == _EventType.RECONCILIATION_ALERT
+        assert entry.event_group == _EventGroup.RECONCILIATION
+
+    def test_detail_rejects_invalid_domain(self) -> None:
+        from alphamind.portfolio_state.events.activity_log import (
+            ReconciliationAlertDetail,
+        )
+
+        with pytest.raises(ValidationError):
+            ReconciliationAlertDetail(
+                domain="bogus",  # type: ignore[arg-type]
+                field_name="share_count",
+                local_value=1.0,
+                alpaca_value=2.0,
+                delta_description="x",
+            )
