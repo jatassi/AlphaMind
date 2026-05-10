@@ -29,6 +29,7 @@ from alphamind.decision.strategist.runner import StrategistResult
 from alphamind.pipeline import _shared
 from alphamind.pipeline._shared import apply_agent_overrides
 from alphamind.pipeline.analysis import apply_agent_overrides as analysis_apply_overrides
+from alphamind.portfolio_state.pricing import PriceQuote, StubCurrentPriceProvider
 
 # ---------------------------------------------------------------------------
 # Hoist contract
@@ -77,36 +78,39 @@ _NOW = _AS_OF
 _TIMESTAMP = _AS_OF
 
 
-def _make_minimal_inputs() -> dict[str, Any]:
-    """Return a fixture-tuple dict ready for ``run_decision_pipeline``.
+def _pipeline_inputs_from_fixture(
+    fixture: Any,
+    quotes: dict[str, PriceQuote],
+    config: Any,
+    now: datetime,
+    *,
+    active_sectors: tuple[str, ...],
+) -> dict[str, Any]:
+    """Build the ``run_decision_pipeline`` kwarg dict for any fixture tuple.
 
-    Uses the empty-portfolio repository fixture (zero positions, $100k cash)
-    so the snapshot assembler succeeds end-to-end with no per-position
-    pricing complexity.
+    Common construction shared between ``_make_minimal_inputs`` and
+    ``_make_multi_position_inputs``. Wraps the supplied fixture with the
+    ``position_max_size_pct`` risk-parameter entry the library-snapshot
+    translator requires, then assembles repository, price provider, library
+    config, market inputs, and the state-delivery config around the
+    caller-supplied ``active_sectors`` tuple.
     """
     from types import MappingProxyType
 
-    from alphamind.portfolio_state.pricing import StubCurrentPriceProvider
-    from alphamind.portfolio_state.repository import StubPortfolioStateRepository
-    from alphamind.risk_guardrails.guardrail_evaluation import (
-        FeatureFlagsView,
-        LibraryConfig,
-        MarketInputs,
-    )
-    from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
-    from tests.portfolio_state._fixtures import (
-        build_minimal_snapshot_inputs,
-    )
-
-    fixture, quotes, _, config, now = build_minimal_snapshot_inputs()
-    # The library snapshot translator requires a ``position_max_size_pct``
-    # rule; rebuild the fixture with that entry present.
     from alphamind.portfolio_state.records.capital import (
         ActiveRiskParameterEntry,
         ActiveRiskParameterSet,
         RegimeLabel,
         RegimeTransitionState,
     )
+    from alphamind.portfolio_state.repository import StubPortfolioStateRepository
+    from alphamind.risk_guardrails.guardrail_evaluation import (
+        FeatureFlagsView,
+        FixtureIvProvider,
+        LibraryConfig,
+        MarketInputs,
+    )
+    from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 
     fixture = fixture.model_copy(
         update={
@@ -137,18 +141,16 @@ def _make_minimal_inputs() -> dict[str, Any]:
         effective_limits=MappingProxyType({"position_max_size_pct": 10.0}),
         escalation_zones=MappingProxyType({}),
         feature_flags=feature_flags,
-        active_sectors=("tech", "semis", "financials", "energy"),
+        active_sectors=active_sectors,
         active_regime="normal",
         active_profile="medium",
         conservative_buffer_pct=10.0,
     )
-    from alphamind.risk_guardrails.guardrail_evaluation import FixtureIvProvider
-
     library_market = MarketInputs(
         underlying_prices=MappingProxyType({}),
         risk_free_rate=0.045,
         iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
-        as_of=_AS_OF,
+        as_of=now,
     )
     state_delivery_config = StateDeliveryConfig(
         recent_engine_actions_lookback_invocations=3,
@@ -175,11 +177,30 @@ def _make_minimal_inputs() -> dict[str, Any]:
         "state_delivery_config": state_delivery_config,
         "options_enabled": False,
         "short_selling_enabled": False,
-        "active_sectors": frozenset({"tech", "semis", "financials", "energy"}),
+        "active_sectors": frozenset(active_sectors),
         "invocation_id": _INVOCATION_ID,
-        "timestamp": _TIMESTAMP,
-        "now": _NOW,
+        "timestamp": now,
+        "now": now,
     }
+
+
+def _make_minimal_inputs() -> dict[str, Any]:
+    """Return a fixture-tuple dict ready for ``run_decision_pipeline``.
+
+    Uses the empty-portfolio repository fixture (zero positions, $100k cash)
+    so the snapshot assembler succeeds end-to-end with no per-position
+    pricing complexity.
+    """
+    from tests.portfolio_state._fixtures import build_minimal_snapshot_inputs
+
+    fixture, quotes, _, config, now = build_minimal_snapshot_inputs()
+    return _pipeline_inputs_from_fixture(
+        fixture,
+        quotes,
+        config,
+        now,
+        active_sectors=("tech", "semis", "financials", "energy"),
+    )
 
 
 def _sector_resolver(ticker: str) -> str:
@@ -846,38 +867,65 @@ def test_pre_processor_receives_outputs_from_parallel_branch(
 # ---------------------------------------------------------------------------
 
 
+class _CountingPriceProvider:
+    """Wraps a ``StubCurrentPriceProvider`` and counts ``get_quotes`` calls.
+
+    Used by the ALP-407 double-fetch guards to assert the composition runner
+    hits the provider exactly once per decision-pipeline invocation.
+    """
+
+    def __init__(self, inner: StubCurrentPriceProvider) -> None:
+        self._inner = inner
+        self.get_quotes_calls = 0
+
+    async def get_quote(self, ticker: str, *, freshness_threshold_seconds: float) -> PriceQuote:
+        return await self._inner.get_quote(
+            ticker, freshness_threshold_seconds=freshness_threshold_seconds
+        )
+
+    async def get_quotes(
+        self,
+        tickers: tuple[str, ...],
+        *,
+        freshness_threshold_seconds: float,
+    ) -> dict[str, PriceQuote]:
+        self.get_quotes_calls += 1
+        return await self._inner.get_quotes(
+            tickers, freshness_threshold_seconds=freshness_threshold_seconds
+        )
+
+
+def _make_multi_position_inputs() -> dict[str, Any]:
+    """Like ``_make_minimal_inputs``, but built from the multi-position
+    fixture (NVDA/AMD/JPM equity + AAPL pending) so the assembler actually
+    fetches quotes for several tickers.
+
+    Used by the ALP-407 populated-map guard to verify the assembler's
+    materialized ``price_map`` actually flows into the strategist's
+    ``current_price_lookup`` (i.e., the optimization is wired correctly,
+    not just bypassing the provider).
+    """
+    from tests.portfolio_state._fixtures import build_multi_position_snapshot_inputs
+
+    fixture, quotes, _, config, now = build_multi_position_snapshot_inputs()
+    return _pipeline_inputs_from_fixture(
+        fixture,
+        quotes,
+        config,
+        now,
+        active_sectors=("tech", "financials"),
+    )
+
+
 def test_pipeline_does_not_double_fetch_quotes(monkeypatch: pytest.MonkeyPatch) -> None:
     """The composition reuses the assembler's materialized ``price_map``
     instead of re-fetching quotes for the strategist + PM lookup, so a
     single decision-pipeline invocation hits ``get_quotes`` exactly once
     (ALP-407).
+
+    Smoke check on the empty-portfolio fixture — the assembler still calls
+    ``get_quotes`` once even with zero positions (passing an empty tuple).
     """
-    from alphamind.portfolio_state.pricing import (
-        PriceQuote,
-        StubCurrentPriceProvider,
-    )
-
-    class _CountingPriceProvider:
-        def __init__(self, inner: StubCurrentPriceProvider) -> None:
-            self._inner = inner
-            self.get_quotes_calls = 0
-
-        async def get_quote(self, ticker: str, *, freshness_threshold_seconds: float) -> PriceQuote:
-            return await self._inner.get_quote(
-                ticker, freshness_threshold_seconds=freshness_threshold_seconds
-            )
-
-        async def get_quotes(
-            self,
-            tickers: tuple[str, ...],
-            *,
-            freshness_threshold_seconds: float,
-        ) -> dict[str, PriceQuote]:
-            self.get_quotes_calls += 1
-            return await self._inner.get_quotes(
-                tickers, freshness_threshold_seconds=freshness_threshold_seconds
-            )
-
     log = _CallLog()
     _patch_runners(monkeypatch, log=log)
 
@@ -890,6 +938,45 @@ def test_pipeline_does_not_double_fetch_quotes(monkeypatch: pytest.MonkeyPatch) 
     asyncio.run(run_decision_pipeline(**inputs))
 
     assert counting.get_quotes_calls == 1
+
+
+def test_pipeline_does_not_double_fetch_quotes_with_positions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a populated portfolio (NVDA/AMD/JPM open + AAPL pending), the
+    composition still hits ``get_quotes`` exactly once and the strategist's
+    ``current_price_lookup`` resolves each held ticker to the price the
+    assembler fetched — proving the assembler-materialized ``price_map``
+    actually feeds downstream consumers (ALP-407).
+    """
+    log = _CallLog()
+    _patch_runners(monkeypatch, log=log)
+
+    inputs = _make_multi_position_inputs()
+    counting = _CountingPriceProvider(inputs["price_provider"])
+    inputs["price_provider"] = counting
+
+    from alphamind.pipeline.decision import run_decision_pipeline
+
+    asyncio.run(run_decision_pipeline(**inputs))
+
+    # (a) The composition fetched quotes once — no second round-trip for the
+    # strategist/PM lookups.
+    assert counting.get_quotes_calls == 1
+
+    # (b) The strategist received a callable price lookup, and resolving
+    # each held ticker through it returns the price the fixture seeded
+    # (NVDA $510, AMD $115, JPM $195, AAPL pending $185).
+    strategist_lookup = log.strategist["current_price_lookup"]
+    assert strategist_lookup("NVDA") == pytest.approx(510.0)
+    assert strategist_lookup("AMD") == pytest.approx(115.0)
+    assert strategist_lookup("JPM") == pytest.approx(195.0)
+    assert strategist_lookup("AAPL") == pytest.approx(185.0)
+
+    # And the PM received the same lookup — confirming both consumers share
+    # the assembler's materialized map rather than the PM re-fetching.
+    pm_lookup = log.pm["current_price_lookup"]
+    assert pm_lookup("NVDA") == pytest.approx(510.0)
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,6 @@ Three Pydantic value objects and one pure function:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -311,14 +310,18 @@ class AssembledSnapshot(BaseModel):
     ``price_map`` exposes the assembler-internal ticker → :class:`PriceQuote`
     mapping the assembler already fetched while building the snapshot, so
     downstream consumers (e.g., the decision pipeline composition) can reuse
-    the materialized quotes instead of re-querying the price provider.
+    the materialized quotes instead of re-querying the price provider. The
+    field is typed ``dict`` (not ``Mapping``) because Pydantic v2 stores a
+    plain ``dict`` on the model regardless of annotation; ``frozen=True``
+    blocks field reassignment but does not prevent dict mutation, so the
+    type honestly reflects runtime behavior.
     """
 
     model_config = ConfigDict(frozen=True)
 
     snapshot: PortfolioStateSnapshot
     freshness: SnapshotFreshness
-    price_map: Mapping[str, PriceQuote]
+    price_map: dict[str, PriceQuote]
 
 
 __all__ = [

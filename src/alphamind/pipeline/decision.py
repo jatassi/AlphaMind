@@ -432,6 +432,13 @@ def _price_lookup_from_assembled(assembled: AssembledSnapshot) -> Callable[[str]
     """Build a synchronous ticker→price lookup over the assembler-materialized
     ``price_map`` (ALP-407).
 
+    Staleness is fixed at the assembler's ``get_quotes`` fetch time (per
+    ``config.snapshot_freshness_max_price_age_seconds``); callers cannot
+    apply a different freshness threshold here. The pre-PR
+    ``_build_price_lookup`` accepted a ``freshness_threshold_seconds``
+    parameter that is meaningless now that the assembler is the single
+    source of truth on freshness.
+
     The 0.0 fallback in the closure is unreachable in practice — every
     ticker referenced by the snapshot's open and pending positions was
     enumerated by the assembler and its quote is in ``price_map``, so the
