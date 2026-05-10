@@ -136,6 +136,7 @@ def _build_assembled_snapshot(
     ids_unknown: set[str],
     oldest_price_as_of: datetime | None,
     config: PortfolioStateConfig,
+    price_map: dict[str, PriceQuote],
 ) -> AssembledSnapshot:
     """Build and return the AssembledSnapshot; emit structured warnings when needed."""
     fetch_outcomes = PriceFetchOutcomes(
@@ -158,7 +159,7 @@ def _build_assembled_snapshot(
             stale_count,
             sorted(freshness.position_ids_priced_stale | freshness.position_ids_unknown_ticker),
         )
-    return AssembledSnapshot(snapshot=snapshot, freshness=freshness)
+    return AssembledSnapshot(snapshot=snapshot, freshness=freshness, price_map=price_map)
 
 
 def _enrich_positions_with_price_classification(
@@ -690,5 +691,11 @@ async def assemble_snapshot(
     # Step 17 — Compute freshness sidecar and emit structured warnings
     # ------------------------------------------------------------------
     return _build_assembled_snapshot(
-        snapshot, _ids_fresh, _ids_stale, _ids_unknown, _oldest_price_as_of, config
+        snapshot,
+        _ids_fresh,
+        _ids_stale,
+        _ids_unknown,
+        _oldest_price_as_of,
+        config,
+        price_map,
     )

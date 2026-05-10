@@ -4,7 +4,8 @@ Three Pydantic value objects and one pure function:
 
 - ``PriceFetchOutcomes``   — per-position price-fetch record (assembler accumulator)
 - ``SnapshotFreshness``   — typed sidecar reporting how fresh the snapshot's data is
-- ``AssembledSnapshot``   — bundle of (snapshot, freshness) returned by assemble_snapshot
+- ``AssembledSnapshot``   — bundle of (snapshot, freshness, price_map) returned by
+  assemble_snapshot
 - ``compute_snapshot_freshness`` — builds SnapshotFreshness from snapshot + outcomes + config
 """
 
@@ -15,6 +16,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from alphamind.portfolio_state import PortfolioStateConfig
+from alphamind.portfolio_state.pricing import PriceQuote
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
 
 
@@ -303,12 +305,23 @@ def compute_snapshot_freshness(
 
 
 class AssembledSnapshot(BaseModel):
-    """Bundle of (snapshot, freshness) returned by assemble_snapshot."""
+    """Bundle of (snapshot, freshness, price_map) returned by assemble_snapshot.
+
+    ``price_map`` exposes the assembler-internal ticker → :class:`PriceQuote`
+    mapping the assembler already fetched while building the snapshot, so
+    downstream consumers (e.g., the decision pipeline composition) can reuse
+    the materialized quotes instead of re-querying the price provider. The
+    field is typed ``dict`` (not ``Mapping``) because Pydantic v2 stores a
+    plain ``dict`` on the model regardless of annotation; ``frozen=True``
+    blocks field reassignment but does not prevent dict mutation, so the
+    type honestly reflects runtime behavior.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     snapshot: PortfolioStateSnapshot
     freshness: SnapshotFreshness
+    price_map: dict[str, PriceQuote]
 
 
 __all__ = [
