@@ -26,7 +26,10 @@ from alphamind.execution.broker_adapter.queries import (
 )
 from alphamind.execution.corporate_actions import integrate_ca_activity
 from alphamind.execution.corporate_actions.reconciliation import reconcile
-from alphamind.execution.corporate_actions.types import CorporateActionActivity
+from alphamind.execution.corporate_actions.types import (
+    AlpacaPositionLookup,
+    CorporateActionActivity,
+)
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.activity_log import (
     append_activity_log_entry,
@@ -152,6 +155,21 @@ class _FillIntegrationOutcome:
     strategy_incomplete_legs: tuple[str, ...] = ()
 
 
+class _SnapshotLookup:
+    """``AlpacaPositionLookup`` backed by the ``alpaca_positions`` tuple.
+
+    The same positions feed reconciliation; constructing the lookup from them
+    avoids a second Alpaca fetch and keeps handler-side reads consistent with
+    the snapshot the reconciler will compare against.
+    """
+
+    def __init__(self, positions: tuple[PositionSnapshot, ...]) -> None:
+        self._by_symbol: dict[str, PositionSnapshot] = {p.symbol: p for p in positions}
+
+    def get_position(self, symbol: str) -> PositionSnapshot | None:
+        return self._by_symbol.get(symbol)
+
+
 @dataclass(frozen=True)
 class Phase1Summary:
     """Outcome of one ``process_unprocessed_fills`` invocation.
@@ -217,6 +235,12 @@ async def process_unprocessed_fills(
 
     valid_fills, quarantined_count = _quarantine_invalid(handle, fills, rows_by_fill_id)
 
+    # Build a per-symbol lookup the handlers consult for post-adjustment Alpaca
+    # state on the CA types that need it (STOCK_MERGER, SPIN_OFF, and the
+    # options / strategy branches of REVERSE_SPLIT / STOCK_DIVIDEND). The same
+    # positions feed reconciliation below, so the lookup is free.
+    alpaca_lookup = _SnapshotLookup(alpaca_positions) if alpaca_positions else None
+
     fills_processed = 0
     for event in _iter_merged_events(valid_fills, ca_activities):
         if isinstance(event, FillRecord):
@@ -224,7 +248,7 @@ async def process_unprocessed_fills(
             _mark_processed(rows_by_fill_id[event.fill_id], handle.invocation_id)
             fills_processed += 1
         else:
-            await _integrate_one_ca_activity(handle, event)
+            await _integrate_one_ca_activity(handle, event, alpaca_lookup)
 
     reconciliation_alerts = await reconcile(
         handle,
@@ -1503,16 +1527,20 @@ def _ticker_of(position: PositionRecord) -> str:
 
 
 async def _integrate_one_ca_activity(
-    handle: InvocationHandle, activity: CorporateActionActivity
+    handle: InvocationHandle,
+    activity: CorporateActionActivity,
+    alpaca_position_lookup: AlpacaPositionLookup | None,
 ) -> None:
     """Thin shim: delegate to the ``corporate_actions`` package dispatcher.
 
-    Passes ``alpaca_position_lookup=None``; story 04 wires the real lookup.
     The ``corporate_actions`` package owns the full implementation; this shim
     preserves the existing call site in ``process_unprocessed_fills`` without
-    change.
+    change. ``alpaca_position_lookup`` is built from the same
+    ``alpaca_positions`` snapshot that feeds the reconciliation step (see
+    :class:`_SnapshotLookup`); it is ``None`` only when the caller supplied an
+    empty ``alpaca_positions`` tuple.
     """
-    await integrate_ca_activity(handle, activity, alpaca_position_lookup=None)
+    await integrate_ca_activity(handle, activity, alpaca_position_lookup=alpaca_position_lookup)
 
 
 __all__ = [
