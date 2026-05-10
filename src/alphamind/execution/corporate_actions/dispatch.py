@@ -18,15 +18,14 @@ from alphamind.execution.state_persistence.invocation_context.context import (
 )
 from alphamind.portfolio_state.events.activity_log import CorporateActionType
 
+from .handlers.mergers import handle_cash_merger, handle_stock_merger
 from .handlers.splits import (
     handle_cash_dividend_long,
     handle_cash_dividend_short,
-    handle_cash_merger,
     handle_reverse_split,
     handle_spin_off,
     handle_split,
     handle_stock_dividend,
-    handle_stock_merger,
     handle_symbol_change,
 )
 from .types import AlpacaPositionLookup, CorporateActionActivity
