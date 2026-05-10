@@ -169,7 +169,17 @@ class ValidationRequest(BaseModel):
 
 
 class ValidationResult(BaseModel):
-    """The tool's output, mirroring ``state-delivery.md`` § Output contract."""
+    """The tool's output, mirroring ``state-delivery.md`` § Output contract.
+
+    ``implied_volatility`` is the IV the library consumed when computing
+    ``greeks`` — the average across legs for OPTIONS / STRATEGY proposals,
+    sourced from the IV surface (or realized-vol fallback) per
+    ``iv_sourcing.py``. ``None`` for equity proposals (no IV needed) and for
+    ADJUST/CANCEL/disabled-feature early-exits where greeks are zero/None.
+    Plumbed through to :class:`alphamind.execution.oms.submit_envelope_mcp`
+    ``Acknowledgment.validation_metadata.implied_volatility`` and on to
+    persisted ``OptionGreeks.iv_used`` (ALP-399).
+    """
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
@@ -177,6 +187,7 @@ class ValidationResult(BaseModel):
     per_rule: tuple[RuleProjection, ...]
     delta_adjusted_exposure: float
     greeks: Greeks | None
+    implied_volatility: float | None
     cumulative_impact_note: str
     failure_guidance: str | None
     proposal_index_in_invocation: int
@@ -363,6 +374,7 @@ def validate_guardrail(
         per_rule=output.per_rule,
         delta_adjusted_exposure=this_dae.signed_notional_usd,
         greeks=this_dae.net_greeks,
+        implied_volatility=this_dae.iv_used,
         cumulative_impact_note=_format_cumulative_impact_note(state),
         failure_guidance=failure_guidance,
         proposal_index_in_invocation=proposal_index,
@@ -400,6 +412,7 @@ def _disabled_result(
         per_rule=(),
         delta_adjusted_exposure=0.0,
         greeks=None,
+        implied_volatility=None,
         cumulative_impact_note=cumulative_impact_note,
         failure_guidance=guidance,
         proposal_index_in_invocation=proposal_index,

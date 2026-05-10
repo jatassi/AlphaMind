@@ -605,6 +605,12 @@ async def test_open_options_acknowledgment_greeks_match_persisted_position_greek
             "OPEN-options Acknowledgment must carry computed greeks per "
             "docs/design/05-execution-layer/architecture.md § 3"
         )
+        ack_iv = validation_metadata["implied_volatility"]
+        assert ack_iv is not None, (
+            "OPEN-options Acknowledgment must carry the validation-time "
+            "implied_volatility (ALP-399) so persistence can populate "
+            "OptionGreeks.iv_used"
+        )
     except BaseException:
         await ctx.__aexit__(None, None, None)
         raise
@@ -625,3 +631,7 @@ async def test_open_options_acknowledgment_greeks_match_persisted_position_greek
     assert persisted_greeks.gamma == pytest.approx(ack_greeks["gamma"])
     assert persisted_greeks.theta == pytest.approx(ack_greeks["theta"])
     assert persisted_greeks.vega == pytest.approx(ack_greeks["vega"])
+    assert persisted_greeks.iv_used is not None, (
+        "ALP-399: OPEN-options writeback must thread the validation-time IV to OptionGreeks.iv_used"
+    )
+    assert persisted_greeks.iv_used == pytest.approx(ack_iv)

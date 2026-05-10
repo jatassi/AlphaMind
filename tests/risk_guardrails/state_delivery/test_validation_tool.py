@@ -886,6 +886,7 @@ def test_equity_action_returns_none_greeks() -> None:
     state = _state()
     result = validate_guardrail(request=_equity_request(), state=state)
     assert result.greeks is None
+    assert result.implied_volatility is None
 
 
 def test_option_action_returns_populated_greeks(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -909,6 +910,9 @@ def test_option_action_returns_populated_greeks(monkeypatch: pytest.MonkeyPatch)
     )
     result = validate_guardrail(request=_option_request(), state=_state())
     assert result.greeks == greeks
+    # ALP-399: the IV the library consumed is surfaced on ValidationResult so
+    # downstream Acknowledgment / persistence (OptionGreeks.iv_used) can read it.
+    assert result.implied_volatility == 0.30
 
 
 def test_strategy_action_returns_populated_greeks(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -927,6 +931,8 @@ def test_strategy_action_returns_populated_greeks(monkeypatch: pytest.MonkeyPatc
         (proj,),
         signed_notional_usd=1_000.0,
         greeks=greeks,
+        iv_source=IvSource.SURFACE,
+        iv_used=0.28,
     )
     request = ValidationRequest(
         instrument=ValidationInstrument(
@@ -957,6 +963,9 @@ def test_strategy_action_returns_populated_greeks(monkeypatch: pytest.MonkeyPatc
     )
     result = validate_guardrail(request=request, state=_state())
     assert result.greeks == greeks
+    # ALP-399: multi-leg strategy IV surfaces via the same _mean_iv path;
+    # locked here so future strategy-writeback support inherits a tested contract.
+    assert result.implied_volatility == 0.28
 
 
 # ---------------------------------------------------------------------------

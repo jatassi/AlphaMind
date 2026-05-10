@@ -990,6 +990,7 @@ def _build_acknowledgment(
         )
         metadata = _ValidationMetadata(
             greeks=result.greeks,
+            implied_volatility=result.implied_volatility,
             delta_adjusted_exposure=result.delta_adjusted_exposure,
             per_rule_headroom=per_rule_headroom,
         )
