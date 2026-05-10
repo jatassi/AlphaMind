@@ -25,12 +25,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-import yaml
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from alphamind.config.models.guardrails import GuardrailsConfig, ProgressiveTier
+from alphamind.config.guardrails_helpers import (
+    load_cumulative_drawdown_progressive_tiers,
+)
 from alphamind.decision.portfolio_manager.models import (
     CriterionAssessment,
     OpenCommand,
@@ -1159,20 +1160,6 @@ def _phase_e_validate_sql_row(
 # ---------------------------------------------------------------------------
 
 
-def _load_progressive_tiers() -> tuple[ProgressiveTier, ...]:
-    """Read the cumulative-drawdown progressive tiers from ``config/guardrails.yaml``.
-
-    Mirrors ``GuardrailsConfig`` validation; selects the
-    ``cumulative_drawdown_pct`` rule (the only rule that carries
-    ``progressive_tiers``) and returns its tier sequence.
-    """
-    raw = cast(dict[str, Any], yaml.safe_load(Path("config/guardrails.yaml").read_text()))
-    config = GuardrailsConfig.model_validate(raw)
-    rule = next(r for r in config.rules if r.id == "cumulative_drawdown_pct")
-    assert rule.progressive_tiers is not None
-    return tuple(rule.progressive_tiers)
-
-
 def _phase_f_active_risk_parameters() -> Any:
     from alphamind.portfolio_state.aggregates.risk_parameters import (
         ActiveRiskParameterEntry,
@@ -1265,7 +1252,7 @@ def _phase_f_phase_1_enforcement_result() -> Any:
     return compose_phase_1_enforcement(
         regime_output=regime_output,
         drawdown_state=drawdown,
-        progressive_tiers=_load_progressive_tiers(),
+        progressive_tiers=load_cumulative_drawdown_progressive_tiers(),
     )
 
 

@@ -37,9 +37,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any
 
-import yaml
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -50,7 +49,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 # ``tests/execution/oms/test_submit_engine_envelope.py``; without this the
 # transitive harness-side imports race with the lazy submodule load.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
-from alphamind.config.models.guardrails import GuardrailsConfig, ProgressiveTier
+from alphamind.config.guardrails_helpers import (
+    load_cumulative_drawdown_progressive_tiers,
+)
 from alphamind.execution.oms.command_ids import (
     compute_attempt_seq,
     derive_engine_command_id,
@@ -658,20 +659,6 @@ def _phase_3_envelope() -> Any:
     )
 
 
-def _load_progressive_tiers() -> tuple[ProgressiveTier, ...]:
-    """Load the cumulative-drawdown progressive tiers from ``config/guardrails.yaml``.
-
-    Mirrors the inline loader in ``tests/execution/guardrail_enforcement/_helpers.py``
-    so the verify script consumes the same canonical tier sequence the
-    enforcement orchestrator (story 02 / ALP-395) reads at runtime.
-    """
-    raw = cast(dict[str, Any], yaml.safe_load(Path("config/guardrails.yaml").read_text()))
-    config = GuardrailsConfig.model_validate(raw)
-    rule = next(r for r in config.rules if r.id == "cumulative_drawdown_pct")
-    assert rule.progressive_tiers is not None
-    return tuple(rule.progressive_tiers)
-
-
 def _phase_3_active_risk_parameters() -> Any:
     """Compose the Phase-3 ``ActiveRiskParameterSet`` via the enforcement orchestrator.
 
@@ -743,7 +730,7 @@ def _phase_3_active_risk_parameters() -> Any:
     result = compose_phase_1_enforcement(
         regime_output=regime_output,
         drawdown_state=drawdown,
-        progressive_tiers=_load_progressive_tiers(),
+        progressive_tiers=load_cumulative_drawdown_progressive_tiers(),
     )
     return result.active_risk_parameters
 
