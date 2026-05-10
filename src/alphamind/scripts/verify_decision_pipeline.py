@@ -540,8 +540,13 @@ def build_fixture_repository(
         ),
     )
     brackets = tuple(
-        _make_bracket(position_id=p.position_id, ticker=p.details.ticker)  # type: ignore[union-attr]
-        for p in positions
+        _make_bracket(position_id=pid, ticker=tk)
+        for pid, tk in (
+            ("POS-AAPL", "AAPL"),
+            ("POS-NVDA", "NVDA"),
+            ("POS-JPM", "JPM"),
+            ("POS-XOM", "XOM"),
+        )
     )
     # One active thesis (per scope) — anchored to the AAPL position so the
     # PM has at least one thesis to read via ``get_thesis_components``.

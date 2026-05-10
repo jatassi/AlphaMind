@@ -35,6 +35,7 @@ from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
 from alphamind.decision.strategist.runner import StrategistResult
 from alphamind.pipeline.decision import DecisionPipelineResult
 from alphamind.portfolio_state.pricing import PriceQuote, PriceSource
+from alphamind.portfolio_state.records.positions import EquityPositionDetails
 from alphamind.portfolio_state.repository import RepositoryFixture
 from alphamind.scripts.verify_decision_pipeline import (
     Verdict,
@@ -89,10 +90,10 @@ def test_build_fixture_repository_covers_four_sectors() -> None:
     assert isinstance(fixture, RepositoryFixture)
     # Four open positions, each in a distinct sector.
     assert len(fixture.open_positions) == 4
-    tickers = {
-        pos.details.ticker  # type: ignore[union-attr]
-        for pos in fixture.open_positions
-    }
+    tickers: set[str] = set()
+    for pos in fixture.open_positions:
+        assert isinstance(pos.details, EquityPositionDetails)
+        tickers.add(pos.details.ticker)
     # Each sector is represented by exactly one ticker.
     assert tickers == {"AAPL", "NVDA", "JPM", "XOM"}
     # No abandoned actions, no recent PM decisions.
