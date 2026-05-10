@@ -59,10 +59,8 @@ from alphamind.portfolio_state.records.capital import (
 )
 from alphamind.portfolio_state.records.orders import OrderRecord
 from alphamind.portfolio_state.records.positions import (
-    EquityPositionDetails,
-    OptionsPositionDetails,
     PositionRecord,
-    StrategyPositionDetails,
+    resolve_ticker,
 )
 from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
@@ -193,24 +191,12 @@ def _adapt_sector_resolver_for_input_bundle(
         return sector_resolver_position
 
     def _adapter(position: PositionRecord) -> str | None:
-        ticker = _resolve_position_ticker(position)
+        ticker = resolve_ticker(position.details)
         if ticker is None:
             return None
         return sector_resolver(ticker)
 
     return _adapter
-
-
-def _resolve_position_ticker(position: PositionRecord) -> str | None:
-    """Extract the underlying ticker from a position, or return None."""
-    details = position.details
-    if isinstance(details, EquityPositionDetails):
-        return details.ticker
-    if isinstance(details, OptionsPositionDetails):
-        return details.underlying_ticker
-    if isinstance(details, StrategyPositionDetails) and details.legs:
-        return details.legs[0].options.underlying_ticker
-    return None
 
 
 # ---------------------------------------------------------------------------

@@ -772,7 +772,7 @@ def test_total_short_pct_and_single_short_max_pct() -> None:
 
 def test_unresolvable_position_skipped_with_warning(caplog: pytest.LogCaptureFixture) -> None:
     """AC: Positions with no ticker are skipped; WARNING is logged."""
-    # A STRATEGY position with empty legs — _resolve_position_ticker returns None
+    # A STRATEGY position with empty legs — resolve_ticker returns None
     strategy_details = StrategyPositionDetails(
         strategy_type_label="iron_condor",
         legs=(),  # empty → no ticker extractable

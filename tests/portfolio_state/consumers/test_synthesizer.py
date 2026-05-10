@@ -16,6 +16,7 @@ from alphamind.portfolio_state.consumers.synthesizer import (
     SynthesizerPositionSummary,
     SynthesizerThesisSummary,
     SynthesizerView,
+    _ticker_from_position,
     project_synthesizer_view,
 )
 from alphamind.portfolio_state.records.activity_log import (
@@ -57,9 +58,11 @@ from alphamind.portfolio_state.records.orders import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
+    OptionGreeks,
     PositionFill,
     PositionRecord,
     PositionStatus,
+    StrategyPositionDetails,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -613,6 +616,55 @@ def _make_empty_snapshot() -> PortfolioStateSnapshot:
 
 
 # ---------------------------------------------------------------------------
+# Empty-legs strategy builders (ALP-406 boundary)
+# ---------------------------------------------------------------------------
+
+
+def _make_empty_legs_strategy_details() -> StrategyPositionDetails:
+    return StrategyPositionDetails(
+        strategy_type_label="iron_condor",
+        legs=(),
+        net_premium_usd=-100.0,
+        max_profit_usd=200.0,
+        max_loss_usd=-500.0,
+        breakeven_levels=(),
+        strategy_greeks=OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0),
+    )
+
+
+def _make_empty_legs_strategy_position(pos_id: str = "POS-STRAT-EMPTY") -> PositionView:
+    record = PositionRecord.model_validate(
+        {
+            "position_id": pos_id,
+            "thesis_id": None,
+            "bracket_id": None,
+            "status": PositionStatus.OPEN,
+            "direction": Direction.LONG,
+            "entry_timestamp": _T0,
+            "details": _make_empty_legs_strategy_details(),
+            "execution_history": (_make_fill(),),
+            "realized_pnl_to_date_usd": None,
+            "corporate_action_adjustment_needed": False,
+            "parent_position_id": None,
+            "origin": None,
+        }
+    )
+    return PositionView(
+        record=record,
+        current_market_value_usd=0.0,
+        unrealized_pnl_usd=0.0,
+        unrealized_pnl_pct=0.0,
+        position_weight_pct=0.0,
+        position_age_hours=0.0,
+        notional_exposure_usd=0.0,
+        delta_adjusted_exposure_usd=0.0,
+        distance_to_target_usd=None,
+        distance_to_stop_usd=None,
+        risk_reward_at_current=None,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Tests: value object models
 # ---------------------------------------------------------------------------
 
@@ -808,3 +860,36 @@ class TestSnapshotBackedSynthesizerReader:
         assert positions == ()
         assert theses == ()
         assert exposure.sector_exposure_pct == {}
+
+
+# ---------------------------------------------------------------------------
+# Empty-legs → empty-string boundary (ALP-406)
+# ---------------------------------------------------------------------------
+
+
+class TestTickerFromPositionEmptyLegsBoundary:
+    """Pin the `resolve_ticker(...) or ""` adapter in `_ticker_from_position`.
+
+    The shared `resolve_ticker` helper returns `None` for empty-legs strategies;
+    the synthesizer's `SynthesizerPositionSummary.ticker` is typed `str` (no
+    optional), so the adapter converts `None` to `""`. These tests guard the
+    conversion both at the helper boundary and end-to-end through the projection.
+    """
+
+    def test_ticker_from_position_returns_empty_string_for_empty_legs(self) -> None:
+        view = _make_empty_legs_strategy_position()
+        assert _ticker_from_position(view) == ""
+
+    def test_project_synthesizer_view_summary_ticker_is_empty_string(self) -> None:
+        strategy_pos = _make_empty_legs_strategy_position("POS-STRAT-EMPTY")
+        snapshot = _make_snapshot(
+            open_positions=(strategy_pos,),
+            pending_positions=(),
+            brackets=(),
+            pending_orders=(),
+            active_theses=(),
+            position_modification_trail={},
+        )
+        view = project_synthesizer_view(snapshot, sector_resolver=_simple_sector_resolver())
+        assert len(view.positions) == 1
+        assert view.positions[0].ticker == ""

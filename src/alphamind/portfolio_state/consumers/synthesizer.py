@@ -9,10 +9,8 @@ from pydantic import BaseModel, ConfigDict
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.records.positions import (
     Direction,
-    EquityPositionDetails,
-    OptionsPositionDetails,
     PositionRecord,
-    StrategyPositionDetails,
+    resolve_ticker,
 )
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
 from alphamind.portfolio_state.views.positions import PositionView
@@ -88,14 +86,12 @@ class SynthesizerPortfolioStateReader(Protocol):
 
 
 def _ticker_from_position(pos: PositionRecord | PositionView) -> str:
-    details = pos.details
-    if isinstance(details, EquityPositionDetails):
-        return details.ticker
-    if isinstance(details, OptionsPositionDetails):
-        return details.underlying_ticker
-    if isinstance(details, StrategyPositionDetails) and details.legs:
-        return details.legs[0].options.underlying_ticker
-    return ""
+    """Return the underlying ticker, or empty string when unresolvable.
+
+    The synthesizer view's per-position summary types ticker as ``str`` (no
+    optional), so unresolvable strategies surface as ``""`` rather than ``None``.
+    """
+    return resolve_ticker(pos.details) or ""
 
 
 def _project_positions(

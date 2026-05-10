@@ -43,7 +43,7 @@ from alphamind.portfolio_state.records.positions import (
     InstrumentType,
     OptionsPositionDetails,
     PositionRecord,
-    StrategyPositionDetails,
+    resolve_ticker,
 )
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -344,15 +344,11 @@ def _render_position_record(
 
 
 def _resolve_position_ticker(pos: PositionRecord | PositionView) -> str:
-    details = pos.details
-    if isinstance(details, EquityPositionDetails):
-        return details.ticker
-    if isinstance(details, OptionsPositionDetails):
-        return details.underlying_ticker
-    if isinstance(details, StrategyPositionDetails) and details.legs:
-        return details.legs[0].options.underlying_ticker
-    msg = f"position {pos.position_id!r} has no resolvable ticker"
-    raise ValueError(msg)
+    ticker = resolve_ticker(pos.details)
+    if ticker is None:
+        msg = f"position {pos.position_id!r} has no resolvable ticker"
+        raise ValueError(msg)
+    return ticker
 
 
 def _render_underlying_line(pos: PositionView, ticker: str) -> str:

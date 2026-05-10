@@ -206,6 +206,25 @@ PositionDetailsPayload = Annotated[
 ]
 
 
+def resolve_ticker(
+    details: EquityPositionDetails | OptionsPositionDetails | StrategyPositionDetails,
+) -> str | None:
+    """Extract the underlying ticker from a position-details payload.
+
+    Returns the ticker string for equity and options positions, the first leg's
+    underlying ticker for multi-leg strategies, or ``None`` when a strategy has
+    no legs. Callers that need an empty-string sentinel on miss should adapt
+    locally via ``resolve_ticker(details) or ""``.
+    """
+    if isinstance(details, EquityPositionDetails):
+        return details.ticker
+    if isinstance(details, OptionsPositionDetails):
+        return details.underlying_ticker
+    if isinstance(details, StrategyPositionDetails) and details.legs:
+        return details.legs[0].options.underlying_ticker
+    return None
+
+
 class PositionRecord(BaseModel):
     """Persistent record for a single position across all instrument types.
 
