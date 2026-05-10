@@ -5,8 +5,9 @@ from __future__ import annotations
 import pathlib
 from typing import Annotated, Any
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from alphamind.config.loaders import read_yaml_file
 
 
 class PortfolioStateConfig(BaseModel):
@@ -50,5 +51,4 @@ def _flatten_portfolio_state_yaml(raw: dict[str, Any]) -> dict[str, Any]:
 
 def load_portfolio_state_config(path: pathlib.Path) -> PortfolioStateConfig:
     """Parse *path* as YAML and return a validated :class:`PortfolioStateConfig`."""
-    raw: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return PortfolioStateConfig.model_validate(_flatten_portfolio_state_yaml(raw))
+    return PortfolioStateConfig.model_validate(_flatten_portfolio_state_yaml(read_yaml_file(path)))

@@ -5,8 +5,9 @@ from __future__ import annotations
 import pathlib
 from typing import Annotated, Any
 
-import yaml
 from pydantic import BaseModel, ConfigDict, Field
+
+from alphamind.config.loaders import read_yaml_file
 
 
 class BreachBehaviorConfig(BaseModel):
@@ -48,5 +49,4 @@ def _flatten_breach_behavior_yaml(raw: dict[str, Any]) -> dict[str, Any]:
 
 def load_breach_behavior_config(path: pathlib.Path) -> BreachBehaviorConfig:
     """Parse *path* as YAML and return a validated :class:`BreachBehaviorConfig`."""
-    raw: dict[str, Any] = yaml.safe_load(path.read_text(encoding="utf-8"))
-    return BreachBehaviorConfig.model_validate(_flatten_breach_behavior_yaml(raw))
+    return BreachBehaviorConfig.model_validate(_flatten_breach_behavior_yaml(read_yaml_file(path)))
