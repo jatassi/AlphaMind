@@ -68,6 +68,7 @@ from alphamind.portfolio_state.events.activity_log import (
     BracketActivatedDetail,
     BracketCancelledCorporateActionDetail,
     BracketDissolvedDetail,
+    BracketIncompleteWarningDetail,
     CapitalReleasedDetail,
     CashCreditedDetail,
     CashCreditReason,
@@ -89,6 +90,7 @@ from alphamind.portfolio_state.records.orders import (
     BracketLegStatus,
     BracketStatus,
     OptionsInstrumentSpec,
+    OrderClass,
     OrderDirection,
     OrderRecord,
     OrderStatus,
@@ -100,6 +102,8 @@ from alphamind.portfolio_state.records.positions import (
     PositionFill,
     PositionRecord,
     PositionStatus,
+    StrategyLeg,
+    StrategyPositionDetails,
 )
 from alphamind.portfolio_state.records.theses import ThesisRecordStatus
 
@@ -129,8 +133,12 @@ class StateInconsistencyError(RuntimeError):
 class _FillIntegrationOutcome:
     """Per-fill diff handed to the activity-log emitter.
 
-    Bundles the eight fields the per-fill emitter needs so its signature
-    stays cohesive instead of spreading across positional / kw arguments.
+    Bundles the fields the per-fill emitter needs so its signature stays
+    cohesive instead of spreading across positional / kw arguments.
+    ``strategy_incomplete_legs``, when populated, marks an mleg cancel-mid-fill
+    scenario surfaced by the strategy-fill handler — it triggers a
+    ``BRACKET_INCOMPLETE_WARNING`` activity-log entry naming the unfilled
+    siblings.
     """
 
     fill: FillRecord
@@ -141,6 +149,7 @@ class _FillIntegrationOutcome:
     thesis_resolved: bool
     cash_delta_usd: float
     direction_is_buy: bool
+    strategy_incomplete_legs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -277,6 +286,10 @@ async def _integrate_one_fill(
     record, returns the updated typed record, and then the row is
     re-projected via the matching codec. This keeps the per-step logic
     pure and testable through the public entry point.
+
+    Strategy / mleg positions take a per-leg-aware path that consults
+    sibling per-leg ``OrderRow`` statuses to gate the atomic PENDING → OPEN
+    transition (per ``broker-adapter.md § Multi-leg fill events``).
     """
     order = await _read_order(handle, fill.order_id)
     updated_order = _apply_fill_to_order(order, fill)
@@ -285,10 +298,29 @@ async def _integrate_one_fill(
     position_row, position = await _read_position_for_order(handle, order)
     direction_is_buy = order.direction in _BUY_DIRECTIONS
 
-    updated_position = _apply_fill_to_position(position, fill, is_buy_side=direction_is_buy)
+    if isinstance(position.details, StrategyPositionDetails):
+        updated_position, incomplete_legs = await _apply_strategy_fill_to_position(
+            handle,
+            position,
+            position.details,
+            fill,
+            updated_order=updated_order,
+        )
+    else:
+        updated_position = _apply_fill_to_position(position, fill, is_buy_side=direction_is_buy)
+        incomplete_legs = ()
     _persist_position_update(position_row, updated_position)
 
     bracket_status_change = await _maybe_update_bracket(handle, position, updated_position)
+    if incomplete_legs:
+        # Cancel-mid-fill: dissolve the bracket once (subsequent fills observe
+        # the already-DISSOLVED bracket and skip a duplicate warning).
+        bracket_status_change, incomplete_legs = await _dissolve_bracket_for_incomplete_strategy(
+            handle,
+            updated_position.bracket_id,
+            bracket_status_change,
+            incomplete_legs,
+        )
     thesis_resolved = await _maybe_resolve_thesis(handle, position, updated_position, fill)
     cash_delta = await _apply_cash_movement(handle, order, fill)
 
@@ -304,6 +336,7 @@ async def _integrate_one_fill(
         thesis_resolved=thesis_resolved,
         cash_delta_usd=cash_delta,
         direction_is_buy=direction_is_buy,
+        strategy_incomplete_legs=incomplete_legs,
     )
     await _emit_fill_activity_log_entries(handle, outcome)
 
@@ -406,16 +439,21 @@ def _apply_fill_to_position(
     *,
     is_buy_side: bool,
 ) -> PositionRecord:
-    """Dispatch entry / add / exit handling based on instrument type, status, and direction."""
+    """Dispatch entry / add / exit handling based on instrument type, status, and direction.
+
+    Strategy / mleg positions never reach this function: the caller
+    (:func:`_integrate_one_fill`) routes them to
+    :func:`_apply_strategy_fill_to_position` because the strategy path needs
+    DB access to consult sibling per-leg order statuses.
+    """
     details = position.details
     if isinstance(details, EquityPositionDetails):
         return _apply_fill_to_equity_position(position, details, fill, is_buy_side=is_buy_side)
     if isinstance(details, OptionsPositionDetails):
         return _apply_fill_to_options_position(position, details, fill, is_buy_side=is_buy_side)
-    msg = (
-        f"Phase 1 fill integration currently supports equity and options positions only; "
-        f"got {details.instrument_type!r}"
-    )
+    # Strategy positions are intercepted upstream; this branch defends against
+    # a future detail variant being added without updating the dispatcher.
+    msg = f"Phase 1 fill integration: unhandled instrument type {details.instrument_type!r}"
     raise NotImplementedError(msg)
 
 
@@ -650,6 +688,350 @@ def _apply_options_exit_fill(
     if closed:
         update["status"] = PositionStatus.CLOSED
     return position.model_copy(update=update)
+
+
+# ---------------------------------------------------------------------------
+# Strategy / mleg fill integration (story 04b / ALP-392)
+# ---------------------------------------------------------------------------
+
+
+async def _apply_strategy_fill_to_position(
+    handle: InvocationHandle,
+    position: PositionRecord,
+    details: StrategyPositionDetails,
+    fill: FillRecord,
+    *,
+    updated_order: OrderRecord,
+) -> tuple[PositionRecord, tuple[str, ...]]:
+    """Apply a per-leg fill to an mleg strategy position.
+
+    Per ``broker-adapter.md § Multi-leg fill events``, a strategy position is
+    not considered open until every leg has reached ``filled`` status. Each
+    per-leg fill updates the matching ``StrategyLeg.options`` (contract_count,
+    premium_paid_per_contract) and appends to ``execution_history``; the
+    PENDING → OPEN transition fires only when the post-fill sibling-leg
+    statuses say every leg is FILLED.
+
+    The fill correlates to a leg via the order's ``OptionsInstrumentSpec``:
+    legs are uniquely identified by ``(contract_type, strike, expiration)`` —
+    the OCC identity that distinguishes one option contract from another in
+    a multi-leg structure. Entry and close orders against the same leg carry
+    different ``order_id`` values but the same option identity.
+
+    Returns ``(updated_position, incomplete_leg_ids)``: ``incomplete_leg_ids``
+    is non-empty only when the parent strategy was canceled mid-fill (one or
+    more sibling legs are CANCELLED while not all legs are FILLED), signalling
+    that :func:`_emit_fill_activity_log_entries` should write a
+    ``BRACKET_INCOMPLETE_WARNING`` entry for operator follow-up.
+    """
+    leg = _strategy_leg_for_order(details.legs, updated_order)
+    if position.status == PositionStatus.PENDING:
+        return await _apply_strategy_entry_or_continuation(
+            handle, position, details, fill, updated_order=updated_order, leg=leg
+        )
+    if position.status == PositionStatus.OPEN:
+        return await _apply_strategy_open_fill(
+            handle, position, details, fill, updated_order=updated_order, leg=leg
+        )
+    msg = f"Phase 1 cannot integrate strategy fill against position status {position.status!r}"
+    raise ValueError(msg)
+
+
+async def _apply_strategy_entry_or_continuation(
+    handle: InvocationHandle,
+    position: PositionRecord,
+    details: StrategyPositionDetails,
+    fill: FillRecord,
+    *,
+    updated_order: OrderRecord,
+    leg: StrategyLeg,
+) -> tuple[PositionRecord, tuple[str, ...]]:
+    """Update one leg's contract_count + premium and gate the atomic OPEN."""
+    new_legs = _set_leg_entry(details.legs, leg=leg, fill=fill)
+    new_details = details.model_copy(update={"legs": new_legs})
+
+    sibling_statuses = await _read_sibling_leg_statuses(
+        handle,
+        position_id=position.position_id,
+        excluded_order_id=updated_order.order_id,
+    )
+    all_other_filled = all(status == OrderStatus.FILLED for status in sibling_statuses.values())
+    any_canceled = any(status == OrderStatus.CANCELLED for status in sibling_statuses.values())
+    this_leg_filled = updated_order.status == OrderStatus.FILLED
+
+    update: dict[str, object] = {
+        "details": new_details,
+        "execution_history": (*position.execution_history, _position_fill_from_record(fill)),
+    }
+    incomplete: tuple[str, ...] = ()
+    if this_leg_filled and all_other_filled and not any_canceled:
+        # Atomic PENDING → OPEN at the last leg's filled event.
+        update["status"] = PositionStatus.OPEN
+        update["entry_timestamp"] = fill.fill_timestamp
+    elif any_canceled:
+        # Cancel mid-fill: surface the unfilled sibling leg ids so the
+        # surrounding integrator emits a BRACKET_INCOMPLETE_WARNING.
+        incomplete = tuple(
+            sorted(
+                order_id
+                for order_id, status in sibling_statuses.items()
+                if status != OrderStatus.FILLED
+            )
+        )
+    return position.model_copy(update=update), incomplete
+
+
+async def _apply_strategy_open_fill(
+    handle: InvocationHandle,
+    position: PositionRecord,
+    details: StrategyPositionDetails,
+    fill: FillRecord,
+    *,
+    updated_order: OrderRecord,
+    leg: StrategyLeg,
+) -> tuple[PositionRecord, tuple[str, ...]]:
+    """Apply a fill against an OPEN strategy: ADD (same-side) or CLOSE (opposite-side)."""
+    is_buy_side = updated_order.direction in _BUY_DIRECTIONS
+    leg_direction_is_long = leg.direction != Direction.SHORT
+    is_opening_for_leg = is_buy_side == leg_direction_is_long
+    if is_opening_for_leg:
+        new_legs = _add_to_leg(details.legs, leg=leg, fill=fill)
+        new_details = details.model_copy(update={"legs": new_legs})
+        return (
+            position.model_copy(
+                update={
+                    "details": new_details,
+                    "execution_history": (
+                        *position.execution_history,
+                        _position_fill_from_record(fill),
+                    ),
+                }
+            ),
+            (),
+        )
+    return await _apply_strategy_close_fill(
+        handle,
+        position,
+        details,
+        fill,
+        updated_order=updated_order,
+        leg=leg,
+    )
+
+
+async def _apply_strategy_close_fill(
+    handle: InvocationHandle,
+    position: PositionRecord,
+    details: StrategyPositionDetails,
+    fill: FillRecord,
+    *,
+    updated_order: OrderRecord,
+    leg: StrategyLeg,
+) -> tuple[PositionRecord, tuple[str, ...]]:
+    """Apply a closing fill: decrement leg quantity, accumulate signed P/L,
+    flip status to CLOSED only when the last leg fully closes."""
+    leg_options = leg.options
+    qty_after = leg_options.contract_count - fill.fill_quantity
+    if qty_after < -_QTY_EPSILON:
+        msg = (
+            f"strategy exit fill quantity ({fill.fill_quantity}) exceeds open contract count "
+            f"({leg_options.contract_count}) for position_id={position.position_id!r}, "
+            f"leg_id={leg.leg_id!r}"
+        )
+        raise ValueError(msg)
+    closed_for_this_leg = abs(qty_after) < _QTY_EPSILON
+    leg_direction_sign = -1.0 if leg.direction == Direction.SHORT else 1.0
+    pnl_per_contract = fill.fill_price - leg_options.premium_paid_per_contract
+    realized_delta = (
+        pnl_per_contract * fill.fill_quantity * leg_options.contract_multiplier * leg_direction_sign
+    )
+    cumulative_realized = (position.realized_pnl_to_date_usd or 0.0) + realized_delta
+
+    new_options = leg.options.model_copy(
+        update={"contract_count": 0.0 if closed_for_this_leg else qty_after},
+    )
+    new_legs = _replace_leg(details.legs, leg_id=leg.leg_id, new_options=new_options)
+    new_details = details.model_copy(update={"legs": new_legs})
+
+    update: dict[str, object] = {
+        "details": new_details,
+        "execution_history": (
+            *position.execution_history,
+            _position_fill_from_record(fill),
+        ),
+        "realized_pnl_to_date_usd": cumulative_realized,
+    }
+    sibling_statuses = await _read_sibling_leg_statuses(
+        handle,
+        position_id=position.position_id,
+        excluded_order_id=updated_order.order_id,
+    )
+    all_others_terminal = all(
+        status in (OrderStatus.FILLED, OrderStatus.CANCELLED)
+        for status in sibling_statuses.values()
+    )
+    if (
+        closed_for_this_leg
+        and updated_order.status == OrderStatus.FILLED
+        and all_others_terminal
+        and _every_leg_closed(new_legs)
+    ):
+        update["status"] = PositionStatus.CLOSED
+    return position.model_copy(update=update), ()
+
+
+def _strategy_leg_for_order(legs: tuple[StrategyLeg, ...], order: OrderRecord) -> StrategyLeg:
+    """Return the strategy leg the order targets, matched on OCC option identity.
+
+    Per-leg orders carry an ``OptionsInstrumentSpec``; the matching
+    ``StrategyLeg.options`` agrees on ``(contract_type, strike,
+    expiration_date)`` because a strategy is structurally a fixed set of
+    option contracts. Entry / ADD / CLOSE orders against the same leg share
+    the option identity but carry distinct ``order_id`` values.
+    """
+    spec = order.instrument_spec
+    if not isinstance(spec, OptionsInstrumentSpec):
+        msg = (
+            f"strategy fill: order {order.order_id!r} carries non-options "
+            f"instrument_spec {type(spec).__name__}; per-leg orders must use "
+            "OptionsInstrumentSpec"
+        )
+        raise TypeError(msg)
+    for leg in legs:
+        opts = leg.options
+        if (
+            opts.contract_type == spec.contract_type
+            and opts.strike_price == spec.strike
+            and opts.expiration_date == spec.expiration
+        ):
+            return leg
+    msg = (
+        f"strategy fill: no leg matches order {order.order_id!r} on OCC identity "
+        f"({spec.contract_type!r}, strike={spec.strike}, expiration={spec.expiration})"
+    )
+    raise ValueError(msg)
+
+
+def _set_leg_entry(
+    legs: tuple[StrategyLeg, ...],
+    *,
+    leg: StrategyLeg,
+    fill: FillRecord,
+) -> tuple[StrategyLeg, ...]:
+    """Set the matching leg's contract_count and premium from a PENDING entry fill.
+
+    A strategy enters all legs simultaneously at OPEN time, so each leg's
+    pre-fill ``contract_count`` is zero — the entry fill establishes the
+    initial size and premium.
+    """
+    new_options = leg.options.model_copy(
+        update={
+            "contract_count": fill.fill_quantity,
+            "premium_paid_per_contract": fill.fill_price,
+        }
+    )
+    return _replace_leg(legs, leg_id=leg.leg_id, new_options=new_options)
+
+
+def _add_to_leg(
+    legs: tuple[StrategyLeg, ...],
+    *,
+    leg: StrategyLeg,
+    fill: FillRecord,
+) -> tuple[StrategyLeg, ...]:
+    """Increment a leg's contract_count and recompute weighted-average premium."""
+    prior_count = leg.options.contract_count
+    new_count = prior_count + fill.fill_quantity
+    weighted_premium = (
+        (leg.options.premium_paid_per_contract * prior_count)
+        + (fill.fill_price * fill.fill_quantity)
+    ) / new_count
+    new_options = leg.options.model_copy(
+        update={
+            "contract_count": new_count,
+            "premium_paid_per_contract": weighted_premium,
+        }
+    )
+    return _replace_leg(legs, leg_id=leg.leg_id, new_options=new_options)
+
+
+def _replace_leg(
+    legs: tuple[StrategyLeg, ...],
+    *,
+    leg_id: str,
+    new_options: OptionsPositionDetails,
+) -> tuple[StrategyLeg, ...]:
+    return tuple(
+        StrategyLeg(
+            leg_id=existing.leg_id,
+            direction=existing.direction,
+            options=new_options,
+        )
+        if existing.leg_id == leg_id
+        else existing
+        for existing in legs
+    )
+
+
+def _every_leg_closed(legs: tuple[StrategyLeg, ...]) -> bool:
+    return all(abs(leg.options.contract_count) < _QTY_EPSILON for leg in legs)
+
+
+async def _read_sibling_leg_statuses(
+    handle: InvocationHandle,
+    *,
+    position_id: str,
+    excluded_order_id: str,
+) -> dict[str, OrderStatus]:
+    """Return ``{leg_order_id: OrderStatus}`` for all per-leg orders on a strategy.
+
+    Excludes the parent strategy order (``order_class=MLEG``) and the leg the
+    current fill just updated — the caller has the latter's post-fill status
+    in hand and gates the OPEN transition by combining it with the sibling
+    statuses.
+    """
+    stmt = (
+        select(OrderRow.order_id, OrderRow.status)
+        .where(OrderRow.position_id == position_id)
+        .where(OrderRow.order_class != OrderClass.MLEG.value)
+        .where(OrderRow.order_id != excluded_order_id)
+    )
+    rows = (await handle.session.execute(stmt)).all()
+    return {row.order_id: OrderStatus(row.status) for row in rows}
+
+
+async def _dissolve_bracket_for_incomplete_strategy(
+    handle: InvocationHandle,
+    bracket_id: str | None,
+    prior_change: BracketStatus | None,
+    incomplete_legs: tuple[str, ...],
+) -> tuple[BracketStatus | None, tuple[str, ...]]:
+    """Dissolve the strategy bracket on cancel-mid-fill.
+
+    The strategist resolves the partial residual on its next invocation per
+    ``broker-adapter.md § Multi-leg fill events § Cancellation``; dissolving
+    here surfaces the broken contract immediately rather than leaving the
+    bracket in an inconsistent PENDING_ENTRY / ACTIVE state.
+
+    Returns the (possibly updated) bracket status change plus the
+    ``incomplete_legs`` tuple. The leg list is cleared when the bracket is
+    already DISSOLVED — a prior fill in the same Phase 1 invocation has
+    already emitted the warning, so subsequent fills suppress duplicates.
+    """
+    if bracket_id is None:
+        return prior_change, incomplete_legs
+    bracket_row = await handle.session.get(BracketRow, bracket_id)
+    if bracket_row is None:
+        msg = f"position references bracket {bracket_id!r}, but bracket row is missing"
+        raise StateInconsistencyError(msg)
+    if bracket_row.status == BracketStatus.DISSOLVED.value:
+        # A prior fill in this invocation already dissolved the bracket and
+        # emitted the warning; suppress the duplicate.
+        return prior_change, ()
+    bracket_row.status = BracketStatus.DISSOLVED.value
+    for leg_row in await _read_bracket_legs(handle, bracket_id):
+        leg_row.leg_status = BracketLegStatus.CANCELLED.value
+    return BracketStatus.DISSOLVED, incomplete_legs
 
 
 def _persist_position_update(row: PositionRow, position: PositionRecord) -> None:
@@ -986,6 +1368,23 @@ async def _emit_fill_activity_log_entries(
             timestamp=fill.fill_timestamp,
             detail=BracketDissolvedDetail(
                 cancelled_leg_order_ids=await _bracket_leg_order_ids(handle, bracket_id),
+            ),
+        )
+
+    if outcome.strategy_incomplete_legs:
+        await _emit(
+            handle,
+            event_type=EventType.BRACKET_INCOMPLETE_WARNING,
+            order_id=None,
+            position_id=pos_id,
+            thesis_id=thesis_id,
+            timestamp=fill.fill_timestamp,
+            detail=BracketIncompleteWarningDetail(
+                missing_leg_types=outcome.strategy_incomplete_legs,
+                expected_resolution=(
+                    "strategist re-evaluates the partial mleg residual on its next "
+                    "invocation per broker-adapter.md § Multi-leg fill events § Cancellation"
+                ),
             ),
         )
 

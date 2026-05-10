@@ -245,7 +245,16 @@ class PositionRecord(BaseModel):
         return self
 
     def _check_status_rules(self) -> None:
-        if self.status == PositionStatus.PENDING and self.execution_history:
+        # Strategy positions accumulate per-leg fills in execution_history while
+        # the parent stays PENDING — the atomic PENDING → OPEN transition fires
+        # only when every leg has reached `filled` status (broker-adapter.md §
+        # Multi-leg fill events § Atomicity). The "PENDING → empty history"
+        # invariant continues to apply for equity / single-leg options.
+        if (
+            self.status == PositionStatus.PENDING
+            and self.execution_history
+            and not isinstance(self.details, StrategyPositionDetails)
+        ):
             msg = "execution_history must be empty when status is PENDING"
             raise ValueError(msg)
         if self.status == PositionStatus.OPEN and not self.execution_history:

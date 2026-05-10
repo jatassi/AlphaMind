@@ -147,13 +147,15 @@ The `--output json` mode emits:
 
 ## Operational caveats
 
-**Fill-integration path scope.** Per ALP-365's narrowing, only the
-long-equity + stock-split paths are wired in Phase 1. Options-strategy fills,
-SHORT-side entry fills, and other corporate-action types raise
-`NotImplementedError` from `process_unprocessed_fills` if an unprocessed fill
-of the unsupported kind is seen. This is by design at the v1 substrate;
-production callers must filter the fill stream upstream of Phase 1 until the
-follow-up stories land.
+**Fill-integration path scope.** Phase 1 now supports the full instrument
+matrix: long-equity (story 07 / ALP-365), single-leg options (story 03c /
+ALP-388), and multi-leg strategy / mleg positions (story 04b / ALP-392). The
+remaining narrowed paths are SHORT-side equity entry fills (raise
+`NotImplementedError` from `_apply_fill_to_equity_position`) and
+corporate-action types other than SPLIT (raise `NotImplementedError` from
+`_apply_ca_to_quantity_and_basis`). Production callers must filter the fill
+stream upstream of Phase 1 for those remaining cases until the follow-up
+stories land.
 
 **`persist_command_abandoned` is engine-side only.** The function exists,
 is exported, and is unit-tested for its post-rollback emission contract,

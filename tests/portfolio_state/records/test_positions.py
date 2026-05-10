@@ -511,6 +511,31 @@ class TestPendingStatusRules:
             )
         assert "execution_history" in str(exc_info.value)
 
+    def test_pending_strategy_with_per_leg_fills_passes(self) -> None:
+        """Strategy positions accumulate per-leg fills in execution_history while
+        the parent stays PENDING — the atomic PENDING → OPEN transition fires
+        only when every leg has reached `filled` status (broker-adapter.md §
+        Multi-leg fill events § Atomicity)."""
+        leg = _make_strategy_leg()
+        strat = StrategyPositionDetails(
+            strategy_type_label="bull_call_spread",
+            legs=(leg,),
+            net_premium_usd=-500.0,
+            max_profit_usd=1000.0,
+            max_loss_usd=500.0,
+            breakeven_levels=(205.0,),
+            strategy_greeks=_GREEKS,
+        )
+        p = _make_position(
+            status=PositionStatus.PENDING,
+            entry_timestamp=None,
+            details=strat,
+            direction=Direction.LONG,
+            execution_history=(_FILL,),
+        )
+        assert p.status == PositionStatus.PENDING
+        assert len(p.execution_history) == 1
+
 
 class TestOpenStatusRules:
     def test_open_with_fills_passes(self) -> None:
