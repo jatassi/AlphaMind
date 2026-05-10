@@ -20,6 +20,7 @@ from alphamind.portfolio_state.records.positions import (
     PositionStatus,
     StrategyLeg,
     StrategyPositionDetails,
+    resolve_ticker,
 )
 
 
@@ -731,3 +732,49 @@ class TestLiveExecutionEstimate:
         assert "positive" in doc
         assert "estimated_spread_usd" in doc
         assert "live_adjusted_fill_price" in doc
+
+
+# ---------------------------------------------------------------------------
+# resolve_ticker tests (ALP-406)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveTicker:
+    def test_equity_returns_ticker(self) -> None:
+        details = EquityPositionDetails(
+            ticker="AAPL",
+            share_count=100.0,
+            average_cost_basis_per_share=150.0,
+        )
+        assert resolve_ticker(details) == "AAPL"
+
+    def test_options_returns_underlying_ticker(self) -> None:
+        details = _make_options_details(underlying_ticker="MSFT")
+        assert resolve_ticker(details) == "MSFT"
+
+    def test_strategy_returns_first_leg_underlying_ticker(self) -> None:
+        leg = _make_strategy_leg(
+            options=_make_options_details(underlying_ticker="SPY"),
+        )
+        details = StrategyPositionDetails(
+            strategy_type_label="bull_call_spread",
+            legs=(leg,),
+            net_premium_usd=-100.0,
+            max_profit_usd=200.0,
+            max_loss_usd=-100.0,
+            breakeven_levels=(450.0,),
+            strategy_greeks=_GREEKS,
+        )
+        assert resolve_ticker(details) == "SPY"
+
+    def test_strategy_with_empty_legs_returns_none(self) -> None:
+        details = StrategyPositionDetails(
+            strategy_type_label="iron_condor",
+            legs=(),
+            net_premium_usd=-100.0,
+            max_profit_usd=200.0,
+            max_loss_usd=-500.0,
+            breakeven_levels=(),
+            strategy_greeks=OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0),
+        )
+        assert resolve_ticker(details) is None

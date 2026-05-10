@@ -19,6 +19,7 @@ from alphamind.portfolio_state.records.positions import (
     InstrumentType,
     OptionsPositionDetails,
     StrategyPositionDetails,
+    resolve_ticker,
 )
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
 from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -51,28 +52,6 @@ _INSTRUMENT_TO_ASSET_TYPE: dict[InstrumentType, AssetType] = {
     InstrumentType.OPTIONS: AssetType.OPTION,
     InstrumentType.STRATEGY: AssetType.STRATEGY,
 }
-
-
-# ---------------------------------------------------------------------------
-# Ticker extraction (mirrors _resolve_position_ticker in decision/strategist/runner.py)
-# ---------------------------------------------------------------------------
-
-
-def _resolve_ticker(
-    details: EquityPositionDetails | OptionsPositionDetails | StrategyPositionDetails,
-) -> str | None:
-    """Extract the underlying ticker from a position's details payload.
-
-    Mirrors ``_resolve_position_ticker`` in ``decision/strategist/runner.py``.
-    Returns ``None`` when the ticker cannot be determined (e.g. empty strategy legs).
-    """
-    if isinstance(details, EquityPositionDetails):
-        return details.ticker
-    if isinstance(details, OptionsPositionDetails):
-        return details.underlying_ticker
-    if isinstance(details, StrategyPositionDetails) and details.legs:
-        return details.legs[0].options.underlying_ticker
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +192,7 @@ def to_library_snapshot(
 
     for pos in all_positions:
         details = pos.record.details
-        underlying = _resolve_ticker(details)
+        underlying = resolve_ticker(details)
 
         if underlying is None:
             logger.warning(
