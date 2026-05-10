@@ -133,10 +133,10 @@ Use the `/tdd` skill (`Skill("tdd")`) to drive the work: red → green → refac
 
 After tests are green and before your final commit, invoke the `simplify` skill (`Skill("simplify")`) to review and clean up your changes, then run `uv run ruff check .`, `uv run ruff format .`, and `uv run mypy` and address all findings from your changes only.
 
-When done:
+When done — **REQUIRED — DO NOT SKIP THE COMMIT STEP. Do NOT end your work with `simplify` findings as the final action; the commit must come AFTER simplify.**
 1. Run `uv run pytest -n auto` and confirm green.
-2. Stage all changes with `git add` and create the final commit. **REQUIRED — DO NOT SKIP.** After committing, run `git log --oneline <feature-branch>..HEAD` and confirm at least one of YOUR commits is listed. If `git status` shows untracked or modified files, you have NOT committed — `git add` and commit them.
-3. Report back with **the verbatim output of `git log --oneline <feature-branch>..HEAD`** (paste the exact lines from your terminal, not a paraphrase or summary), followed by a one-line attestation per acceptance criterion ("met by test X", "met by file Y exists", "met by manual inspection of Z"). A report without verbatim git-log output signals to the orchestrator that the commit step was skipped — the orchestrator will reject the report and re-dispatch.
+2. **STAGE AND COMMIT.** `git add` then `git commit`. After committing, run `git log --oneline <feature-branch>..HEAD` and confirm at least one of YOUR commits is listed. If `git status` shows untracked or modified files, you have NOT committed — `git add` and commit them.
+3. Report back with **the verbatim output of `git log --oneline <feature-branch>..HEAD`** as the FIRST item in your report (before any prose), followed by a one-line attestation per acceptance criterion ("met by test X", "met by file Y exists", "met by manual inspection of Z"). A report without verbatim git-log output as its first item signals to the orchestrator that the commit step was skipped — the orchestrator will reject the report and re-dispatch.
 
 If you hit a blocker — schema gap, ambiguous spec, sibling-work-tree primitive missing or shaped differently than the story expected, test that won't pass without scope creep — stop and report. Do not improvise.
 
