@@ -1268,6 +1268,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=Path("config"),
         help="Path to the configuration directory (default: ./config).",
     )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a SQLite DB for phases 3/4/5 (equity/options/mleg lifecycles). "
+            "When omitted, phases 3/4/5 DEFER. Operator runs typically point this at a "
+            "fresh tmp DB created via `alembic upgrade head` (see runbook)."
+        ),
+    )
     return parser
 
 
@@ -1300,6 +1310,7 @@ def _build_context(
     factory = AlpacaClientFactory(venue, mode=args.mode)
     client = factory.build_trading_client()
     queries = AccountStateQueries(client)
+    db_path: Path | None = args.db if args.db is not None else None
     return VerifyContext(
         factory=factory,
         queries=queries,
@@ -1307,6 +1318,7 @@ def _build_context(
         venue=venue,
         mode=args.mode,
         verbose=bool(args.verbose),
+        db_path=db_path,
     )
 
 

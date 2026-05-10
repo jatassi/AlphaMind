@@ -143,6 +143,11 @@ CLI flags:
   + day-trade headroom in Phase 6).
 - `--config-dir PATH` — Override the configuration directory (default:
   `./config`).
+- `--db PATH` — Path to the SQLite DB phases 3/4/5 (equity / options /
+  mleg lifecycles) write through. **Required for those phases to RUN**
+  (otherwise they DEFER with a clear diagnostic). Set this to the tmp
+  DB you just created in Prerequisites step 4 (e.g.
+  `--db=/tmp/alphamind-verify-broker/alphamind.db`).
 
 Exit code: `0` on full pass (DEFERRED counts as not-failing), `1` on
 any phase failure.
