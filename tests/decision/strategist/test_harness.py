@@ -160,7 +160,9 @@ def _risk_budget() -> RiskBudgetConsumption:
 
 
 def _active_risk_parameters() -> ActiveRiskParameterSet:
-    return ActiveRiskParameterSet(
+    from tests.decision.conftest import compose_active_risk_parameters_via_orchestrator
+
+    return compose_active_risk_parameters_via_orchestrator(
         regime_label=RegimeLabel.NORMAL,
         transition_state=RegimeTransitionState.STABLE,
         transition_invocations_remaining=0,
