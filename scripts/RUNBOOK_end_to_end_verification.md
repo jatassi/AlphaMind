@@ -101,6 +101,7 @@ they read time-dependent DB state.
 | 3 | Analysis: domain researchers | domain_researchers, domain_researcher_failure_modes | Yes (1 of 2) | ~30–60s |
 | 4 | Analysis: qualitative + adaptive | qualitative_researcher, adaptive_researcher | Yes | ~45–90s |
 | 5 | Analysis: synthesizer | synthesizer | Yes | ~10–30s |
+| 5b | Execution: guardrail enforcement | guardrail_enforcement | No | <1s |
 | 6 | Decision: analyst | analyst (normal + halt scenarios) | Yes (Opus) | ~30–90s |
 | 7 | Decision: strategist | strategist (normal + defensive_posture + emergency scenarios) | Yes (Opus) | ~10–15 min |
 | 8 | Decision: proposal pre-processor | proposal_pre_processor (4 scenarios) | No | <1s |
@@ -536,6 +537,52 @@ the operator decides whether to act on it.
 **On FAIL:** read `scripts/RUNBOOK_synthesizer.md` § Failure-mode
 triage. The diagnostic archive (under the `--archive-root`) has the
 prompt, user message, and full response for offline analysis.
+
+## Phase 5b — Guardrail enforcement layer
+
+Pure in-process integration check against the Phase 1 guardrail-enforcement
+orchestrator. No SDK calls, no LLM cost. Sub-second runtime against a fresh
+on-disk DB. Phase 5b proves the composition primitive + orchestrator +
+repository-provider helper + assembler integration are wired together correctly
+so the canonical `ActiveRiskParameterSet` consumed by the decision-layer agents
+(Phases 6 / 7 / 9) is composed faithfully from the regime-resolved baseline
+plus cumulative-drawdown progressive-tier overrides.
+
+```bash
+uv run python scripts/verify_guardrail_enforcement.py \
+    --db-path "$DB_PATH"
+```
+
+Verifies four phases against a freshly-migrated DB: composition primitive
+(four tier cases — no-tier / `CONSTRAINED` / `HEAVILY_CONSTRAINED` /
+`FULL_HALT` — all loading their triggers from `config/guardrails.yaml`),
+Phase 1 enforcement orchestrator (synthetic `RegimeAdaptationOutput` +
+per-tier `DrawdownState` → `Phase1EnforcementResult`), repository provider
+(`make_active_risk_parameters_provider` + `SqlPortfolioStateRepository.get_active_risk_parameters`
+identity), and assembler integration (`assemble_snapshot` surfaces the
+composed parameters at `snapshot.active_risk_parameters`).
+
+`--db-path` defaults to the standard resolution chain (`DATABASE_PATH` env
+var, then `config/main.yaml` `paths.database` key). For ad-hoc verification
+against a fresh DB, the script's runbook documents the migration recipe
+(both Alembic chain and in-process `Base.metadata.create_all`).
+
+This phase runs after distillation (Phase 2 produces the regime label the
+adaptation orchestrator translates into the regime-resolved baseline) and
+before the decision-layer agents (Phases 6 / 7 / 9 consume
+`snapshot.active_risk_parameters`). On a paper-evaluation harness run the
+work tree's e2e harness exercises the same surface with live regime +
+drawdown inputs; this phase keeps the contract verified in isolation.
+
+**On failure:** read `scripts/RUNBOOK_guardrail_enforcement.md` § Failure-mode
+triage. The FAIL output names the phase and a one-line diagnostic. Most
+common: `missing required tables: <list>` (the DB schema is partial —
+re-run the migration recipe), or per-tier mismatch
+(`tier 1 / CONSTRAINED: tier=<X>, expected …`) which means
+`config/guardrails.yaml` lost a non-halt tier or the classifier regressed.
+Don't proceed to Phase 6 — if the guardrail-enforcement layer is broken,
+the decision-layer agents will consume a malformed parameter set and
+either reject correct proposals or accept invalid ones.
 
 ## Phase 6 — Analyst (decision layer)
 

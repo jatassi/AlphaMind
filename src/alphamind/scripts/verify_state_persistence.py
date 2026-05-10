@@ -25,10 +25,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+import yaml
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind.config.models.guardrails import GuardrailsConfig, ProgressiveTier
 from alphamind.decision.portfolio_manager.models import (
     CriterionAssessment,
     OpenCommand,
@@ -1157,6 +1159,20 @@ def _phase_e_validate_sql_row(
 # ---------------------------------------------------------------------------
 
 
+def _load_progressive_tiers() -> tuple[ProgressiveTier, ...]:
+    """Read the cumulative-drawdown progressive tiers from ``config/guardrails.yaml``.
+
+    Mirrors ``GuardrailsConfig`` validation; selects the
+    ``cumulative_drawdown_pct`` rule (the only rule that carries
+    ``progressive_tiers``) and returns its tier sequence.
+    """
+    raw = cast(dict[str, Any], yaml.safe_load(Path("config/guardrails.yaml").read_text()))
+    config = GuardrailsConfig.model_validate(raw)
+    rule = next(r for r in config.rules if r.id == "cumulative_drawdown_pct")
+    assert rule.progressive_tiers is not None
+    return tuple(rule.progressive_tiers)
+
+
 def _phase_f_active_risk_parameters() -> Any:
     from alphamind.portfolio_state.aggregates.risk_parameters import (
         ActiveRiskParameterEntry,
@@ -1189,6 +1205,70 @@ def _phase_f_active_risk_parameters() -> Any:
     )
 
 
+def _phase_f_phase_1_enforcement_result() -> Any:
+    """Compose a ``Phase1EnforcementResult`` representative of Phase F's setup.
+
+    Wraps :func:`_phase_f_active_risk_parameters` in a synthetic
+    ``RegimeAdaptationOutput`` (NORMAL regime, no transition, no overlays) and
+    a zero-drawdown ``DrawdownState`` so the cumulative-drawdown tier
+    classifier yields ``None`` and the active-risk parameters pass through
+    unchanged. The resulting bundle is the canonical input to
+    :func:`make_active_risk_parameters_provider`.
+    """
+    from alphamind.config.models.regimes import Regime
+    from alphamind.execution.guardrail_enforcement import compose_phase_1_enforcement
+    from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+    from alphamind.portfolio_state.records.capital import RegimeTransitionState
+    from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+    from alphamind.risk_guardrails.regime_adaptation import (
+        RegimeAdaptationOutput,
+        RegimeAdaptationState,
+    )
+
+    parameters = _phase_f_active_risk_parameters()
+    regime_state = RegimeAdaptationState(
+        as_of=_NOW.isoformat().replace("+00:00", "Z"),
+        invocation_id=_INV_ID_BASE,
+        active_regime=Regime.normal,
+        prior_regime=None,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        transition_started_invocation_id=None,
+        transition_origin_regime=None,
+        active_overlays=(),
+        distillation_regime_label="normal",
+        distillation_vix_level=18.0,
+        regime_skip_emergency=False,
+    )
+    regime_output = RegimeAdaptationOutput(
+        runtime_dimensions_active_regime=Regime.normal,
+        runtime_dimensions_active_overlays=(),
+        overlay_activation_decisions=(),
+        effective_limits={},
+        active_risk_parameter_set=parameters,
+        regime_transition_breaches=(),
+        regime_skip_emergency=False,
+        new_persisted_state=regime_state,
+        audit_log_entries=(),
+    )
+    drawdown = DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=100_000.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
+    )
+    return compose_phase_1_enforcement(
+        regime_output=regime_output,
+        drawdown_state=drawdown,
+        progressive_tiers=_load_progressive_tiers(),
+    )
+
+
 _PHASE_F_LABEL = "Phase F — repository read parity"
 
 
@@ -1203,6 +1283,9 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
     OPEN position to surface in the snapshot; the verify orchestrator
     sequences Phases C then F to honour this.
     """
+    from alphamind.execution.guardrail_enforcement import (
+        make_active_risk_parameters_provider,
+    )
     from alphamind.execution.state_persistence.repository import (
         build_sql_portfolio_state_repository,
     )
@@ -1261,8 +1344,11 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
         # or before now, and now at or before future_start).
         now = datetime.now(UTC)
 
-        async def _provider() -> Any:
-            return _phase_f_active_risk_parameters()
+        # Construct the active-risk parameters via the guardrail-enforcement
+        # orchestrator (story 02 + 03a) so the verify script exercises the
+        # same composition path production wiring will use.
+        phase_1_result = _phase_f_phase_1_enforcement_result()
+        provider = make_active_risk_parameters_provider(phase_1_result)
 
         async def _prior_provider(_path: str) -> Any:
             return _phase_f_active_risk_parameters()
@@ -1270,7 +1356,7 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
         committed_repo = build_sql_portfolio_state_repository(
             session_factory=factory,
             invocation_id=committed_inv_id,
-            active_risk_parameters_provider=_provider,
+            active_risk_parameters_provider=provider,
             prior_active_risk_parameters_provider=_prior_provider,
             config=_state_persistence_config(),
         )
@@ -1348,7 +1434,7 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
         uncommitted_repo = build_sql_portfolio_state_repository(
             session_factory=factory,
             invocation_id=uncommitted_inv_id,
-            active_risk_parameters_provider=_provider,
+            active_risk_parameters_provider=provider,
             prior_active_risk_parameters_provider=_prior_provider,
             config=_state_persistence_config(),
         )

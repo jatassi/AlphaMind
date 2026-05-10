@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
@@ -919,12 +920,24 @@ def _build_constructive_request_from_open(command: OpenCommand) -> ValidationReq
     strategy) via :func:`_instrument_ticker_key` and sizing
     (``quantity``, ``dollar_value``) directly from
     :class:`PositionSize` per the canonical OMS command schema.
+
+    For :class:`OptionInstrument` source instruments, propagates ``strike`` /
+    ``expiration`` / ``contract_type`` to the :class:`ValidationInstrument`;
+    the validation tool's ``_validate_options_fields`` requires those fields
+    populated for ``asset_type=OPTIONS`` and computes greeks from them.
     """
-    instrument = ValidationInstrument(
-        ticker=_instrument_ticker_key(command.instrument),
-        asset_type=_OMS_TO_VALIDATION_ASSET[command.instrument.asset_type],
-        direction=_OMS_TO_VALIDATION_DIRECTION[_instrument_direction(command.instrument)],
-    )
+    instrument_kwargs: dict[str, Any] = {
+        "ticker": _instrument_ticker_key(command.instrument),
+        "asset_type": _OMS_TO_VALIDATION_ASSET[command.instrument.asset_type],
+        "direction": _OMS_TO_VALIDATION_DIRECTION[_instrument_direction(command.instrument)],
+    }
+    if isinstance(command.instrument, OptionInstrument):
+        instrument_kwargs["strike"] = command.instrument.strike
+        instrument_kwargs["expiration"] = datetime.fromisoformat(
+            command.instrument.expiration
+        ).replace(tzinfo=UTC)
+        instrument_kwargs["contract_type"] = command.instrument.contract_type
+    instrument = ValidationInstrument(**instrument_kwargs)
     size = ValidationSize(
         quantity=int(command.position_size.quantity),
         dollar_value=command.position_size.dollar_value,

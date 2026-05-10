@@ -238,7 +238,9 @@ def _make_param_entry(*, rule_id: str, rule_label: str, value: float) -> ActiveR
 
 def _active_risk_parameters() -> ActiveRiskParameterSet:
     """Risk parameters covering the PM header renderer's required rules."""
-    return ActiveRiskParameterSet(
+    from tests.decision.conftest import compose_active_risk_parameters_via_orchestrator
+
+    return compose_active_risk_parameters_via_orchestrator(
         regime_label=RegimeLabel.NORMAL,
         transition_state=RegimeTransitionState.STABLE,
         transition_invocations_remaining=0,
