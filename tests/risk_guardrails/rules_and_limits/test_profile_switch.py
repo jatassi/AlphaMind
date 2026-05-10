@@ -34,7 +34,7 @@ def config_dir(tmp_path: Path) -> Path:
 
 
 def _load_main(config_dir: Path) -> MainConfig:
-    payload = yaml.safe_load((config_dir / "main.yaml").read_text())
+    payload = yaml.safe_load((config_dir / "main.yaml").read_text(encoding="utf-8"))
     return MainConfig.model_validate(payload)
 
 

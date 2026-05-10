@@ -102,7 +102,7 @@ def load_event_calendar(path: Path) -> EventCalendar:
     by ``event_timestamp_utc``.
     """
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         msg = f"Event-calendar file not found: {path}"
         raise EventCalendarParseError(msg) from exc
