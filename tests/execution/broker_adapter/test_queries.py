@@ -1002,7 +1002,175 @@ class TestGetAccountActivities:
 
 
 # ---------------------------------------------------------------------------
-# 10. Public surface re-exports
+# 10. get_option_contracts — chain enumeration for verify-script strike picking
+# ---------------------------------------------------------------------------
+
+
+def _make_option_contract(
+    *,
+    underlying: str = "NVDA",
+    expiration: date = date(2026, 6, 19),
+    strike: float = 100.0,
+    contract_type: str = "call",
+    status: str = "active",
+    symbol: str | None = None,
+) -> Any:
+    """Build an alpaca-py ``OptionContract`` for chain-enumeration tests."""
+    from uuid import uuid4
+
+    from alpaca.trading.models import OptionContract
+
+    occ_strike = f"{round(strike * 1000):08d}"
+    type_letter = "C" if contract_type == "call" else "P"
+    yymmdd = expiration.strftime("%y%m%d")
+    occ_symbol = symbol or f"{underlying:<6}{yymmdd}{type_letter}{occ_strike}"
+    return OptionContract.model_validate(
+        {
+            "id": str(uuid4()),
+            "symbol": occ_symbol,
+            "name": f"{underlying} {expiration.isoformat()} {strike} {contract_type.upper()}",
+            "status": status,
+            "tradable": True,
+            "expiration_date": expiration.isoformat(),
+            "root_symbol": underlying,
+            "underlying_symbol": underlying,
+            "underlying_asset_id": str(uuid4()),
+            "type": contract_type,
+            "style": "american",
+            "strike_price": strike,
+            "size": "100",
+        }
+    )
+
+
+def _make_option_contracts_response(
+    contracts: list[Any], next_page_token: str | None = None
+) -> Any:
+    from alpaca.trading.models import OptionContractsResponse
+
+    return OptionContractsResponse(
+        option_contracts=contracts,
+        next_page_token=next_page_token,
+    )
+
+
+class TestGetOptionContracts:
+    def test_returns_option_contract_snapshots_for_underlying_and_expiration(self) -> None:
+        """Wraps ``TradingClient.get_option_contracts`` for a given underlying +
+        expiration date, returning a tuple of ``OptionContractSnapshot`` records
+        sorted by strike price."""
+        from alphamind.execution.broker_adapter.queries import (
+            AccountStateQueries,
+            OptionContractSnapshot,
+        )
+
+        contracts = [
+            _make_option_contract(strike=120.0),
+            _make_option_contract(strike=100.0),
+            _make_option_contract(strike=110.0),
+        ]
+        client = _fake_client()
+        client.get_option_contracts.return_value = _make_option_contracts_response(contracts)
+
+        qs = AccountStateQueries(client)
+        result = qs.get_option_contracts(
+            underlying="NVDA",
+            expiration=date(2026, 6, 19),
+        )
+
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+        assert all(isinstance(c, OptionContractSnapshot) for c in result)
+        # Sorted by strike ascending so callers can pick by index.
+        assert [c.strike for c in result] == [100.0, 110.0, 120.0]
+
+    def test_passes_filters_to_sdk_request(self) -> None:
+        """The call must build a ``GetOptionContractsRequest`` filtering by
+        ``underlying_symbols``, ``expiration_date``, ``type=CALL``,
+        ``status=ACTIVE``."""
+        from alpaca.trading.enums import AssetStatus, ContractType
+        from alpaca.trading.requests import GetOptionContractsRequest
+
+        from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+        client = _fake_client()
+        client.get_option_contracts.return_value = _make_option_contracts_response([])
+
+        qs = AccountStateQueries(client)
+        qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+
+        call_args = client.get_option_contracts.call_args
+        # Either positional or keyword.
+        request = call_args[0][0] if call_args[0] else call_args[1].get("request")
+        assert isinstance(request, GetOptionContractsRequest)
+        assert request.underlying_symbols == ["NVDA"]
+        assert request.expiration_date == date(2026, 6, 19)
+        assert request.type == ContractType.CALL
+        assert request.status == AssetStatus.ACTIVE
+
+    def test_returns_empty_tuple_when_chain_empty(self) -> None:
+        from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+        client = _fake_client()
+        client.get_option_contracts.return_value = _make_option_contracts_response([])
+
+        qs = AccountStateQueries(client)
+        result = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+
+        assert result == ()
+
+    def test_returns_empty_tuple_when_response_option_contracts_is_none(self) -> None:
+        """``OptionContractsResponse.option_contracts`` is ``Optional[List]``;
+        the wrapper coerces ``None`` to an empty tuple so callers don't have to
+        special-case it."""
+        from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+        client = _fake_client()
+        client.get_option_contracts.return_value = _make_option_contracts_response(
+            contracts=[],
+        )
+        client.get_option_contracts.return_value.option_contracts = None
+
+        qs = AccountStateQueries(client)
+        result = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+
+        assert result == ()
+
+    def test_snapshot_carries_symbol_strike_and_type(self) -> None:
+        from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+        client = _fake_client()
+        client.get_option_contracts.return_value = _make_option_contracts_response(
+            [_make_option_contract(strike=105.0, symbol="NVDA  260619C00105000")],
+        )
+
+        qs = AccountStateQueries(client)
+        (snap,) = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+
+        assert snap.symbol == "NVDA  260619C00105000"
+        assert snap.strike == 105.0
+        assert snap.contract_type == "call"
+        assert snap.expiration == date(2026, 6, 19)
+
+    def test_snapshot_is_frozen(self) -> None:
+        from pydantic import ValidationError
+
+        from alphamind.execution.broker_adapter.queries import AccountStateQueries
+
+        client = _fake_client()
+        client.get_option_contracts.return_value = _make_option_contracts_response(
+            [_make_option_contract(strike=100.0)],
+        )
+
+        qs = AccountStateQueries(client)
+        (snap,) = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
+
+        with pytest.raises((TypeError, ValidationError)):
+            snap.strike = 200.0
+
+
+# ---------------------------------------------------------------------------
+# 11. Public surface re-exports
 # ---------------------------------------------------------------------------
 
 
@@ -1020,6 +1188,7 @@ class TestPublicReExports:
             "AssetSnapshot",
             "CalendarDay",
             "MarketClock",
+            "OptionContractSnapshot",
         }
         actual = set(pkg.__all__)
         missing = expected_new - actual
@@ -1032,6 +1201,7 @@ class TestPublicReExports:
             AssetSnapshot,
             CalendarDay,
             MarketClock,
+            OptionContractSnapshot,
             OrderLegSnapshot,
             OrderSnapshot,
             PositionSnapshot,
@@ -1048,4 +1218,5 @@ class TestPublicReExports:
             AssetSnapshot,
             CalendarDay,
             MarketClock,
+            OptionContractSnapshot,
         )

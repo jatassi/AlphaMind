@@ -260,6 +260,69 @@ def _make_clock(is_open: bool = False) -> Clock:
     )
 
 
+def _make_option_contract(
+    *,
+    underlying: str = "NVDA",
+    expiration: dt.date | None = None,
+    strike: float = 100.0,
+    contract_type: str = "call",
+    symbol: str | None = None,
+) -> Any:
+    """Build a single alpaca-py ``OptionContract`` for chain-mock fixtures."""
+    from uuid import uuid4
+
+    from alpaca.trading.models import OptionContract
+
+    expiry = expiration or dt.date(2026, 6, 19)
+    occ_strike = f"{round(strike * 1000):08d}"
+    type_letter = "C" if contract_type == "call" else "P"
+    yymmdd = expiry.strftime("%y%m%d")
+    occ_symbol = symbol or f"{underlying:<6}{yymmdd}{type_letter}{occ_strike}"
+    return OptionContract.model_validate(
+        {
+            "id": str(uuid4()),
+            "symbol": occ_symbol,
+            "name": f"{underlying} {expiry.isoformat()} {strike} {contract_type.upper()}",
+            "status": "active",
+            "tradable": True,
+            "expiration_date": expiry.isoformat(),
+            "root_symbol": underlying,
+            "underlying_symbol": underlying,
+            "underlying_asset_id": str(uuid4()),
+            "type": contract_type,
+            "style": "american",
+            "strike_price": strike,
+            "size": "100",
+        }
+    )
+
+
+def _make_option_contracts_response(contracts: list[Any]) -> Any:
+    """Wrap a list of contracts in the alpaca-py ``OptionContractsResponse``."""
+    from alpaca.trading.models import OptionContractsResponse
+
+    return OptionContractsResponse(option_contracts=contracts, next_page_token=None)
+
+
+def _default_option_chain() -> list[Any]:
+    """Return a 5-strike call chain spanning 80 / 90 / 100 / 110 / 120.
+
+    Used by the chain-aware test helpers as a default fixture when the test
+    doesn't care about specific strikes — the median is 100.0 and the
+    next-higher strike is 110.0, so phase-5 vertical-spread tests get a
+    deterministic long/short pair.
+    """
+    return [_make_option_contract(strike=s) for s in (80.0, 90.0, 100.0, 110.0, 120.0)]
+
+
+def _override_chain(ctx: Any, strikes: tuple[float, ...]) -> None:
+    """Replace the queries' option-chain fixture with one carrying *strikes*."""
+    sdk_client = ctx.queries._client
+    sdk_client.get_option_contracts.return_value = _make_option_contracts_response(
+        [_make_option_contract(strike=s) for s in strikes],
+    )
+
+
 def _fake_factory(mode: str = "paper") -> MagicMock:
     """Return a MagicMock that mimics ``AlpacaClientFactory``."""
     from alphamind.execution.broker_adapter import AlpacaClientFactory
@@ -885,6 +948,63 @@ async def test_phase_3_defers_when_db_path_missing_with_clear_reason() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phases 3, 4, 5 — conditional deferral when market is closed
+#
+# When the live ``MarketClock`` reports ``is_open=False`` the lifecycle phases
+# can't realistically observe a fill within their per-phase budget (Alpaca
+# paper-mode equity fills only arrive during regular session hours). Each
+# lifecycle phase calls ``queries.get_clock()`` and DEFERs with a clear
+# operator message rather than submitting orders that won't fill.
+# ---------------------------------------------------------------------------
+
+
+def _build_clock_aware_context(
+    tmp_path: Path,
+    *,
+    is_open: bool,
+) -> Any:
+    """Build a VerifyContext whose queries' get_clock returns *is_open*.
+
+    Phases 3 / 4 / 5 read ``queries.get_clock()`` after the db-path gate to
+    decide whether to defer or proceed; tests need a queries object whose
+    underlying SDK client returns a deterministic Clock.
+    """
+    from alphamind.execution.broker_adapter import AccountStateQueries
+    from alphamind.scripts.verify_broker_adapter import VerifyContext
+
+    sdk_client = _build_options_calendar_client()
+    sdk_client.get_clock.return_value = _make_clock(is_open=is_open)
+    queries = AccountStateQueries(sdk_client)
+    factory = _fake_factory()
+    return VerifyContext(
+        factory=factory,
+        queries=queries,
+        execution=_execution_config(),
+        venue=_venue_config(),
+        mode="paper",
+        verbose=False,
+        db_path=tmp_path / "alphamind.db",
+    )
+
+
+async def test_phase_3_defers_when_market_closed(tmp_path: Path) -> None:
+    """When ``MarketClock.is_open`` is ``False``, phase 3 defers with the
+    standard "market closed; re-run during 09:30-16:00 ET" diagnostic instead
+    of submitting orders that won't fill within the 30s timeout."""
+    from alphamind.scripts.verify_broker_adapter import phase_3_equity_order_lifecycle
+
+    ctx = _build_clock_aware_context(tmp_path, is_open=False)
+    result = await phase_3_equity_order_lifecycle(ctx)
+
+    assert result.ok is True
+    assert result.deferred is True
+    detail = (result.detail or "").lower()
+    assert "market" in detail and "closed" in detail
+    assert "09:30" in (result.detail or "")
+    assert "16:00" in (result.detail or "")
+
+
+# ---------------------------------------------------------------------------
 # Phase 3 happy path — equity OPEN→fill→CLOSE round-trip with mocked broker
 # ---------------------------------------------------------------------------
 
@@ -995,11 +1115,19 @@ def _build_trade_update_fill(
 
 
 def _make_context_with_db(tmp_path: Path, *, mode: str = "paper", verbose: bool = False) -> Any:
-    """Build a VerifyContext threading a tmp DB path."""
+    """Build a VerifyContext threading a tmp DB path.
+
+    Wires ``queries.get_clock()`` to return ``is_open=True`` so the lifecycle
+    phases pass the market-open defer-gate and proceed to drive the
+    OPEN→fill→CLOSE round-trip.
+    """
+    from alphamind.execution.broker_adapter import AccountStateQueries
     from alphamind.scripts.verify_broker_adapter import VerifyContext
 
     factory = _fake_factory(mode=mode)
-    queries = _fake_queries()
+    sdk_client = MagicMock(spec=TradingClient)
+    sdk_client.get_clock.return_value = _make_clock(is_open=True)
+    queries = AccountStateQueries(sdk_client)
     return VerifyContext(
         factory=factory,
         queries=queries,
@@ -1212,18 +1340,28 @@ def _build_options_calendar_client(today: dt.date | None = None) -> MagicMock:
 
 
 def _make_context_with_db_and_calendar(
-    tmp_path: Path, *, mode: str = "paper", verbose: bool = False
+    tmp_path: Path,
+    *,
+    mode: str = "paper",
+    verbose: bool = False,
+    is_open: bool = True,
 ) -> Any:
     """Build a VerifyContext whose queries' get_calendar honors filters.
 
     Phases 4 / 5 read the trading calendar to pick a near-term option
-    expiration; tests need a queries object whose calendar surface returns
-    enough business days for that pick to succeed.
+    expiration and the option chain to pick a listed strike; tests need a
+    queries object whose calendar surface returns enough business days for
+    that pick to succeed and whose clock surface reports the market as open
+    (the lifecycle phases defer up front when the clock says closed).
     """
     from alphamind.execution.broker_adapter import AccountStateQueries
     from alphamind.scripts.verify_broker_adapter import VerifyContext
 
     sdk_client = _build_options_calendar_client()
+    sdk_client.get_clock.return_value = _make_clock(is_open=is_open)
+    sdk_client.get_option_contracts.return_value = _make_option_contracts_response(
+        _default_option_chain(),
+    )
     queries = AccountStateQueries(sdk_client)
     factory = _fake_factory(mode=mode)
     return VerifyContext(
@@ -1246,6 +1384,99 @@ async def test_phase_4_defers_when_db_path_missing() -> None:
     assert result.ok is True
     assert result.deferred is True
     assert "db" in (result.detail or "").lower()
+
+
+async def test_phase_4_defers_when_market_closed(tmp_path: Path) -> None:
+    """When ``MarketClock.is_open`` is False, phase 4 defers up front instead
+    of submitting options orders that won't fill within the 60s budget."""
+    from alphamind.scripts.verify_broker_adapter import phase_4_options_order_lifecycle
+
+    ctx = _make_context_with_db_and_calendar(tmp_path, is_open=False)
+    result = await phase_4_options_order_lifecycle(ctx)
+
+    assert result.ok is True
+    assert result.deferred is True
+    detail = (result.detail or "").lower()
+    assert "market" in detail and "closed" in detail
+    assert "09:30" in (result.detail or "")
+    assert "16:00" in (result.detail or "")
+
+
+async def test_phase_4_picks_listed_strike_from_chain(tmp_path: Path) -> None:
+    """Phase 4 must query the option chain and pick a strike from the listed
+    set rather than hardcoding $900 (which Alpaca rejects with
+    ``asset "NVDA  260518C00900000" not found`` when the picked expiration
+    doesn't list it). The picked strike should be the median of the listed
+    chain (approximately ATM), and the OCC symbol on the dispatched OPEN
+    should reference that strike, not $900."""
+    import asyncio as _asyncio
+
+    from alpaca.trading.enums import AssetClass
+
+    from alphamind.scripts.verify_broker_adapter import phase_4_options_order_lifecycle
+
+    chain_strikes = (95.0, 100.0, 105.0, 110.0, 115.0)  # median = 105.0
+
+    open_order = _build_alpaca_order(asset_class=AssetClass.US_OPTION)
+    close_order = _build_alpaca_order(asset_class=AssetClass.US_OPTION)
+    submitted: list[Any] = []
+
+    def _submit_order(req: Any) -> Any:
+        coid = getattr(req, "client_order_id", "")
+        target = open_order if len(submitted) == 0 else close_order
+        target.client_order_id = coid
+        submitted.append(req)
+        return target
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit_order)
+
+    stream = _FakeStream()
+    ctx = _make_context_with_db_and_calendar(tmp_path)
+    _override_chain(ctx, chain_strikes)
+    ctx.factory.build_trading_client.return_value = client
+    ctx.factory.build_trading_stream.return_value = stream
+
+    async def _injector() -> None:
+        for _ in range(50):
+            await _asyncio.sleep(0.01)
+            if stream.handler is not None and len(submitted) >= 1:
+                break
+        await stream.inject(
+            _build_trade_update_fill(
+                order_id=open_order.id,
+                client_order_id=open_order.client_order_id,
+                asset_class=AssetClass.US_OPTION,
+            )
+        )
+        for _ in range(200):
+            await _asyncio.sleep(0.01)
+            if len(submitted) >= 2:
+                break
+        await stream.inject(
+            _build_trade_update_fill(
+                order_id=close_order.id,
+                client_order_id=close_order.client_order_id,
+                asset_class=AssetClass.US_OPTION,
+            )
+        )
+
+    injector_task = _asyncio.create_task(_injector())
+    try:
+        result = await phase_4_options_order_lifecycle(ctx)
+    finally:
+        injector_task.cancel()
+        with contextlib.suppress(_asyncio.CancelledError, Exception):
+            await injector_task
+
+    assert result.ok is True, result.detail
+    open_request = submitted[0]
+    listed_strike = int(open_request.symbol[-8:]) / 1000.0
+    assert listed_strike in chain_strikes, (
+        f"OCC strike {listed_strike} not in listed chain {chain_strikes}"
+    )
+    # Median of the 5-strike chain is 105.0.
+    assert listed_strike == 105.0, f"expected median 105.0, got {listed_strike}"
 
 
 async def test_phase_4_happy_path_options_open_fill_close(tmp_path: Path) -> None:
@@ -1426,6 +1657,217 @@ async def test_phase_5_defers_when_db_path_missing() -> None:
     assert result.ok is True
     assert result.deferred is True
     assert "db" in (result.detail or "").lower()
+
+
+async def test_phase_5_defers_when_market_closed(tmp_path: Path) -> None:
+    """When ``MarketClock.is_open`` is False, phase 5 defers up front instead
+    of submitting a multi-leg spread that won't fill within the 120s budget."""
+    from alphamind.scripts.verify_broker_adapter import phase_5_mleg_order_lifecycle
+
+    ctx = _make_context_with_db_and_calendar(tmp_path, is_open=False)
+    result = await phase_5_mleg_order_lifecycle(ctx)
+
+    assert result.ok is True
+    assert result.deferred is True
+    detail = (result.detail or "").lower()
+    assert "market" in detail and "closed" in detail
+    assert "09:30" in (result.detail or "")
+    assert "16:00" in (result.detail or "")
+
+
+async def test_phase_4_retries_later_expiration_when_first_chain_empty(
+    tmp_path: Path,
+) -> None:
+    """When the first business-day candidate has no listed contracts, phase 4
+    must walk forward to the next candidate and pick a strike from that chain.
+    Models the operator failure where the first expiration past T+7 has no
+    listed call options on NVDA but later expirations do."""
+    import asyncio as _asyncio
+
+    from alpaca.trading.enums import AssetClass
+
+    from alphamind.scripts.verify_broker_adapter import phase_4_options_order_lifecycle
+
+    open_order = _build_alpaca_order(asset_class=AssetClass.US_OPTION)
+    close_order = _build_alpaca_order(asset_class=AssetClass.US_OPTION)
+    submitted: list[Any] = []
+
+    def _submit_order(req: Any) -> Any:
+        coid = getattr(req, "client_order_id", "")
+        target = open_order if len(submitted) == 0 else close_order
+        target.client_order_id = coid
+        submitted.append(req)
+        return target
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit_order)
+
+    stream = _FakeStream()
+    ctx = _make_context_with_db_and_calendar(tmp_path)
+    sdk_client = ctx.queries._client
+    populated = [_make_option_contract(strike=s) for s in (95.0, 100.0, 105.0)]
+
+    call_count = {"n": 0}
+
+    def _chain(request: Any) -> Any:
+        call_count["n"] += 1
+        # First lookup returns empty; subsequent lookups return a populated chain.
+        if call_count["n"] == 1:
+            return _make_option_contracts_response([])
+        return _make_option_contracts_response(populated)
+
+    sdk_client.get_option_contracts.side_effect = _chain
+
+    ctx.factory.build_trading_client.return_value = client
+    ctx.factory.build_trading_stream.return_value = stream
+
+    async def _injector() -> None:
+        for _ in range(50):
+            await _asyncio.sleep(0.01)
+            if stream.handler is not None and len(submitted) >= 1:
+                break
+        await stream.inject(
+            _build_trade_update_fill(
+                order_id=open_order.id,
+                client_order_id=open_order.client_order_id,
+                asset_class=AssetClass.US_OPTION,
+            )
+        )
+        for _ in range(200):
+            await _asyncio.sleep(0.01)
+            if len(submitted) >= 2:
+                break
+        await stream.inject(
+            _build_trade_update_fill(
+                order_id=close_order.id,
+                client_order_id=close_order.client_order_id,
+                asset_class=AssetClass.US_OPTION,
+            )
+        )
+
+    injector_task = _asyncio.create_task(_injector())
+    try:
+        result = await phase_4_options_order_lifecycle(ctx)
+    finally:
+        injector_task.cancel()
+        with contextlib.suppress(_asyncio.CancelledError, Exception):
+            await injector_task
+
+    assert result.ok is True, result.detail
+    # The chain was queried at least twice (first empty, then populated).
+    assert call_count["n"] >= 2
+    # The picked strike is from the populated (second) chain.
+    open_request = submitted[0]
+    listed_strike = int(open_request.symbol[-8:]) / 1000.0
+    assert listed_strike == 100.0  # median of (95, 100, 105)
+
+
+async def test_phase_4_defers_when_no_expiration_has_listed_chain(
+    tmp_path: Path,
+) -> None:
+    """When *every* business-day candidate in the search window returns an
+    empty chain, phase 4 DEFERs with a clear "no listed contracts" diagnostic
+    rather than submitting an order with a guessed strike."""
+    from alphamind.scripts.verify_broker_adapter import phase_4_options_order_lifecycle
+
+    ctx = _make_context_with_db_and_calendar(tmp_path)
+    sdk_client = ctx.queries._client
+    sdk_client.get_option_contracts.return_value = _make_option_contracts_response([])
+
+    result = await phase_4_options_order_lifecycle(ctx)
+
+    assert result.ok is True
+    assert result.deferred is True
+    detail = (result.detail or "").lower()
+    assert "no listed" in detail or "no contracts" in detail or "cannot" in detail
+
+
+async def test_phase_5_picks_listed_strikes_from_chain(tmp_path: Path) -> None:
+    """Phase 5 must query the option chain and pick long + short strikes from
+    the listed set rather than hardcoding $900 / $910. Long strike = median
+    of listed chain (approximately ATM); short strike = next listed strike
+    above. Both must be in the listed chain and short > long."""
+    import asyncio as _asyncio
+
+    from alpaca.trading.enums import AssetClass, OrderClass
+
+    from alphamind.scripts.verify_broker_adapter import phase_5_mleg_order_lifecycle
+
+    chain_strikes = (95.0, 100.0, 105.0, 110.0, 115.0)
+    # median = 105.0; next-up = 110.0
+
+    open_order = _build_alpaca_order(order_class=OrderClass.MLEG, asset_class=AssetClass.US_OPTION)
+    close_order = _build_alpaca_order(order_class=OrderClass.MLEG, asset_class=AssetClass.US_OPTION)
+    submitted: list[Any] = []
+
+    def _submit_order(req: Any) -> Any:
+        coid = getattr(req, "client_order_id", "")
+        target = open_order if len(submitted) == 0 else close_order
+        target.client_order_id = coid
+        submitted.append(req)
+        return target
+
+    client = MagicMock()
+    client.submit_order = MagicMock(side_effect=_submit_order)
+
+    stream = _FakeStream()
+    ctx = _make_context_with_db_and_calendar(tmp_path)
+    _override_chain(ctx, chain_strikes)
+    ctx.factory.build_trading_client.return_value = client
+    ctx.factory.build_trading_stream.return_value = stream
+
+    async def _injector() -> None:
+        for _ in range(50):
+            await _asyncio.sleep(0.01)
+            if stream.handler is not None and len(submitted) >= 1:
+                break
+        await stream.inject(
+            _build_trade_update_fill(
+                order_id=open_order.id,
+                client_order_id=open_order.client_order_id,
+                asset_class=AssetClass.US_OPTION,
+                order_class=OrderClass.MLEG,
+            )
+        )
+        for _ in range(200):
+            await _asyncio.sleep(0.01)
+            if len(submitted) >= 2:
+                break
+        await stream.inject(
+            _build_trade_update_fill(
+                order_id=close_order.id,
+                client_order_id=close_order.client_order_id,
+                asset_class=AssetClass.US_OPTION,
+                order_class=OrderClass.MLEG,
+            )
+        )
+
+    injector_task = _asyncio.create_task(_injector())
+    try:
+        result = await phase_5_mleg_order_lifecycle(ctx)
+    finally:
+        injector_task.cancel()
+        with contextlib.suppress(_asyncio.CancelledError, Exception):
+            await injector_task
+
+    assert result.ok is True, result.detail
+    # Inspect the OPEN's mleg legs — both leg OCC symbols must reference
+    # listed strikes, with short > long.
+    open_request = submitted[0]
+    legs = open_request.legs
+    assert len(legs) == 2
+    leg_strikes = sorted(int(leg.symbol[-8:]) / 1000.0 for leg in legs)
+    long_strike, short_strike = leg_strikes[0], leg_strikes[1]
+    assert long_strike in chain_strikes, (
+        f"long strike {long_strike} not in listed chain {chain_strikes}"
+    )
+    assert short_strike in chain_strikes, (
+        f"short strike {short_strike} not in listed chain {chain_strikes}"
+    )
+    assert short_strike > long_strike
+    # Median + next-up: 105.0 / 110.0.
+    assert long_strike == 105.0
+    assert short_strike == 110.0
 
 
 async def test_phase_5_happy_path_mleg_open_fill_close(tmp_path: Path) -> None:

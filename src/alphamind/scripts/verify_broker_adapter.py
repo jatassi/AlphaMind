@@ -445,6 +445,24 @@ def _deferred_no_db(label: str, lifecycle: str) -> PhaseResult:
     )
 
 
+def _deferred_market_closed(label: str) -> PhaseResult:
+    """Build the standard "market closed; re-run during a session" deferral result.
+
+    Paper-mode equity / option fills only arrive during the regular US session
+    window (09:30-16:00 ET). Submitting orders off-hours guarantees the
+    per-phase fill-wait budget will expire — the OPEN is accepted by Alpaca
+    but the entry fill never arrives. Defer up front with a clear operator
+    message instead of forcing a misleading FAIL diagnostic.
+    """
+    return PhaseResult.skipped(
+        label,
+        (
+            "Market closed (US session 09:30-16:00 ET); re-run during a session "
+            "for low-latency paper fills."
+        ),
+    )
+
+
 _PHASE_3_LABEL = "Phase 3 — Equity order lifecycle"
 _PHASE_4_LABEL = "Phase 4 — Options order lifecycle"
 _PHASE_5_LABEL = "Phase 5 — Mleg strategy lifecycle"
@@ -454,27 +472,22 @@ _PHASE_5_LABEL = "Phase 5 — Mleg strategy lifecycle"
 # probe (one less moving part).
 _VERIFY_UNDERLYING: str = "NVDA"
 
-# Reference strikes for the option / vertical-spread fixtures. The script
-# never consults live quotes — picks placeholder strikes and lets the paper
-# account fill at market. 900 / 910 keep NVDA's calls OTM at typical ranges
-# without straying so far they can't fill on paper.
-_PHASE_4_STRIKE: float = 900.0
-_PHASE_5_LONG_STRIKE: float = 900.0
-_PHASE_5_SHORT_STRIKE: float = 910.0
-
 
 async def phase_3_equity_order_lifecycle(ctx: VerifyContext) -> PhaseResult:
     """Drive an OPEN → fill → CLOSE round-trip on a paper-mode equity bracket.
 
     Defers when ``ctx.db_path`` is None (subagent runs lack a writable DB).
-    Otherwise dispatches a 1-share OPEN bracket via the broker dispatcher,
-    waits for the entry fill via ``subscribe_trade_updates``, then submits a
-    CLOSE and confirms the close fill. Wraps in try/finally so a mid-flight
-    timeout triggers cleanup (CANCEL on pending order, CLOSE on opened
-    position).
+    Defers when ``MarketClock.is_open`` is False (off-hours fills don't arrive
+    within the per-phase budget). Otherwise dispatches a 1-share OPEN bracket
+    via the broker dispatcher, waits for the entry fill via
+    ``subscribe_trade_updates``, then submits a CLOSE and confirms the close
+    fill. Wraps in try/finally so a mid-flight timeout triggers cleanup
+    (CANCEL on pending order, CLOSE on opened position).
     """
     if ctx.db_path is None:
         return _deferred_no_db(_PHASE_3_LABEL, "equity")
+    if not ctx.queries.get_clock().is_open:
+        return _deferred_market_closed(_PHASE_3_LABEL)
     plan = _LifecyclePlan(
         label=_PHASE_3_LABEL,
         fill_timeout_seconds=_PHASE_3_FILL_TIMEOUT_SECONDS,
@@ -736,28 +749,47 @@ async def _wait_for_fill(
 async def phase_4_options_order_lifecycle(ctx: VerifyContext) -> PhaseResult:
     """Drive an OPEN → fill → CLOSE round-trip on a paper-mode single-leg option.
 
-    Defers when ``ctx.db_path`` is None. Otherwise picks the nearest
-    expiration ≥ 7 days out via the live calendar, submits a 1-contract
-    long-call OPEN, waits for the fill, then submits a CLOSE. Wraps in
-    try/finally so a mid-flight timeout triggers cleanup.
+    Defers when ``ctx.db_path`` is None. Defers when the market is closed
+    (off-hours options fills don't arrive within the 60s budget). Otherwise
+    picks the nearest expiration ≥ 7 days out that has a non-empty listed
+    chain, picks the median listed call strike (approximately ATM), submits a
+    1-contract long-call OPEN on that strike, waits for the fill, then
+    submits a CLOSE. Wraps in try/finally so a mid-flight timeout triggers
+    cleanup. Returns a DEFER if no expiration in the search window has any
+    listed contracts.
     """
     if ctx.db_path is None:
         return _deferred_no_db(_PHASE_4_LABEL, "single-leg options")
+    if not ctx.queries.get_clock().is_open:
+        return _deferred_market_closed(_PHASE_4_LABEL)
     try:
-        expiration = _pick_near_term_expiration(ctx.queries, days_out_min=7)
-    except Exception as exc:
+        listed = _pick_listed_chain_for_underlying(
+            ctx.queries, underlying=_VERIFY_UNDERLYING, days_out_min=7
+        )
+    except RuntimeError as exc:
         return PhaseResult.failed(
             _PHASE_4_LABEL,
             f"could not pick options expiration from live calendar: {exc!s}",
         )
-    occ_symbol = _build_occ(_VERIFY_UNDERLYING, expiration, _PHASE_4_STRIKE)
+    if listed is None:
+        return PhaseResult.skipped(
+            _PHASE_4_LABEL,
+            (
+                f"No listed call contracts on {_VERIFY_UNDERLYING} for any business "
+                f"day in the next {_EXPIRATION_SEARCH_WINDOW_DAYS} days; "
+                f"cannot pick a strike."
+            ),
+        )
+    expiration, strikes = listed
+    strike = _pick_median_strike(strikes)
+    occ_symbol = _build_occ(_VERIFY_UNDERLYING, expiration, strike)
     plan = _LifecyclePlan(
         label=_PHASE_4_LABEL,
         fill_timeout_seconds=_PHASE_4_FILL_TIMEOUT_SECONDS,
         role_prefix="phase4",
         open_command=_build_options_open_command(
             underlying=_VERIFY_UNDERLYING,
-            strike=_PHASE_4_STRIKE,
+            strike=strike,
             expiration=expiration,
         ),
         close_context={
@@ -804,18 +836,33 @@ def _build_options_open_command(
     )
 
 
-def _pick_near_term_expiration(queries: AccountStateQueries, *, days_out_min: int) -> dt.date:
-    """Pick the first business-day expiration ≥ ``days_out_min`` from today.
+# Search-window upper bound for "first business day with a listed chain" —
+# 60 days is wide enough to cover monthly-only chains plus illiquid weeks
+# without exploding the per-day chain-lookup count when the operator runs
+# a second-by-second re-test.
+_EXPIRATION_SEARCH_WINDOW_DAYS: int = 60
 
-    Reads ``queries.get_calendar`` over a 60-day window; returns the first
-    business day at-or-after ``today + days_out_min``. Listed options expire
-    on Fridays, but Alpaca's paper venue accepts any business day; picking the
-    first business day past the threshold keeps re-runs deterministic and
-    avoids day-of-week brittleness.
+
+def _pick_listed_chain_for_underlying(
+    queries: AccountStateQueries,
+    *,
+    underlying: str,
+    days_out_min: int,
+) -> tuple[dt.date, tuple[float, ...]] | None:
+    """Find the first business day ≥ ``days_out_min`` whose chain is non-empty.
+
+    Walks each business day in
+    ``[today + days_out_min, today + _EXPIRATION_SEARCH_WINDOW_DAYS]`` in
+    chronological order, querying the option chain for *underlying* on that
+    date. Returns ``(expiration, sorted_strikes)`` for the first date with a
+    non-empty active call chain, or ``None`` if no candidate in the window
+    lists any contracts. Raises ``RuntimeError`` when the calendar fetch
+    returns zero business days (the live calendar is broken or the operator
+    chose an impossible window).
     """
     today = _today_utc()
     start = today + dt.timedelta(days=days_out_min)
-    end = today + dt.timedelta(days=60)
+    end = today + dt.timedelta(days=_EXPIRATION_SEARCH_WINDOW_DAYS)
     calendar = queries.get_calendar(start=start, end=end)
     if not calendar:
         msg = (
@@ -823,7 +870,47 @@ def _pick_near_term_expiration(queries: AccountStateQueries, *, days_out_min: in
             f"and {end.isoformat()}"
         )
         raise RuntimeError(msg)
-    return calendar[0].date
+    for day in calendar:
+        contracts = queries.get_option_contracts(underlying=underlying, expiration=day.date)
+        if contracts:
+            strikes = tuple(c.strike for c in contracts)
+            return day.date, strikes
+    return None
+
+
+def _pick_median_strike(strikes: tuple[float, ...]) -> float:
+    """Return the median strike of a non-empty sorted strike tuple.
+
+    Used by phase 4 as the "approximately ATM" proxy when no underlying mark
+    is available. ``strikes`` must already be sorted ascending (the caller
+    receives strikes in that order from ``get_option_contracts``).
+    """
+    if not strikes:
+        msg = "_pick_median_strike requires at least one strike"
+        raise ValueError(msg)
+    return strikes[len(strikes) // 2]
+
+
+def _pick_vertical_spread_strikes(strikes: tuple[float, ...]) -> tuple[float, float]:
+    """Return ``(long_strike, short_strike)`` for a long-call vertical spread.
+
+    Long = median strike (approximately ATM). Short = next listed strike up.
+    When the median is the highest listed strike, falls back to picking the
+    second-highest as the long and the highest as the short — guarantees
+    short > long for a valid vertical-spread structure.
+    """
+    if len(strikes) < 2:
+        msg = f"_pick_vertical_spread_strikes requires at least 2 strikes, got {len(strikes)}"
+        raise ValueError(msg)
+    median_index = len(strikes) // 2
+    if median_index == len(strikes) - 1:
+        # Median is the highest strike — shift down by one notch so short > long.
+        long_index = median_index - 1
+        short_index = median_index
+    else:
+        long_index = median_index
+        short_index = median_index + 1
+    return strikes[long_index], strikes[short_index]
 
 
 def _build_occ(underlying: str, expiration: dt.date, strike: float) -> str:
@@ -852,30 +939,48 @@ _OPT_CALL = _opt_call_enum()
 async def phase_5_mleg_order_lifecycle(ctx: VerifyContext) -> PhaseResult:
     """Drive an OPEN → all-legs-fill → CLOSE round-trip on a 2-leg vertical spread.
 
-    Defers when ``ctx.db_path`` is None. Otherwise picks the nearest
-    expiration ≥ 7 days out via the live calendar, submits a 1-unit long
-    call vertical spread, waits for the parent fill, then submits a CLOSE
-    that inverts each leg's intent. Wraps in try/finally so a mid-flight
-    timeout triggers cleanup.
+    Defers when ``ctx.db_path`` is None. Defers when the market is closed
+    (off-hours mleg fills don't arrive within the 120s budget). Otherwise
+    picks the nearest expiration ≥ 7 days out that has ≥ 2 listed call
+    strikes, picks long = median listed strike and short = next listed
+    strike up, submits a 1-unit long call vertical spread, waits for the
+    parent fill, then submits a CLOSE that inverts each leg's intent. Wraps
+    in try/finally so a mid-flight timeout triggers cleanup. DEFERs if no
+    expiration in the search window has ≥ 2 listed call strikes.
     """
     if ctx.db_path is None:
         return _deferred_no_db(_PHASE_5_LABEL, "2-leg vertical-spread")
+    if not ctx.queries.get_clock().is_open:
+        return _deferred_market_closed(_PHASE_5_LABEL)
     try:
-        expiration = _pick_near_term_expiration(ctx.queries, days_out_min=7)
-    except Exception as exc:
+        listed = _pick_listed_chain_for_underlying(
+            ctx.queries, underlying=_VERIFY_UNDERLYING, days_out_min=7
+        )
+    except RuntimeError as exc:
         return PhaseResult.failed(
             _PHASE_5_LABEL,
             f"could not pick options expiration from live calendar: {exc!s}",
         )
-    open_legs = _build_mleg_open_legs(_VERIFY_UNDERLYING, expiration)
+    if listed is None or len(listed[1]) < 2:
+        return PhaseResult.skipped(
+            _PHASE_5_LABEL,
+            (
+                f"No expiration on {_VERIFY_UNDERLYING} in the next "
+                f"{_EXPIRATION_SEARCH_WINDOW_DAYS} days has ≥ 2 listed call "
+                f"strikes; cannot build a vertical spread."
+            ),
+        )
+    expiration, strikes = listed
+    long_strike, short_strike = _pick_vertical_spread_strikes(strikes)
+    open_legs = _build_mleg_open_legs(_VERIFY_UNDERLYING, expiration, long_strike, short_strike)
     plan = _LifecyclePlan(
         label=_PHASE_5_LABEL,
         fill_timeout_seconds=_PHASE_5_FILL_TIMEOUT_SECONDS,
         role_prefix="phase5",
         open_command=_build_mleg_open_command(
             underlying=_VERIFY_UNDERLYING,
-            long_strike=_PHASE_5_LONG_STRIKE,
-            short_strike=_PHASE_5_SHORT_STRIKE,
+            long_strike=long_strike,
+            short_strike=short_strike,
             expiration=expiration,
         ),
         close_context={
@@ -889,7 +994,12 @@ async def phase_5_mleg_order_lifecycle(ctx: VerifyContext) -> PhaseResult:
     return await _drive_lifecycle(ctx, plan)
 
 
-def _build_mleg_open_legs(underlying: str, expiration: dt.date) -> tuple[Any, ...]:
+def _build_mleg_open_legs(
+    underlying: str,
+    expiration: dt.date,
+    long_strike: float,
+    short_strike: float,
+) -> tuple[Any, ...]:
     """Build the open-side ``MLEGLegAck`` tuple the close dispatcher inverts.
 
     Mirrors the persisted ``StrategyPositionDetails`` → MLEGLegAck translation
@@ -901,13 +1011,13 @@ def _build_mleg_open_legs(underlying: str, expiration: dt.date) -> tuple[Any, ..
 
     return (
         MLEGLegAck(
-            occ_symbol=_build_occ(underlying, expiration, _PHASE_5_LONG_STRIKE),
+            occ_symbol=_build_occ(underlying, expiration, long_strike),
             side="buy",
             ratio_qty=1,
             position_intent="buy_to_open",
         ),
         MLEGLegAck(
-            occ_symbol=_build_occ(underlying, expiration, _PHASE_5_SHORT_STRIKE),
+            occ_symbol=_build_occ(underlying, expiration, short_strike),
             side="sell",
             ratio_qty=1,
             position_intent="sell_to_open",

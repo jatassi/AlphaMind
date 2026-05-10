@@ -152,9 +152,11 @@ CLI flags:
 Exit code: `0` on full pass (DEFERRED counts as not-failing), `1` on
 any phase failure.
 
-Expected runtime under 2 minutes. The bulk of wall-clock is paper-mode
-fill latency in Phases 3 / 4 / 5 (typically 1–10 seconds per OPEN /
-CLOSE round-trip during US market hours; longer outside session).
+Expected runtime under 2 minutes during a US market session. The bulk
+of wall-clock is paper-mode fill latency in Phases 3 / 4 / 5 (typically
+1–10 seconds per OPEN / CLOSE round-trip during US market hours).
+Off-hours runs DEFER Phases 3 / 4 / 5 up front and finish in seconds
+without submitting any orders.
 
 ## Expected output
 
@@ -204,9 +206,13 @@ indented line, and count as not-failing for exit-code purposes.
 | 2 — Account state queries | `get_orders pagination raised: …` | The pagination cursor logic raised mid-iteration. | Re-read `queries.py § get_orders` — the cursor advances via the oldest order's `submitted_at`; an empty page exits the loop. |
 | 3 — Equity order lifecycle | `submit_equity_open returned GatewaySubmissionFailed: …` | The retry window expired without a successful submission. | Inspect the diagnostic; commonly a network blip or paper-API 5xx. Re-run; persistent failures suggest paper-API outage. |
 | 3 — Equity order lifecycle | Submission rejected with `code='insufficient_buying_power'` | Paper account's buying power is too low for the verify's order size. | Reset the paper account from the Alpaca dashboard or shrink the verify's order size temporarily. |
-| 3 — Equity order lifecycle | Fill never arrives within the timeout | Fill latency outside US market hours can exceed the verify's wait budget. | Re-run during US market session (09:30–16:00 ET); paper-mode fills outside session can take minutes. |
+| 3 — Equity order lifecycle | `[DEFERRED] Market closed (US session 09:30-16:00 ET); …` | Off-hours run — the lifecycle defer-gates on `MarketClock.is_open` because off-session fills don't arrive within the 30s wait budget. | Re-run during US market session (09:30-16:00 ET). |
+| 3 — Equity order lifecycle | Fill never arrives within the timeout | Even during session, fill latency on a degraded paper venue can exceed the verify's 30s wait budget. | Confirm the paper venue is healthy via the Alpaca status page; re-run. Persistent failures suggest paper-API outage. |
+| 4 — Options order lifecycle | `[DEFERRED] Market closed (US session 09:30-16:00 ET); …` | Off-hours run; same defer-gate as Phase 3. | Re-run during US market session. |
+| 4 — Options order lifecycle | `[DEFERRED] No listed call contracts on NVDA for any business day in the next 60 days; …` | Every candidate expiration in the search window returned an empty chain — most likely an Alpaca paper-environment data gap. | Re-try in a few minutes; if it persists, switch the verify underlying to another optionable name with a known-active chain. |
 | 4 — Options order lifecycle | Permanent rejection `code='options_level_not_approved'` | The paper account has no options-trading approval. | Enable options trading on the Alpaca paper account from the dashboard's Account Settings. |
-| 4 — Options order lifecycle | Permanent rejection `code='contract_expired'` | The verify's hardcoded option expiration is in the past. | The verify selects a near-term expiration at runtime; if this fires, the calendar fetch returned no future expirations — investigate Phase 2's `get_calendar` first. |
+| 4 — Options order lifecycle | Permanent rejection `code='contract_expired'` | The chain query returned a contract whose expiration is somehow already past. | Investigate Phase 2's `get_calendar` (the calendar drives candidate dates) and `queries.get_option_contracts` (the chain enumerator). |
+| 5 — Mleg strategy lifecycle | `[DEFERRED] No expiration on NVDA in the next 60 days has ≥ 2 listed call strikes; …` | Every candidate expiration's chain has < 2 strikes — too sparse to build a vertical spread. | Re-try later or switch underlying. See Phase 4's "no listed contracts" row above. |
 | 5 — Mleg strategy lifecycle | Permanent rejection `code='invalid_legs'` | The mleg request's leg structure violates Alpaca's constraints (leg count outside [2,4], ratios not GCD=1, mixed underlyings). | Re-read `order_mleg.py § _validate_alpaca_constraints` and `_simplify_ratios`; the verify's vertical-spread fixture should produce 2 legs with ratios (1, 1). |
 | 5 — Mleg strategy lifecycle | Position transitions to OPEN before the last leg fills | The Phase 1 fill-integration logic for strategies regressed. | Re-read `state_persistence/write_paths/phase1_strategy.py`; the documented contract is "PENDING → OPEN only at the last-leg fill". |
 | 6 — Venue config | `venue constant SETTLEMENT_DAYS_BY_INSTRUMENT[equity] = N, expected 1` | A constant in `venue_configuration/constants.py` drifted from the documented value. | Re-read `venue-configuration.md § Settlement` and align the constant. T+1 settlement landed in the SEC rule effective 2024-05-28. |
@@ -223,10 +229,22 @@ any phase function. A missing-credential failure surfaces as the
 naming `RuntimeError` from the factory, with the script returning 1
 before any network call.
 
-**Phases 3 / 4 / 5 require US market hours for low-latency fills.**
-Paper-mode fills outside session can take minutes; the verify's
-within-phase timeouts are tuned for session-hour latency. Schedule the
-operator run for a US market day, ideally mid-session.
+**Phases 3 / 4 / 5 defer when the market is closed.** Each lifecycle
+phase reads `MarketClock.is_open` after the `--db` gate; if the market
+is closed it DEFERs with `Market closed (US session 09:30-16:00 ET);
+re-run during a session for low-latency paper fills.` rather than
+submitting orders that can't fill within the per-phase wait budget
+(equity 30s, options 60s, mleg 120s). Schedule the operator run for a
+US market day, ideally mid-session.
+
+**Phases 4 / 5 pick option strikes from the live chain.** The script
+queries `get_option_contracts` for each near-term business-day
+candidate until it finds an expiration with a non-empty active call
+chain, then picks the median listed strike (Phase 4) or median + next
+listed strike up (Phase 5). No strike is hardcoded — the run is
+resilient to expirations whose listed strike sets shift between days.
+DEFERs cleanly if no expiration in the 60-day search window has any
+listed contracts.
 
 **Phase 6 reads the live `/v2/clock` and `/v2/calendar`.** A network
 partition during Phase 6 surfaces as `calendar/clock interaction

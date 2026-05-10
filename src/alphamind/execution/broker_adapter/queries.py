@@ -22,18 +22,24 @@ from zoneinfo import ZoneInfo
 
 from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import ActivityType, QueryOrderStatus
+from alpaca.trading.enums import ActivityType, AssetStatus, ContractType, QueryOrderStatus
 from alpaca.trading.models import (
     Asset,
     Calendar,
     Clock,
     NonTradeActivity,
+    OptionContract,
+    OptionContractsResponse,
     Order,
     Position,
     TradeAccount,
     TradeActivity,
 )
-from alpaca.trading.requests import GetCalendarRequest, GetOrdersRequest
+from alpaca.trading.requests import (
+    GetCalendarRequest,
+    GetOptionContractsRequest,
+    GetOrdersRequest,
+)
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 _ET = ZoneInfo("America/New_York")
@@ -182,6 +188,22 @@ class MarketClock(BaseModel):
     is_open: bool
     next_open: dt.datetime
     next_close: dt.datetime
+
+
+class OptionContractSnapshot(BaseModel):
+    """Subset of ``OptionContract`` fields needed for chain enumeration.
+
+    The verify script's strike-picker reads ``symbol`` (OCC) and ``strike`` to
+    pick a listed near-ATM contract; downstream callers may also surface
+    ``expiration`` for cross-checks.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    symbol: str
+    strike: float
+    expiration: dt.date
+    contract_type: Literal["call", "put"]
 
 
 # ---------------------------------------------------------------------------
@@ -515,3 +537,47 @@ class AccountStateQueries:
             next_open=_to_aware(result.next_open),  # type: ignore[arg-type]
             next_close=_to_aware(result.next_close),  # type: ignore[arg-type]
         )
+
+    def get_option_contracts(
+        self,
+        *,
+        underlying: str,
+        expiration: dt.date,
+    ) -> tuple[OptionContractSnapshot, ...]:
+        """Return active call contracts on *underlying* expiring on *expiration*.
+
+        Wraps ``TradingClient.get_option_contracts`` via
+        ``GetOptionContractsRequest(type=CALL, status=ACTIVE)``. Results are
+        sorted by strike ascending so callers can pick by index (median, ATM,
+        etc.). The verify-script strike-picker uses this surface to avoid
+        hardcoding strikes that may not be listed for the picked expiration.
+
+        ``OptionContractsResponse.option_contracts`` is ``Optional[List]`` in
+        the SDK; the wrapper coerces ``None`` to an empty tuple so callers can
+        treat "no listed contracts for this expiration" as data, not a missing
+        field.
+        """
+        request = GetOptionContractsRequest(
+            underlying_symbols=[underlying],
+            expiration_date=expiration,
+            type=ContractType.CALL,
+            status=AssetStatus.ACTIVE,
+        )
+        result = self._client.get_option_contracts(request)
+        if not isinstance(result, OptionContractsResponse):
+            msg = "get_option_contracts returned unexpected raw-data response"
+            raise TypeError(msg)
+        contracts: list[OptionContract] = list(result.option_contracts or [])
+        snapshots = sorted(
+            (
+                OptionContractSnapshot(
+                    symbol=str(c.symbol),
+                    strike=float(c.strike_price),
+                    expiration=c.expiration_date,
+                    contract_type=_enum_str(c.type),  # type: ignore[arg-type]
+                )
+                for c in contracts
+            ),
+            key=lambda s: s.strike,
+        )
+        return tuple(snapshots)
