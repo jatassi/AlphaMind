@@ -89,7 +89,7 @@ The full sequence is one atomic transaction. On any failure, the transaction rol
 
 A `processed_corporate_actions` ledger tracks integrated Alpaca activity IDs. One row per CA activity keyed on `alpaca_activity_id` (deduplication anchor), with `processing_invocation_id`, `processing_timestamp`, and `processing_status` (`processed` after the Phase 1 transaction commits). On Phase 1 retry, the OMS skips activity IDs already in the ledger.
 
-Parallels the fill records' `processing_status` field. The narrow ledger keeps writes minimal — `/v2/account/activities` is the authoritative queryable store, and the activity log entry at integration time captures everything needed for audit.
+Parallels the fill records' `processing_status` field. The narrow ledger keeps writes minimal — `/v1/corporate-actions` (v1beta1 Corporate Actions Market Data API) is the authoritative queryable store, and the activity log entry at integration time captures everything needed for audit.
 
 ---
 
