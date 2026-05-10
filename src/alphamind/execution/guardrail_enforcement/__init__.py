@@ -11,5 +11,13 @@ Design reference: ``docs/design/05-execution-layer/architecture.md`` § 3.
 from alphamind.execution.guardrail_enforcement.composition import (
     compose_active_risk_parameters,
 )
+from alphamind.execution.guardrail_enforcement.orchestrator import (
+    Phase1EnforcementResult,
+    compose_phase_1_enforcement,
+)
 
-__all__ = ["compose_active_risk_parameters"]
+__all__ = [
+    "Phase1EnforcementResult",
+    "compose_active_risk_parameters",
+    "compose_phase_1_enforcement",
+]
