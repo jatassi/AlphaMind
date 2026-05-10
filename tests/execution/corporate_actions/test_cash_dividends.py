@@ -527,6 +527,7 @@ async def test_cash_dividend_long_emits_cash_credited_entry(
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
 
+    txn_time = _NOW - timedelta(minutes=5)
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-long-2",
         action_type=CorporateActionType.CASH_DIVIDEND_LONG,
@@ -535,7 +536,7 @@ async def test_cash_dividend_long_emits_cash_credited_entry(
         ratio_or_amount=0.25,
         position_id="pos-1",
         signed_cash_impact_usd=25.0,
-        transaction_time=_NOW - timedelta(minutes=5),
+        transaction_time=txn_time,
     )
 
     ctx, handle = await _open_handle(factory)
@@ -555,11 +556,18 @@ async def test_cash_dividend_long_emits_cash_credited_entry(
             .all()
         )
         assert len(log_rows) == 1
-        detail = activity_log_entry_from_row(log_rows[0]).detail
+        entry = activity_log_entry_from_row(log_rows[0])
+        detail = entry.detail
         assert isinstance(detail, CashCreditedDetail)
         assert detail.reason == CashCreditReason.CASH_DIVIDEND_LONG
         assert detail.amount_usd == pytest.approx(25.0)
         assert detail.new_balance_usd == pytest.approx(_INITIAL_CASH + 25.0)
+        # CA-driven cash entries anchor at the activity's transaction_time
+        # (NOT wall-clock now) so the chronological log invariant holds.
+        assert entry.timestamp == txn_time
+        # And they thread the originating position_id so operators can filter
+        # the cash audit by position.
+        assert entry.position_id == "pos-1"
 
 
 async def test_cash_dividend_long_leaves_quantity_and_basis_unchanged(
@@ -789,6 +797,7 @@ async def test_cash_dividend_short_emits_cash_debited_entry(
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
 
+    txn_time = _NOW - timedelta(minutes=5)
     ca = CorporateActionActivity(
         alpaca_activity_id="ca-cash-div-short-2",
         action_type=CorporateActionType.CASH_DIVIDEND_SHORT,
@@ -797,7 +806,7 @@ async def test_cash_dividend_short_emits_cash_debited_entry(
         ratio_or_amount=0.30,
         position_id="pos-1",
         signed_cash_impact_usd=-30.0,
-        transaction_time=_NOW - timedelta(minutes=5),
+        transaction_time=txn_time,
     )
 
     ctx, handle = await _open_handle(factory)
@@ -817,11 +826,16 @@ async def test_cash_dividend_short_emits_cash_debited_entry(
             .all()
         )
         assert len(log_rows) == 1
-        detail = activity_log_entry_from_row(log_rows[0]).detail
+        entry = activity_log_entry_from_row(log_rows[0])
+        detail = entry.detail
         assert isinstance(detail, CashDebitedDetail)
         assert detail.reason == CashDebitReason.CASH_DIVIDEND_SHORT_OBLIGATION
         assert detail.amount_usd == pytest.approx(30.0)
         assert detail.new_balance_usd == pytest.approx(_INITIAL_CASH - 30.0)
+        # CA-driven cash debits also anchor at transaction_time and carry
+        # the originating position_id (mirrors the long-side credit).
+        assert entry.timestamp == txn_time
+        assert entry.position_id == "pos-1"
 
 
 async def test_cash_dividend_short_leaves_quantity_and_basis_unchanged(
@@ -949,3 +963,72 @@ async def test_cash_dividend_short_cancels_bracket_and_writes_ledger_row(
         )
         assert len(ledger_rows) == 1
         assert ledger_rows[0].processing_status == CorporateActionLedgerStatus.PROCESSED.value
+
+
+# ---------------------------------------------------------------------------
+# Zero-amount short-circuit
+# ---------------------------------------------------------------------------
+
+
+async def test_zero_amount_cash_dividend_does_not_emit_cash_entry(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """A zero-rate cash dividend (``signed_cash_impact_usd=0``) does not
+    emit a spurious ``CASH_CREDITED`` entry with ``amount_usd=0`` — the
+    movement short-circuits before any state mutation."""
+    from alphamind.execution.corporate_actions import integrate_ca_activity
+    from alphamind.execution.corporate_actions.types import CorporateActionActivity
+
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    await _seed_position_cluster(
+        factory,
+        _make_open_position(direction=Direction.LONG),
+        _make_pending_entry_order(),
+        _make_active_thesis(),
+        _make_active_bracket(),
+    )
+    await _seed_cash_ledger(factory)
+    await _seed_drawdown_state(factory)
+
+    ca = CorporateActionActivity(
+        alpaca_activity_id="ca-cash-div-zero",
+        action_type=CorporateActionType.CASH_DIVIDEND_LONG,
+        ticker="AAPL",
+        new_ticker=None,
+        ratio_or_amount=0.0,
+        position_id="pos-1",
+        signed_cash_impact_usd=0.0,
+        transaction_time=_NOW - timedelta(minutes=5),
+    )
+
+    ctx, handle = await _open_handle(factory)
+    await integrate_ca_activity(handle, ca, alpaca_position_lookup=None)
+    await ctx.__aexit__(None, None, None)
+
+    async with factory() as sess:
+        # No CASH_CREDITED or CASH_DEBITED entry should appear for a zero rate.
+        cash_rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow)
+                    .where(ActivityLogRow.invocation_id == handle.invocation_id)
+                    .where(
+                        ActivityLogRow.event_type.in_(
+                            (
+                                EventType.CASH_CREDITED.value,
+                                EventType.CASH_DEBITED.value,
+                            )
+                        )
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert cash_rows == []
+
+        # Cash ledger balance is untouched.
+        cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash_row is not None
+        assert cash_row.current_cash_usd == pytest.approx(_INITIAL_CASH)

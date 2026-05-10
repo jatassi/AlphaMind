@@ -217,6 +217,7 @@ async def _run_fetch(
     positions: dict[str, PositionLookup],
     *,
     config: CorporateActionsConfig | None = None,
+    known_symbols: tuple[str, ...] | None = None,
 ) -> tuple[CorporateActionActivity, ...]:
     """Open a handle, run the fetcher, close — used by every parametric test."""
     from alphamind.execution.corporate_actions.fetcher import (
@@ -230,6 +231,7 @@ async def _run_fetch(
             queries,
             config=config or CorporateActionsConfig(),
             position_lookup_for_symbol=_lookup_for(positions),
+            known_symbols=(tuple(positions.keys()) if known_symbols is None else known_symbols),
         )
     finally:
         await ctx.__aexit__(None, None, None)
@@ -387,7 +389,13 @@ async def test_cold_start_cursor_is_today_minus_lookback(
     await _seed_invocation_substrate(factory)
     queries = _FakeQueries(events=())
 
-    await _run_fetch(factory, queries, {}, config=CorporateActionsConfig(fetcher_lookback_days=7))
+    await _run_fetch(
+        factory,
+        queries,
+        {},
+        config=CorporateActionsConfig(fetcher_lookback_days=7),
+        known_symbols=("AAPL",),
+    )
 
     assert len(queries.calls) == 1
     call = queries.calls[0]
@@ -412,7 +420,13 @@ async def test_warm_start_cursor_uses_max_processing_timestamp(
     )
     queries = _FakeQueries(events=())
 
-    await _run_fetch(factory, queries, {}, config=CorporateActionsConfig(fetcher_lookback_days=7))
+    await _run_fetch(
+        factory,
+        queries,
+        {},
+        config=CorporateActionsConfig(fetcher_lookback_days=7),
+        known_symbols=("AAPL",),
+    )
 
     assert queries.calls[0]["start"] == seed_ts.date() - timedelta(days=7)
 
@@ -643,7 +657,10 @@ async def test_event_for_unknown_symbol_is_filtered(
     await _seed_invocation_substrate(factory)
     queries = _FakeQueries(events=(_forward_split("UNKNOWN", date(2026, 5, 5)),))
 
-    result = await _run_fetch(factory, queries, {})
+    # Caller has at least one local position so ``known_symbols`` is non-empty
+    # — the broker returns an UNKNOWN event for a symbol the local side has no
+    # exposure to and the lookup filter drops it.
+    result = await _run_fetch(factory, queries, {}, known_symbols=("AAPL",))
 
     assert result == ()
 
@@ -763,8 +780,42 @@ async def test_returns_tuple_of_corporate_action_activity(
     await _seed_invocation_substrate(factory)
     queries = _FakeQueries(events=())
 
-    result = await _run_fetch(factory, queries, {})
+    result = await _run_fetch(factory, queries, {}, known_symbols=("AAPL",))
 
     assert isinstance(result, tuple)
     for activity in result:
         assert isinstance(activity, CorporateActionActivity)
+
+
+# ---------------------------------------------------------------------------
+# Tests — server-side symbol narrowing
+# ---------------------------------------------------------------------------
+
+
+async def test_known_symbols_are_passed_to_broker(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """``known_symbols`` is forwarded verbatim to ``get_corporate_actions(symbols=...)``."""
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    queries = _FakeQueries(events=())
+
+    symbols = ("AAPL", "MSFT", "TGT")
+    await _run_fetch(factory, queries, _POSITIONS_AAPL_LONG, known_symbols=symbols)
+
+    assert len(queries.calls) == 1
+    assert queries.calls[0]["symbols"] == symbols
+
+
+async def test_empty_known_symbols_short_circuits_without_api_call(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """When ``known_symbols`` is empty the fetcher returns ``()`` without hitting the API."""
+    _, factory = db
+    await _seed_invocation_substrate(factory)
+    queries = _FakeQueries(events=(_forward_split("AAPL", date(2026, 5, 5)),))
+
+    result = await _run_fetch(factory, queries, _POSITIONS_AAPL_LONG, known_symbols=())
+
+    assert result == ()
+    assert queries.calls == []

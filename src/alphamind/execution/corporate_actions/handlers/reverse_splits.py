@@ -55,6 +55,8 @@ async def handle_reverse_split(
             handle,
             activity.signed_cash_impact_usd,
             reason=CashCreditReason.FRACTIONAL_SHARE_CASH_OUT.value,
+            timestamp=activity.transaction_time,
+            position_id=activity.position_id,
         )
 
     await finalize_ca_handler(handle, pos_row=pos_row, activity=activity, result=result)
