@@ -321,6 +321,61 @@ async def test_reconcile_no_alert_when_within_quantity_tolerance(
     assert count == 0
 
 
+async def test_reconcile_emits_alert_for_alpaca_only_position(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """Alpaca holds a symbol AlphaMind has no local OPEN/PENDING position for —
+    e.g., an orphan SPIN_OFF child stranded by a prior crash, or any
+    unexpected broker-side holding. The reconciler emits one alert per
+    orphan with ``field_name='alpaca_only_position'``."""
+    from alphamind.execution.corporate_actions.reconciliation import reconcile
+
+    _, factory = db
+    await seed_invocation_substrate(factory)
+    await seed_position_cluster(
+        factory,
+        make_open_equity_position(share_count=10.0),
+        make_pending_entry_order(),
+        make_active_thesis(),
+        make_active_bracket(),
+    )
+    await seed_cash_ledger(factory, current_cash_usd=100_000.0)
+
+    ctx, handle = await open_handle(factory)
+    count = await reconcile(
+        handle,
+        # AAPL matches the seeded local position; ORPHAN_X has no local match.
+        alpaca_positions=(
+            _equity_position_snapshot(symbol="AAPL", qty=10.0),
+            _equity_position_snapshot(symbol="ORPHAN_X", qty=7.0),
+        ),
+        alpaca_account=_trade_account(cash=100_000.0),
+    )
+    await ctx.__aexit__(None, None, None)
+
+    # Exactly one orphan alert.
+    assert count == 1
+
+    async with factory() as sess:
+        rows = (
+            (
+                await sess.execute(
+                    select(ActivityLogRow).where(
+                        ActivityLogRow.event_type == EventType.RECONCILIATION_ALERT.value
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 1
+        assert '"field_name":"alpaca_only_position"' in rows[0].detail_json
+        assert "ORPHAN_X" in rows[0].detail_json
+        # Local-side value is 0 (no local row), Alpaca-side is the orphan qty.
+        assert '"local_value":0.0' in rows[0].detail_json
+        assert '"alpaca_value":7.0' in rows[0].detail_json
+
+
 async def test_reconcile_does_not_mutate_local_state(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:

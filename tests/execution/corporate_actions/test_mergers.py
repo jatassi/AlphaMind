@@ -737,6 +737,9 @@ async def test_cash_merger_equity_emits_position_closed_and_cash_credited(
         # Deal price per share = signed_cash_impact_usd / pre_qty = 7500 / 100 = 75.
         assert closed_detail["exit_price"] == pytest.approx(75.0)
         assert closed_detail["realized_pnl_usd"] == pytest.approx(2500.0)
+        # Cash merger carries a CA-specific resolution category so operators
+        # can distinguish CA-driven closes from PM-driven ones in the audit.
+        assert closed_detail["thesis_resolution_category"] == "corporate_action_cash_merger"
 
         # Verify cash credited row carries CASH_MERGER_PROCEEDS reason.
         credit_rows = [r for r in rows if r.event_type == EventType.CASH_CREDITED.value]

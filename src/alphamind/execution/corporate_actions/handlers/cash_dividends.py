@@ -70,7 +70,13 @@ async def _apply_cash_dividend(
     pre_qty = details.share_count
     pre_basis = details.average_cost_basis_per_share
 
-    await _apply_signed_cash_movement(handle, activity.signed_cash_impact_usd, reason=reason)
+    await _apply_signed_cash_movement(
+        handle,
+        activity.signed_cash_impact_usd,
+        reason=reason,
+        timestamp=activity.transaction_time,
+        position_id=activity.position_id,
+    )
 
     updated = position.model_copy(update={"corporate_action_adjustment_needed": True})
     _persist_position_update(pos_row, updated)

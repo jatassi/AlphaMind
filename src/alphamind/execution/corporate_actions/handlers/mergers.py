@@ -102,6 +102,8 @@ async def handle_cash_merger(
         handle,
         activity.signed_cash_impact_usd,
         reason=CashCreditReason.CASH_MERGER_PROCEEDS.value,
+        timestamp=activity.transaction_time,
+        position_id=activity.position_id,
     )
 
     exit_price = activity.signed_cash_impact_usd / pre_qty if pre_qty else 0.0
@@ -116,7 +118,7 @@ async def handle_cash_merger(
             exit_method=PositionExitMethod.CORPORATE_ACTION_CASH_MERGER,
             exit_price=exit_price,
             realized_pnl_usd=updated.realized_pnl_to_date_usd or 0.0,
-            thesis_resolution_category="",
+            thesis_resolution_category="corporate_action_cash_merger",
         ),
     )
 
@@ -259,6 +261,8 @@ async def handle_stock_merger(
             handle,
             activity.signed_cash_impact_usd,
             reason=CashCreditReason.CASH_MERGER_PROCEEDS.value,
+            timestamp=activity.transaction_time,
+            position_id=activity.position_id,
         )
 
     await _emit_corporate_action_applied(
@@ -285,8 +289,13 @@ def _swap_for_stock_merger(
 ) -> tuple[float, float, float, float, _PositionDetails]:
     """Project the post-merger Alpaca snapshot onto the position's details."""
     details = position.details
-    # Greeks on the post-merger position are stale; the continuous monitor
-    # repopulates them at the next refresh per ``corporate-actions.md``.
+    # Stock-merger creates a new OCC contract whose underlying differs from
+    # the prior contract — prior greeks were computed against a different
+    # instrument and would be misleading even with ``refresh_failed=True``,
+    # so we zero them outright (unlike ``reverse_splits`` / ``stock_dividends``
+    # where the OCC strike adjusts but the underlying is unchanged and
+    # ``_stale_greeks`` preserves the prior values). The next monitor refresh
+    # populates fresh values.
     stale_greeks = OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0, refresh_failed=True)
 
     if isinstance(details, EquityPositionDetails):

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Final
 
 from sqlalchemy import select
 
@@ -48,6 +49,11 @@ from alphamind.portfolio_state.records.orders import BracketStatus
 from alphamind.portfolio_state.records.positions import PositionRecord
 
 from ..types import CorporateActionActivity
+
+# Sub-nanocent cash movements are floating-point noise rather than real
+# economic events; mirrors ``phase1._QTY_EPSILON`` (1e-9) so the CA path's
+# zero-amount gate is uniform with the fill-side gate.
+_CASH_EPSILON: Final[float] = 1e-9
 
 
 class _StateInconsistencyError(RuntimeError):
@@ -209,6 +215,8 @@ async def _apply_signed_cash_movement(
     signed_cash_impact_usd: float,
     *,
     reason: str,
+    timestamp: datetime,
+    position_id: str,
 ) -> None:
     """Update cash_ledger by *signed_cash_impact_usd* and emit the log entry.
 
@@ -216,23 +224,35 @@ async def _apply_signed_cash_movement(
     (``CASH_DEBITED``).  The *reason* must be the string value of an appropriate
     :class:`~alphamind.portfolio_state.events.activity_log.CashCreditReason` or
     :class:`~alphamind.portfolio_state.events.activity_log.CashDebitReason` member.
+
+    *timestamp* anchors the activity-log entry at the CA's
+    ``transaction_time`` so every CA-driven entry shares the same monotonic
+    timestamp (the cash-ledger row's ``last_updated_at`` keeps wall-clock
+    ``datetime.now(UTC)`` to match the fill-side row-stamp convention).
+    *position_id* threads the originating position onto the cash entry so
+    operators can filter the cash audit by position.
+
+    Zero-magnitude movements (``abs <= _CASH_EPSILON``) short-circuit before
+    any state mutation so zero-rate dividends do not emit spurious
+    ``amount_usd=0`` entries.
     """
+    if abs(signed_cash_impact_usd) <= _CASH_EPSILON:
+        return
     cash_row = await handle.session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
     if cash_row is None:
         msg = "cash_ledger singleton missing — CA handler cannot apply cash movement"
         raise ValueError(msg)
-    now = datetime.now(UTC)
     cash_row.current_cash_usd = cash_row.current_cash_usd + signed_cash_impact_usd
-    cash_row.last_updated_at = now.isoformat()
+    cash_row.last_updated_at = datetime.now(UTC).isoformat()
     new_balance = cash_row.current_cash_usd
     if signed_cash_impact_usd >= 0:
         await _emit(
             handle,
             event_type=EventType.CASH_CREDITED,
             order_id=None,
-            position_id=None,
+            position_id=position_id,
             thesis_id=None,
-            timestamp=now,
+            timestamp=timestamp,
             detail=CashCreditedDetail(
                 amount_usd=abs(signed_cash_impact_usd),
                 reason=CashCreditReason(reason),
@@ -244,9 +264,9 @@ async def _apply_signed_cash_movement(
             handle,
             event_type=EventType.CASH_DEBITED,
             order_id=None,
-            position_id=None,
+            position_id=position_id,
             thesis_id=None,
-            timestamp=now,
+            timestamp=timestamp,
             detail=CashDebitedDetail(
                 amount_usd=abs(signed_cash_impact_usd),
                 reason=CashDebitReason(reason),

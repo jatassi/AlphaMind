@@ -308,6 +308,7 @@ async def fetch_unprocessed_ca_activities(
     *,
     config: CorporateActionsConfig,
     position_lookup_for_symbol: Callable[[str], PositionLookup | None],
+    known_symbols: tuple[str, ...],
 ) -> tuple[CorporateActionActivity, ...]:
     """Fetch new v1beta1 CA events, translate them, and filter against the ledger.
 
@@ -321,15 +322,23 @@ async def fetch_unprocessed_ca_activities(
         position_lookup_for_symbol: Maps a ticker to the local
             :class:`PositionLookup`.  Returns ``None`` for symbols AlphaMind
             has no exposure to; those events are filtered out.
+        known_symbols: The set of tickers AlphaMind has local exposure to,
+            built from the position-snapshot iteration. Passed to the v1beta1
+            endpoint via ``symbols=`` so the broker narrows the response
+            server-side; when empty, the call short-circuits to ``()``.
 
     Returns:
         Tuple of :class:`CorporateActionActivity` sorted ascending by
         ``transaction_time``.
     """
+    if not known_symbols:
+        return ()
+
     start = await _derive_start_date(handle, lookback_days=config.fetcher_lookback_days)
     end = datetime.now(UTC).date()
 
     events = await queries.get_corporate_actions(
+        symbols=known_symbols,
         start=start,
         end=end,
     )

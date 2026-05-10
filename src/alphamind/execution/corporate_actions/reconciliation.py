@@ -94,12 +94,14 @@ async def reconcile(
         Count of ``RECONCILIATION_ALERT`` entries emitted.
     """
     alpaca_by_symbol = {snapshot.symbol: snapshot for snapshot in alpaca_positions}
+    matched_symbols: set[str] = set()
     alert_count = 0
 
     for position_row in await _read_live_position_rows(handle):
         record = position_row_to_record(position_row)
         details = record.details
         if isinstance(details, EquityPositionDetails):
+            matched_symbols.add(details.ticker)
             alert_count += await _reconcile_equity(
                 handle,
                 position_id=position_row.position_id,
@@ -108,6 +110,7 @@ async def reconcile(
                 alpaca=alpaca_by_symbol.get(details.ticker),
             )
         elif isinstance(details, OptionsPositionDetails):
+            matched_symbols.add(details.underlying_ticker)
             alert_count += await _reconcile_options(
                 handle,
                 position_id=position_row.position_id,
@@ -120,6 +123,26 @@ async def reconcile(
         # local strategy carries multiple legs — the comparison is
         # leg-by-leg through the continuous monitor (ALP-123), not this
         # post-Phase-1 sweep.
+
+    # Alpaca-only orphans: positions present in Alpaca but with no matching
+    # local OPEN/PENDING record (e.g., a SPIN_OFF child stranded by a prior
+    # invocation crash, or any unexpected broker-side holding). Surface one
+    # alert per orphan so the operator can investigate. ``sorted`` keeps the
+    # emission order deterministic.
+    for symbol in sorted(alpaca_by_symbol.keys() - matched_symbols):
+        snapshot = alpaca_by_symbol[symbol]
+        await _emit_alert(
+            handle,
+            position_id=None,
+            domain="position",
+            field_name="alpaca_only_position",
+            local_value=0.0,
+            alpaca_value=snapshot.qty,
+            delta_description=(
+                f"Alpaca holds {symbol} qty={snapshot.qty}; no matching local position"
+            ),
+        )
+        alert_count += 1
 
     if alpaca_account is not None:
         alert_count += await _reconcile_cash(handle, alpaca_account=alpaca_account)
