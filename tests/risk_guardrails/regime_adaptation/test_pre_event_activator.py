@@ -79,6 +79,9 @@ def _scheduler_config(
         "timezone": timezone,
         "max_instances": 1,
         "overlap_dedup_lookback_minutes": 30,
+        "emergency_poll_interval_seconds": 5,
+        "market_calendar_exchange": "XNYS",
+        "supervisor_shutdown_timeout_seconds": 10,
         "triggers": triggers
         if triggers is not None
         else {

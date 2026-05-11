@@ -1,4 +1,20 @@
-"""Pydantic models for scheduler.yaml (story 03c)."""
+"""Pydantic models for scheduler.yaml (story 03c, extended in ALP-442 story 01).
+
+The original three fields (``timezone``, ``max_instances``,
+``overlap_dedup_lookback_minutes``, ``triggers``) drive the APScheduler
+cron configuration. ALP-442 story 01 adds three pipeline-scheduler
+runtime knobs per parent decision (D):
+
+* ``emergency_poll_interval_seconds`` — cadence at which story 04b's
+  receiver polls the activity log for emergency-invocation requests.
+* ``market_calendar_exchange`` — the exchange-calendars name story 04a
+  consults to skip non-trading days.
+* ``supervisor_shutdown_timeout_seconds`` — per-task cancellation budget
+  the ``PipelineSupervisor`` enforces at shutdown.
+
+These three are scheduler-runtime knobs loaded directly at process start,
+not resolver-cascade values.
+"""
 
 import re
 
@@ -17,6 +33,9 @@ class SchedulerConfig(BaseModel):
     timezone: str
     max_instances: int = Field(ge=1)
     overlap_dedup_lookback_minutes: int = Field(ge=0)
+    emergency_poll_interval_seconds: int = Field(ge=1)
+    market_calendar_exchange: str = Field(min_length=1)
+    supervisor_shutdown_timeout_seconds: int = Field(ge=1)
     triggers: dict[str, str]
 
     @field_validator("triggers")

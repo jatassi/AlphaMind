@@ -1,10 +1,18 @@
 # APScheduler cron triggers — fires the analysis pipeline on the schedule
-# defined per design/configuration-management.md § scheduler.yaml.
-# Trigger keys are stems for run_types/<key>.yaml overlays.
+# defined per design/configuration-management.md § scheduler.yaml. Trigger
+# keys are stems for run_types/<key>.yaml overlays. The bottom block holds
+# pipeline-scheduler runtime knobs added in ALP-442 story 01 (parent
+# decision (D)): they are loaded directly at process start by the scheduler
+# package, not by the resolver cascade.
 
 timezone: US/Eastern
 max_instances: 1
 overlap_dedup_lookback_minutes: 30
+
+# Scheduler-runtime knobs (ALP-442 story 01).
+emergency_poll_interval_seconds: 5
+market_calendar_exchange: "XNYS"
+supervisor_shutdown_timeout_seconds: 10
 
 triggers:
   market_hours_rolling: "30 9,11,13,15 * * mon-fri"
