@@ -21,6 +21,7 @@ from alphamind.execution.regt_margin_attribution.config import (
     ShockParameters,
     load_regt_margin_attribution_config,
 )
+from alphamind.execution.regt_margin_attribution.orchestrator import compute_attribution
 from alphamind.execution.regt_margin_attribution.pm_equivalent import (
     compute_pm_equivalent_margin,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "RegTMarginAttributionConfig",
     "ShockParameters",
     "compose_class_groups",
+    "compute_attribution",
     "compute_pm_equivalent_margin",
     "compute_regt_margin",
     "load_regt_margin_attribution_config",
