@@ -43,6 +43,7 @@ def _shipped_config() -> BreachBehaviorConfig:
         multi_rule_breach_simultaneous_deferred_rules_count=3,
         cascade_max_steps=8,
         delta_buffer_secondary_check_buffer_factor=1.0,
+        emergency_invocation_cooldown_minutes=30,
     )
 
 
@@ -752,6 +753,7 @@ def test_total_short_selector_uses_config_trim_target_not_hardcoded() -> None:
         multi_rule_breach_simultaneous_deferred_rules_count=3,
         cascade_max_steps=8,
         delta_buffer_secondary_check_buffer_factor=1.0,
+        emergency_invocation_cooldown_minutes=30,
     )
     with pytest.raises(ValueError):
         select_for_total_short_exposure_breach(
@@ -773,6 +775,7 @@ def test_single_short_selector_uses_config_trim_target_not_hardcoded() -> None:
         multi_rule_breach_simultaneous_deferred_rules_count=3,
         cascade_max_steps=8,
         delta_buffer_secondary_check_buffer_factor=1.0,
+        emergency_invocation_cooldown_minutes=30,
     )
 
     result = select_for_single_short_max_size_breach(

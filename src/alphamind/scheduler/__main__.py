@@ -36,7 +36,9 @@ from alphamind.execution.state_persistence.process_lifetime import (
     record_process_lifetime,
 )
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
+from alphamind.risk_guardrails.breach_behavior.config import load_breach_behavior_config
 from alphamind.scheduler.driver import run_pipeline_scheduler_task
+from alphamind.scheduler.emergency import run_emergency_receiver_task
 from alphamind.scheduler.logging_setup import configure_pipeline_logging
 from alphamind.scheduler.orchestrator import run_invocation
 from alphamind.scheduler.session import PipelineMode, new_session
@@ -144,16 +146,20 @@ async def _run_once(args: argparse.Namespace) -> None:
 
 
 async def _run_daemon(*, mode: PipelineMode) -> None:
-    """Daemon path — register the APScheduler driver and run until shutdown."""
+    """Daemon path — register both supervisor tasks and run until shutdown.
+
+    Registers the APScheduler driver (story 04a) and the emergency-invocation
+    receiver (story 04b) on the :class:`PipelineSupervisor`.
+    """
     configure_pipeline_logging()
     cfg = SchedulerConfig.model_validate(read_yaml_file(_CONFIG_DIR / "scheduler.yaml"))
     shutdown_timeout = cfg.supervisor_shutdown_timeout_seconds
+    breach_behavior_config = load_breach_behavior_config(_CONFIG_DIR / "breach_behavior.yaml")
+    venue_config = _load_venue_config(_CONFIG_DIR)
+    execution_mode = ExecutionMode.live if mode == "live" else ExecutionMode.paper
 
     archive_root = _DEFAULT_ARCHIVE_ROOT
     archive_root.mkdir(parents=True, exist_ok=True)
-
-    venue_config = _load_venue_config(_CONFIG_DIR)
-    execution_mode = ExecutionMode.live if mode == "live" else ExecutionMode.paper
 
     engine = make_async_engine()
     session_factory = make_async_session_factory(engine)
@@ -178,6 +184,20 @@ async def _run_daemon(*, mode: PipelineMode) -> None:
             coro_fn=partial(
                 run_pipeline_scheduler_task,
                 scheduler_config=cfg,
+                session_factory=session_factory,
+                archive_root=archive_root,
+                config_dir=_CONFIG_DIR,
+                env_path=_DEFAULT_ENV_PATH,
+                venue_config=venue_config,
+                execution_mode=execution_mode,
+            ),
+        )
+        supervisor.register_task(
+            name="emergency_receiver",
+            coro_fn=partial(
+                run_emergency_receiver_task,
+                poll_interval_seconds=cfg.emergency_poll_interval_seconds,
+                cooldown_minutes=breach_behavior_config.emergency_invocation_cooldown_minutes,
                 session_factory=session_factory,
                 archive_root=archive_root,
                 config_dir=_CONFIG_DIR,
