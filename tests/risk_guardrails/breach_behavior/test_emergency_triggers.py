@@ -40,6 +40,7 @@ def _shipped_config() -> BreachBehaviorConfig:
         multi_rule_breach_simultaneous_deferred_rules_count=3,
         cascade_max_steps=8,
         delta_buffer_secondary_check_buffer_factor=1.0,
+        emergency_invocation_cooldown_minutes=30,
     )
 
 
@@ -255,6 +256,7 @@ def test_multi_rule_breach_custom_threshold_two_fires() -> None:
         multi_rule_breach_simultaneous_deferred_rules_count=2,
         cascade_max_steps=8,
         delta_buffer_secondary_check_buffer_factor=1.0,
+        emergency_invocation_cooldown_minutes=30,
     )
     budget = RiskBudgetConsumption(
         entries=(
@@ -354,6 +356,7 @@ def test_drawdown_velocity_custom_window_smaller_does_not_fire() -> None:
         multi_rule_breach_simultaneous_deferred_rules_count=3,
         cascade_max_steps=8,
         delta_buffer_secondary_check_buffer_factor=1.0,
+        emergency_invocation_cooldown_minutes=30,
     )
     history = (
         _sample(minutes_before_t0=25, intraday_drawdown_pct=0.4),
@@ -379,6 +382,7 @@ def test_drawdown_velocity_custom_threshold_higher() -> None:
         multi_rule_breach_simultaneous_deferred_rules_count=3,
         cascade_max_steps=8,
         delta_buffer_secondary_check_buffer_factor=1.0,
+        emergency_invocation_cooldown_minutes=30,
     )
     history = (
         _sample(minutes_before_t0=20, intraday_drawdown_pct=1.5),

@@ -47,10 +47,16 @@ _ALL_OVERRIDE_FIELDS: frozenset[str] = _BASE_OVERRIDE_FIELDS | _ADAPTIVE_ONLY_OV
 
 
 class RunType(StrEnum):
-    """The six firing triggers the scheduler resolves to a run-type bundle.
+    """The seven firing triggers the scheduler resolves to a run-type bundle.
 
-    Member values match the filename stems under `config/run_types/` and the
-    keys in `scheduler.yaml`'s `triggers:` map.
+    Member values match the filename stems under ``config/run_types/``. The
+    first six members have matching cron entries in ``scheduler.yaml``'s
+    ``triggers:`` map; ``emergency`` is non-cron — it is dispatched by the
+    pipeline scheduler's emergency-invocation receiver (story 04b /
+    ``alphamind.scheduler.emergency``) when the continuous monitor writes an
+    ``EMERGENCY_INVOCATION_REQUESTED`` activity-log entry per
+    ``docs/design/06-risk-guardrails/breach-behavior.md`` § Emergency
+    invocation trigger.
     """
 
     pre_open = "pre_open"
@@ -59,6 +65,7 @@ class RunType(StrEnum):
     off_hours_rolling = "off_hours_rolling"
     weekend_saturday = "weekend_saturday"
     weekend_sunday = "weekend_sunday"
+    emergency = "emergency"
 
 
 class NewsDigestConfig(BaseModel):

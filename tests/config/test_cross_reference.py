@@ -77,6 +77,7 @@ def _make_inputs(
     profiles: Mapping[Profile, Any] | None = None,
     regimes: Mapping[Regime, Any] | None = None,
     overlays: Mapping[Any, Any] | None = None,
+    run_types: Mapping[Any, Any] | None = None,
 ) -> LoadedConfig:
     return LoadedConfig(
         main=main if main is not None else _MAIN,
@@ -92,7 +93,7 @@ def _make_inputs(
         regimes=dict(regimes) if regimes is not None else dict(_REGIMES),
         modes=dict(_MODES),
         overlays=dict(overlays) if overlays is not None else dict(_OVERLAYS),
-        run_types=dict(_RUN_TYPES),
+        run_types=dict(run_types) if run_types is not None else dict(_RUN_TYPES),
     )
 
 
@@ -279,6 +280,28 @@ def test_adaptive_researcher_tool_caps_key_not_registered_raises() -> None:
             inputs,
             env_keys=_DEFAULT_ENV_KEYS,
             registered_tools=smaller_tools,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Check: every RunType has a matching run_types/<value>.yaml entry loaded
+# ---------------------------------------------------------------------------
+
+
+def test_run_type_emergency_member_without_matching_yaml_raises() -> None:
+    """``RunType.emergency`` has no ``scheduler.yaml`` trigger entry but MUST have
+    a matching ``run_types/emergency.yaml`` file. A hand-constructed
+    ``LoadedConfig`` that omits the emergency entry surfaces as a cross-ref error.
+    """
+    from alphamind.config.models import RunType
+
+    pruned = {rt: cfg for rt, cfg in _RUN_TYPES.items() if rt is not RunType.emergency}
+    inputs = _make_inputs(run_types=pruned)
+    with pytest.raises(CrossReferenceError, match="emergency"):
+        validate_cross_references(
+            inputs,
+            env_keys=_DEFAULT_ENV_KEYS,
+            registered_tools=REGISTERED_TOOLS,
         )
 
 

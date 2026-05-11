@@ -191,3 +191,40 @@ class TestCliArgparseSurface:
     def test_run_once_requires_reason(self) -> None:
         with pytest.raises(SystemExit):
             main(argv=["run", "--once", "market_hours_rolling"])
+
+
+class TestCliDaemonRegistersEmergencyReceiver:
+    def test_daemon_path_registers_emergency_receiver_task(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The daemon-mode branch must register a task named
+        ``emergency_receiver`` on the ``PipelineSupervisor`` (story 04b)."""
+        from alphamind.scheduler import __main__ as module
+        from alphamind.scheduler.supervisor import PipelineSupervisor
+
+        _patch_cli_heavy_setup(monkeypatch)
+
+        # Capture the supervisor instance the daemon path constructs so we can
+        # inspect its task registry once ``main()`` returns.
+        captured: dict[str, Any] = {}
+
+        original_supervisor_cls = PipelineSupervisor
+
+        class _SpySupervisor(PipelineSupervisor):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__(*args, **kwargs)
+                captured["supervisor"] = self
+
+            async def run(self) -> None:
+                # Skip the actual supervisor loop -- we only want to observe
+                # that the task was registered before ``run()`` was awaited.
+                return None
+
+        monkeypatch.setattr(module, "PipelineSupervisor", _SpySupervisor)
+
+        main(argv=["run", "--mode", "paper"])
+
+        supervisor = captured["supervisor"]
+        assert isinstance(supervisor, original_supervisor_cls)
+        assert "emergency_receiver" in supervisor.task_names()

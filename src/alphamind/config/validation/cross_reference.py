@@ -71,6 +71,7 @@ def validate_cross_references(
     failures.extend(_check_venue_env_refs(inputs.venue, env_keys))
     failures.extend(_check_agent_tools(inputs.agents, registered_tools))
     failures.extend(_check_scheduler_run_type_files(inputs.scheduler, inputs.run_types))
+    failures.extend(_check_run_type_files_cover_enum_members(inputs.run_types))
     failures.extend(_check_run_type_enabled_agents(inputs.run_types, inputs.agents))
     failures.extend(_check_run_type_overrides(inputs.run_types, inputs.agents))
 
@@ -251,6 +252,26 @@ def _check_scheduler_run_type_files(
                 f"matching run_types/{trigger_key}.yaml in the loaded bundle"
             )
     return failures
+
+
+def _check_run_type_files_cover_enum_members(
+    run_types: Mapping[RunType, RunTypeConfig],
+) -> list[str]:
+    """Check 9b: every ``RunType`` enum member has a matching run-type entry.
+
+    The inverse of check 9 for ``RunType.emergency`` — which has no
+    ``scheduler.yaml`` cron entry but must still ship a
+    ``run_types/emergency.yaml`` so the resolver's
+    ``inputs.run_types[runtime.firing_trigger]`` lookup succeeds when the
+    emergency receiver task (story 04b) dispatches a ``RunType.emergency``
+    invocation.
+    """
+    return [
+        f"run_types: enum member {member.value!r} has no matching "
+        f"run_types/{member.value}.yaml entry in the loaded bundle"
+        for member in RunType
+        if member not in run_types
+    ]
 
 
 def _check_run_type_enabled_agents(

@@ -74,6 +74,7 @@ class EventType(StrEnum):
     GUARDRAIL_REJECTION = "GUARDRAIL_REJECTION"
     RISK_LIMIT_APPROACHED = "RISK_LIMIT_APPROACHED"
     RISK_PARAMETER_CHANGED = "RISK_PARAMETER_CHANGED"
+    EMERGENCY_INVOCATION_REQUESTED = "EMERGENCY_INVOCATION_REQUESTED"
 
     # PM decision events
     PM_DECISION = "PM_DECISION"
@@ -551,6 +552,29 @@ class RiskParameterChangedDetail(BaseModel):
     regime_label: str
 
 
+class EmergencyInvocationRequestedDetail(BaseModel):
+    """Detail payload for ``EMERGENCY_INVOCATION_REQUESTED`` events.
+
+    Emitted by the continuous monitor when one of the four emergency-invocation
+    triggers (regime jump, multi-rule breach, drawdown velocity, margin call)
+    fires per ``docs/design/06-risk-guardrails/breach-behavior.md`` § Emergency
+    invocation trigger. The pipeline scheduler's emergency receiver task
+    consumes the entry, enforces the 30-minute cooldown (with margin-call
+    override), and dispatches one ``run_invocation`` with
+    ``trigger_type="emergency"`` and ``firing_run_type=RunType.emergency``.
+
+    ``cooldown_remaining_seconds`` is the writer-side observation at emission
+    time (0 when cooldown is satisfied or bypassed by ``margin_call``). The
+    receiver re-checks the cooldown against the live ``invocations`` table.
+    """
+
+    model_config = {"frozen": True}
+
+    trigger_type: Literal["regime_jump", "multi_rule_breach", "drawdown_velocity", "margin_call"]
+    trigger_reason: str
+    cooldown_remaining_seconds: int = Field(ge=0)
+
+
 # ---------------------------------------------------------------------------
 # Per-event-type detail-payload classes — PM decision events
 # ---------------------------------------------------------------------------
@@ -767,6 +791,7 @@ AnyDetailType = (
     | GuardrailRejectionDetail
     | RiskLimitApproachedDetail
     | RiskParameterChangedDetail
+    | EmergencyInvocationRequestedDetail
     | PMDecisionDetail
     | CommandAbandonedDetail
     | EnvelopeParseFailedDetail
@@ -813,6 +838,7 @@ EVENT_TYPE_TO_DETAIL_CLASS: dict[EventType, type] = {
     EventType.GUARDRAIL_REJECTION: GuardrailRejectionDetail,
     EventType.RISK_LIMIT_APPROACHED: RiskLimitApproachedDetail,
     EventType.RISK_PARAMETER_CHANGED: RiskParameterChangedDetail,
+    EventType.EMERGENCY_INVOCATION_REQUESTED: EmergencyInvocationRequestedDetail,
     EventType.PM_DECISION: PMDecisionDetail,
     EventType.COMMAND_ABANDONED: CommandAbandonedDetail,
     EventType.ENVELOPE_PARSE_FAILED: EnvelopeParseFailedDetail,
@@ -855,6 +881,7 @@ EVENT_TYPE_TO_GROUP: dict[EventType, EventGroup] = {
     EventType.GUARDRAIL_REJECTION: EventGroup.RISK_AND_GUARDRAIL,
     EventType.RISK_LIMIT_APPROACHED: EventGroup.RISK_AND_GUARDRAIL,
     EventType.RISK_PARAMETER_CHANGED: EventGroup.RISK_AND_GUARDRAIL,
+    EventType.EMERGENCY_INVOCATION_REQUESTED: EventGroup.RISK_AND_GUARDRAIL,
     EventType.PM_DECISION: EventGroup.PM_DECISION,
     EventType.COMMAND_ABANDONED: EventGroup.PM_DECISION,
     EventType.ENVELOPE_PARSE_FAILED: EventGroup.PM_DECISION,

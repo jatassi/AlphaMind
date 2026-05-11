@@ -22,6 +22,7 @@ def _valid_flat_payload() -> dict[str, Any]:
         "multi_rule_breach_simultaneous_deferred_rules_count": 3,
         "cascade_max_steps": 8,
         "delta_buffer_secondary_check_buffer_factor": 1.0,
+        "emergency_invocation_cooldown_minutes": 30,
     }
 
 
@@ -34,6 +35,7 @@ def test_yaml_parses_documented_defaults() -> None:
     assert cfg.multi_rule_breach_simultaneous_deferred_rules_count == 3
     assert cfg.cascade_max_steps == 8
     assert cfg.delta_buffer_secondary_check_buffer_factor == 1.0
+    assert cfg.emergency_invocation_cooldown_minutes == 30
 
 
 @pytest.mark.parametrize(
@@ -49,6 +51,8 @@ def test_yaml_parses_documented_defaults() -> None:
         ("cascade_max_steps", -1),
         ("delta_buffer_secondary_check_buffer_factor", 0.0),
         ("delta_buffer_secondary_check_buffer_factor", -1.0),
+        ("emergency_invocation_cooldown_minutes", 0),
+        ("emergency_invocation_cooldown_minutes", -1),
     ],
 )
 def test_non_positive_value_fails_with_field_path(field: str, value: float) -> None:

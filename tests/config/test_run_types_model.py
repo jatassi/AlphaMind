@@ -231,7 +231,7 @@ def test_run_type_rejects_unknown_agent_name_in_enabled() -> None:
         RunTypeConfig.model_validate(raw)
 
 
-def test_run_type_enum_has_six_members() -> None:
+def test_run_type_enum_has_seven_members_including_emergency() -> None:
     from alphamind.config.models import RunType
 
     assert {member.value for member in RunType} == {
@@ -241,7 +241,14 @@ def test_run_type_enum_has_six_members() -> None:
         "off_hours_rolling",
         "weekend_saturday",
         "weekend_sunday",
+        "emergency",
     }
+
+
+def test_run_type_emergency_member_value() -> None:
+    from alphamind.config.models import RunType
+
+    assert RunType.emergency.value == "emergency"
 
 
 # --------------------------------------------------------------------------- #
@@ -259,7 +266,7 @@ def test_every_shipped_run_type_yaml_parses_cleanly() -> None:
 
     bundle = load_run_types(CONFIG_DIR)
     assert set(bundle.keys()) == set(RunType)
-    assert len(bundle) == 6
+    assert len(bundle) == 7
 
 
 def test_load_run_types_returns_immutable_mapping() -> None:
@@ -293,6 +300,7 @@ def test_load_run_types_raises_when_file_missing(tmp_path: Path) -> None:
         ("weekend_sunday.yaml", True),
         ("off_hours_rolling.yaml", False),
         ("weekend_saturday.yaml", False),
+        ("emergency.yaml", True),
     ],
 )
 def test_run_type_yaml_adaptive_researcher_membership(
@@ -311,6 +319,7 @@ def test_run_type_yaml_adaptive_researcher_membership(
         "off_hours_rolling.yaml",
         "weekend_saturday.yaml",
         "weekend_sunday.yaml",
+        "emergency.yaml",
     ],
 )
 def test_every_run_type_carries_decision_layer_and_synthesizer(filename: str) -> None:
@@ -329,6 +338,7 @@ def test_every_run_type_carries_decision_layer_and_synthesizer(filename: str) ->
         ("off_hours_rolling.yaml", 3),
         ("weekend_saturday.yaml", 3),
         ("weekend_sunday.yaml", 5),
+        ("emergency.yaml", 5),
     ],
 )
 def test_news_digest_top_n_per_sector_matches_doc_table(
@@ -345,6 +355,7 @@ def test_news_digest_top_n_per_sector_matches_doc_table(
         ("market_hours_rolling.yaml", 20, 3000),
         ("pre_close.yaml", 15, 2500),
         ("weekend_sunday.yaml", 20, 3000),
+        ("emergency.yaml", 25, 4000),
     ],
 )
 def test_adaptive_overrides_match_doc_table(
@@ -356,12 +367,17 @@ def test_adaptive_overrides_match_doc_table(
     assert overrides["cumulative_tool_token_budget"] == tool_token_budget
 
 
-def test_run_type_filename_stems_match_scheduler_trigger_keys() -> None:
-    """The 6 run-type filenames must align with scheduler.yaml's triggers."""
+def test_run_type_filename_stems_match_scheduler_trigger_keys_plus_emergency() -> None:
+    """The 7 run-type filenames cover scheduler.yaml's 6 triggers + ``emergency``.
+
+    ``emergency`` has no cron entry in ``scheduler.yaml`` — the emergency
+    receiver task (story 04b) dispatches it from activity-log events instead.
+    """
     scheduler = _read_yaml(CONFIG_DIR / "scheduler.yaml")
     trigger_keys = set(scheduler["triggers"].keys())
     yaml_stems = {p.stem for p in RUN_TYPES_DIR.glob("*.yaml")}
-    assert trigger_keys == yaml_stems
+    assert yaml_stems - trigger_keys == {"emergency"}
+    assert trigger_keys - yaml_stems == set()
 
 
 def test_loaded_bundle_pre_open_has_news_digest_5_3() -> None:
