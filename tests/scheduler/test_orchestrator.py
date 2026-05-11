@@ -679,31 +679,6 @@ async def _seed_singletons_via_handle(handle: Any) -> None:
     handle.session.add(drawdown_state_record_to_row(drawdown, last_updated_at=_NOW))
 
 
-async def _seed_snapshot_singletons(
-    factory: async_sessionmaker[AsyncSession],
-) -> None:
-    """Seed the cash_ledger + drawdown_state singletons assemble_snapshot reads.
-
-    Both ``SqlPortfolioStateRepository.get_cash_ledger`` and
-    ``.get_drawdown_state`` raise ``RepositoryConsistencyError`` when the
-    singleton row is absent; the orchestrator's between-phase snapshot
-    assembly therefore requires either a real Phase 1 (which seeds them) or
-    explicit seeding in the test fixture.
-    """
-    from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
-        cash_ledger_record_to_row,
-    )
-    from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
-        drawdown_state_record_to_row,
-    )
-
-    cash, drawdown = _singleton_records()
-    async with factory() as session:
-        session.add(cash_ledger_record_to_row(cash, last_updated_at=_NOW))
-        session.add(drawdown_state_record_to_row(drawdown, last_updated_at=_NOW))
-        await session.commit()
-
-
 class TestRunInvocationSnapshotWiring:
     """The orchestrator threads a real ``AssembledSnapshot`` between phases.
 
@@ -800,6 +775,109 @@ class TestRunInvocationSnapshotWiring:
         assert "repository" not in decision_kwargs
         assert "price_provider" not in decision_kwargs
         assert "portfolio_state_config" not in decision_kwargs
+
+    async def test_snapshot_assembled_exactly_once_per_invocation(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The synthesizer reader and the decision pipeline share one snapshot.
+
+        Slice 2 of ALP-449: the orchestrator assembles the
+        ``AssembledSnapshot`` exactly once between Phase 1 and the
+        analysis pipeline; the same object threads through both
+        ``SnapshotBackedSynthesizerReader`` and ``run_decision_pipeline``.
+        A regression that re-assembles per consumer would show up as
+        ``assemble_count > 1``.
+        """
+        from alphamind.portfolio_state.assembler import assemble_snapshot
+        from alphamind.scheduler import orchestrator as module
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        assemble_count = 0
+
+        async def _counting_assemble(*args: Any, **kwargs: Any) -> Any:
+            nonlocal assemble_count
+            assemble_count += 1
+            return await assemble_snapshot(*args, **kwargs)
+
+        monkeypatch.setattr(module, "assemble_snapshot", _counting_assemble)
+
+        await run_invocation(
+            session_factory=async_factory,
+            process_lifetime_id="proc-orch-1",
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            archive_root=archive_root,
+            config_dir=SHIPPED_CONFIG_DIR,
+            env_path=env_path,
+            venue_config=_make_venue_config(),
+            execution_mode=ExecutionMode.paper,
+            now=_NOW,
+        )
+
+        assert assemble_count == 1
+
+
+class TestRunInvocationFailuresThreeTxBoundaries:
+    """Failure semantics at the three transaction boundaries (ALP-449).
+
+    ``TestRunInvocationFailures`` covers Phase 1 abort and between-phase
+    abort already; this class fills in the Phase 2 boundary — a
+    dispatch-side raise must leave Phase 1 durable and ``phase2_completed_at``
+    NULL (matches the design's "commands submitted before the abort
+    remain committed" semantic; the per-envelope mechanics themselves
+    are tested in ``tests/scheduler/test_phase2_dispatch.py``).
+    """
+
+    async def test_phase2_dispatch_failure_leaves_phase1_committed_phase2_null(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A dispatch_phase2 raise propagates; the row keeps Phase 1, drops Phase 2."""
+        from alphamind.scheduler import orchestrator as module
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        async def _raising_dispatch(**kw: Any) -> Any:
+            raise RuntimeError("phase 2 boom")
+
+        monkeypatch.setattr(module, "dispatch_phase2", _raising_dispatch)
+
+        with pytest.raises(RuntimeError, match="phase 2 boom"):
+            await run_invocation(
+                session_factory=async_factory,
+                process_lifetime_id="proc-orch-1",
+                trigger_type="manual",
+                trigger_source="cli",
+                trigger_reason="test",
+                firing_run_type=RunType.market_hours_rolling,
+                archive_root=archive_root,
+                config_dir=SHIPPED_CONFIG_DIR,
+                env_path=env_path,
+                venue_config=_make_venue_config(),
+                execution_mode=ExecutionMode.paper,
+                now=_NOW,
+            )
+
+        async with async_factory() as session:
+            rows = (await session.execute(select(InvocationRow))).scalars().all()
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.phase1_completed_at is not None
+        assert row.phase2_completed_at is None
 
 
 class TestModeToDecisionLiteral:
