@@ -27,6 +27,10 @@ from typing import TYPE_CHECKING, Any
 
 from alphamind.distillation.calibration import CALIBRATION_STATE_VALUES, CalibrationState
 from alphamind.distillation.output import OutputBlock
+from alphamind.execution.state_persistence.invocation_paths import (
+    CALIBRATION_SNAPSHOT_FILENAME,
+    INVOCATIONS_DIRNAME,
+)
 
 if TYPE_CHECKING:
     from alphamind.distillation.orchestrator import DistillationOutputs
@@ -42,12 +46,6 @@ Bumped only when the on-disk shape changes incompatibly. Future schema
 work owns its own migration; this story lays the bootstrap version.
 """
 
-
-_SNAPSHOT_FILENAME: str = "data_calibration_state.json"
-"""Per-invocation snapshot filename pinned by the threshold-calibration design doc."""
-
-_INVOCATIONS_DIRNAME: str = "invocations"
-"""Subdirectory under ``base_path`` where per-invocation snapshots live."""
 
 _JSON_INDENT_UNIT: str = "  "
 """One indentation unit for the on-disk JSON payload.
@@ -211,7 +209,7 @@ def write_calibration_state_snapshot(
         "unavailable_reasons": _aggregate_reasons(blocks, CalibrationState.UNAVAILABLE),
     }
 
-    target_path = base_path / _INVOCATIONS_DIRNAME / invocation_id / _SNAPSHOT_FILENAME
+    target_path = base_path / INVOCATIONS_DIRNAME / invocation_id / CALIBRATION_SNAPSHOT_FILENAME
     _atomic_write(target_path, _serialize(snapshot))
     return target_path
 

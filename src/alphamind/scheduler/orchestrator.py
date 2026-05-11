@@ -52,14 +52,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.config.load import PipelineConfig
 from alphamind.config.loaders import load_overlays, read_yaml_file
-from alphamind.config.models.main import ExecutionMode, MainConfig
+from alphamind.config.models.main import MainConfig
 from alphamind.config.models.modes import Mode
 from alphamind.config.models.overlays import Overlay, PreEventOverlay, StressOverlay
 from alphamind.config.models.profiles import ProfileConfig
 from alphamind.config.models.regimes import Regime
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.scheduler import SchedulerConfig
-from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.state_persistence.config import (
     StatePersistenceConfig,
     load_state_persistence_config,
@@ -142,6 +141,7 @@ from alphamind.scheduler.phase2_dispatch import (
     Phase2Summary,
     dispatch_phase2,
 )
+from alphamind.scheduler.run_context import RunInvocationContext
 from alphamind.scheduler.runtime import resolve_runtime_dimensions
 
 __all__ = ["InvocationSummary", "run_invocation"]
@@ -597,6 +597,23 @@ def _build_sector_resolver(resolved: Any) -> Callable[[str], str]:
     return _resolver
 
 
+def _load_prior_active_risk_parameters(snapshot_path: str) -> ActiveRiskParameterSet:
+    """Rehydrate an ``ActiveRiskParameterSet`` from a resolved-config snapshot.
+
+    Reads the JSON file persisted by :func:`alphamind.config.snapshot.persist_snapshot`,
+    extracts the ``rule_values`` map and ``regime_label`` string the prior
+    invocation composed, and re-wraps them via :func:`_build_active_risk_parameters`
+    so the snapshot assembler reads the same values the decision pipeline
+    consumed at the time the prior invocation wrote that snapshot (ALP-450
+    item 1).
+    """
+    payload = json.loads(Path(snapshot_path).read_text())
+    return _build_active_risk_parameters(
+        rule_values=payload["rule_values"],
+        regime=Regime(payload["regime_label"]),
+    )
+
+
 def _make_repository_providers(
     active_risk_parameters: ActiveRiskParameterSet,
 ) -> tuple[
@@ -607,18 +624,20 @@ def _make_repository_providers(
 
     The repository factory's ``active_risk_parameters_provider`` is zero-arg;
     ``prior_active_risk_parameters_provider`` takes the prior invocation's
-    resolved-config snapshot path. Both currently yield the same
-    ``active_risk_parameters`` value (pre-review triage simplification — the
-    prior-snapshot rehydration is deferred to a follow-up story; surfacing
-    a stale set keeps the snapshot assembler operational without depending
-    on the persisted-snapshot codec landing first).
+    resolved-config snapshot path and rehydrates the ``ActiveRiskParameterSet``
+    that was active at that point. When the snapshot file is missing on disk
+    (first-ever invocation, archive relocation), the prior provider falls
+    back to the current set so the snapshot assembler stays operational.
     """
 
     async def _active_provider() -> ActiveRiskParameterSet:
         return active_risk_parameters
 
-    async def _prior_provider(_snapshot_path: str) -> ActiveRiskParameterSet:
-        return active_risk_parameters
+    async def _prior_provider(snapshot_path: str) -> ActiveRiskParameterSet:
+        try:
+            return _load_prior_active_risk_parameters(snapshot_path)
+        except FileNotFoundError:
+            return active_risk_parameters
 
     return _active_provider, _prior_provider
 
@@ -651,19 +670,13 @@ def _price_provider_from_phase1(
 # ---------------------------------------------------------------------------
 
 
-async def run_invocation(  # noqa: PLR0913 — composition surface threads typed inputs
+async def run_invocation(
     *,
-    session_factory: async_sessionmaker[AsyncSession],
-    process_lifetime_id: str,
+    context: RunInvocationContext,
     trigger_type: TriggerType,
     trigger_source: str,
     trigger_reason: str,
     firing_run_type: RunType,
-    archive_root: Path,
-    config_dir: Path,
-    env_path: Path,
-    venue_config: VenueConfig,
-    execution_mode: ExecutionMode,
     now: datetime,
 ) -> InvocationSummary:
     """Drive one pipeline invocation through the design's three-transaction model.
@@ -675,6 +688,14 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
     Phase 2 (per-envelope sessions + final row stamp) → return
     :class:`InvocationSummary`.
     """
+    session_factory = context.session_factory
+    process_lifetime_id = context.process_lifetime_id
+    archive_root = context.archive_root
+    config_dir = context.config_dir
+    env_path = context.env_path
+    venue_config = context.venue_config
+    execution_mode = context.execution_mode
+
     start_perf = time.monotonic()
     state_persistence_config = load_state_persistence_config(
         read_yaml_file(config_dir / "main.yaml")

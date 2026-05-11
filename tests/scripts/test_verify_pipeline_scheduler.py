@@ -521,7 +521,7 @@ class TestCheckProcessLifetimeRow:
             _stub,
         )
 
-        result = await check_process_lifetime_row(
+        result, _ = await check_process_lifetime_row(
             session_factory=object(),  # type: ignore[arg-type]
             archive_root=tmp_path,
         )
@@ -542,9 +542,120 @@ class TestCheckProcessLifetimeRow:
             _stub,
         )
 
-        result = await check_process_lifetime_row(
+        result, _ = await check_process_lifetime_row(
             session_factory=object(),  # type: ignore[arg-type]
             archive_root=tmp_path,
         )
         assert not result.passed
         assert "git unavailable" in result.message
+
+
+class TestCheckProcessLifetimeRowReturnsId:
+    """``check_process_lifetime_row`` exposes the row id it wrote.
+
+    ALP-450 item 3: the verify script's smoke-test write (this function)
+    and the e2e invocation both call ``record_process_lifetime``, leaving
+    the smoke-test row orphaned. The fix threads the smoke-test row's
+    id forward so the e2e invocation reuses it; that requires exposing
+    the id on the check's return value.
+    """
+
+    @pytest.mark.asyncio
+    async def test_passing_result_carries_process_lifetime_id(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from alphamind.scripts.verify_pipeline_scheduler import check_process_lifetime_row
+
+        async def _stub(**_kwargs: Any) -> str:
+            return "plt-abc-123"
+
+        monkeypatch.setattr(
+            "alphamind.scripts.verify_pipeline_scheduler.record_process_lifetime",
+            _stub,
+        )
+
+        result, process_lifetime_id = await check_process_lifetime_row(
+            session_factory=object(),  # type: ignore[arg-type]
+            archive_root=tmp_path,
+        )
+        assert result.passed
+        assert process_lifetime_id == "plt-abc-123"
+
+    @pytest.mark.asyncio
+    async def test_failing_result_returns_none_id(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from alphamind.scripts.verify_pipeline_scheduler import check_process_lifetime_row
+
+        async def _stub(**_kwargs: Any) -> str:
+            raise RuntimeError("git unavailable")
+
+        monkeypatch.setattr(
+            "alphamind.scripts.verify_pipeline_scheduler.record_process_lifetime",
+            _stub,
+        )
+
+        result, process_lifetime_id = await check_process_lifetime_row(
+            session_factory=object(),  # type: ignore[arg-type]
+            archive_root=tmp_path,
+        )
+        assert not result.passed
+        assert process_lifetime_id is None
+
+
+class TestDriveOnceInvocationReusesProcessLifetimeId:
+    """``_drive_once_invocation`` reuses the smoke-test row's id.
+
+    ALP-450 item 3: with the smoke-test row id threaded forward,
+    ``_drive_once_invocation`` must NOT call ``record_process_lifetime``
+    a second time — exactly one row lands per verify run.
+    """
+
+    @pytest.mark.asyncio
+    async def test_does_not_call_record_process_lifetime(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from alphamind.config.models.run_types import RunType
+        from alphamind.scripts import verify_pipeline_scheduler as module
+
+        record_calls = {"count": 0}
+
+        async def _record_stub(**_kwargs: Any) -> str:
+            record_calls["count"] += 1
+            return "should-not-be-called"
+
+        monkeypatch.setattr(module, "record_process_lifetime", _record_stub)
+
+        # Stub run_invocation; the orchestrator stays untouched. We don't
+        # care what summary returns; just that _drive_once_invocation
+        # forwarded the pre-existing id and didn't call the writer.
+        from types import SimpleNamespace
+
+        async def _run_invocation_stub(**kwargs: Any) -> Any:
+            # Record the threading invariant: context carries the supplied id.
+            assert kwargs["context"].process_lifetime_id == "plt-supplied-1"
+            return SimpleNamespace(invocation_id="inv-stub-1", duration_seconds=0.0)
+
+        # ``_drive_once_invocation`` imports run_invocation INSIDE the function;
+        # patch the source module so the inner import picks up the stub.
+        monkeypatch.setattr(
+            "alphamind.scheduler.orchestrator.run_invocation",
+            _run_invocation_stub,
+        )
+
+        class _StubEngine:
+            async def dispose(self) -> None:
+                return None
+
+        monkeypatch.setattr(module, "make_async_engine", lambda: _StubEngine())
+        monkeypatch.setattr(module, "make_async_session_factory", lambda _engine: object())
+
+        invocation_id = await module._drive_once_invocation(
+            archive_root=tmp_path,
+            run_type=RunType.market_hours_rolling,
+            mode="paper",
+            process_lifetime_id="plt-supplied-1",
+        )
+
+        assert invocation_id == "inv-stub-1"
+        assert record_calls["count"] == 0

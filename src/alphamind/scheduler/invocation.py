@@ -42,6 +42,10 @@ from alphamind.execution.state_persistence.invocation_context.records import (
     InvocationRecord,
     TriggerType,
 )
+from alphamind.execution.state_persistence.invocation_paths import (
+    CALIBRATION_SNAPSHOT_FILENAME,
+    INVOCATIONS_DIRNAME,
+)
 from alphamind.persistence.models import CollectionRuns
 
 
@@ -131,8 +135,6 @@ def _isoformat_z(now: datetime) -> str:
 
 
 _INVOCATION_ID_PATTERN = re.compile(r"^inv-\d{8}T\d{6}Z-[0-9a-f]{8}$")
-_CALIBRATION_SNAPSHOT_FILENAME = "data_calibration_state.json"
-_INVOCATIONS_DIRNAME = "invocations"
 
 
 def _persist_data_calibration_snapshot(
@@ -154,8 +156,8 @@ def _persist_data_calibration_snapshot(
     expose a "latest snapshot path" helper, so the directory scan lives inline here
     per story 03a's spec.
     """
-    invocations_dir = archive_root / _INVOCATIONS_DIRNAME
-    target_path = invocations_dir / invocation_id / _CALIBRATION_SNAPSHOT_FILENAME
+    invocations_dir = archive_root / INVOCATIONS_DIRNAME
+    target_path = invocations_dir / invocation_id / CALIBRATION_SNAPSHOT_FILENAME
 
     prior_content = _find_latest_prior_calibration_content(
         invocations_dir=invocations_dir, current_invocation_id=invocation_id
@@ -188,7 +190,7 @@ def _find_latest_prior_calibration_content(
         reverse=True,
     )
     for candidate in candidates:
-        snapshot_path = candidate / _CALIBRATION_SNAPSHOT_FILENAME
+        snapshot_path = candidate / CALIBRATION_SNAPSHOT_FILENAME
         if snapshot_path.exists():
             return snapshot_path.read_text()
     return None

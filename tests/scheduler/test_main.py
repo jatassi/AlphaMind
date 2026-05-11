@@ -130,7 +130,7 @@ class TestCliRunOnce:
         assert captured["trigger_source"] == "cli"
         assert captured["trigger_reason"] == "test reason"
         assert captured["firing_run_type"] is RunType.market_hours_rolling
-        assert captured["process_lifetime_id"] == "proc-cli-1"
+        assert captured["context"].process_lifetime_id == "proc-cli-1"
 
         out = capsys.readouterr().out
         payload = json.loads(out)

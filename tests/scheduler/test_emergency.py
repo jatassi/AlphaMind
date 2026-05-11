@@ -319,17 +319,24 @@ async def _running_receiver(
 
     monkeypatch.setattr(emergency_module, "run_invocation", recorder)
 
+    from alphamind.scheduler.run_context import RunInvocationContext
+
+    context = RunInvocationContext(
+        session_factory=factory,
+        process_lifetime_id=pipeline_session.process_lifetime_id,
+        archive_root=tmp_path / "archive",
+        config_dir=tmp_path / "config",
+        env_path=tmp_path / ".env",
+        venue_config=venue_config,
+        execution_mode=ExecutionMode.paper,
+    )
+
     async def _runner() -> None:
         await run_emergency_receiver_task(
             pipeline_session,
             poll_interval_seconds=poll_interval_seconds,
             cooldown_minutes=cooldown_minutes,
-            session_factory=factory,
-            archive_root=tmp_path / "archive",
-            config_dir=tmp_path / "config",
-            env_path=tmp_path / ".env",
-            venue_config=venue_config,
-            execution_mode=ExecutionMode.paper,
+            context=context,
         )
 
     task = asyncio.create_task(_runner())
@@ -433,7 +440,7 @@ class TestDispatchAfterStartup:
         assert call["firing_run_type"] is RunType.emergency
         assert call["trigger_source"] == "continuous_monitor"
         assert call["trigger_reason"] == "Regime jump: normal -> crisis"
-        assert call["process_lifetime_id"] == pipeline_session.process_lifetime_id
+        assert call["context"].process_lifetime_id == pipeline_session.process_lifetime_id
 
 
 class TestCooldown:

@@ -18,21 +18,19 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 
 import exchange_calendars
 import pandas as pd
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.scheduler import SchedulerConfig
-from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.scheduler.orchestrator import run_invocation
+from alphamind.scheduler.run_context import RunInvocationContext
 from alphamind.scheduler.session import PipelineSession
 
 __all__ = ["register_pipeline_jobs", "run_pipeline_scheduler_task"]
@@ -97,19 +95,13 @@ async def _is_within_dedup_window(
     return result.scalar_one_or_none() is not None
 
 
-def _make_scheduled_job(  # noqa: PLR0913 — composition surface
+def _make_scheduled_job(
     *,
     trigger_key: str,
     run_type: RunType,
     cron_expression: str,
-    session_factory: async_sessionmaker[AsyncSession],
     scheduler_config: SchedulerConfig,
-    process_lifetime_id: str,
-    archive_root: Path,
-    config_dir: Path,
-    env_path: Path,
-    venue_config: VenueConfig,
-    execution_mode: ExecutionMode,
+    context: RunInvocationContext,
 ) -> Callable[[], Awaitable[None]]:
     """Build the async coroutine APScheduler fires for one trigger.
 
@@ -126,7 +118,7 @@ def _make_scheduled_job(  # noqa: PLR0913 — composition surface
             log.info("scheduled trigger=%s skipped — non-trading day", trigger_key)
             return
         if run_type in _DEDUP_GATED_TRIGGERS:
-            async with session_factory() as dedup_session:
+            async with context.session_factory() as dedup_session:
                 if await _is_within_dedup_window(
                     dedup_session,
                     now=now,
@@ -137,17 +129,11 @@ def _make_scheduled_job(  # noqa: PLR0913 — composition surface
         start_perf = time.monotonic()
         try:
             summary = await run_invocation(
-                session_factory=session_factory,
-                process_lifetime_id=process_lifetime_id,
+                context=context,
                 trigger_type="scheduled",
                 trigger_source=trigger_key,
                 trigger_reason=cron_expression,
                 firing_run_type=run_type,
-                archive_root=archive_root,
-                config_dir=config_dir,
-                env_path=env_path,
-                venue_config=venue_config,
-                execution_mode=execution_mode,
                 now=now,
             )
         except Exception:
@@ -167,17 +153,11 @@ def _make_scheduled_job(  # noqa: PLR0913 — composition surface
     return _job
 
 
-def register_pipeline_jobs(  # noqa: PLR0913 — composition surface
+def register_pipeline_jobs(
     *,
     scheduler: AsyncIOScheduler,
     scheduler_config: SchedulerConfig,
-    session_factory: async_sessionmaker[AsyncSession],
-    process_lifetime_id: str,
-    archive_root: Path,
-    config_dir: Path,
-    env_path: Path,
-    venue_config: VenueConfig,
-    execution_mode: ExecutionMode,
+    context: RunInvocationContext,
 ) -> None:
     """Register one cron job per ``scheduler_config.triggers`` entry.
 
@@ -194,14 +174,8 @@ def register_pipeline_jobs(  # noqa: PLR0913 — composition surface
             trigger_key=trigger_key,
             run_type=run_type,
             cron_expression=cron_expression,
-            session_factory=session_factory,
             scheduler_config=scheduler_config,
-            process_lifetime_id=process_lifetime_id,
-            archive_root=archive_root,
-            config_dir=config_dir,
-            env_path=env_path,
-            venue_config=venue_config,
-            execution_mode=execution_mode,
+            context=context,
         )
         scheduler.add_job(
             job,
@@ -217,31 +191,28 @@ async def run_pipeline_scheduler_task(
     session: PipelineSession,
     *,
     scheduler_config: SchedulerConfig,
-    session_factory: async_sessionmaker[AsyncSession],
-    archive_root: Path,
-    config_dir: Path,
-    env_path: Path,
-    venue_config: VenueConfig,
-    execution_mode: ExecutionMode,
+    context: RunInvocationContext,
 ) -> None:
     """Build the ``AsyncIOScheduler``, register jobs, start, and await cancellation.
 
     Designed to be registered as a :class:`PipelineSupervisor` task. The
     supervisor calls this coroutine with the per-process
-    :class:`PipelineSession`; the rest of the parameters are closed over
-    by the caller via ``functools.partial`` in ``__main__``.
+    :class:`PipelineSession`; ``context`` is closed over by the caller via
+    ``functools.partial`` in ``__main__`` and must carry the same
+    ``process_lifetime_id`` as ``session``.
     """
+    if session.process_lifetime_id != context.process_lifetime_id:
+        msg = (
+            f"session.process_lifetime_id={session.process_lifetime_id!r} disagrees with "
+            f"context.process_lifetime_id={context.process_lifetime_id!r}; the supervisor "
+            "and the orchestrator-context builder must agree on the per-process id"
+        )
+        raise ValueError(msg)
     scheduler = AsyncIOScheduler(timezone=scheduler_config.timezone)
     register_pipeline_jobs(
         scheduler=scheduler,
         scheduler_config=scheduler_config,
-        session_factory=session_factory,
-        process_lifetime_id=session.process_lifetime_id,
-        archive_root=archive_root,
-        config_dir=config_dir,
-        env_path=env_path,
-        venue_config=venue_config,
-        execution_mode=execution_mode,
+        context=context,
     )
     scheduler.start()
     for job in scheduler.get_jobs():

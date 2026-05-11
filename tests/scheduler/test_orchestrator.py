@@ -142,6 +142,30 @@ def _make_venue_config() -> VenueConfig:
     )
 
 
+def _make_context(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    env_path: Path,
+    archive_root: Path,
+) -> Any:
+    """Compose the standard ``RunInvocationContext`` test fixtures use.
+
+    Centralizes the seven bundled fields so the per-test invocations
+    stay focused on what's specific to each scenario.
+    """
+    from alphamind.scheduler.run_context import RunInvocationContext
+
+    return RunInvocationContext(
+        session_factory=session_factory,
+        process_lifetime_id="proc-orch-1",
+        archive_root=archive_root,
+        config_dir=SHIPPED_CONFIG_DIR,
+        env_path=env_path,
+        venue_config=_make_venue_config(),
+        execution_mode=ExecutionMode.paper,
+    )
+
+
 def _make_phase1_inputs(*, staleness_flag: bool = False) -> Any:
     """Build a minimal ``Phase1Inputs`` with no positions / no CA activities."""
     from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -321,17 +345,15 @@ class TestRunInvocationHappyPath:
 
         _patch_no_op_pipeline(monkeypatch)
         summary = await run_invocation(
-            session_factory=async_factory,
-            process_lifetime_id="proc-orch-1",
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
             trigger_type="manual",
             trigger_source="cli",
             trigger_reason="test",
             firing_run_type=RunType.market_hours_rolling,
-            archive_root=archive_root,
-            config_dir=SHIPPED_CONFIG_DIR,
-            env_path=env_path,
-            venue_config=_make_venue_config(),
-            execution_mode=ExecutionMode.paper,
             now=_NOW,
         )
 
@@ -356,17 +378,15 @@ class TestRunInvocationHappyPath:
 
         _patch_no_op_pipeline(monkeypatch)
         summary = await run_invocation(
-            session_factory=async_factory,
-            process_lifetime_id="proc-orch-1",
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
             trigger_type="manual",
             trigger_source="cli",
             trigger_reason="test",
             firing_run_type=RunType.market_hours_rolling,
-            archive_root=archive_root,
-            config_dir=SHIPPED_CONFIG_DIR,
-            env_path=env_path,
-            venue_config=_make_venue_config(),
-            execution_mode=ExecutionMode.paper,
             now=_NOW,
         )
 
@@ -401,17 +421,15 @@ class TestRunInvocationHappyPath:
         )
         _patch_no_op_pipeline(monkeypatch, phase1_summary=phase1)
         await run_invocation(
-            session_factory=async_factory,
-            process_lifetime_id="proc-orch-1",
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
             trigger_type="manual",
             trigger_source="cli",
             trigger_reason="test",
             firing_run_type=RunType.market_hours_rolling,
-            archive_root=archive_root,
-            config_dir=SHIPPED_CONFIG_DIR,
-            env_path=env_path,
-            venue_config=_make_venue_config(),
-            execution_mode=ExecutionMode.paper,
             now=_NOW,
         )
 
@@ -449,17 +467,15 @@ class TestRunInvocationFailures:
         _patch_no_op_pipeline(monkeypatch, phase1_raises=RuntimeError("phase 1 boom"))
         with pytest.raises(RuntimeError, match="phase 1 boom"):
             await run_invocation(
-                session_factory=async_factory,
-                process_lifetime_id="proc-orch-1",
+                context=_make_context(
+                    session_factory=async_factory,
+                    env_path=env_path,
+                    archive_root=archive_root,
+                ),
                 trigger_type="manual",
                 trigger_source="cli",
                 trigger_reason="test",
                 firing_run_type=RunType.market_hours_rolling,
-                archive_root=archive_root,
-                config_dir=SHIPPED_CONFIG_DIR,
-                env_path=env_path,
-                venue_config=_make_venue_config(),
-                execution_mode=ExecutionMode.paper,
                 now=_NOW,
             )
 
@@ -494,17 +510,15 @@ class TestRunInvocationFailures:
         )
         with pytest.raises(RuntimeError, match="decision boom"):
             await run_invocation(
-                session_factory=async_factory,
-                process_lifetime_id="proc-orch-1",
+                context=_make_context(
+                    session_factory=async_factory,
+                    env_path=env_path,
+                    archive_root=archive_root,
+                ),
                 trigger_type="manual",
                 trigger_source="cli",
                 trigger_reason="test",
                 firing_run_type=RunType.market_hours_rolling,
-                archive_root=archive_root,
-                config_dir=SHIPPED_CONFIG_DIR,
-                env_path=env_path,
-                venue_config=_make_venue_config(),
-                execution_mode=ExecutionMode.paper,
                 now=_NOW,
             )
 
@@ -546,17 +560,15 @@ class TestRunInvocationModeAndStaleness:
         monkeypatch.setattr(module, "resolve_runtime_dimensions", _stub_resolve)
 
         await run_invocation(
-            session_factory=async_factory,
-            process_lifetime_id="proc-orch-1",
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
             trigger_type="manual",
             trigger_source="cli",
             trigger_reason="test",
             firing_run_type=RunType.market_hours_rolling,
-            archive_root=archive_root,
-            config_dir=SHIPPED_CONFIG_DIR,
-            env_path=env_path,
-            venue_config=_make_venue_config(),
-            execution_mode=ExecutionMode.paper,
             now=_NOW,
         )
 
@@ -576,17 +588,15 @@ class TestRunInvocationModeAndStaleness:
         from alphamind.scheduler.orchestrator import run_invocation
 
         await run_invocation(
-            session_factory=async_factory,
-            process_lifetime_id="proc-orch-1",
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
             trigger_type="manual",
             trigger_source="cli",
             trigger_reason="test",
             firing_run_type=RunType.market_hours_rolling,
-            archive_root=archive_root,
-            config_dir=SHIPPED_CONFIG_DIR,
-            env_path=env_path,
-            venue_config=_make_venue_config(),
-            execution_mode=ExecutionMode.paper,
             now=_NOW,
         )
         assert captured["decision"]["mode"] == "normal"
@@ -603,17 +613,15 @@ class TestRunInvocationModeAndStaleness:
 
         _patch_no_op_pipeline(monkeypatch, staleness_flag=True)
         summary = await run_invocation(
-            session_factory=async_factory,
-            process_lifetime_id="proc-orch-1",
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
             trigger_type="manual",
             trigger_source="cli",
             trigger_reason="test",
             firing_run_type=RunType.market_hours_rolling,
-            archive_root=archive_root,
-            config_dir=SHIPPED_CONFIG_DIR,
-            env_path=env_path,
-            venue_config=_make_venue_config(),
-            execution_mode=ExecutionMode.paper,
             now=_NOW,
         )
 
@@ -714,17 +722,15 @@ class TestRunInvocationSnapshotWiring:
         _patch_no_op_pipeline(monkeypatch, captured=captured)
 
         await run_invocation(
-            session_factory=async_factory,
-            process_lifetime_id="proc-orch-1",
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
             trigger_type="manual",
             trigger_source="cli",
             trigger_reason="test",
             firing_run_type=RunType.market_hours_rolling,
-            archive_root=archive_root,
-            config_dir=SHIPPED_CONFIG_DIR,
-            env_path=env_path,
-            venue_config=_make_venue_config(),
-            execution_mode=ExecutionMode.paper,
             now=_NOW,
         )
 
@@ -753,17 +759,15 @@ class TestRunInvocationSnapshotWiring:
         _patch_no_op_pipeline(monkeypatch, captured=captured)
 
         await run_invocation(
-            session_factory=async_factory,
-            process_lifetime_id="proc-orch-1",
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
             trigger_type="manual",
             trigger_source="cli",
             trigger_reason="test",
             firing_run_type=RunType.market_hours_rolling,
-            archive_root=archive_root,
-            config_dir=SHIPPED_CONFIG_DIR,
-            env_path=env_path,
-            venue_config=_make_venue_config(),
-            execution_mode=ExecutionMode.paper,
             now=_NOW,
         )
 
@@ -809,17 +813,15 @@ class TestRunInvocationSnapshotWiring:
         monkeypatch.setattr(module, "assemble_snapshot", _counting_assemble)
 
         await run_invocation(
-            session_factory=async_factory,
-            process_lifetime_id="proc-orch-1",
+            context=_make_context(
+                session_factory=async_factory,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
             trigger_type="manual",
             trigger_source="cli",
             trigger_reason="test",
             firing_run_type=RunType.market_hours_rolling,
-            archive_root=archive_root,
-            config_dir=SHIPPED_CONFIG_DIR,
-            env_path=env_path,
-            venue_config=_make_venue_config(),
-            execution_mode=ExecutionMode.paper,
             now=_NOW,
         )
 
@@ -858,17 +860,15 @@ class TestRunInvocationFailuresThreeTxBoundaries:
 
         with pytest.raises(RuntimeError, match="phase 2 boom"):
             await run_invocation(
-                session_factory=async_factory,
-                process_lifetime_id="proc-orch-1",
+                context=_make_context(
+                    session_factory=async_factory,
+                    env_path=env_path,
+                    archive_root=archive_root,
+                ),
                 trigger_type="manual",
                 trigger_source="cli",
                 trigger_reason="test",
                 firing_run_type=RunType.market_hours_rolling,
-                archive_root=archive_root,
-                config_dir=SHIPPED_CONFIG_DIR,
-                env_path=env_path,
-                venue_config=_make_venue_config(),
-                execution_mode=ExecutionMode.paper,
                 now=_NOW,
             )
 
@@ -878,6 +878,129 @@ class TestRunInvocationFailuresThreeTxBoundaries:
         row = rows[0]
         assert row.phase1_completed_at is not None
         assert row.phase2_completed_at is None
+
+
+class TestLoadPriorActiveRiskParameters:
+    """``_load_prior_active_risk_parameters`` rehydrates the set from a snapshot.
+
+    The repository's ``prior_active_risk_parameters_provider`` is keyed by the
+    prior invocation's ``resolved_config_snapshot_path``; the orchestrator's
+    wiring needs to parse that file and return the prior set so the snapshot
+    assembler compares Phase 1 state against the actual prior limits, not the
+    current ones (ALP-450 item 1).
+    """
+
+    def test_reads_rule_values_and_regime_from_snapshot(self, tmp_path: Path) -> None:
+        """Given a snapshot with known rule_values + regime_label, return that set."""
+        from alphamind.config.models.regimes import Regime
+        from alphamind.portfolio_state.records.capital import RegimeLabel
+        from alphamind.scheduler.orchestrator import _load_prior_active_risk_parameters
+
+        snapshot_path = tmp_path / "prior_resolved.json"
+        snapshot_path.write_text(
+            json.dumps(
+                {
+                    "regime_label": Regime.elevated.value,
+                    "rule_values": {
+                        "daily_drawdown_pct": 0.025,
+                        "position_max_loss_pct": 0.01,
+                    },
+                }
+            )
+        )
+
+        result = _load_prior_active_risk_parameters(str(snapshot_path))
+
+        assert result.regime_label is RegimeLabel.ELEVATED
+        rule_map = {entry.rule_id: entry.value for entry in result.entries}
+        assert rule_map == {
+            "daily_drawdown_pct": 0.025,
+            "position_max_loss_pct": 0.01,
+        }
+
+
+class TestPriorProviderRehydratesFromPriorInvocation:
+    """End-to-end: a second invocation passes the prior row's snapshot through.
+
+    The repository factory's ``prior_active_risk_parameters_provider`` is
+    invoked by the snapshot assembler with the PRIOR invocation row's
+    ``resolved_config_snapshot_path``. With the rehydration wired, the
+    returned set reflects the rule_values that lived on disk for that prior
+    invocation, not the current invocation's set.
+    """
+
+    async def test_second_invocation_returns_prior_snapshot_set(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Two snapshots on disk → prior provider returns the older one's set."""
+        from alphamind.config.models.regimes import Regime
+        from alphamind.scheduler.orchestrator import _make_repository_providers
+
+        # Hand-roll a "prior" snapshot file with distinguishable rule_values.
+        prior_snapshot_path = tmp_path / "prior_resolved.json"
+        prior_snapshot_path.write_text(
+            json.dumps(
+                {
+                    "regime_label": Regime.crisis.value,
+                    "rule_values": {"daily_drawdown_pct": 0.005},
+                }
+            )
+        )
+
+        # The current set is what _make_repository_providers takes as input.
+        from alphamind.scheduler.orchestrator import _build_active_risk_parameters
+
+        current_set = _build_active_risk_parameters(
+            rule_values={"daily_drawdown_pct": 0.05},
+            regime=Regime.normal,
+        )
+
+        _, prior_provider = _make_repository_providers(current_set)
+        prior_set = await prior_provider(str(prior_snapshot_path))
+
+        # The prior provider must return the snapshot-derived set, NOT a copy
+        # of the current set.
+        from alphamind.portfolio_state.records.capital import RegimeLabel
+
+        assert prior_set.regime_label is RegimeLabel.CRISIS
+        rule_map = {entry.rule_id: entry.value for entry in prior_set.entries}
+        assert rule_map == {"daily_drawdown_pct": 0.005}
+
+    async def test_unknown_snapshot_path_falls_back_to_current(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        tmp_path: Path,
+    ) -> None:
+        """If the snapshot path is missing on disk, fall back to the current set.
+
+        First-ever invocation has no prior; the FK-resolution layer may still
+        end up handing the provider a path that doesn't exist (e.g. archive
+        relocation). Falling back to the current set keeps the snapshot
+        assembler operational instead of raising mid-invocation.
+        """
+        from alphamind.config.models.regimes import Regime
+        from alphamind.scheduler.orchestrator import (
+            _build_active_risk_parameters,
+            _make_repository_providers,
+        )
+
+        current_set = _build_active_risk_parameters(
+            rule_values={"daily_drawdown_pct": 0.05},
+            regime=Regime.normal,
+        )
+
+        _, prior_provider = _make_repository_providers(current_set)
+        missing_path = str(tmp_path / "definitely_not_on_disk.json")
+        result = await prior_provider(missing_path)
+
+        assert result is current_set
 
 
 class TestModeToDecisionLiteral:
