@@ -21,6 +21,7 @@ from alphamind.execution.regt_margin_attribution.config import (
     ShockParameters,
     load_regt_margin_attribution_config,
 )
+from alphamind.execution.regt_margin_attribution.pm_stress import stress_class_group
 from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt_margin
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     "compose_class_groups",
     "compute_regt_margin",
     "load_regt_margin_attribution_config",
+    "stress_class_group",
 ]
