@@ -30,6 +30,10 @@ from alphamind.execution.corporate_actions.types import (
     AlpacaPositionLookup,
     CorporateActionActivity,
 )
+from alphamind.execution.regt_margin_attribution import (
+    compute_attribution,
+    load_regt_margin_attribution_config,
+)
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.activity_log import (
     append_activity_log_entry,
@@ -109,6 +113,7 @@ from alphamind.portfolio_state.records.positions import (
     StrategyPositionDetails,
 )
 from alphamind.portfolio_state.records.theses import ThesisRecordStatus
+from alphamind.risk_guardrails.guardrail_evaluation.types import MarketInputs
 
 # Buy-side directions debit cash (purchase consideration); sell-side credit
 # cash (sale proceeds).
@@ -192,6 +197,7 @@ async def process_unprocessed_fills(
     alpaca_positions: tuple[PositionSnapshot, ...] = (),
     alpaca_account: TradeAccountSnapshot | None = None,
     *,
+    market_inputs: MarketInputs,
     config: StatePersistenceConfig,
 ) -> Phase1Summary:
     """Drain every unprocessed fill + CA activity and integrate them atomically.
@@ -206,6 +212,18 @@ async def process_unprocessed_fills(
     local state to ``alpaca_positions`` / ``alpaca_account`` and emits one
     ``RECONCILIATION_ALERT`` per unexplained delta. Auto-correction is
     deferred to ALP-123.
+
+    Per-fill Reg T margin attribution (story 06a / ALP-428) is wedged into
+    the merged-events loop: for every ``FillRecord`` event, snapshot all
+    positions before integration, integrate the fill, snapshot all
+    positions after, call :func:`compute_attribution`, and write the
+    serialized attribution into the fill row's ``regt_attribution_json``
+    column. Quarantined fills are excluded from the loop and retain
+    ``regt_attribution_json IS NULL`` per parent decision (H). The Reg T
+    attribution config is loaded once at function entry via
+    :func:`load_regt_margin_attribution_config` (rather than threaded
+    through the signature) so existing callers and tests do not need to
+    construct it.
 
     All state mutations and activity-log emissions join the open
     ``handle.session`` transaction; the surrounding ``InvocationContext``
@@ -224,10 +242,17 @@ async def process_unprocessed_fills(
         alpaca_account: Typed Alpaca account snapshot for the cash-reconciliation
             step. Defaults to ``None`` (no cash alert emitted); production
             callers pass ``AccountStateQueries.get_account()``.
+        market_inputs: Market data the per-fill attribution wedge reads —
+            ``underlying_prices`` must cover every open-position underlying
+            (``KeyError`` otherwise); ``iv_provider`` must serve every leg
+            on a class group with options; ``risk_free_rate`` and ``as_of``
+            anchor Black-Scholes pricing in the PM-equivalent path. Required
+            keyword-only.
         config: State-persistence configuration knobs (currently unused; the
             signature is forward-shaped).
     """
     del config  # No knobs consumed at this story; signature is forward-shaped.
+    regt_config = load_regt_margin_attribution_config()
 
     fill_rows = await _read_unprocessed_fill_rows(handle)
     fills = tuple(fill_row_to_record(row) for row in fill_rows)
@@ -244,8 +269,18 @@ async def process_unprocessed_fills(
     fills_processed = 0
     for event in _iter_merged_events(valid_fills, ca_activities):
         if isinstance(event, FillRecord):
+            pre_positions = await _read_all_positions(handle)
             await _integrate_one_fill(handle, event)
-            _mark_processed(rows_by_fill_id[event.fill_id], handle.invocation_id)
+            post_positions = await _read_all_positions(handle)
+            attribution = compute_attribution(
+                pre_fill_positions=pre_positions,
+                post_fill_positions=post_positions,
+                market_inputs=market_inputs,
+                config=regt_config,
+            )
+            row = rows_by_fill_id[event.fill_id]
+            row.regt_attribution_json = attribution.model_dump_json()
+            _mark_processed(row, handle.invocation_id)
             fills_processed += 1
         else:
             await _integrate_one_ca_activity(handle, event, alpaca_lookup)
@@ -295,6 +330,20 @@ def _iter_merged_events(
 # ---------------------------------------------------------------------------
 # Fill-integration core
 # ---------------------------------------------------------------------------
+
+
+async def _read_all_positions(handle: InvocationHandle) -> tuple[PositionRecord, ...]:
+    """Snapshot every ``positions`` row, rehydrated to typed records.
+
+    Used by the per-fill Reg T attribution wedge (story 06a / ALP-428) to
+    capture pre- and post-fill state. Returns positions of every status —
+    the attribution math filters internally to ``Status.OPEN`` so the
+    snapshot stays a thin database read with no domain shaping. Called twice
+    per fill (cheap; no caching).
+    """
+    stmt = select(PositionRow)
+    rows = (await handle.session.execute(stmt)).scalars()
+    return tuple(position_row_to_record(row) for row in rows)
 
 
 async def _read_unprocessed_fill_rows(

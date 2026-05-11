@@ -116,6 +116,11 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    FixtureIvProvider,
+    MarketInputs,
+    RealizedVolEntry,
+)
 from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
@@ -163,6 +168,32 @@ def _make_state_persistence_config() -> StatePersistenceConfig:
             "pip_freeze_snapshot_root": "/tmp/pip-freeze",
             "invocation_provenance_root": "/tmp/provenance",
         }
+    )
+
+
+def _make_market_inputs() -> MarketInputs:
+    """Minimal ``MarketInputs`` covering the underlying these tests use.
+
+    The Reg T attribution wedge (story 06a / ALP-428) requires a price for
+    every open-position underlying and an IV provider that can serve every
+    leg the PM-equivalent path consults. The fixture provider has no surface
+    rows but a realized-vol entry, so any options lookup falls back to the
+    realized-vol scalar — sufficient for these tests, which assert state-
+    persistence behaviour rather than the attribution math itself.
+    """
+    return MarketInputs(
+        underlying_prices={_UNDERLYING: 410.0},
+        risk_free_rate=0.0425,
+        iv_provider=FixtureIvProvider(
+            surface={},
+            realized_vol={
+                _UNDERLYING: RealizedVolEntry(
+                    underlying=_UNDERLYING,
+                    trailing_30d_realized_vol=0.30,
+                )
+            },
+        ),
+        as_of=_NOW,
     )
 
 
@@ -726,7 +757,11 @@ async def test_long_call_entry_fill_transitions_pending_position_to_open(
     await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-opt-1"))
 
     ctx, handle = await _open_handle(factory)
-    summary = await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    summary = await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     assert summary.fills_processed == 1
@@ -817,7 +852,11 @@ async def test_short_put_entry_fill_carries_negative_cost_basis(
     )
 
     ctx, handle = await _open_handle(factory)
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -908,7 +947,11 @@ async def test_add_fill_recomputes_weighted_average_premium(
     )
 
     ctx, handle = await _open_handle(factory)
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -972,7 +1015,11 @@ async def test_partial_close_fill_accumulates_realized_pl_and_emits_position_red
     )
 
     ctx, handle = await _open_handle(factory)
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -1081,7 +1128,11 @@ async def test_full_close_fill_transitions_position_closed_and_dissolves_bracket
     )
 
     ctx, handle = await _open_handle(factory)
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -1157,7 +1208,11 @@ async def test_bracket_activation_for_monitor_managed_legs_carries_empty_order_i
     await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-opt-1"))
 
     ctx, handle = await _open_handle(factory)
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -1272,7 +1327,11 @@ async def test_buy_to_close_short_position_debits_cash_and_realizes_pnl(
     )
 
     ctx, handle = await _open_handle(factory)
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -1373,7 +1432,11 @@ async def test_atomicity_exit_fill_exceeds_open_quantity_rolls_back(
     invocation_id = handle.invocation_id
     try:
         with pytest.raises(ValueError, match="exit fill quantity"):
-            await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+            await process_unprocessed_fills(
+                handle,
+                market_inputs=_make_market_inputs(),
+                config=_make_state_persistence_config(),
+            )
     finally:
         await ctx.__aexit__(ValueError, ValueError("forced"), None)
 

@@ -124,6 +124,10 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    FixtureIvProvider,
+    MarketInputs,
+)
 from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
@@ -169,6 +173,21 @@ def _make_state_persistence_config() -> StatePersistenceConfig:
             "pip_freeze_snapshot_root": "/tmp/pip-freeze",
             "invocation_provenance_root": "/tmp/provenance",
         }
+    )
+
+
+def _make_market_inputs() -> MarketInputs:
+    """Minimal ``MarketInputs`` covering every ticker the file's positions use.
+
+    The wedge in ``process_unprocessed_fills`` (story 06a / ALP-428) requires
+    a price for every open-position underlying; equity-only tests need only
+    a positive scalar per ticker (the IV provider is unused).
+    """
+    return MarketInputs(
+        underlying_prices={"AAPL": 150.0, "MSFT": 400.0, "GOOG": 150.0},
+        risk_free_rate=0.0425,
+        iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
+        as_of=_NOW,
     )
 
 
@@ -725,7 +744,11 @@ async def test_entry_fill_transitions_pending_position_to_open(
     await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-1"))
 
     ctx, handle = await _open_handle(factory)
-    summary = await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    summary = await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     assert summary.fills_processed == 1
@@ -846,7 +869,11 @@ async def test_exit_fill_closes_position_and_resolves_thesis(
     )
 
     ctx, handle = await _open_handle(factory)
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -939,7 +966,11 @@ async def test_multi_fill_ordering_produces_cumulative_state(
     )
 
     ctx, handle = await _open_handle(factory)
-    summary = await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    summary = await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     assert summary.fills_processed == 2
@@ -1007,7 +1038,10 @@ async def test_corporate_action_split_emits_events_and_ledger_anchor(
 
     ctx, handle = await _open_handle(factory)
     summary = await process_unprocessed_fills(
-        handle, config=_make_state_persistence_config(), ca_activities=(ca,)
+        handle,
+        ca_activities=(ca,),
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
     )
     await ctx.__aexit__(None, None, None)
 
@@ -1087,7 +1121,11 @@ async def test_atomicity_exception_rolls_back_fills_and_log(
     invocation_id = handle.invocation_id
     try:
         with pytest.raises(NotImplementedError, match="SHORT entry"):
-            await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+            await process_unprocessed_fills(
+                handle,
+                market_inputs=_make_market_inputs(),
+                config=_make_state_persistence_config(),
+            )
     finally:
         # Funnel the (caught) exception through the context manager so the
         # surrounding transaction rolls back.
@@ -1164,7 +1202,11 @@ async def test_quarantined_fill_excluded_without_aborting_batch(
     await _append_fill(factory, _make_unprocessed_fill(fill_id="fill-good"))
 
     ctx, handle = await _open_handle(factory)
-    summary = await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    summary = await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     assert summary.fills_processed == 1
@@ -1239,7 +1281,11 @@ async def test_buy_fill_decrements_reserved_capital_to_zero(
     )
 
     ctx, handle = await _open_handle(factory)
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -1299,7 +1345,11 @@ async def test_buy_fill_clamps_reserved_capital_decrement_at_zero(
     )
 
     ctx, handle = await _open_handle(factory)
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -1431,7 +1481,11 @@ async def test_short_entry_fill_raises_explicit_not_implemented(
     ctx, handle = await _open_handle(factory)
     try:
         with pytest.raises(NotImplementedError, match="SHORT entry"):
-            await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+            await process_unprocessed_fills(
+                handle,
+                market_inputs=_make_market_inputs(),
+                config=_make_state_persistence_config(),
+            )
     finally:
         await ctx.__aexit__(NotImplementedError, NotImplementedError("forced"), None)
 
@@ -1463,7 +1517,11 @@ async def test_phase1_stamps_completion_timestamp_on_invocation_row(
 
     ctx, handle = await _open_handle(factory)
     invocation_id = handle.invocation_id
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -1542,6 +1600,7 @@ async def test_summary_carries_reconciliation_alert_count(
         # cash mismatch produces a second.
         alpaca_positions=(_alpaca_equity_snapshot(qty=9.0),),
         alpaca_account=_alpaca_account_snapshot(cash=50_000.0),
+        market_inputs=_make_market_inputs(),
         config=_make_state_persistence_config(),
     )
     await ctx.__aexit__(None, None, None)
@@ -1630,6 +1689,7 @@ async def test_fill_before_ca_reflects_pre_action_quantity_at_fill(
         ca_activities=(ca,),
         alpaca_positions=(),
         alpaca_account=None,
+        market_inputs=_make_market_inputs(),
         config=_make_state_persistence_config(),
     )
     await ctx.__aexit__(None, None, None)
@@ -1724,6 +1784,7 @@ async def test_fill_after_ca_reflects_post_action_quantity_at_fill(
         ca_activities=(ca,),
         alpaca_positions=(),
         alpaca_account=None,
+        market_inputs=_make_market_inputs(),
         config=_make_state_persistence_config(),
     )
     await ctx.__aexit__(None, None, None)
