@@ -11,6 +11,7 @@ orchestrator, and Phase 1 wedge modules.
 
 from __future__ import annotations
 
+from alphamind.execution.regt_margin_attribution.aggregates import RegTExcessAggregates
 from alphamind.execution.regt_margin_attribution.class_groups import (
     ClassGroup,
     compose_class_groups,
@@ -31,6 +32,7 @@ from alphamind.execution.regt_margin_attribution.regt_margin import compute_regt
 __all__ = [
     "ClassGroup",
     "IvShockMultipliers",
+    "RegTExcessAggregates",
     "RegTMarginAttributionConfig",
     "ShockParameters",
     "compose_class_groups",

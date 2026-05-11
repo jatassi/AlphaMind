@@ -37,6 +37,7 @@ import logging
 from datetime import datetime
 from typing import cast
 
+from alphamind.execution.regt_margin_attribution.aggregates import RegTExcessAggregates
 from alphamind.portfolio_state import PortfolioStateConfig
 from alphamind.portfolio_state.computations.exposure import (
     SectorResolver,
@@ -443,7 +444,7 @@ async def assemble_snapshot(
     )
 
     # ------------------------------------------------------------------
-    # Step 2 — Fetch raw OMS records (concurrent, 13 calls)
+    # Step 2 — Fetch raw OMS records (concurrent, 14 calls)
     # ------------------------------------------------------------------
     _step2 = await asyncio.gather(
         repository.get_open_positions(),
@@ -463,6 +464,7 @@ async def assemble_snapshot(
             sliding_window_invocations=config.pm_decision_log_sliding_window_invocations
         ),
         repository.get_thesis_quality_aggregates(),
+        repository.get_regt_excess_aggregates(now),
     )
     open_positions_raw = cast(tuple[PositionRecord, ...], _step2[0])
     pending_positions_raw = cast(tuple[PositionRecord, ...], _step2[1])
@@ -477,6 +479,7 @@ async def assemble_snapshot(
     intra_invocation_changelog = cast(tuple[ActivityLogEntry, ...], _step2[10])
     recent_pm_decision_log = cast(tuple[ActivityLogEntry, ...], _step2[11])
     thesis_quality_aggregates = cast(ThesisQualityAggregate, _step2[12])
+    regt_excess_aggregates = cast(RegTExcessAggregates, _step2[13])
 
     # ------------------------------------------------------------------
     # Step 3 — Fetch brackets for known positions
@@ -605,6 +608,11 @@ async def assemble_snapshot(
     # write paths no longer maintain it). The assembler is the single
     # source of truth and computes it here using the same canonical
     # formula as ``true_deployable_capital_usd``.
+    #
+    # The three ``regt_excess_*`` fields land via the Step 2-fetched
+    # ``regt_excess_aggregates`` (computed by summing fill-record metadata
+    # across calendar-day-anchored windows; see
+    # ``regt-margin-attribution.md § Aggregation and delivery``).
     true_deployable = compute_true_deployable_capital_usd(cash_ledger_raw)
     enriched_cash: CashLedger = cash_ledger_raw.model_copy(
         update={
@@ -613,6 +621,9 @@ async def assemble_snapshot(
             ),
             "true_deployable_capital_usd": true_deployable,
             "available_buying_power_usd": true_deployable,
+            "regt_excess_trailing_30d_usd": regt_excess_aggregates.trailing_30d_usd,
+            "regt_excess_trailing_90d_usd": regt_excess_aggregates.trailing_90d_usd,
+            "regt_excess_lifetime_usd": regt_excess_aggregates.lifetime_usd,
         }
     )
 

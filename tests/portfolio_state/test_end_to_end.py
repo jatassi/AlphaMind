@@ -645,6 +645,10 @@ class _RaisingRepositoryReadError:
     async def get_cash_ledger(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
+    async def get_regt_excess_aggregates(self, now: datetime) -> NoReturn:
+        del now
+        raise RepositoryReadError("simulated DB error")
+
     async def get_pending_orders(self) -> NoReturn:
         raise RepositoryReadError("simulated DB error")
 
@@ -698,6 +702,10 @@ class _RaisingRepositoryConsistencyError:
         raise RepositoryConsistencyError("simulated consistency violation")
 
     async def get_cash_ledger(self) -> NoReturn:
+        raise RepositoryConsistencyError("simulated consistency violation")
+
+    async def get_regt_excess_aggregates(self, now: datetime) -> NoReturn:
+        del now
         raise RepositoryConsistencyError("simulated consistency violation")
 
     async def get_pending_orders(self) -> NoReturn:

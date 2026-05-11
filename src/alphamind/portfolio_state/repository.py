@@ -8,6 +8,7 @@ from typing import Annotated, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from alphamind.execution.regt_margin_attribution.aggregates import RegTExcessAggregates
 from alphamind.portfolio_state.records.activity_log import ActivityLogEntry
 from alphamind.portfolio_state.records.capital import (
     ActiveRiskParameterSet,
@@ -154,6 +155,8 @@ class PortfolioStateRepository(Protocol):
     # Category 4 — Capital and capacity
     async def get_cash_ledger(self) -> CashLedger: ...
 
+    async def get_regt_excess_aggregates(self, now: datetime) -> RegTExcessAggregates: ...
+
     async def get_pending_orders(self) -> tuple[OrderRecord, ...]: ...
 
     async def get_risk_budget_consumption(self) -> RiskBudgetConsumption: ...
@@ -204,6 +207,11 @@ class RepositoryFixture(BaseModel):
     active_theses: tuple[ThesisRecord, ...]
     recent_thesis_resolutions: tuple[RecentThesisResolution, ...]
     cash_ledger: CashLedger
+    regt_excess_aggregates: RegTExcessAggregates = RegTExcessAggregates(
+        trailing_30d_usd=0.0,
+        trailing_90d_usd=0.0,
+        lifetime_usd=0.0,
+    )
     pending_orders: tuple[OrderRecord, ...]
     risk_budget: RiskBudgetConsumption
     active_risk_parameters: ActiveRiskParameterSet
@@ -250,6 +258,10 @@ class StubPortfolioStateRepository:
 
     async def get_cash_ledger(self) -> CashLedger:
         return self._fixture.cash_ledger
+
+    async def get_regt_excess_aggregates(self, now: datetime) -> RegTExcessAggregates:
+        del now
+        return self._fixture.regt_excess_aggregates
 
     async def get_pending_orders(self) -> tuple[OrderRecord, ...]:
         return self._fixture.pending_orders
