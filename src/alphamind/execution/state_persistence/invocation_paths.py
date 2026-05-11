@@ -1,12 +1,10 @@
 """Shared filename + directory constants for the per-invocation archive layout.
 
-Both the orchestrator-side row composer (``alphamind.scheduler.invocation``)
+The orchestrator-side row composer (``alphamind.scheduler.invocation``)
 and the distillation-side snapshot writer
-(``alphamind.distillation.calibration_snapshot``) write to the same
-``<archive_root>/invocations/<invocation_id>/data_calibration_state.json``
-target. The original code carried the filename + dirname as private
-constants in both modules, so a rename touched two places. ALP-450 item 4
-lifted them here so the contract lives in one location.
+(``alphamind.distillation.calibration_snapshot``) both write to
+``<archive_root>/invocations/<invocation_id>/data_calibration_state.json``;
+the constants live here so the two writers share one source of truth.
 """
 
 from __future__ import annotations

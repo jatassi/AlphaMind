@@ -233,10 +233,10 @@ async def check_process_lifetime_row(
 
     Returns ``(check_result, process_lifetime_id)``. On success the second
     element is the id the writer minted (threaded forward into the e2e
-    invocation so the same row is reused — ALP-450 item 3). On writer
-    failure the second element is ``None`` and the check is FAIL; the
-    most common cause is ``git rev-parse HEAD`` returning non-zero
-    (missing git binary, detached worktree).
+    invocation so the same row is reused — only one row lands per verify
+    run). On writer failure the second element is ``None`` and the check
+    is FAIL; the most common cause is ``git rev-parse HEAD`` returning
+    non-zero (missing git binary, detached worktree).
     """
     try:
         process_lifetime_id = await record_process_lifetime(
@@ -579,7 +579,7 @@ async def _drive_once_invocation(
 
     ``process_lifetime_id`` is supplied by the upstream smoke-test check
     (``check_process_lifetime_row``) so the e2e invocation reuses that
-    row instead of writing a second one — ALP-450 item 3.
+    row instead of writing a second one.
     """
     from alphamind.config.loaders import read_yaml_file
     from alphamind.scheduler.logging_setup import configure_pipeline_logging
@@ -653,8 +653,7 @@ def _run_once_invocation(
     activity-log / archive checks); on failure it is ``None``.
 
     ``process_lifetime_id`` is reused from the upstream smoke-test row so
-    the e2e invocation writes only the orchestrator's ``invocations`` row
-    (ALP-450 item 3).
+    the e2e invocation writes only the orchestrator's ``invocations`` row.
     """
     try:
         invocation_id = asyncio.run(
@@ -740,7 +739,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # End-to-end --once invocation. The downstream checks depend on this
     # invocation_id existing in the DB / on disk; on FAIL the script bails.
     # The smoke-test row's process_lifetime_id is reused so the e2e
-    # invocation does not write a second row (ALP-450 item 3).
+    # invocation does not write a second row.
     invocation_result, invocation_id = _run_once_invocation(
         archive_root=args.archive_root,
         run_type=RunType(args.run_type),

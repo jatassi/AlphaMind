@@ -125,6 +125,54 @@ async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[Asyn
         await async_engine.dispose()
 
 
+@pytest.fixture
+async def async_factory_with_singletons(
+    tmp_path: Path,
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """Same as ``async_factory`` plus seeded ``cash_ledger`` + ``drawdown_state``.
+
+    Production ``process_unprocessed_fills`` seeds the singletons as a side
+    effect of fill integration. Tests that drive the real Phase 1 writer
+    with zero fills (no broker) need the singletons pre-seeded so the
+    post-Phase-1 snapshot read sees a satisfied repository.
+    """
+    db_path = tmp_path / "alphamind.db"
+
+    import alphamind.execution.state_persistence.tables  # noqa: F401
+
+    sync_engine = make_engine(str(db_path))
+    try:
+        Base.metadata.create_all(sync_engine)
+        with make_session_factory(sync_engine)() as sess:
+            sess.add(process_lifetime_record_to_row(_make_process_lifetime_record()))
+            cash, drawdown = _singleton_records()
+            from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
+                cash_ledger_record_to_row,
+            )
+            from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
+                drawdown_state_record_to_row,
+            )
+
+            sess.add(cash_ledger_record_to_row(cash, last_updated_at=_NOW))
+            sess.add(drawdown_state_record_to_row(drawdown, last_updated_at=_NOW))
+            sess.commit()
+    finally:
+        sync_engine.dispose()
+
+    async_engine: AsyncEngine = make_async_engine(str(db_path))
+    factory = make_async_session_factory(async_engine)
+    try:
+        yield factory
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.fixture
+def db_path(tmp_path: Path) -> Path:
+    """Return the sqlite file path the ``async_factory_*`` fixtures use."""
+    return tmp_path / "alphamind.db"
+
+
 def _make_venue_config() -> VenueConfig:
     creds = AlpacaCredentials(
         rest_url="https://paper-api.alpaca.markets",
@@ -887,7 +935,7 @@ class TestLoadPriorActiveRiskParameters:
     prior invocation's ``resolved_config_snapshot_path``; the orchestrator's
     wiring needs to parse that file and return the prior set so the snapshot
     assembler compares Phase 1 state against the actual prior limits, not the
-    current ones (ALP-450 item 1).
+    current ones.
     """
 
     def test_reads_rule_values_and_regime_from_snapshot(self, tmp_path: Path) -> None:
@@ -1001,6 +1049,156 @@ class TestPriorProviderRehydratesFromPriorInvocation:
         result = await prior_provider(missing_path)
 
         assert result is current_set
+
+    async def test_corrupt_snapshot_propagates_error(self, tmp_path: Path) -> None:
+        """A corrupt prior snapshot propagates JSON / schema errors.
+
+        Defensive fallback would mask a contract violation by substituting
+        an unrelated set; propagation aborts the invocation cleanly so the
+        operator sees the cause. The ``FileNotFoundError`` fallback exists
+        only for the legitimate "no prior" case, not for corrupted data.
+        """
+        from alphamind.config.models.regimes import Regime
+        from alphamind.scheduler.orchestrator import (
+            _build_active_risk_parameters,
+            _make_repository_providers,
+        )
+
+        corrupt_path = tmp_path / "corrupt.json"
+        corrupt_path.write_text("{not valid json")
+
+        current_set = _build_active_risk_parameters(
+            rule_values={"daily_drawdown_pct": 0.05},
+            regime=Regime.normal,
+        )
+        _, prior_provider = _make_repository_providers(current_set)
+
+        with pytest.raises(json.JSONDecodeError):
+            await prior_provider(str(corrupt_path))
+
+
+def _stub_only_llm_and_broker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stub LLM + broker callees; leave Phase 1/2 writers in production form.
+
+    Differs from :func:`_patch_no_op_pipeline` by NOT stubbing
+    ``process_unprocessed_fills`` and ``dispatch_phase2`` — those are the
+    DB writers the verify-script-style checks expect to land their rows
+    and activity-log entries in production form.
+    """
+    from alphamind.scheduler import orchestrator as module
+
+    async def _gather_stub(**_kw: Any) -> Any:
+        return _make_phase1_inputs(staleness_flag=False)
+
+    async def _analysis_stub(**_kw: Any) -> Any:
+        return _make_analysis_result()
+
+    async def _decision_stub(**_kw: Any) -> Any:
+        return _make_decision_result()
+
+    monkeypatch.setattr(module, "gather_phase1_inputs", _gather_stub)
+    monkeypatch.setattr(module, "run_analysis_pipeline", _analysis_stub)
+    monkeypatch.setattr(module, "run_decision_pipeline", _decision_stub)
+
+
+class TestRunInvocationProductionPathArtifacts:
+    """Pin the verify-script row + activity-log checks against a unit invocation.
+
+    The other test classes in this file stub every heavy callee
+    (``gather_phase1_inputs``, ``process_unprocessed_fills``,
+    ``run_analysis_pipeline``, ``run_decision_pipeline``, ``dispatch_phase2``)
+    so the orchestrator wiring is exercised without hitting the broker or
+    LLM. That coverage missed two blockers caught in /review on PR #44
+    (``snapshot_metadata_json`` column population, baseline ``activity_log``
+    emission) because both were expected from the orchestrator's own glue
+    code — not from the stubbed inner stages.
+
+    This class re-runs the orchestrator with the LLM + broker stages
+    stubbed but ``process_unprocessed_fills`` / ``dispatch_phase2`` in
+    production form, then runs the verify script's
+    ``check_invocation_row_population`` and ``check_activity_log`` helpers
+    against the resulting DB state. Regressions to the row-population path
+    or the baseline activity-log emission surface at test time instead of
+    verify-script time.
+    """
+
+    async def test_check_invocation_row_population_passes(
+        self,
+        async_factory_with_singletons: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        db_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """End-to-end run → ``check_invocation_row_population`` PASS."""
+        from alphamind.scheduler.orchestrator import run_invocation
+        from alphamind.scripts.verify_pipeline_scheduler import (
+            check_invocation_row_population,
+        )
+
+        _stub_only_llm_and_broker(monkeypatch)
+        summary = await run_invocation(
+            context=_make_context(
+                session_factory=async_factory_with_singletons,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="integration test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        sync_engine = make_engine(str(db_path))
+        try:
+            with sync_engine.connect() as conn:
+                result = check_invocation_row_population(conn, invocation_id=summary.invocation_id)
+        finally:
+            sync_engine.dispose()
+        assert result.passed, result.message
+
+    async def test_check_activity_log_passes(
+        self,
+        async_factory_with_singletons: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        db_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """End-to-end run → ``check_activity_log`` PASS.
+
+        With no fills and no commands, the orchestrator's baseline
+        ``DISTILLATION_CONFIG_CHANGE`` emission is the only entry and is
+        sufficient to satisfy the verify-script's "at least one entry"
+        guarantee.
+        """
+        from alphamind.scheduler.orchestrator import run_invocation
+        from alphamind.scripts.verify_pipeline_scheduler import check_activity_log
+
+        _stub_only_llm_and_broker(monkeypatch)
+        summary = await run_invocation(
+            context=_make_context(
+                session_factory=async_factory_with_singletons,
+                env_path=env_path,
+                archive_root=archive_root,
+            ),
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="integration test",
+            firing_run_type=RunType.market_hours_rolling,
+            now=_NOW,
+        )
+
+        sync_engine = make_engine(str(db_path))
+        try:
+            with sync_engine.connect() as conn:
+                result = check_activity_log(conn, invocation_id=summary.invocation_id)
+        finally:
+            sync_engine.dispose()
+        assert result.passed, result.message
 
 
 class TestModeToDecisionLiteral:

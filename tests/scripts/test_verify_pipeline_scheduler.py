@@ -553,11 +553,11 @@ class TestCheckProcessLifetimeRow:
 class TestCheckProcessLifetimeRowReturnsId:
     """``check_process_lifetime_row`` exposes the row id it wrote.
 
-    ALP-450 item 3: the verify script's smoke-test write (this function)
-    and the e2e invocation both call ``record_process_lifetime``, leaving
-    the smoke-test row orphaned. The fix threads the smoke-test row's
-    id forward so the e2e invocation reuses it; that requires exposing
-    the id on the check's return value.
+    The verify script's smoke-test write (this function) and the e2e
+    invocation both call ``record_process_lifetime``, leaving the smoke-test
+    row orphaned. The fix threads the smoke-test row's id forward so the
+    e2e invocation reuses it; that requires exposing the id on the check's
+    return value.
     """
 
     @pytest.mark.asyncio
@@ -606,9 +606,9 @@ class TestCheckProcessLifetimeRowReturnsId:
 class TestDriveOnceInvocationReusesProcessLifetimeId:
     """``_drive_once_invocation`` reuses the smoke-test row's id.
 
-    ALP-450 item 3: with the smoke-test row id threaded forward,
-    ``_drive_once_invocation`` must NOT call ``record_process_lifetime``
-    a second time — exactly one row lands per verify run.
+    With the smoke-test row id threaded forward, ``_drive_once_invocation``
+    must NOT call ``record_process_lifetime`` a second time — exactly one
+    row lands per verify run.
     """
 
     @pytest.mark.asyncio

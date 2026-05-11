@@ -1,17 +1,10 @@
-"""Per-invocation context bundle for ``run_invocation`` (ALP-450 item 6).
+"""Per-invocation context bundle for ``run_invocation``.
 
-Bundles the seven process-stable inputs that previously threaded
-individually through ``run_pipeline_scheduler_task`` → ``register_pipeline_jobs``
-→ ``_make_scheduled_job`` → ``run_invocation`` (and symmetrically through
-``run_emergency_receiver_task`` → ``_process_one_entry`` → ``run_invocation``).
-
-Bundling them into one frozen dataclass means adding an eighth threaded
-value (e.g. a new env-derived path) touches one location instead of three
-layers in two paths.
-
-The per-call dimensions — ``trigger_type``, ``trigger_source``,
-``trigger_reason``, ``firing_run_type``, ``now`` — stay outside the
-context because they vary on every call.
+Bundles the process-stable inputs threaded through the supervisor task
+layers down to ``run_invocation``. The per-call dimensions
+(``trigger_type``, ``trigger_source``, ``trigger_reason``,
+``firing_run_type``, ``now``) stay outside the context because they
+vary on every call.
 """
 
 from __future__ import annotations
@@ -29,7 +22,7 @@ __all__ = ["RunInvocationContext"]
 
 @dataclass(frozen=True, slots=True)
 class RunInvocationContext:
-    """Frozen bundle of the seven process-stable inputs ``run_invocation`` reads."""
+    """Frozen bundle of the process-stable inputs ``run_invocation`` reads."""
 
     session_factory: async_sessionmaker[AsyncSession]
     process_lifetime_id: str

@@ -604,8 +604,7 @@ def _load_prior_active_risk_parameters(snapshot_path: str) -> ActiveRiskParamete
     extracts the ``rule_values`` map and ``regime_label`` string the prior
     invocation composed, and re-wraps them via :func:`_build_active_risk_parameters`
     so the snapshot assembler reads the same values the decision pipeline
-    consumed at the time the prior invocation wrote that snapshot (ALP-450
-    item 1).
+    consumed at the time the prior invocation wrote that snapshot.
     """
     payload = json.loads(Path(snapshot_path).read_text())
     return _build_active_risk_parameters(

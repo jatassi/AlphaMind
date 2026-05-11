@@ -198,16 +198,12 @@ async def run_pipeline_scheduler_task(
     Designed to be registered as a :class:`PipelineSupervisor` task. The
     supervisor calls this coroutine with the per-process
     :class:`PipelineSession`; ``context`` is closed over by the caller via
-    ``functools.partial`` in ``__main__`` and must carry the same
-    ``process_lifetime_id`` as ``session``.
+    ``functools.partial`` in ``__main__``.
     """
-    if session.process_lifetime_id != context.process_lifetime_id:
-        msg = (
-            f"session.process_lifetime_id={session.process_lifetime_id!r} disagrees with "
-            f"context.process_lifetime_id={context.process_lifetime_id!r}; the supervisor "
-            "and the orchestrator-context builder must agree on the per-process id"
-        )
-        raise ValueError(msg)
+    log.info(
+        "pipeline scheduler task start: process_lifetime_id=%s",
+        session.process_lifetime_id,
+    )
     scheduler = AsyncIOScheduler(timezone=scheduler_config.timezone)
     register_pipeline_jobs(
         scheduler=scheduler,
