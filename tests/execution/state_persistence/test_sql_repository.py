@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind.execution.regt_margin_attribution import RegTExcessAggregates
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.activity_log import (
     activity_log_entry_to_row,
@@ -38,6 +39,9 @@ from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
 from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
     drawdown_state_record_to_row,
 )
+from alphamind.execution.state_persistence.tables.fill_records_codec import (
+    record_to_row as fill_record_to_row,
+)
 from alphamind.execution.state_persistence.tables.orders_codec import (
     record_to_row as order_record_to_row,
 )
@@ -46,6 +50,11 @@ from alphamind.execution.state_persistence.tables.positions_codec import (
 )
 from alphamind.execution.state_persistence.tables.theses_codec import (
     record_to_rows as thesis_record_to_rows,
+)
+from alphamind.execution.state_persistence.write_paths.records import (
+    FillProcessingStatus,
+    FillRecord,
+    RegTMarginAttribution,
 )
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import (
@@ -623,6 +632,91 @@ async def _seed_drawdown_state(
         await sess.commit()
 
 
+def _make_regt_attribution(regt_excess_over_pm: float) -> RegTMarginAttribution:
+    """RegT attribution payload exercising only ``regt_excess_over_pm`` (the summed field)."""
+    return RegTMarginAttribution(
+        regt_margin_before=0.0,
+        regt_margin_after=0.0,
+        regt_marginal_consumption=0.0,
+        pm_equivalent_before=0.0,
+        pm_equivalent_after=0.0,
+        pm_marginal_consumption=0.0,
+        regt_excess_over_pm=regt_excess_over_pm,
+        pm_model_version="ibkr_mirror_v1_2025Q3",
+    )
+
+
+def _make_fill_record_for_aggregator(
+    fill_id: str,
+    *,
+    order_id: str = "ord-1",
+    fill_timestamp: datetime,
+    fill_price: float = 150.0,
+    processed: bool = True,
+    regt_attribution: RegTMarginAttribution | None = None,
+) -> FillRecord:
+    """Build a fill record exercising only the columns the aggregator query reads.
+
+    ``processed=False`` builds an ``unprocessed`` row (no ``processing_*``
+    metadata) so the aggregator's defense-in-depth status filter has
+    something to exclude.
+    """
+    if processed:
+        status = FillProcessingStatus.PROCESSED
+        processing_invocation_id: str | None = _INV_ID
+        processing_timestamp: datetime | None = fill_timestamp
+    else:
+        status = FillProcessingStatus.UNPROCESSED
+        processing_invocation_id = None
+        processing_timestamp = None
+    return FillRecord(
+        fill_id=fill_id,
+        order_id=order_id,
+        fill_timestamp=fill_timestamp,
+        fill_price=fill_price,
+        fill_quantity=1.0,
+        remaining_quantity_after=0.0,
+        order_status_after=OrderStatus.FILLED,
+        slippage_usd=0.0,
+        fees_usd=0.0,
+        execution_venue=None,
+        gateway_reference=None,
+        persistence_timestamp=fill_timestamp,
+        processing_status=status,
+        processing_invocation_id=processing_invocation_id,
+        processing_timestamp=processing_timestamp,
+        regt_attribution=regt_attribution,
+        live_execution_estimate=None,
+    )
+
+
+async def _seed_fill_records(
+    factory: async_sessionmaker[AsyncSession],
+    *fills: FillRecord,
+) -> None:
+    """Seed fills referencing ord-1 (which the helper auto-creates as a stub)."""
+    from tests.execution.state_persistence._fk_substrate import (
+        stub_bracket_row,
+        stub_order_row,
+        stub_position_row,
+    )
+
+    if not fills:
+        return
+    order_ids = {f.order_id for f in fills}
+    async with factory() as sess:
+        for oid in sorted(order_ids):
+            stub_pos_id = f"stub-pos-{oid}"
+            stub_brk_id = f"stub-brk-{oid}"
+            sess.add(stub_position_row(stub_pos_id))
+            sess.add(stub_order_row(oid, stub_brk_id))
+            sess.add(stub_bracket_row(stub_brk_id, stub_pos_id, oid))
+        await sess.flush()
+        for fill in fills:
+            sess.add(fill_record_to_row(fill))
+        await sess.commit()
+
+
 async def _seed_activity_log_entry(
     factory: async_sessionmaker[AsyncSession],
     entry: ActivityLogEntry,
@@ -934,6 +1028,151 @@ async def test_get_cash_ledger_missing_singleton_raises_consistency_error(
     repo = await _build_repo(factory)
     with pytest.raises(RepositoryConsistencyError):
         await repo.get_cash_ledger()
+
+
+async def test_get_regt_excess_aggregates_rejects_naive_datetime(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """``get_regt_excess_aggregates`` raises ``ValueError`` on a naive ``now``.
+
+    Naive datetimes produce timezone-implicit ISO strings whose lex order
+    against stored UTC timestamps would silently misclassify rows at the
+    trailing-window cutoffs; the guard fires before any query runs.
+    """
+    _, factory = db
+    await _seed_minimal_invocation(factory)
+
+    repo = await _build_repo(factory)
+    naive_now = datetime(2026, 5, 8, 12, 0, 0)  # noqa: DTZ001 — deliberate; exercises the guard
+    with pytest.raises(ValueError, match="timezone-aware"):
+        await repo.get_regt_excess_aggregates(naive_now)
+
+
+async def test_get_regt_excess_aggregates_empty_table_returns_zeros(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    _, factory = db
+    await _seed_minimal_invocation(factory)
+
+    repo = await _build_repo(factory)
+    result = await repo.get_regt_excess_aggregates(_NOW)
+
+    assert result == RegTExcessAggregates(
+        trailing_30d_usd=0.0,
+        trailing_90d_usd=0.0,
+        lifetime_usd=0.0,
+    )
+
+
+async def test_get_regt_excess_aggregates_null_attribution_contributes_zero(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    _, factory = db
+    await _seed_minimal_invocation(factory)
+    fill_no_attribution = _make_fill_record_for_aggregator(
+        "fill-no-attr",
+        fill_timestamp=_NOW - timedelta(days=1),
+        regt_attribution=None,
+    )
+    await _seed_fill_records(factory, fill_no_attribution)
+
+    repo = await _build_repo(factory)
+    result = await repo.get_regt_excess_aggregates(_NOW)
+
+    assert result == RegTExcessAggregates(
+        trailing_30d_usd=0.0,
+        trailing_90d_usd=0.0,
+        lifetime_usd=0.0,
+    )
+
+
+async def test_get_regt_excess_aggregates_unprocessed_fill_excluded(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    _, factory = db
+    await _seed_minimal_invocation(factory)
+    # Defense-in-depth: production write paths never produce this state, but
+    # the aggregator query must filter on processing_status='processed' so
+    # that an unprocessed-with-attribution row contributes nothing.
+    unprocessed = _make_fill_record_for_aggregator(
+        "fill-unprocessed",
+        fill_timestamp=_NOW - timedelta(days=1),
+        processed=False,
+        regt_attribution=_make_regt_attribution(regt_excess_over_pm=42.0),
+    )
+    await _seed_fill_records(factory, unprocessed)
+
+    repo = await _build_repo(factory)
+    result = await repo.get_regt_excess_aggregates(_NOW)
+
+    assert result == RegTExcessAggregates(
+        trailing_30d_usd=0.0,
+        trailing_90d_usd=0.0,
+        lifetime_usd=0.0,
+    )
+
+
+async def test_get_regt_excess_aggregates_trailing_windows_calendar_days(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    _, factory = db
+    await _seed_minimal_invocation(factory)
+    # Distinct fill_price values keep the dedupe constraint satisfied.
+    fill_recent = _make_fill_record_for_aggregator(
+        "fill-1d",
+        fill_timestamp=_NOW - timedelta(days=1),
+        fill_price=150.01,
+        regt_attribution=_make_regt_attribution(regt_excess_over_pm=10.0),
+    )
+    fill_outside_30 = _make_fill_record_for_aggregator(
+        "fill-31d",
+        fill_timestamp=_NOW - timedelta(days=31),
+        fill_price=150.02,
+        regt_attribution=_make_regt_attribution(regt_excess_over_pm=20.0),
+    )
+    fill_outside_90 = _make_fill_record_for_aggregator(
+        "fill-91d",
+        fill_timestamp=_NOW - timedelta(days=91),
+        fill_price=150.03,
+        regt_attribution=_make_regt_attribution(regt_excess_over_pm=30.0),
+    )
+    await _seed_fill_records(factory, fill_recent, fill_outside_30, fill_outside_90)
+
+    repo = await _build_repo(factory)
+    result = await repo.get_regt_excess_aggregates(_NOW)
+
+    # 30d: only fill-1d.
+    # 90d: fill-1d + fill-31d.
+    # Lifetime: all three.
+    assert result.trailing_30d_usd == pytest.approx(10.0, abs=1e-9)
+    assert result.trailing_90d_usd == pytest.approx(30.0, abs=1e-9)
+    assert result.lifetime_usd == pytest.approx(60.0, abs=1e-9)
+
+
+async def test_get_regt_excess_aggregates_sums_regt_excess_over_pm(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    _, factory = db
+    await _seed_minimal_invocation(factory)
+    seeded_excesses = [3.5, 7.25, 11.125]
+    fills = tuple(
+        _make_fill_record_for_aggregator(
+            f"fill-sum-{i}",
+            fill_timestamp=_NOW - timedelta(days=1),
+            fill_price=150.0 + 0.01 * i,
+            regt_attribution=_make_regt_attribution(regt_excess_over_pm=excess),
+        )
+        for i, excess in enumerate(seeded_excesses)
+    )
+    await _seed_fill_records(factory, *fills)
+
+    repo = await _build_repo(factory)
+    result = await repo.get_regt_excess_aggregates(_NOW)
+
+    expected_sum = sum(seeded_excesses)
+    assert result.trailing_30d_usd == pytest.approx(expected_sum, abs=1e-9)
+    assert result.trailing_90d_usd == pytest.approx(expected_sum, abs=1e-9)
+    assert result.lifetime_usd == pytest.approx(expected_sum, abs=1e-9)
 
 
 async def test_get_pending_orders_returns_pending_and_partially_filled(

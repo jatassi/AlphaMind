@@ -124,6 +124,11 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    FixtureIvProvider,
+    MarketInputs,
+    RealizedVolEntry,
+)
 from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
@@ -171,6 +176,31 @@ def _make_state_persistence_config() -> StatePersistenceConfig:
             "pip_freeze_snapshot_root": "/tmp/pip-freeze",
             "invocation_provenance_root": "/tmp/provenance",
         }
+    )
+
+
+def _make_market_inputs() -> MarketInputs:
+    """Minimal ``MarketInputs`` covering the underlying these tests use.
+
+    The Reg T attribution wedge (story 06a / ALP-428) requires a price for
+    every open-position underlying and an IV provider that can serve every
+    leg the PM-equivalent path consults. Strategy positions iterate every
+    leg through Black-Scholes; the realized-vol fallback handles arbitrary
+    strikes without requiring per-test surface seeding.
+    """
+    return MarketInputs(
+        underlying_prices={_UNDERLYING: 410.0},
+        risk_free_rate=0.0425,
+        iv_provider=FixtureIvProvider(
+            surface={},
+            realized_vol={
+                _UNDERLYING: RealizedVolEntry(
+                    underlying=_UNDERLYING,
+                    trailing_30d_realized_vol=0.30,
+                )
+            },
+        ),
+        as_of=_NOW,
     )
 
 
@@ -980,7 +1010,11 @@ async def test_all_legs_filled_atomic_open_with_signed_net_cost_basis(
         )
 
     ctx, handle = await _open_handle(factory)
-    summary = await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    summary = await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     assert summary.fills_processed == 4
@@ -1111,7 +1145,11 @@ async def test_long_call_spread_has_positive_net_debit(
         )
 
     ctx, handle = await _open_handle(factory)
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -1203,7 +1241,11 @@ async def test_short_put_spread_has_negative_net_credit(
         )
 
     ctx, handle = await _open_handle(factory)
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -1268,7 +1310,11 @@ async def test_staggered_legs_only_open_at_last_filled_event(
         )
 
     ctx, handle = await _open_handle(factory)
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -1308,7 +1354,11 @@ async def test_staggered_legs_only_open_at_last_filled_event(
 
     ctx2, handle2 = await _open_handle(factory, invocation_id_suffix="-phase1-t2")
     handle2_invocation_id = handle2.invocation_id
-    await process_unprocessed_fills(handle2, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle2,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx2.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -1410,7 +1460,11 @@ async def test_partial_leg_fill_position_stays_pending(
 
     ctx, handle = await _open_handle(factory)
     invocation_id = handle.invocation_id
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -1483,7 +1537,11 @@ async def test_cancel_mid_fill_writes_bracket_incomplete_warning(
 
     ctx, handle = await _open_handle(factory)
     invocation_id = handle.invocation_id
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -1628,7 +1686,11 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
         )
 
     ctx, handle = await _open_handle(factory)
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -1771,7 +1833,11 @@ async def test_strategy_add_recomputes_average_cost_basis(
         )
 
     ctx, handle = await _open_handle(factory)
-    await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+    await process_unprocessed_fills(
+        handle,
+        market_inputs=_make_market_inputs(),
+        config=_make_state_persistence_config(),
+    )
     await ctx.__aexit__(None, None, None)
 
     async with factory() as sess:
@@ -1863,7 +1929,11 @@ async def test_strategy_fill_failure_rolls_back_all_state(
     invocation_id = handle.invocation_id
     try:
         with pytest.raises(ValueError, match="exit fill quantity"):
-            await process_unprocessed_fills(handle, config=_make_state_persistence_config())
+            await process_unprocessed_fills(
+                handle,
+                market_inputs=_make_market_inputs(),
+                config=_make_state_persistence_config(),
+            )
     finally:
         await ctx.__aexit__(ValueError, ValueError("forced"), None)
 

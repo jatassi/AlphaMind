@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
+from alphamind.execution.regt_margin_attribution import RegTExcessAggregates
 from alphamind.portfolio_state import PortfolioStateConfig
 from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.freshness import AssembledSnapshot, SnapshotFreshness
@@ -526,6 +527,7 @@ def _make_fixture(
     prior_invocation_context: PriorInvocationContext | None = None,
     active_risk_parameters: ActiveRiskParameterSet | None = None,
     cash_ledger: CashLedger | None = None,
+    regt_excess_aggregates: RegTExcessAggregates | None = None,
 ) -> RepositoryFixture:
     return RepositoryFixture.model_validate(
         {
@@ -547,6 +549,12 @@ def _make_fixture(
             "current_invocation_metadata": current_invocation_metadata
             or _make_invocation_metadata(),
             "prior_invocation_context": prior_invocation_context or _make_prior_context(),
+            "regt_excess_aggregates": regt_excess_aggregates
+            or RegTExcessAggregates(
+                trailing_30d_usd=0.0,
+                trailing_90d_usd=0.0,
+                lifetime_usd=0.0,
+            ),
         }
     )
 
@@ -601,6 +609,10 @@ class _FailingRepository:
         raise RepositoryReadError("simulated read failure")
 
     async def get_cash_ledger(self) -> CashLedger:
+        raise RepositoryReadError("simulated read failure")
+
+    async def get_regt_excess_aggregates(self, now: datetime) -> RegTExcessAggregates:
+        del now
         raise RepositoryReadError("simulated read failure")
 
     async def get_pending_orders(self) -> tuple[OrderRecord, ...]:
@@ -1478,3 +1490,74 @@ def test_assembler_recomputes_available_buying_power_from_canonical_formula() ->
     assert enriched.available_buying_power_usd == pytest.approx(82_000.0)
     # The canonical formula matches true_deployable_capital_usd by construction.
     assert enriched.available_buying_power_usd == enriched.true_deployable_capital_usd
+
+
+def test_step_11_populates_regt_excess_trailing_fields_from_aggregates() -> None:
+    """Step 11 must overwrite the ``regt_excess_*`` placeholders on the
+    persisted ``CashLedger`` row with the values returned by the repository's
+    ``get_regt_excess_aggregates(now)`` call."""
+    aggregates = RegTExcessAggregates(
+        trailing_30d_usd=12.5,
+        trailing_90d_usd=33.75,
+        lifetime_usd=125.0,
+    )
+    fixture = _make_fixture(regt_excess_aggregates=aggregates)
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider({}, _NOW)
+
+    assembled = _run(
+        assemble_snapshot(
+            repository=repo,
+            price_provider=provider,
+            sector_resolver=_null_sector_resolver,
+            config=_make_config(),
+            now=_NOW,
+        )
+    )
+    enriched = assembled.snapshot.cash_ledger
+    assert enriched.regt_excess_trailing_30d_usd == pytest.approx(12.5)
+    assert enriched.regt_excess_trailing_90d_usd == pytest.approx(33.75)
+    assert enriched.regt_excess_lifetime_usd == pytest.approx(125.0)
+
+
+def test_step_11_zero_aggregates_overwrite_persisted_placeholders() -> None:
+    """Step 11 must surface aggregator zeros — not leak persisted placeholders.
+
+    Seeds the ``cash_ledger`` row with deliberately non-zero placeholders so
+    that a no-op refactor (Step 11 forgetting to populate the three regt
+    fields from the aggregator) would surface those placeholders unchanged
+    and the test would fail.
+    """
+    cash = CashLedger.model_validate(
+        {
+            "current_cash_usd": 10_000.0,
+            "settled_cash_usd": 10_000.0,
+            "reserved_capital_usd": 0.0,
+            "available_buying_power_usd": 10_000.0,
+            "margin_held_usd": 0.0,
+            "unsettled_proceeds": (),
+            "cash_pct_of_portfolio": 0.0,
+            "true_deployable_capital_usd": 0.0,
+            # Non-zero stale placeholders Step 11 must overwrite.
+            "regt_excess_trailing_30d_usd": 999.0,
+            "regt_excess_trailing_90d_usd": 999.0,
+            "regt_excess_lifetime_usd": 999.0,
+        }
+    )
+    fixture = _make_fixture(cash_ledger=cash)  # default fixture supplies zero aggregates
+    repo = StubPortfolioStateRepository(fixture)
+    provider = StubCurrentPriceProvider({}, _NOW)
+
+    assembled = _run(
+        assemble_snapshot(
+            repository=repo,
+            price_provider=provider,
+            sector_resolver=_null_sector_resolver,
+            config=_make_config(),
+            now=_NOW,
+        )
+    )
+    enriched = assembled.snapshot.cash_ledger
+    assert enriched.regt_excess_trailing_30d_usd == 0.0
+    assert enriched.regt_excess_trailing_90d_usd == 0.0
+    assert enriched.regt_excess_lifetime_usd == 0.0

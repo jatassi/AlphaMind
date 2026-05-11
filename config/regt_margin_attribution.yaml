@@ -1,0 +1,100 @@
+# Reg T Margin Attribution — OCC TIMS / FINRA 4210 baseline v1 config snapshot
+#
+# Methodology source:
+#   OCC TIMS RBH/CPM User Guide v1.13 (November 2021), page 1, paragraph 4.
+#   This is the customer-portfolio-margin methodology FINRA Rule 4210(g) points
+#   to, and is the public, citeable, broker-neutral reference model the
+#   AlphaMind Reg T attribution module uses to compute the PM-equivalent
+#   margin against which Reg T's per-leg consumption is compared.
+#
+# Source URL (Wayback snapshot):
+#   https://web.archive.org/web/20260129221213/https://www.theocc.com/getmedia/cc2a75c2-294e-4667-a94f-7470ddc78fe8/RBH-CPM_UserGuide.pdf
+# Access date: 2026-05-10.
+#
+# Verbatim tier percentages (OCC TIMS RBH/CPM User Guide v1.13, p. 1, ¶ 4):
+#   * High-capitalization diversified indexes: +6% / -8% (ASYMMETRIC).
+#   * Non-high-capitalization diversified indexes: ±10%.
+#   * Narrow-based indexes: ±15%.
+#   * Equities: ±15%.
+#
+# Asymmetry handling (high-cap diversified +6/-8):
+#   The implementation schema (ShockParameters.per_symbol_overrides) is a
+#   single symmetric float per symbol. Rather than expand the schema to
+#   support asymmetric (up/down) shocks, we apply the larger absolute
+#   magnitude (0.08 = -8%) symmetrically. This is conservatively wrong:
+#   it OVERSTATES the PM-equivalent margin (a 8% up-shock is harsher than
+#   the true 6%), which in turn UNDERSTATES regt_excess_over_pm — the safe
+#   direction for a broker-switch signal (a smaller, harder-to-justify
+#   excess is preferable to an inflated one). If/when the schema gains
+#   asymmetric support, switch to native +0.06/-0.08 for these symbols.
+#
+# House-conservatism layer:
+#   The asset-class defaults (`high_cap_equity: 0.15`, `small_cap_equity: 0.20`,
+#   `unmapped_default: 0.20`) sit ABOVE OCC's 15% equity baseline. They apply
+#   only when a symbol is not in `per_symbol_overrides` and its class is
+#   ambiguous from the ticker alone; raising the floor in those cases
+#   biases the PM number upward (regt_excess_over_pm downward — same safe
+#   direction as above).
+#
+# Operator refresh contract:
+#   When OCC publishes a revision of the RBH/CPM User Guide, re-read § 4 of
+#   page 1, refresh any changed tier percentages above, bump `pm_model_version`
+#   to a new operator-chosen string (so historical aggregates are filterable
+#   across the methodology change), and re-run
+#   `scripts/verify_regt_margin_attribution.py`. The PDF lives behind a CDN
+#   that may rotate; if the live URL 404s, fetch the Wayback snapshot above
+#   and record the new access date in this comment block.
+
+pm_model_version: "occ_tims_v1_2026Q2"
+
+# Annualised risk-free rate reference.
+# Source: US 3-month T-bill yield as of 2026-05-10 (design-doc reference value).
+# Update alongside pm_model_version on each operator-driven snapshot refresh.
+risk_free_rate_annual: 0.0425
+
+iv_shock:
+  # IV rises on a down-shock (multiplier >= 1.0); falls or holds on an up-shock (multiplier <= 1.0).
+  # Values per parent ALP-126 pre-resolved configuration decision (B).
+  worst_down_multiplier: 1.20
+  worst_up_multiplier: 0.95
+
+shock_parameters:
+  # Asset-class defaults (house-conservatism layer above OCC's 15% equity baseline,
+  # applied only when symbol classification is ambiguous from ticker alone).
+  # All values in decimal form: 0.15 = ±15%, 0.20 = ±20%.
+  high_cap_equity: 0.15    # ±15% — OCC equities baseline
+  small_cap_equity: 0.20   # ±20% — house-conservatism above OCC's 15% equity baseline
+  unmapped_default: 0.20   # ±20% — house-conservatism fallback for unmapped symbols
+
+  per_symbol_overrides:
+    # Mapped per OCC TIMS RBH/CPM User Guide v1.13, page 1, paragraph 4.
+    # High-capitalization diversified indexes — verbatim +6/-8 asymmetric,
+    # applied symmetrically at 0.08 (the larger absolute magnitude) per the
+    # asymmetry-handling note in the header block above.
+    SPY:    0.08    # high-cap diversified — S&P 500
+    QQQ:    0.08    # high-cap diversified — NDX
+    DIA:    0.08    # high-cap diversified — DJX
+    VTI:    0.08    # high-cap diversified — broad US
+    VOO:    0.08    # high-cap diversified — S&P 500
+    IWM:    0.10    # non-high-cap diversified — Russell 2000
+    XLF:    0.15    # narrow-based index — financials sector SPDR
+    XLE:    0.15    # narrow-based index — energy sector SPDR
+    XLK:    0.15    # narrow-based index — technology sector SPDR
+    XLV:    0.15    # narrow-based index — health-care sector SPDR
+    XLY:    0.15    # narrow-based index — consumer-discretionary sector SPDR
+    XLP:    0.15    # narrow-based index — consumer-staples sector SPDR
+    XLU:    0.15    # narrow-based index — utilities sector SPDR
+    XLI:    0.15    # narrow-based index — industrials sector SPDR
+    XLB:    0.15    # narrow-based index — materials sector SPDR
+    XLRE:   0.15    # narrow-based index — real-estate sector SPDR
+    XLC:    0.15    # narrow-based index — communication-services sector SPDR
+    AAPL:   0.15    # equity
+    MSFT:   0.15    # equity
+    NVDA:   0.15    # equity
+    GOOGL:  0.15    # equity
+    AMZN:   0.15    # equity
+    META:   0.15    # equity
+    BRK.B:  0.15    # equity
+    TSLA:   0.15    # equity
+    JPM:    0.15    # equity
+    UNH:    0.15    # equity

@@ -36,7 +36,7 @@ Four components with distinct responsibilities, consumers, and failure modes:
 | [State persistence](state-persistence.md) | Designed | Three-tier persistence model (core / lifecycle / derived entities), Phase 1 collect + Phase 2 commit, atomic transactions, immediate fill persistence, single-writer invariant, activity log catalog |
 | [Corporate actions](corporate-actions.md) | Designed | Position-layer mechanics for Alpaca-emitted CA events: per-action quantity/cost-basis/cash mutations, spin-off child positions, Phase 1 chronological merge with fills, idempotency ledger, activity log additions |
 | [Venue configuration](venue-configuration.md) | Designed | Alpaca-specific venue rules: settlement cycle, market sessions, PDT, Reg T margin percentages |
-| [Reg T margin attribution](regt-margin-attribution.md) | Designed | Per-fill attribution of marginal Reg T vs. portfolio-margin-equivalent consumption using an IBKR-mirror reference model; cumulative excess surfaces in portfolio state as the broker-switch signal |
+| [Reg T margin attribution](regt-margin-attribution.md) | Designed | Per-fill attribution of marginal Reg T vs. portfolio-margin-equivalent consumption using an OCC TIMS / FINRA 4210 baseline reference model; cumulative excess surfaces in portfolio state as the broker-switch signal |
 
 **Note on data schemas:** The position, thesis, and orders & brackets documents serve double duty — they define execution behavior *and* the authoritative data schemas consumed by the [data layer](../01-data-layer/internal/README.md), which cross-references them as the source of truth.
 

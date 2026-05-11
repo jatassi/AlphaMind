@@ -132,6 +132,11 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    FixtureIvProvider,
+    MarketInputs,
+    RealizedVolEntry,
+)
 from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 __all__ = [
@@ -305,6 +310,48 @@ def _state_persistence_config() -> StatePersistenceConfig:
             "pip_freeze_snapshot_root": "/tmp/verify-corporate-actions",
             "invocation_provenance_root": "/tmp/verify-corporate-actions",
         }
+    )
+
+
+def _market_inputs() -> MarketInputs:
+    """Fixture ``MarketInputs`` for the Phase 1 wedge in this verify script.
+
+    Story 06a / ALP-428 added a required ``market_inputs`` argument to
+    ``process_unprocessed_fills``. The script seeds many tickers (one per CA
+    action type plus the strategy underlying); each gets a positive scalar
+    so the wedge can price every open position. The strategy ticker also
+    flows through the IV provider, but the realized-vol fallback covers
+    arbitrary strikes/expirations the Black-Scholes path may consult.
+    """
+    underlying_prices = {
+        ticker: 100.0
+        for ticker in (
+            _TICKER_SPLIT,
+            _TICKER_REV_SPLIT,
+            _TICKER_STOCK_DIV,
+            _TICKER_CD_LONG,
+            _TICKER_CD_SHORT,
+            _TICKER_CASH_MERGER,
+            _TICKER_STOCK_MERGER_OLD,
+            _TICKER_STOCK_MERGER_NEW,
+            _TICKER_SPIN_OFF_PARENT,
+            _TICKER_SPIN_OFF_CHILD,
+            _TICKER_SYMBOL_CHANGE_OLD,
+            _TICKER_SYMBOL_CHANGE_NEW,
+            _TICKER_STRATEGY,
+        )
+    }
+    realized_vol = {
+        _TICKER_STRATEGY: RealizedVolEntry(
+            underlying=_TICKER_STRATEGY,
+            trailing_30d_realized_vol=0.30,
+        )
+    }
+    return MarketInputs(
+        underlying_prices=underlying_prices,
+        risk_free_rate=0.0425,
+        iv_provider=FixtureIvProvider(surface={}, realized_vol=realized_vol),
+        as_of=_NOW,
     )
 
 
@@ -1524,6 +1571,7 @@ async def run_verify(db_path: Path) -> VerifyResult:
                 ca_activities=activities,
                 alpaca_positions=alpaca_positions,
                 alpaca_account=alpaca_account,
+                market_inputs=_market_inputs(),
                 config=_state_persistence_config(),
             )
 

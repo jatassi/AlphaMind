@@ -6,6 +6,12 @@ migrated SQLite DB across six phases (schema, InvocationContext round-trip,
 Phase 1 fill integration, Phase 2 accepted-envelope writeback, Phase 2 Layer-1
 parse-failure writeback, repository read parity).
 
+Phase C and Phase F call ``process_unprocessed_fills``, which since story
+06a / ALP-428 requires a ``MarketInputs`` argument for the per-fill Reg T
+margin attribution wedge. The script constructs a fixture ``MarketInputs``
+(via :func:`_market_inputs`) covering the AAPL equity position used by
+Phase C; the IV provider is unused for equity-only state.
+
 No SDK invocation; no live broker contact. Sub-second runtime against a fresh
 on-disk DB.
 
@@ -132,6 +138,10 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    FixtureIvProvider,
+    MarketInputs,
+)
 from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 __all__ = [
@@ -178,6 +188,22 @@ def _state_persistence_config() -> StatePersistenceConfig:
             "pip_freeze_snapshot_root": "/tmp/verify-state-persistence",
             "invocation_provenance_root": "/tmp/verify-state-persistence",
         }
+    )
+
+
+def _market_inputs() -> MarketInputs:
+    """Fixture ``MarketInputs`` for Phase C / Phase F's ``process_unprocessed_fills`` call.
+
+    Story 06a / ALP-428 added a required ``market_inputs`` argument so the
+    Phase 1 wedge can compute per-fill Reg T margin attribution. This script
+    seeds only an AAPL equity position, so a single underlying price suffices
+    and the IV provider is unused.
+    """
+    return MarketInputs(
+        underlying_prices={_TICKER: 150.0},
+        risk_free_rate=0.0425,
+        iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
+        as_of=_NOW,
     )
 
 
@@ -810,7 +836,11 @@ async def run_phase_c_phase1_write_path(db_path: Path) -> PhaseResult:
         async with InvocationContext(
             session_factory=factory, record=_invocation_record(invocation_id)
         ) as handle:
-            summary = await process_unprocessed_fills(handle, config=_state_persistence_config())
+            summary = await process_unprocessed_fills(
+                handle,
+                market_inputs=_market_inputs(),
+                config=_state_persistence_config(),
+            )
 
         if summary.fills_processed != 1:
             return PhaseResult(
@@ -1324,7 +1354,11 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
         # write path always touches ``phase1_completed_at`` as its final
         # step before the surrounding context commits.
         async with InvocationContext(session_factory=factory, record=committed_record) as handle:
-            await process_unprocessed_fills(handle, config=_state_persistence_config())
+            await process_unprocessed_fills(
+                handle,
+                market_inputs=_market_inputs(),
+                config=_state_persistence_config(),
+            )
 
         # Sample ``now`` between Phase 1's just-completed stamp and the
         # buffered ``future_start`` so both invariants hold (phase1_at at

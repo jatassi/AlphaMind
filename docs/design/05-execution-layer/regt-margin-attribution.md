@@ -27,7 +27,7 @@ regt_margin_attribution:
   pm_equivalent_after:          float    # Portfolio-margin-equivalent initial-margin requirement post-fill
   pm_marginal_consumption:      float    # after - before; signed
   regt_excess_over_pm:          float    # regt_marginal_consumption - pm_marginal_consumption
-  pm_model_version:             str      # e.g. "ibkr_mirror_v1_2025Q3"
+  pm_model_version:             str      # e.g. "occ_tims_v1_2026Q2"
 ```
 
 `regt_excess_over_pm` is the headline value — the dollar cost of running on Reg T attributable to this fill. The cumulative aggregate across all attributed fills is the operator's broker-switch signal.
@@ -47,27 +47,27 @@ For a batch of unprocessed fills, fills are processed in `fill_timestamp` order 
 3. **`*_after` snapshot.** Recompute both requirements against the post-fill position set.
 4. **Marginal deltas.** Subtract; populate the structure; persist alongside the fill record.
 
-The Reg T side reuses the per-leg formulas in [`venue-configuration.md § Margin tiers`](venue-configuration.md#regulatory-and-account-constraints) summed across positions. The PM side runs the IBKR-mirror reference model below.
+The Reg T side reuses the per-leg formulas in [`venue-configuration.md § Margin tiers`](venue-configuration.md#regulatory-and-account-constraints) summed across positions. The PM side runs the OCC TIMS / FINRA 4210 baseline reference model below.
 
 The underlying price, IV surface, and Black-Scholes implementation are the surfaces [`guardrail-evaluation.md`](../06-risk-guardrails/guardrail-evaluation.md) already uses for T3 validation; the same data and code path serves both.
 
 ---
 
-## Portfolio-margin reference model: IBKR-mirror v1
+## Portfolio-margin reference model: OCC TIMS / FINRA 4210 baseline v1
 
-Per-class-group scenario stress against IBKR's published shock parameters, summed across class groups.
+Per-class-group scenario stress against OCC TIMS's published shock parameters, summed across class groups.
 
 **Class group.** One underlying plus all derivatives written on it. An equity-only position is its own class group. An options strategy on NVDA contributes to the NVDA class group along with any long or short NVDA stock.
 
 **Per-class-group stress.** For each class group:
 
-1. Apply IBKR's published shock for the underlying's asset class — e.g., ±15% for high-cap S&P 500 equity, ±20% for small-cap, ETF-specific values per IBKR's table. Discretize across the standard 10-point grid (equidistant shock points from worst-down to worst-up).
+1. Apply OCC TIMS's published shock for the underlying's asset class — e.g., ±15% for high-cap S&P 500 equity, ±20% for small-cap, ETF-specific values per OCC TIMS's table. Discretize across the standard 10-point grid (equidistant shock points from worst-down to worst-up).
 2. At each shock point, revalue all instruments in the class group. Equity revalues at the shocked underlying price. Options revalue via Black-Scholes with the shocked underlying and an IV adjustment paired to the price-shock direction; reuses the pricing infrastructure in [`guardrail-evaluation.md § Delta-adjusted exposure`](../06-risk-guardrails/guardrail-evaluation.md#delta-adjusted-exposure).
 3. The class group's margin requirement = the absolute value of the worst (most-negative) P/L across the shock grid.
 
-**Aggregation.** Sum the per-class-group margins. Inter-class offsets — where correlated class groups would net against each other under IBKR's product-group methodology — are v2 scope. Without offsets, the PM-equivalent number is biased *upward* relative to IBKR's actual output, which biases the Reg T excess (`regt - pm`) *downward*. Conservative direction: understates the broker-switch case rather than overstating it.
+**Aggregation.** Sum the per-class-group margins. Inter-class offsets — where correlated class groups would net against each other under OCC TIMS's product-group methodology — are v2 scope. Without offsets, the PM-equivalent number is biased *upward* relative to OCC TIMS's actual output, which biases the Reg T excess (`regt - pm`) *downward*. Conservative direction: understates the broker-switch case rather than overstating it.
 
-**Version-pinning.** The shock parameter table is a versioned snapshot of IBKR's published margin methodology document (e.g., `pm_model_version: "ibkr_mirror_v1_2025Q3"`). The snapshot lives in implementation config; refresh is operator-driven. Aggregates over time are filterable by version when methodology changes.
+**Version-pinning.** The shock parameter table is a versioned snapshot of the OCC TIMS RBH/CPM User Guide (the methodology FINRA Rule 4210(g) points to; e.g., `pm_model_version: "occ_tims_v1_2026Q2"`). The snapshot lives in implementation config; refresh is operator-driven. Aggregates over time are filterable by version when methodology changes.
 
 ---
 
@@ -100,7 +100,7 @@ Distinct from the [paper-evaluation harness](paper-evaluation-harness.md), which
 
 ## v2 candidates
 
-- **Inter-class correlation offsets.** Mirror IBKR's product-group methodology where correlated class groups (index ETFs vs. constituents, sector pairs) net against each other before aggregation. Reduces the v1 conservative bias.
+- **Inter-class correlation offsets.** Mirror OCC TIMS's product-group methodology where correlated class groups (index ETFs vs. constituents, sector pairs) net against each other before aggregation. Reduces the v1 conservative bias.
 - **Maintenance-margin equivalent.** A continuous-evaluation companion that tracks ongoing margin drag across position lifetimes, not just at fill events.
 - **Threshold alert.** When `regt_excess_trailing_30d` exceeds a configured floor, surface to the operator via the [command center](../command-center.md) alerts pane as a broker-revisit prompt.
 
@@ -112,5 +112,5 @@ Distinct from the [paper-evaluation harness](paper-evaluation-harness.md), which
 - [State persistence — fill records](state-persistence.md) — where `regt_margin_attribution` metadata is persisted.
 - [Portfolio state — cash and buying power](../01-data-layer/internal/portfolio-state.md) — where the cumulative aggregates surface.
 - [Command center — Portfolio dashboard](../command-center.md) — Cash and capital pane displays the running aggregate.
-- [Guardrail evaluation](../06-risk-guardrails/guardrail-evaluation.md) — Black-Scholes + IV-surface infrastructure reused for the IBKR-mirror options revaluation step.
+- [Guardrail evaluation](../06-risk-guardrails/guardrail-evaluation.md) — Black-Scholes + IV-surface infrastructure reused for the OCC TIMS options revaluation step.
 - [Position model](position-model.md) — class-group composition follows position-model semantics for equity, options, and strategy positions.

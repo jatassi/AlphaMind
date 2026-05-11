@@ -153,6 +153,10 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecordStatus,
 )
 from alphamind.portfolio_state.repository import PortfolioStateRepository
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    FixtureIvProvider,
+    MarketInputs,
+)
 from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
@@ -198,6 +202,21 @@ def _config() -> StatePersistenceConfig:
             "pip_freeze_snapshot_root": "/tmp/pip-freeze",
             "invocation_provenance_root": "/tmp/provenance",
         }
+    )
+
+
+def _market_inputs() -> MarketInputs:
+    """Minimal ``MarketInputs`` for the six-step contract's Phase 1 step.
+
+    The wedge in ``process_unprocessed_fills`` (story 06a / ALP-428) requires
+    a price for every open-position underlying; this test seeds AAPL and
+    NVDA equity positions only, so the IV provider is unused.
+    """
+    return MarketInputs(
+        underlying_prices={"AAPL": 150.0, "NVDA": 500.0},
+        risk_free_rate=0.0425,
+        iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
+        as_of=_NOW,
     )
 
 
@@ -684,7 +703,11 @@ async def test_six_step_snapshot_isolation_contract(
     # is moved up-front for tests that span two transactions on one row).
     session, handle = await _open_handle_for_existing_invocation(factory, invocation_id=_INV_ID)
     try:
-        summary = await process_unprocessed_fills(handle, config=_config())
+        summary = await process_unprocessed_fills(
+            handle,
+            market_inputs=_market_inputs(),
+            config=_config(),
+        )
         await session.commit()
     finally:
         await session.close()

@@ -98,6 +98,7 @@ they read time-dependent DB state.
 | 1c | Execution: OMS commands | oms_commands | No | <60s |
 | 1d | Execution: broker adapter | broker_adapter | No (live broker) | <2 min |
 | 1e | Execution: corporate actions | corporate_actions | No | <2s |
+| 1f | Execution: Reg T margin attribution | regt_margin_attribution | No | <2s |
 | 2 | Distillation | distillation, regime_transition, calibration_mix | Yes (1 of 3) | ~30–60s |
 | 3 | Analysis: domain researchers | domain_researchers, domain_researcher_failure_modes | Yes (1 of 2) | ~30–60s |
 | 4 | Analysis: qualitative + adaptive | qualitative_researcher, adaptive_researcher | Yes | ~45–90s |
@@ -343,6 +344,46 @@ match the row label to its row in the triage table. Live integration of
 the corporate-actions pipeline (real Alpaca v1beta1 fetch + Phase 1
 drain against a production-shaped position set) belongs with ALP-123
 (continuous monitor) when it lands.
+
+## Phase 1f — Reg T margin attribution
+
+Pure in-process integration check against the Reg T margin attribution
+work tree (ALP-126). The script seeds a representative four-position
+portfolio (long NVDA equity, short AMD equity, long SPY call, NVDA
+bull-call-spread strategy) so the pre-fill Reg T and PM-equivalent
+margins are non-trivial, then drains two unprocessed fills (a BUY entry
+on a new PENDING NVDA long, a SELL partial-exit on a separate OPEN AMD
+long) through `process_unprocessed_fills` inside an `InvocationContext`.
+Rehydrates the per-fill `RegTMarginAttribution` records, invokes the
+snapshot assembler so its Step 11 enrichment lands the trailing-window
+aggregates on `CashLedger`, and asserts the headline algebra
+(`regt_excess_over_pm == regt_marginal_consumption − pm_marginal_consumption`)
+plus the trailing-30d aggregate identity. No SDK calls, no live broker
+contact, sub-second runtime against a fresh on-disk DB.
+
+```bash
+uv run python scripts/verify_regt_margin_attribution.py \
+    --db-path "$VERIFY_DB" \
+    --invocation-id verify-regt-001
+```
+
+Expects: `PASS` with an 8-field `RegTMarginAttribution` block printed
+per processed fill and a three-field trailing-window aggregate block
+(`regt_excess_trailing_30d_usd` / `regt_excess_trailing_90d_usd` /
+`regt_excess_lifetime_usd`) printed after the per-fill blocks. Exit code
+`0` on full pass, `1` on any structured assertion failure (each failing
+assertion appears on its own `- ` line in the FAIL trailer).
+
+Stage artifact: the seeded DB at `$VERIFY_DB` carries
+`fill_records.regt_attribution_json` populated rows that downstream
+phases (notably the command-center verify) may read for cumulative
+delivery surface assertions.
+
+**On failure:** read `scripts/RUNBOOK_regt_margin_attribution.md` §
+Failure-mode triage. The FAIL output names the failing assertion in the
+runbook's triage-table vocabulary (`algebra mismatch`,
+`trailing-30d aggregate mismatch`, `non-finite attribution field`, etc.);
+match the message to its row in the triage table.
 
 ## Phase 2 — Distillation layer
 

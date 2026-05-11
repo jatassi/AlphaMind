@@ -24,11 +24,12 @@ by this story; story 07 + 08 verify the full six-step ordering.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind.execution.regt_margin_attribution.aggregates import RegTExcessAggregates
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.repository.activity_log_queries import (
     read_intra_invocation_changelog,
@@ -54,6 +55,7 @@ from alphamind.execution.state_persistence.tables.drawdown_state import (
 from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
     drawdown_state_record_from_row,
 )
+from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
 from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.execution.state_persistence.tables.orders import OrderRow
 from alphamind.execution.state_persistence.tables.orders_codec import (
@@ -69,6 +71,9 @@ from alphamind.execution.state_persistence.tables.theses_codec import (
 )
 from alphamind.execution.state_persistence.tables.thesis_components import (
     ThesisComponentRow,
+)
+from alphamind.execution.state_persistence.write_paths.records import (
+    FillProcessingStatus,
 )
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
@@ -224,6 +229,63 @@ class SqlPortfolioStateRepository:
                 regt_excess_trailing_90d_usd=0.0,
                 regt_excess_lifetime_usd=0.0,
             )
+
+    async def get_regt_excess_aggregates(self, now: datetime) -> RegTExcessAggregates:
+        """Sum ``regt_excess_over_pm`` across fill-record metadata.
+
+        Three calendar-day-anchored windows in one round trip:
+
+        * ``trailing_30d_usd`` — fills with ``processing_timestamp >= now - 30d``.
+        * ``trailing_90d_usd`` — fills with ``processing_timestamp >= now - 90d``.
+        * ``lifetime_usd`` — every processed fill with non-null
+          ``regt_attribution_json``.
+
+        Per ``regt-margin-attribution.md § Aggregation and delivery``: fills
+        predating the attribution module (``regt_attribution_json IS NULL``)
+        contribute zero to every window. Defense-in-depth: rows with
+        ``processing_status != 'processed'`` are also excluded.
+
+        ``now`` must be timezone-aware (UTC convention). Naive datetimes
+        produce timezone-implicit ISO strings whose lex order does not match
+        the absolute order of stored UTC timestamps, so the window cutoffs
+        would silently misclassify rows.
+
+        Implementation uses ``json_extract``, a SQLite-native function.
+        AlphaMind is SQLite-only per CLAUDE.md; a Postgres migration would
+        need to rewrite this query.
+        """
+        if now.tzinfo is None:
+            msg = "now must be timezone-aware (UTC convention)"
+            raise ValueError(msg)
+        cutoff_30d = (now - timedelta(days=30)).isoformat()
+        cutoff_90d = (now - timedelta(days=90)).isoformat()
+        excess_expr = func.json_extract(
+            FillRecordRow.regt_attribution_json, "$.regt_excess_over_pm"
+        )
+        sum_30d = func.coalesce(
+            func.sum(
+                case((FillRecordRow.processing_timestamp >= cutoff_30d, excess_expr), else_=0)
+            ),
+            0.0,
+        )
+        sum_90d = func.coalesce(
+            func.sum(
+                case((FillRecordRow.processing_timestamp >= cutoff_90d, excess_expr), else_=0)
+            ),
+            0.0,
+        )
+        sum_lifetime = func.coalesce(func.sum(excess_expr), 0.0)
+        stmt = select(sum_30d, sum_90d, sum_lifetime).where(
+            FillRecordRow.processing_status == FillProcessingStatus.PROCESSED.value,
+            FillRecordRow.regt_attribution_json.is_not(None),
+        )
+        async with self._session_factory() as session:
+            row = (await session.execute(stmt)).one()
+        return RegTExcessAggregates(
+            trailing_30d_usd=float(row[0]),
+            trailing_90d_usd=float(row[1]),
+            lifetime_usd=float(row[2]),
+        )
 
     async def get_pending_orders(self) -> tuple[OrderRecord, ...]:
         async with self._session_factory() as session:

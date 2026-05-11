@@ -18,6 +18,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     ContractType,
     Greeks,
     bs_greeks,
+    bs_price,
 )
 
 
@@ -380,3 +381,202 @@ def test_vega_returned_per_one_absolute_iv_move() -> None:
     # Per-1-pp form would be ~100x smaller; pin that the function does NOT
     # apply that scaling.
     assert result.vega > expected_per_one_absolute / 2
+
+
+# ---------------------------------------------------------------------------
+# bs_price tests (story ALP-422)
+# ---------------------------------------------------------------------------
+
+
+def test_bs_price_call_atm() -> None:
+    """ATM call: S=K=100, T=0.25, r=0.05, sigma=0.20.
+
+    Reference value 4.614997... hand-computed via the standard BS formula
+    C = S*N(d1) - K*exp(-r*T)*N(d2) and cross-checked in a fresh Python
+    evaluation.
+    """
+    price = bs_price(
+        spot=100.0,
+        strike=100.0,
+        time_to_expiration_years=0.25,
+        risk_free_rate=0.05,
+        implied_volatility=0.20,
+        contract_type=ContractType.CALL,
+    )
+
+    assert price == pytest.approx(4.614997129602855, abs=1e-6)
+    assert price > 0
+
+
+def test_bs_price_put_atm() -> None:
+    """ATM put: S=K=100, T=0.25, r=0.05, sigma=0.20.
+
+    Reference value 3.372777... hand-computed via P = K*exp(-r*T)*N(-d2) - S*N(-d1).
+    """
+    price = bs_price(
+        spot=100.0,
+        strike=100.0,
+        time_to_expiration_years=0.25,
+        risk_free_rate=0.05,
+        implied_volatility=0.20,
+        contract_type=ContractType.PUT,
+    )
+
+    assert price == pytest.approx(3.372777178991008, abs=1e-6)
+    assert price > 0
+
+
+def test_bs_price_call_deep_itm_approaches_intrinsic_minus_pv_strike() -> None:
+    """Deep ITM call: S=150, K=100, T=0.01, r=0.05, sigma=0.20.
+
+    With spot >> strike and short T, price ≈ S - K*exp(-r*T) (forward intrinsic).
+    """
+    spot, strike, t, r, sigma = 150.0, 100.0, 0.01, 0.05, 0.20
+    price = bs_price(
+        spot=spot,
+        strike=strike,
+        time_to_expiration_years=t,
+        risk_free_rate=r,
+        implied_volatility=sigma,
+        contract_type=ContractType.CALL,
+    )
+    expected = spot - strike * math.exp(-r * t)
+
+    assert price == pytest.approx(expected, abs=0.01)
+
+
+def test_bs_price_call_deep_otm_approaches_zero() -> None:
+    """Deep OTM call: S=100, K=200, T=0.25, r=0.05, sigma=0.20.
+
+    Price must be near-zero (< 0.01 * spot).
+    """
+    price = bs_price(
+        spot=100.0,
+        strike=200.0,
+        time_to_expiration_years=0.25,
+        risk_free_rate=0.05,
+        implied_volatility=0.20,
+        contract_type=ContractType.CALL,
+    )
+
+    assert price < 1.0
+
+
+def test_bs_price_at_expiry_returns_intrinsic() -> None:
+    """At time_to_expiration_years=0: ITM call returns spot-strike; OTM put returns 0.0."""
+    call_price = bs_price(
+        spot=110.0,
+        strike=100.0,
+        time_to_expiration_years=0.0,
+        risk_free_rate=0.05,
+        implied_volatility=0.20,
+        contract_type=ContractType.CALL,
+    )
+    put_price = bs_price(
+        spot=110.0,
+        strike=100.0,
+        time_to_expiration_years=0.0,
+        risk_free_rate=0.05,
+        implied_volatility=0.20,
+        contract_type=ContractType.PUT,
+    )
+
+    assert call_price == pytest.approx(10.0, abs=1e-9)
+    assert put_price == pytest.approx(0.0, abs=1e-9)
+
+
+def test_bs_price_rejects_non_positive_spot() -> None:
+    """spot=0.0 raises ValueError mentioning 'Spot must be positive'."""
+    with pytest.raises(ValueError, match="Spot must be positive"):
+        bs_price(
+            spot=0.0,
+            strike=100.0,
+            time_to_expiration_years=0.25,
+            risk_free_rate=0.05,
+            implied_volatility=0.20,
+            contract_type=ContractType.CALL,
+        )
+
+
+def test_bs_price_rejects_non_positive_strike() -> None:
+    """strike=-1.0 raises ValueError."""
+    with pytest.raises(ValueError, match="Strike must be positive"):
+        bs_price(
+            spot=100.0,
+            strike=-1.0,
+            time_to_expiration_years=0.25,
+            risk_free_rate=0.05,
+            implied_volatility=0.20,
+            contract_type=ContractType.CALL,
+        )
+
+
+def test_bs_price_rejects_non_positive_iv() -> None:
+    """implied_volatility=0.0 raises ValueError."""
+    with pytest.raises(ValueError, match="Implied volatility must be positive"):
+        bs_price(
+            spot=100.0,
+            strike=100.0,
+            time_to_expiration_years=0.25,
+            risk_free_rate=0.05,
+            implied_volatility=0.0,
+            contract_type=ContractType.CALL,
+        )
+
+
+def test_bs_price_put_call_parity() -> None:
+    """Put-call parity: C - P = S - K*exp(-r*T), within 1e-6 tolerance."""
+    spot, strike, t, r, sigma = 100.0, 95.0, 0.5, 0.05, 0.25
+    call = bs_price(
+        spot=spot,
+        strike=strike,
+        time_to_expiration_years=t,
+        risk_free_rate=r,
+        implied_volatility=sigma,
+        contract_type=ContractType.CALL,
+    )
+    put = bs_price(
+        spot=spot,
+        strike=strike,
+        time_to_expiration_years=t,
+        risk_free_rate=r,
+        implied_volatility=sigma,
+        contract_type=ContractType.PUT,
+    )
+    forward_intrinsic = spot - strike * math.exp(-r * t)
+
+    assert call - put == pytest.approx(forward_intrinsic, abs=1e-6)
+
+
+def test_bs_price_negative_risk_free_rate() -> None:
+    """risk_free_rate=-0.02 produces a positive, finite price for a near-ATM call."""
+    price = bs_price(
+        spot=100.0,
+        strike=100.0,
+        time_to_expiration_years=0.5,
+        risk_free_rate=-0.02,
+        implied_volatility=0.20,
+        contract_type=ContractType.CALL,
+    )
+
+    assert math.isfinite(price)
+    assert price > 0
+
+
+def test_bs_price_put_deep_itm_approaches_intrinsic_minus_pv_strike() -> None:
+    """Deep ITM put: S=100, K=150, T=0.01, r=0.05, sigma=0.20.
+
+    With strike >> spot and short T, price ≈ K*exp(-r*T) - S (forward intrinsic).
+    """
+    spot, strike, t, r, sigma = 100.0, 150.0, 0.01, 0.05, 0.20
+    price = bs_price(
+        spot=spot,
+        strike=strike,
+        time_to_expiration_years=t,
+        risk_free_rate=r,
+        implied_volatility=sigma,
+        contract_type=ContractType.PUT,
+    )
+    expected = strike * math.exp(-r * t) - spot
+
+    assert price == pytest.approx(expected, abs=0.01)
