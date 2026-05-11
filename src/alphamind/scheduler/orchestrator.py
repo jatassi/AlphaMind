@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,11 +31,14 @@ from typing import Any, Literal
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.config.load import PipelineConfig, load_full_config
-from alphamind.config.loaders import read_yaml_file
-from alphamind.config.models.main import ExecutionMode
+from alphamind.config.loaders import load_overlays, read_yaml_file
+from alphamind.config.models.main import ExecutionMode, MainConfig
 from alphamind.config.models.modes import Mode
-from alphamind.config.models.overlays import Overlay
+from alphamind.config.models.overlays import Overlay, PreEventOverlay, StressOverlay
+from alphamind.config.models.profiles import ProfileConfig
+from alphamind.config.models.regimes import Regime
 from alphamind.config.models.run_types import RunType
+from alphamind.config.models.scheduler import SchedulerConfig
 from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.state_persistence.config import (
     StatePersistenceConfig,
@@ -50,6 +54,13 @@ from alphamind.execution.state_persistence.invocation_context.records import (
 from alphamind.execution.state_persistence.repository import (
     build_sql_portfolio_state_repository,
 )
+from alphamind.execution.state_persistence.tables.drawdown_state import (
+    DRAWDOWN_STATE_SINGLETON_ID,
+    DrawdownStateRow,
+)
+from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
+    drawdown_state_record_from_row,
+)
 from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.execution.state_persistence.write_paths.phase1 import (
     Phase1Summary,
@@ -58,17 +69,35 @@ from alphamind.execution.state_persistence.write_paths.phase1 import (
 from alphamind.pipeline.analysis import run_analysis_pipeline
 from alphamind.pipeline.decision import run_decision_pipeline
 from alphamind.portfolio_state import load_portfolio_state_config
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.pricing import (
     PriceQuote,
     PriceSource,
     StubCurrentPriceProvider,
 )
-from alphamind.portfolio_state.records.capital import ActiveRiskParameterSet
+from alphamind.portfolio_state.records.capital import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+    RegimeLabel,
+    RegimeTransitionState,
+)
+from alphamind.risk_guardrails.breach_behavior.halt_state import compute_halt_state
 from alphamind.risk_guardrails.breach_behavior.types import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
     FeatureFlagsView,
     LibraryConfig,
     MarketInputs,
+)
+from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+from alphamind.risk_guardrails.regime_adaptation.event_calendar import (
+    load_event_calendar,
+)
+from alphamind.risk_guardrails.regime_adaptation.pre_event_activator import (
+    evaluate_pre_event_overlay,
+)
+from alphamind.risk_guardrails.regime_adaptation.stress_activator import (
+    evaluate_stress_overlay,
+    fetch_composite_alert_state,
 )
 from alphamind.risk_guardrails.regime_adaptation.types import (
     OverlayActivationDecision,
@@ -109,22 +138,185 @@ class InvocationSummary:
 
 
 # ---------------------------------------------------------------------------
-# Default-overlay decisions
+# Regime → RegimeLabel mapping (inlined to avoid pulling parameter_set's
+# private constant)
 # ---------------------------------------------------------------------------
 
 
-def _inactive_overlay_decision(overlay: Overlay) -> OverlayActivationDecision:
-    """Build an inactive ``OverlayActivationDecision`` for *overlay*.
+_REGIME_TO_LABEL: dict[Regime, RegimeLabel] = {
+    Regime.low_vol: RegimeLabel.LOW_VOL,
+    Regime.normal: RegimeLabel.NORMAL,
+    Regime.elevated: RegimeLabel.ELEVATED,
+    Regime.crisis: RegimeLabel.CRISIS,
+}
 
-    Story 03b's scope does not wire halt-state computation or overlay
-    evaluation; both default to inactive. Story 04a / 04b plug the real
-    pre-event / stress evaluators into the orchestrator.
+
+# ---------------------------------------------------------------------------
+# Drawdown-state and active-risk-parameters helpers (pre-review triage)
+# ---------------------------------------------------------------------------
+
+
+def _zero_drawdown_state() -> DrawdownState:
+    """Return a zero-drawdown ``DrawdownState``.
+
+    Used when the singleton row is absent (fresh DB / first run) and as the
+    halt-state computation input on bootstrap. The four computed read-time
+    fields carry neutral defaults; only ``current_drawdown_pct`` and
+    ``intraday_drawdown_pct`` (both zero) and ``cumulative_tier`` (``None``)
+    matter for halt detection.
     """
-    return OverlayActivationDecision(
-        overlay=overlay,
-        is_active=False,
-        rationale=f"{overlay.value} overlay evaluation deferred to a later story",
-        pre_event_block_new_positions=False,
+    return DrawdownState(
+        current_drawdown_pct=0.0,
+        equity_high_water_mark_usd=0.0,
+        drawdown_duration_hours=0.0,
+        lifetime_max_drawdown_pct=0.0,
+        intraday_drawdown_pct=0.0,
+        daily_zone=RiskZone.NORMAL,
+        cumulative_zone=RiskZone.NORMAL,
+        cumulative_tier=None,
+        drawdown_by_source_pct={},
+    )
+
+
+async def _read_drawdown_state(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> DrawdownState:
+    """Read the ``drawdown_state`` singleton row; fall back to zero on absence.
+
+    Phase 1's write path (``process_unprocessed_fills``) seeds the singleton
+    row, so a fresh DB legitimately has none before the first invocation
+    completes. Treating absence as zero drawdown keeps the orchestrator
+    runnable from a clean state without violating the halt-detection
+    contract (no drawdown → no halt).
+    """
+    async with session_factory() as session:
+        row = await session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)
+        if row is None:
+            return _zero_drawdown_state()
+        return drawdown_state_record_from_row(
+            row,
+            intraday_drawdown_pct=0.0,
+            daily_zone=RiskZone.NORMAL,
+            cumulative_zone=RiskZone.NORMAL,
+            cumulative_tier=None,
+        )
+
+
+def _build_active_risk_parameters(
+    *,
+    rule_values: Mapping[str, float],
+    regime: Regime,
+) -> ActiveRiskParameterSet:
+    """Compose an ``ActiveRiskParameterSet`` from a flat rule-values map.
+
+    Pre-review triage simplification: the production pipeline normally
+    derives this set through ``compose_phase_1_enforcement`` which in turn
+    requires a fully-resolved ``RegimeAdaptationOutput``. Until the
+    regime-adaptation orchestrator is threaded through the pipeline
+    scheduler (deferred follow-up), we wrap the resolved ``rule_values``
+    directly — they already carry the profile * regime * overlay *
+    feature-flag fold ``compose_config`` produced, which is what the
+    downstream consumers (halt-state computation, repository provider,
+    decision pipeline) actually read.
+
+    Each entry's ``rule_label`` / ``unit`` mirror the ``rule_id`` and a
+    flat ``"pct"`` unit — the values aren't surfaced anywhere downstream
+    in the current pipeline-scheduler call path (the decision pipeline
+    only reads ``rule_id`` and ``value`` from the entries).
+    """
+    entries = tuple(
+        ActiveRiskParameterEntry(
+            rule_id=rule_id,
+            rule_label=rule_id,
+            value=value,
+            unit="pct",
+            regime_multiplier_applied=1.0,
+            base_value=value,
+        )
+        for rule_id, value in sorted(rule_values.items())
+    )
+    return ActiveRiskParameterSet(
+        regime_label=_REGIME_TO_LABEL[regime],
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        parameter_change_flag=False,
+        entries=entries,
+        active_overlays=(),
+    )
+
+
+def _load_base_profile_rule_values(config_dir: Path) -> Mapping[str, float]:
+    """Read ``main.yaml`` + the active profile's rule_values, no fold applied.
+
+    Used for the halt-state computation that happens *before* runtime
+    dimensions are resolved (because halt-state feeds into the resolver).
+    The base profile carries the ``daily_drawdown_pct`` rule required by
+    ``compute_halt_state``; the regime / overlay multipliers don't change
+    which rules exist, only the values, so the base rule_values are
+    sufficient for halt detection on the first iteration.
+    """
+    main_config = MainConfig.model_validate(read_yaml_file(config_dir / "main.yaml"))
+    active_profile = main_config.active_profile
+    profile_config = ProfileConfig.model_validate(
+        read_yaml_file(config_dir / "profiles" / f"{active_profile.value}.yaml")
+    )
+    return profile_config.rule_values
+
+
+# ---------------------------------------------------------------------------
+# Overlay-evaluation helpers
+# ---------------------------------------------------------------------------
+
+
+def _evaluate_pre_event_decision(
+    *,
+    now: datetime,
+    config_dir: Path,
+    overlays_map: Mapping[Overlay, PreEventOverlay | StressOverlay],
+    scheduler_config: SchedulerConfig,
+) -> OverlayActivationDecision:
+    """Load the event calendar and run the pre-event activator."""
+    pre_event_overlay = overlays_map[Overlay.pre_event]
+    if not isinstance(pre_event_overlay, PreEventOverlay):
+        msg = f"overlays_map[Overlay.pre_event] is not a PreEventOverlay: {pre_event_overlay!r}"
+        raise TypeError(msg)
+    event_calendar = load_event_calendar(config_dir / "event_calendar.yaml")
+    return evaluate_pre_event_overlay(
+        now_utc=now,
+        event_calendar=event_calendar,
+        scheduler_config=scheduler_config,
+        pre_event_overlay=pre_event_overlay,
+    )
+
+
+async def _evaluate_stress_decision(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    overlays_map: Mapping[Overlay, PreEventOverlay | StressOverlay],
+) -> OverlayActivationDecision:
+    """Fetch the composite alert state via a sync-session bridge and evaluate stress.
+
+    ``fetch_composite_alert_state`` is a synchronous helper that consumes a
+    sync ``Session`` (it queries the ``DistillationCompositeState`` table the
+    regime-adaptation orchestrator persists). The pipeline scheduler runs on
+    async sessions; ``AsyncSession.run_sync`` is SQLAlchemy 2.x's canonical
+    bridge that hands the sync helper the underlying ``Session`` connected to
+    the same DB.
+    """
+    stress_overlay = overlays_map[Overlay.stress]
+    if not isinstance(stress_overlay, StressOverlay):
+        msg = f"overlays_map[Overlay.stress] is not a StressOverlay: {stress_overlay!r}"
+        raise TypeError(msg)
+    async with session_factory() as session:
+        composite_alert_state = await session.run_sync(
+            lambda sync_session: fetch_composite_alert_state(sync_session)
+        )
+    return evaluate_stress_overlay(
+        funding_stress_alert_active=composite_alert_state.funding_stress_alert_active,
+        market_liquidity_alert_active=composite_alert_state.market_liquidity_alert_active,
+        funding_stress_calibration_state=composite_alert_state.funding_stress_calibration_state,
+        market_liquidity_calibration_state=composite_alert_state.market_liquidity_calibration_state,
+        stress_overlay=stress_overlay,
     )
 
 
@@ -220,21 +412,26 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     now: datetime,
     archive_root: Path,
     state_delivery_config: StateDeliveryConfig,
+    active_risk_parameters: ActiveRiskParameterSet,
 ) -> dict[str, Any]:
     """Assemble the ~22 kwargs ``run_decision_pipeline`` requires.
 
     Pulls from the loaded :class:`PipelineConfig` (resolved feature flags,
     active sectors, agents config + overrides), the open
     :class:`InvocationHandle` (repository), and the Phase 1 market inputs
-    (so the library projector reads consistent prices).
+    (so the library projector reads consistent prices). The composed
+    ``active_risk_parameters`` is threaded into the repository providers
+    (current and prior — both yield the same set as a pre-review triage
+    simplification documented in :func:`_make_repository_providers`).
     """
     resolved = pipeline_config.resolved
 
+    active_provider, prior_provider = _make_repository_providers(active_risk_parameters)
     repository = build_sql_portfolio_state_repository(
         session_factory=session_factory,
         invocation_id=handle.invocation_id,
-        active_risk_parameters_provider=_active_risk_parameters_default_provider,
-        prior_active_risk_parameters_provider=_prior_active_risk_parameters_default_provider,
+        active_risk_parameters_provider=active_provider,
+        prior_active_risk_parameters_provider=prior_provider,
         config=state_persistence_config,
     )
     price_provider = _price_provider_from_phase1(phase1_market_inputs)
@@ -301,35 +498,30 @@ def _default_sector_resolver(ticker: str) -> str:
     return "tech"
 
 
-async def _active_risk_parameters_default_provider() -> ActiveRiskParameterSet:
-    """Placeholder for the active-risk-parameters provider.
+def _make_repository_providers(
+    active_risk_parameters: ActiveRiskParameterSet,
+) -> tuple[
+    Callable[[], Awaitable[ActiveRiskParameterSet]],
+    Callable[[str], Awaitable[ActiveRiskParameterSet]],
+]:
+    """Build the two closure-providers ``SqlPortfolioStateRepository`` consumes.
 
-    Story 03b composes the orchestrator's wiring but does not feed real
-    guardrail-enforcement output into the repository — the inner
-    ``run_decision_pipeline`` is stubbed in tests, and production wiring
-    of the real :func:`compose_phase_1_enforcement` output is deferred to
-    a follow-up story. The placeholder raises so a production path that
-    accidentally consumes it (rather than stubbing it) surfaces clearly.
+    The repository factory's ``active_risk_parameters_provider`` is zero-arg;
+    ``prior_active_risk_parameters_provider`` takes the prior invocation's
+    resolved-config snapshot path. Both currently yield the same
+    ``active_risk_parameters`` value (pre-review triage simplification — the
+    prior-snapshot rehydration is deferred to a follow-up story; surfacing
+    a stale set keeps the snapshot assembler operational without depending
+    on the persisted-snapshot codec landing first).
     """
-    msg = (
-        "active_risk_parameters_provider was invoked but story 03b only ships "
-        "the orchestrator skeleton; wire compose_phase_1_enforcement output "
-        "into this provider in the follow-up story"
-    )
-    raise NotImplementedError(msg)
 
+    async def _active_provider() -> ActiveRiskParameterSet:
+        return active_risk_parameters
 
-async def _prior_active_risk_parameters_default_provider(
-    prior_snapshot_path: str,
-) -> ActiveRiskParameterSet:
-    """Placeholder for the prior-active-risk-parameters provider."""
-    del prior_snapshot_path
-    msg = (
-        "prior_active_risk_parameters_provider was invoked but story 03b only "
-        "ships the orchestrator skeleton; wire the prior-snapshot rebuild "
-        "into this provider in the follow-up story"
-    )
-    raise NotImplementedError(msg)
+    async def _prior_provider(_snapshot_path: str) -> ActiveRiskParameterSet:
+        return active_risk_parameters
+
+    return _active_provider, _prior_provider
 
 
 def _price_provider_from_phase1(
@@ -399,16 +591,52 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
         read_yaml_file(config_dir / "main.yaml")
     )
     state_delivery_config = load_state_delivery_config(config_dir / "state_delivery.yaml")
+    scheduler_config = SchedulerConfig.model_validate(read_yaml_file(config_dir / "scheduler.yaml"))
+    overlays_map = load_overlays(config_dir)
 
-    # Step 1: resolve runtime dimensions in a short read-only session.
-    halt_state: HaltState | None = None  # Story 03b: halt-detection deferred to 04a/b.
+    # Step 1a: read drawdown state + compose a base ActiveRiskParameterSet
+    # so we can compute halt_state before resolving runtime dimensions.
+    #
+    # The orchestrator faces a chicken-and-egg between active_risk_parameters
+    # (computed from the resolved fold, which needs runtime) and halt_state
+    # (computed from active_risk_parameters, which feeds back into runtime).
+    # Pre-review triage simplification: use the base profile's rule_values
+    # (regime=normal, no overlays, no fold) for the halt-state computation;
+    # the CURRENT invocation's active_risk_parameters — derived from the
+    # fully resolved fold below — is what we pass to the repository and to
+    # ``run_decision_pipeline``.
+    drawdown_state = await _read_drawdown_state(session_factory)
+    base_active_risk_parameters = _build_active_risk_parameters(
+        rule_values=_load_base_profile_rule_values(config_dir),
+        regime=Regime.normal,
+    )
+    halt_state = compute_halt_state(
+        drawdown_state=drawdown_state,
+        active_risk_parameters=base_active_risk_parameters,
+    )
+
+    # Step 1b: evaluate the two overlay activators against the freshly-loaded
+    # event calendar (pre-event) and the most-recent composite-alert rows
+    # (stress).
+    pre_event_decision = _evaluate_pre_event_decision(
+        now=now,
+        config_dir=config_dir,
+        overlays_map=overlays_map,
+        scheduler_config=scheduler_config,
+    )
+    stress_decision = await _evaluate_stress_decision(
+        session_factory=session_factory,
+        overlays_map=overlays_map,
+    )
+
+    # Step 1c: resolve runtime dimensions with the real halt + overlay inputs.
     async with session_factory() as short_session:
         runtime = await resolve_runtime_dimensions(
             short_session,
             firing_trigger=firing_run_type,
             halt_state=halt_state,
-            pre_event_decision=_inactive_overlay_decision(Overlay.pre_event),
-            stress_decision=_inactive_overlay_decision(Overlay.stress),
+            pre_event_decision=pre_event_decision,
+            stress_decision=stress_decision,
         )
 
     # Step 2: open the per-invocation transaction.
@@ -434,6 +662,15 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
             invocation_id=handle.invocation_id,
             runtime=runtime,
             today=now.astimezone(UTC).date(),
+        )
+
+        # Compose the current invocation's active_risk_parameters from the
+        # resolved fold (profile * regime * overlays * feature-flags). Threaded
+        # into the repository providers (current + prior) so the snapshot
+        # assembler reads the same values the decision pipeline consumes.
+        active_risk_parameters = _build_active_risk_parameters(
+            rule_values=pipeline_config.resolved.rule_values,
+            regime=runtime.active_regime,
         )
 
         # Phase 1 — collect.
@@ -481,6 +718,7 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
             now=now,
             archive_root=archive_root,
             state_delivery_config=state_delivery_config,
+            active_risk_parameters=active_risk_parameters,
         )
         decision_result = await run_decision_pipeline(**decision_kwargs)
 
