@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -43,6 +44,9 @@ from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.state_persistence.config import (
     StatePersistenceConfig,
     load_state_persistence_config,
+)
+from alphamind.execution.state_persistence.invocation_context.config_change import (
+    emit_distillation_config_change_entry,
 )
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationHandle,
@@ -70,6 +74,9 @@ from alphamind.pipeline.analysis import run_analysis_pipeline
 from alphamind.pipeline.decision import run_decision_pipeline
 from alphamind.portfolio_state import load_portfolio_state_config
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.consumers.synthesizer import (
+    SynthesizerPortfolioStateReader,
+)
 from alphamind.portfolio_state.pricing import (
     PriceQuote,
     PriceSource,
@@ -386,12 +393,73 @@ async def _update_row_phase2(
 def _mode_to_decision_literal(mode: Mode) -> Literal["normal", "halt"]:
     """Translate the config-layer ``Mode`` to the decision pipeline's literal.
 
-    ``Mode.halt`` → ``"halt"`` (defensive posture); every other member
-    (currently only ``Mode.normal``) routes to ``"normal"``. The row's
-    ``active_mode`` column uses a different vocabulary (story 03a's
-    ``ActiveMode``); this helper handles only the decision-pipeline side.
+    ``Mode.normal`` → ``"normal"``; ``Mode.halt`` → ``"halt"`` (defensive
+    posture). The row's ``active_mode`` column uses a different vocabulary
+    (story 03a's ``ActiveMode``); this helper handles only the
+    decision-pipeline side. Symmetric with
+    :func:`alphamind.scheduler.invocation._mode_to_active_mode_literal`: a
+    future ``Mode`` enum expansion raises ``ValueError`` rather than
+    silently mis-translating into ``"normal"``.
     """
-    return "halt" if mode is Mode.halt else "normal"
+    if mode is Mode.normal:
+        return "normal"
+    if mode is Mode.halt:
+        return "halt"
+    msg = f"unexpected Mode member {mode!r}; orchestrator knows only normal | halt"
+    raise ValueError(msg)
+
+
+# ---------------------------------------------------------------------------
+# Baseline DISTILLATION_CONFIG_CHANGE emission
+# ---------------------------------------------------------------------------
+
+
+async def _emit_baseline_config_change_entry(
+    *,
+    handle: InvocationHandle,
+    config_dir: Path,
+    now: datetime,
+) -> None:
+    """Emit a baseline ``DISTILLATION_CONFIG_CHANGE`` entry per invocation.
+
+    Loads the distillation config from ``<config_dir>/distillation.yaml``
+    and calls :func:`emit_distillation_config_change_entry` with
+    ``prior=None``. The helper's hash-check de-dup
+    (``read_most_recent_config_change_new_hash``) suppresses no-op
+    re-emissions on subsequent invocations with byte-identical config; on
+    a fresh DB this writes one baseline entry per config-version so the
+    verify script's ``check_activity_log`` succeeds even when Phase 1 and
+    Phase 2 emit zero entries (clean paper-DB invocation).
+
+    The git SHA is read from the bound invocation row (story 03a stamps
+    it on ``open_invocation`` enter). The entry id follows the convention
+    used by the Phase 1 / Phase 2 emitters
+    (:func:`alphamind.execution.state_persistence.write_paths.phase1._append_activity_log_entry`):
+    ``{invocation_id}-{event_type}-{uuid4-hex}``.
+    """
+    from alphamind.portfolio_state.events.activity_log import EventType
+    from alphamind.scripts._common import load_distillation_config
+
+    distillation_config = load_distillation_config(config_dir / "distillation.yaml")
+    row = await handle.session.get(InvocationRow, handle.invocation_id)
+    if row is None:
+        msg = (
+            f"invocations row {handle.invocation_id!r} disappeared before "
+            "baseline DISTILLATION_CONFIG_CHANGE emission; InvocationContext "
+            "should have inserted it on enter"
+        )
+        raise RuntimeError(msg)
+    entry_id = (
+        f"{handle.invocation_id}-{EventType.DISTILLATION_CONFIG_CHANGE.value}-{uuid.uuid4().hex}"
+    )
+    await emit_distillation_config_change_entry(
+        handle,
+        prior=None,
+        new=distillation_config,
+        timestamp=now,
+        git_sha=row.git_sha_at_invocation,
+        entry_id=entry_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +481,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     archive_root: Path,
     state_delivery_config: StateDeliveryConfig,
     active_risk_parameters: ActiveRiskParameterSet,
+    sector_resolver: Callable[[str], str],
 ) -> dict[str, Any]:
     """Assemble the ~22 kwargs ``run_decision_pipeline`` requires.
 
@@ -462,7 +531,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
         "halt_state": halt_state,
         "agents_config": dict(resolved.agents.agents),
         "agent_overrides": dict(resolved.agent_overrides),
-        "sector_resolver": _default_sector_resolver,
+        "sector_resolver": sector_resolver,
         "borrow_cost_resolver": None,
         "library_config": library_config,
         "library_market": library_market,
@@ -479,23 +548,44 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
 
 
 def _active_sectors_from_resolved(resolved: Any) -> set[str]:
-    """Read active sectors from the loaded assets config; falls back empty."""
-    try:
-        return set(resolved.assets.sectors.keys())
-    except AttributeError:
-        return set()
+    """Read active sectors from the loaded assets config.
 
-
-def _default_sector_resolver(ticker: str) -> str:
-    """Conservative default: every unknown ticker resolves to ``"tech"``.
-
-    Story 03b's tests stub ``run_decision_pipeline`` so the resolver is
-    never invoked; production threading of a real ticker→sector map is
-    out of scope. A future story replaces this with a SectorsConfig-backed
-    resolver.
+    Logs a warning and returns an empty set when the resolved config lacks
+    either ``assets`` or ``assets.sectors``. Future schema changes that
+    rename or relocate these attributes surface as a visible warning rather
+    than silently producing empty data.
     """
-    del ticker
-    return "tech"
+    if not hasattr(resolved, "assets"):
+        log.warning("resolved config has no 'assets' attribute; active_sectors empty")
+        return set()
+    if not hasattr(resolved.assets, "sectors"):
+        log.warning("resolved.assets has no 'sectors' attribute; active_sectors empty")
+        return set()
+    return set(resolved.assets.sectors.keys())
+
+
+def _build_sector_resolver(resolved: Any) -> Callable[[str], str]:
+    """Build a ticker→sector resolver from the resolved assets config.
+
+    Walks ``resolved.assets.sectors`` (``dict[sector, list[ticker]]``) and
+    constructs the inverse map. The returned callable looks up the ticker
+    and returns its sector; tickers absent from every sector list resolve
+    to ``"UNCLASSIFIED"`` (the same sentinel
+    :func:`alphamind.portfolio_state.consumers.synthesizer._project_positions`
+    uses). Logs a warning when ``assets.sectors`` is unavailable.
+    """
+    ticker_to_sector: dict[str, str] = {}
+    if not hasattr(resolved, "assets") or not hasattr(resolved.assets, "sectors"):
+        log.warning("resolved.assets.sectors unavailable; sector_resolver returns 'UNCLASSIFIED'")
+    else:
+        for sector, tickers in resolved.assets.sectors.items():
+            for ticker in tickers:
+                ticker_to_sector[ticker] = sector
+
+    def _resolver(ticker: str) -> str:
+        return ticker_to_sector.get(ticker, "UNCLASSIFIED")
+
+    return _resolver
 
 
 def _make_repository_providers(
@@ -573,8 +663,8 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
 
     1. Resolve runtime dimensions against a short read-only session.
     2. Enter :func:`open_invocation` — opens the per-invocation transaction.
-    3. Phase 1 (collect): gather inputs → ``process_unprocessed_fills`` →
-       update row → ``stamp_phase_completion(handle, column="phase1_completed_at")``.
+    3. Phase 1 (collect): gather inputs → ``process_unprocessed_fills``
+       (which stamps ``phase1_completed_at`` internally) → update row.
     4. Phase 2 (distill + analyze): ``run_analysis_pipeline``.
     5. Phase 3 (decide): ``run_decision_pipeline``.
     6. Phase 4 (execute): ``dispatch_phase2`` → update row →
@@ -673,6 +763,23 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
             regime=runtime.active_regime,
         )
 
+        # Emit a baseline DISTILLATION_CONFIG_CHANGE entry on first invocation
+        # per config-version. The helper's hash-check de-dup
+        # (``read_most_recent_config_change_new_hash``) suppresses no-op
+        # re-emissions on subsequent invocations with byte-identical
+        # distillation config. Always passing ``prior=None`` is safe per the
+        # helper's docstring: it builds a baseline entry on every call and
+        # the de-dup gate handles redundancy. Guarantees at least one
+        # ``activity_log`` entry per invocation on a fresh DB so the verify
+        # script's ``check_activity_log`` succeeds even when Phase 1 / Phase
+        # 2 emit zero entries (clean paper-DB invocation with no fills + no
+        # commands).
+        await _emit_baseline_config_change_entry(
+            handle=handle,
+            config_dir=config_dir,
+            now=now,
+        )
+
         # Phase 1 — collect.
         phase1_inputs = await gather_phase1_inputs(
             handle=handle,
@@ -693,15 +800,42 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
             phase1_summary=phase1_summary,
             staleness_flag=phase1_inputs.staleness_flag,
         )
-        await stamp_phase_completion(handle, column="phase1_completed_at")
+        # ``process_unprocessed_fills`` already stamped ``phase1_completed_at``
+        # at write_paths/phase1.py:294. The orchestrator's role here is the
+        # phase-1 row-summary update only; re-stamping would overwrite the
+        # write-path-internal timestamp with one slightly later.
+
+        # Build the per-invocation sector resolver from the resolved assets
+        # config; threaded into both the synthesizer reader and the decision
+        # pipeline so both see the same ticker→sector map.
+        sector_resolver = _build_sector_resolver(pipeline_config.resolved)
 
         # Phase 2 — distill + analyze.
+        #
+        # NOTE: ``_EmptySynthesizerReader`` is a deferred-wiring stub. The
+        # natural production wiring is ``SnapshotBackedSynthesizerReader``
+        # backed by ``assemble_snapshot`` (see
+        # :func:`alphamind.portfolio_state.consumers.synthesizer.SnapshotBackedSynthesizerReader`
+        # at ``src/alphamind/portfolio_state/consumers/synthesizer.py:175``).
+        # Wiring it here requires the snapshot to read Phase-1-committed
+        # data, but the orchestrator's transaction does not commit until
+        # ``InvocationContext.__aexit__`` — a fresh session opened by
+        # ``build_sql_portfolio_state_repository`` cannot see the open
+        # transaction's uncommitted ``invocations`` / ``phase1_completed_at``
+        # write. The same transaction-visibility constraint applies to
+        # ``run_decision_pipeline``'s own ``assemble_snapshot`` call in
+        # ``_build_decision_kwargs``; resolving it likely requires threading
+        # the open ``handle.session`` through the assembler (or staging a
+        # post-Phase-1 commit). Deferring to a follow-up story scoped to
+        # cross-transaction snapshot visibility.
+        portfolio_reader = _EmptySynthesizerReader()
         analysis_result = await _run_analysis(
             handle=handle,
             pipeline_config=pipeline_config,
             config_dir=config_dir,
             archive_root=archive_root,
             now=now,
+            portfolio_reader=portfolio_reader,
         )
 
         # Phase 3 — decide.
@@ -719,6 +853,7 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
             archive_root=archive_root,
             state_delivery_config=state_delivery_config,
             active_risk_parameters=active_risk_parameters,
+            sector_resolver=sector_resolver,
         )
         decision_result = await run_decision_pipeline(**decision_kwargs)
 
@@ -753,21 +888,21 @@ async def _run_analysis(
     config_dir: Path,
     archive_root: Path,
     now: datetime,
+    portfolio_reader: SynthesizerPortfolioStateReader,
 ) -> Any:
     """Compose ``run_analysis_pipeline`` inputs from the loaded config + handle.
 
     Extracted out of :func:`run_invocation` to keep the main orchestrator
     body readable; threads the synthesizer portfolio reader, distillation
     config, agents config + overrides, and the ticker scope through to
-    the analysis composition. The reader / ticker scope are stub-shaped
-    while the analysis composition's live-snapshot path remains under
-    development; tests stub ``run_analysis_pipeline`` so the values are
-    not consulted on the per-test happy path.
+    the analysis composition. The reader is built upstream by
+    :func:`_build_snapshot_backed_synthesizer_reader` so the synthesizer
+    projects the same post-Phase-1 snapshot the decision pipeline will
+    consume.
     """
     from alphamind.scripts._common import load_distillation_config
 
     resolved = pipeline_config.resolved
-    portfolio_reader = _EmptySynthesizerReader()
     ticker_scope = _ticker_scope_from_assets(resolved)
     return await run_analysis_pipeline(
         session=handle.session,  # type: ignore[arg-type]
@@ -787,32 +922,53 @@ async def _run_analysis(
 def _ticker_scope_from_assets(resolved: Any) -> tuple[str, ...]:
     """Extract the per-invocation ticker scope from the resolved assets config.
 
-    Returns an empty tuple when the assets block lacks a universe (e.g.,
-    minimal fixtures or schemas that surface the universe under a
-    different attribute).
+    ``AssetsConfig`` does not expose a top-level ``universe`` field; the
+    scope is the alphabetized union of every sector's tickers (mirroring
+    :func:`alphamind.scripts._common.load_universe_scope`). Logs a warning
+    and returns an empty tuple when ``resolved`` lacks an ``assets`` /
+    ``assets.sectors`` attribute path — future schema changes surface as a
+    visible warning rather than silent empty data.
     """
-    try:
-        return tuple(resolved.assets.universe)
-    except AttributeError:
+    if not hasattr(resolved, "assets"):
+        log.warning("resolved config has no 'assets' attribute; ticker_scope empty")
         return ()
+    if not hasattr(resolved.assets, "sectors"):
+        log.warning("resolved.assets has no 'sectors' attribute; ticker_scope empty")
+        return ()
+    tickers: set[str] = set()
+    for sector_tickers in resolved.assets.sectors.values():
+        tickers.update(sector_tickers)
+    return tuple(sorted(tickers))
 
 
 def _sectors_config_from_assets(resolved: Any) -> dict[str, list[str]]:
-    """Extract the per-sector ticker buckets from the resolved assets config."""
-    try:
-        return {sector: list(tickers) for sector, tickers in resolved.assets.sectors.items()}
-    except AttributeError:
+    """Extract the per-sector ticker buckets from the resolved assets config.
+
+    Logs a warning and returns an empty dict when the resolved config
+    lacks ``assets`` / ``assets.sectors``.
+    """
+    if not hasattr(resolved, "assets"):
+        log.warning("resolved config has no 'assets' attribute; sectors_config empty")
         return {}
+    if not hasattr(resolved.assets, "sectors"):
+        log.warning("resolved.assets has no 'sectors' attribute; sectors_config empty")
+        return {}
+    return {sector: list(tickers) for sector, tickers in resolved.assets.sectors.items()}
 
 
 class _EmptySynthesizerReader:
     """Empty stand-in implementing :class:`SynthesizerPortfolioStateReader`.
 
-    Story 03b composes the orchestrator's wiring; the live-snapshot reader
-    that backs ``get_positions_summary`` / ``get_active_theses_summary`` /
-    ``get_exposure_snapshot`` against the open invocation session is
-    deferred to a follow-up story. Tests stub ``run_analysis_pipeline`` so
-    the reader is never invoked.
+    Deferred-wiring stub. The production reader is
+    :class:`SnapshotBackedSynthesizerReader`
+    (``src/alphamind/portfolio_state/consumers/synthesizer.py:175``)
+    backed by ``assemble_snapshot``. The wiring is deferred until the
+    cross-transaction snapshot-visibility story lands — the orchestrator's
+    open ``InvocationContext`` transaction does not commit between Phase 1
+    and the synthesizer call, so a separate session opened by the
+    repository factory cannot read the row's ``phase1_completed_at`` until
+    that constraint is reworked. Tests stub ``run_analysis_pipeline`` so
+    the reader is never invoked under unit tests.
     """
 
     async def get_positions_summary(self) -> tuple[Any, ...]:

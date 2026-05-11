@@ -181,11 +181,13 @@ nested-list contexts):
   configured run-type lacks an enabled agent; the decision-pipeline
   composition raised a ``HarnessFailure`` from one of its four agents;
   Phase 1 raised because the Alpaca paper adapter rejected the
-  credentials. Triage — the exception's type + message names the
-  failing layer; consult the per-layer runbook
-  (``RUNBOOK_decision_pipeline.md``, ``RUNBOOK_synthesizer.md``,
-  ``RUNBOOK_broker_adapter.md``, ``RUNBOOK_state_persistence.md``)
-  for failure-mode triage.
+  credentials. **Re-running is expensive** ($1-$5 per invocation per
+  the Cost section). Triage from ``pipeline.log`` +
+  ``~/AlphaMind/archive/invocations/<latest>/`` before re-invoking. The
+  exception's type + message names the failing layer; consult the
+  per-layer runbook (``RUNBOOK_decision_pipeline.md``,
+  ``RUNBOOK_synthesizer.md``, ``RUNBOOK_broker_adapter.md``,
+  ``RUNBOOK_state_persistence.md``) for failure-mode triage.
 
 - **``FAIL: row_population — columns NULL on invocation row: ...``.**
   Likely cause — the orchestrator returned early (before
@@ -208,15 +210,18 @@ nested-list contexts):
   filesystem permissions on the directory tree.
 
 - **``FAIL: activity_log — no activity_log entries found for
-  invocation_id=...``.** Likely cause — every Phase 1 / Phase 2
-  emitter was a no-op (no fills to process, no commands to execute, no
-  config changes since the prior invocation). The
-  ``CONFIG_RELOAD``-sourced ``DISTILLATION_CONFIG_CHANGE`` event is
-  emitted on first invocation per config change; if the config is
-  unchanged and there are no fills or commands, the activity-log
-  remains empty. Triage — make a trivial change to the distillation
-  config (e.g. bump a budget by one) to force a ``CONFIG_RELOAD``
-  emission, then re-run.
+  invocation_id=...``.** Likely cause — the orchestrator's baseline
+  ``DISTILLATION_CONFIG_CHANGE`` emission was suppressed (the
+  ``read_most_recent_config_change_new_hash`` de-dup matched the prior
+  invocation's hash) and Phase 1 / Phase 2 emitted no fill / command
+  entries. The baseline emission writes one entry per config-version on
+  first invocation, then suppresses on subsequent invocations with
+  byte-identical config; a fresh DB always emits at least the baseline.
+  Triage — verify the DB is at the expected migration head and that
+  ``read_most_recent_config_change_new_hash`` is reading the same
+  ``config_file`` key (``"config/distillation.yaml"``). For a
+  guaranteed re-emission, make a trivial change to
+  ``config/distillation.yaml`` (e.g. bump a budget by one).
 
 - **``FAIL: archive — archive directory missing: ...``.** Likely cause
   — the orchestrator returned without committing the per-invocation
@@ -321,16 +326,23 @@ and the future ``alphamind-monitor``).
    The runbook's daemon-mode sanity check covers the wiring; a true
    end-to-end production validation lives under the central runbook's
    pipeline-scheduler phase plus the operator's monitoring.
-3. **Known orchestrator stubs (story 03b).** The orchestrator's
-   ``_active_risk_parameters_default_provider`` raises
-   ``NotImplementedError`` on production-shape invocations; the
-   ``halt_state`` / overlay decisions default to inactive. If the
-   ``--once`` invocation hits these stubs during verification, the
-   ``once_invocation`` check fails with the ``NotImplementedError`` —
-   that's a signal the orchestrator's pre-review triage hasn't yet
-   wired the real providers. The other six checks (auth, schema,
-   process_lifetime, vocabulary) still exercise correctly against the
-   production-shape DB.
+3. **Known orchestrator stub: ``_EmptySynthesizerReader``.** The
+   orchestrator currently wires an empty synthesizer reader (returns
+   no positions / theses / exposure) at
+   ``src/alphamind/scheduler/orchestrator.py``'s ``_EmptySynthesizerReader``.
+   The natural production reader is
+   :class:`SnapshotBackedSynthesizerReader`
+   (``src/alphamind/portfolio_state/consumers/synthesizer.py:175``)
+   backed by ``assemble_snapshot``. Wiring it requires a snapshot
+   that reads Phase-1-committed data, but the orchestrator's
+   ``InvocationContext`` transaction does not commit between Phase 1
+   and the synthesizer call — a separate session opened by the
+   repository factory cannot see the open transaction's uncommitted
+   row. Deferred to a follow-up story scoped to cross-transaction
+   snapshot visibility. Tests stub ``run_analysis_pipeline`` so the
+   empty reader is never invoked under unit tests; the ``--once``
+   verify path may exhibit reduced synthesizer fidelity until the
+   deferred wiring lands.
 
 ## References
 

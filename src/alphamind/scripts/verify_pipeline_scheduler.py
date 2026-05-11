@@ -2,9 +2,9 @@
 
 Operator entry point for the pipeline-scheduler work-tree acceptance gate.
 Drives one ``--once`` invocation through :func:`run_invocation` against
-the paper DB and asserts every artifact landed: the 22-field
-``invocations`` row, the Phase 1 / Phase 2 timestamps, at least one
-``activity_log`` entry, and the per-invocation archive directory with
+the paper DB and asserts every artifact landed: 21 must-be-set columns
+on the ``invocations`` row, the Phase 1 / Phase 2 timestamps, at least
+one ``activity_log`` entry, and the per-invocation archive directory with
 ``resolved_config.json`` + ``data_calibration_state.json``. Also asserts
 the story 04b vocabulary additions are wired (``RunType.emergency``,
 ``EventType.EMERGENCY_INVOCATION_REQUESTED``, ``config/run_types/emergency.yaml``
@@ -90,10 +90,11 @@ _REQUIRED_TABLES: tuple[str, ...] = (
     "activity_log",
 )
 
-# The 22 columns the ``invocations`` row must carry by the end of one
-# successful invocation. ``snapshot_metadata_json`` and ``staleness_flag``
-# are nullable on insert; the orchestrator populates them after Phase 2
-# completes. Drives the row-population check below.
+# The 21 must-be-set columns the ``invocations`` row must carry by the
+# end of one successful invocation. ``snapshot_metadata_json`` is
+# documented as nullable per the storage spec; no production writer
+# populates it in the current pipeline, so it is intentionally absent
+# from this list. Drives the row-population check below.
 _INVOCATION_ROW_COLUMNS: tuple[str, ...] = (
     "invocation_id",
     "process_lifetime_id",
@@ -116,7 +117,6 @@ _INVOCATION_ROW_COLUMNS: tuple[str, ...] = (
     "fill_collection_summary_json",
     "command_execution_summary_json",
     "staleness_flag",
-    "snapshot_metadata_json",
 )
 
 
@@ -198,9 +198,9 @@ def check_db_schema(conn: Connection) -> CheckResult:
             passed=False,
             message=f"missing tables: {', '.join(missing)}",
         )
-    # Spot-check that the ``invocations`` table carries every expected column
-    # — the migration head should produce all 22, but a pre-migration DB
-    # surfaces as a partial column list rather than a missing table.
+    # Spot-check that the ``invocations`` table carries every must-be-set
+    # column — the migration head should produce all 21, but a pre-migration
+    # DB surfaces as a partial column list rather than a missing table.
     inv_cols = {c["name"] for c in inspector.get_columns("invocations")}
     missing_cols = [c for c in _INVOCATION_ROW_COLUMNS if c not in inv_cols]
     if missing_cols:
@@ -214,7 +214,7 @@ def check_db_schema(conn: Connection) -> CheckResult:
         passed=True,
         message=(
             f"tables present: {', '.join(_REQUIRED_TABLES)}; "
-            f"invocations carries all 22 expected columns"
+            f"invocations carries all 21 must-be-set columns"
         ),
     )
 
@@ -298,8 +298,11 @@ def check_invocation_row_population(conn: Connection, *, invocation_id: str) -> 
     """Assert every required column of the ``invocations`` row landed cleanly.
 
     Specifically:
-      * Every one of the 22 columns is populated (per the spec — including
-        the two phase-completion timestamps and both summary JSON columns).
+      * Every one of the 21 must-be-set columns is populated (per the spec
+        — including the two phase-completion timestamps and both summary
+        JSON columns). ``snapshot_metadata_json`` is intentionally not
+        checked: the storage spec lists it as nullable and no production
+        writer populates it.
       * ``trigger_type`` is ``'manual'`` (the verify script always drives a
         manual ``--once`` invocation).
       * ``active_overlays_json`` and ``feature_flags_snapshot_json`` parse as
@@ -339,7 +342,7 @@ def check_invocation_row_population(conn: Connection, *, invocation_id: str) -> 
         label="row_population",
         passed=True,
         message=(
-            "all 22 invocation-row columns populated; trigger_type=manual; "
+            "all 21 must-be-set invocation-row columns populated; trigger_type=manual; "
             "JSON columns parse; resolved_config + data_calibration paths exist"
         ),
     )

@@ -125,7 +125,7 @@ def _seed_full_invocation_row(
     fill_summary: str | None = '{"fills_processed": 0}',
     command_summary: str | None = '{"commands_submitted": 0}',
     staleness_flag: int | None = 0,
-    snapshot_metadata_json: str | None = "{}",
+    snapshot_metadata_json: str | None = None,
     resolved_config_path: str = "/tmp/cfg.json",
     data_cal_path: str = "/tmp/data_cal.json",
     active_overlays_json: str = "[]",
@@ -187,6 +187,8 @@ class TestCheckInvocationRowPopulation:
         cfg_path.write_text('{"profile": "test"}')
         data_cal_path = tmp_path / "data_cal.json"
         data_cal_path.write_text("{}")
+        # snapshot_metadata_json defaults to NULL — the storage spec lists it
+        # as nullable and the row-population check excludes it.
         _seed_full_invocation_row(
             sqlite_engine,
             invocation_id="inv-1",
@@ -196,7 +198,7 @@ class TestCheckInvocationRowPopulation:
         with sqlite_engine.connect() as conn:
             result = check_invocation_row_population(conn, invocation_id="inv-1")
         assert result.passed, result.message
-        assert "22" in result.message  # references the 22-field shape
+        assert "21" in result.message  # references the 21-must-be-set-field shape
 
     def test_fails_when_phase1_completed_at_null(
         self, sqlite_engine: Engine, tmp_path: Path

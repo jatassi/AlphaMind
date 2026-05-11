@@ -265,6 +265,15 @@ def _patch_no_op_pipeline(
         captured["phase1"] = {"args": args, "kwargs": kw}
         if phase1_raises is not None:
             raise phase1_raises
+        # Production ``process_unprocessed_fills`` stamps ``phase1_completed_at``
+        # on the bound row before returning (write_paths/phase1.py:294); the
+        # stub mirrors that so the orchestrator's post-Phase-1 invariants hold.
+        from alphamind.execution.state_persistence.invocation_context.context import (
+            stamp_phase_completion,
+        )
+
+        handle = args[0]
+        await stamp_phase_completion(handle, column="phase1_completed_at")
         return phase1_summary or _make_phase1_summary()
 
     async def _analysis_stub(**kw: Any) -> Any:
@@ -584,3 +593,37 @@ class TestRunInvocationModeAndStaleness:
 
         assert summary.staleness_flag is True
         assert row.staleness_flag == 1
+
+
+class TestModeToDecisionLiteral:
+    """``_mode_to_decision_literal`` is symmetric with the row-side translator.
+
+    Both raise ``ValueError`` on unknown ``Mode`` members rather than silently
+    falling back to ``"normal"``. A future ``Mode`` enum expansion that adds a
+    new member would otherwise silently mis-translate into ``"normal"``.
+    """
+
+    def test_normal_translates_to_normal(self) -> None:
+        from alphamind.scheduler.orchestrator import _mode_to_decision_literal
+
+        assert _mode_to_decision_literal(Mode.normal) == "normal"
+
+    def test_halt_translates_to_halt(self) -> None:
+        from alphamind.scheduler.orchestrator import _mode_to_decision_literal
+
+        assert _mode_to_decision_literal(Mode.halt) == "halt"
+
+    def test_unknown_mode_raises_valueerror(self) -> None:
+        """Passing a non-Mode value (simulating an enum expansion) raises ValueError."""
+        from enum import Enum
+
+        from alphamind.scheduler.orchestrator import _mode_to_decision_literal
+
+        # Simulate a future enum member by passing a fresh Enum value that is
+        # not one of Mode.normal / Mode.halt. ``_mode_to_decision_literal``
+        # narrows via ``is``-identity and falls into the raise branch.
+        class FutureMode(Enum):
+            ATTENTIVE = "attentive"
+
+        with pytest.raises(ValueError, match="unexpected Mode member"):
+            _mode_to_decision_literal(FutureMode.ATTENTIVE)  # type: ignore[arg-type]
