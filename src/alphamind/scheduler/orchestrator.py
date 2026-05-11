@@ -96,6 +96,8 @@ from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.consumers.synthesizer import (
     SnapshotBackedSynthesizerReader,
+    SynthesizerPortfolioStateReader,
+    adapt_ticker_sector_resolver,
 )
 from alphamind.portfolio_state.freshness import AssembledSnapshot
 from alphamind.portfolio_state.pricing import (
@@ -457,11 +459,10 @@ async def _emit_baseline_config_change_entry(
     verify script's ``check_activity_log`` succeeds even when Phase 1 and
     Phase 2 emit zero entries (clean paper-DB invocation).
 
-    The git SHA is read from the bound invocation row (story 03a stamps
-    it on ``open_invocation`` enter). The entry id follows the convention
-    used by the Phase 1 / Phase 2 emitters
-    (:func:`alphamind.execution.state_persistence.write_paths.phase1._append_activity_log_entry`):
-    ``{invocation_id}-{event_type}-{uuid4-hex}``.
+    The git SHA is read from the bound invocation row (stamped by
+    ``insert_invocation_record`` before Phase 1 opened). The entry id
+    follows the Phase 1 / Phase 2 emitter convention
+    (``{invocation_id}-{event_type}-{uuid4-hex}``).
     """
     from alphamind.portfolio_state.events.activity_log import EventType
     from alphamind.scripts._common import load_distillation_config
@@ -667,38 +668,12 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
 ) -> InvocationSummary:
     """Drive one pipeline invocation through the design's three-transaction model.
 
-    Sequences:
-
-    1. Resolve runtime dimensions against a short read-only session.
-    2. :func:`insert_invocation_record` inserts + commits the invocation row
-       in its own short transaction. The row is durable + visible to
-       fresh-session reads from this point forward.
-    3. **Phase 1 transaction** — one session wrapping the baseline
-       ``DISTILLATION_CONFIG_CHANGE`` emission, ``gather_phase1_inputs``,
-       ``process_unprocessed_fills`` (stamps ``phase1_completed_at``), and
-       the row's Phase 1 summary writeback. Commits at close.
-    4. **Snapshot read between phases** — ``assemble_snapshot`` opens fresh
-       sessions via the repository factory and reads the now-committed
-       Phase 1 state. Feeds :class:`SnapshotBackedSynthesizerReader`.
-    5. **Analysis + decision** (read-only) — ``run_analysis_pipeline`` and
-       ``run_decision_pipeline`` run against fresh sessions. The snapshot
-       built above flows through both. No transaction commits here.
-    6. **Phase 2 transaction** — one session wrapping ``dispatch_phase2``,
-       the row's Phase 2 summary writeback, and the
-       ``phase2_completed_at`` stamp. Commits at close.
-    7. Return :class:`InvocationSummary`.
-
-    Failure semantics (per ``docs/design/mid-pipeline-failure-handling.md``):
-      * Phase 1 abort: Phase 1's tx rolls back; the row stays with
-        ``phase1_completed_at IS NULL``; the repository's consistency guard
-        refuses snapshot reads against this invocation; the next invocation
-        retries fills.
-      * Between-phase abort (snapshot/analysis/decision): Phase 1 stays
-        committed; Phase 2 is skipped; the next scheduled invocation
-        regenerates briefs from current state.
-      * Phase 2 abort: Phase 2's tx rolls back; ``phase2_completed_at``
-        stays NULL; already-committed envelopes from prior loop iterations
-        remain durable (per-envelope split lands in Slice 3 / ALP-449).
+    See the module docstring for the per-phase transaction boundaries and
+    failure semantics. The sequence in this function: resolve runtime
+    dimensions → ``insert_invocation_record`` → Phase 1 (one session) →
+    snapshot assembly (fresh sessions) → analysis + decision (read-only) →
+    Phase 2 (per-envelope sessions + final row stamp) → return
+    :class:`InvocationSummary`.
     """
     start_perf = time.monotonic()
     state_persistence_config = load_state_persistence_config(
@@ -832,7 +807,7 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
     )
     portfolio_reader = SnapshotBackedSynthesizerReader(
         assembled.snapshot,
-        sector_resolver=_adapt_sector_resolver_for_snapshot(sector_resolver),
+        sector_resolver=adapt_ticker_sector_resolver(sector_resolver),
     )
 
     # Step 5 — Read-only analysis + decision pipelines. The analysis
@@ -866,13 +841,9 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
     )
     decision_result = await run_decision_pipeline(**decision_kwargs)
 
-    # Step 6 — Phase 2. ``dispatch_phase2`` commits each envelope's
-    # writes in its own transaction so a mid-batch persistence failure
-    # leaves earlier envelopes durable (per ``docs/design/
-    # mid-pipeline-failure-handling.md`` "commands submitted before the
-    # abort remain committed"). Once dispatch returns, a final short
-    # transaction writes the Phase 2 summary onto the invocation row and
-    # stamps ``phase2_completed_at``.
+    # Step 6 — Phase 2. ``dispatch_phase2`` commits each envelope in its
+    # own transaction; the trailing short transaction here writes the
+    # Phase 2 summary and stamps ``phase2_completed_at``.
     phase2_summary = await dispatch_phase2(
         session_factory=session_factory,
         invocation_id=invocation_id,
@@ -913,7 +884,7 @@ async def _assemble_phase1_snapshot(
     having already committed so the repository's
     ``phase1_completed_at IS NULL → RepositoryConsistencyError`` guard
     sees a satisfied row. The same ``AssembledSnapshot`` feeds the
-    synthesizer reader and (post-Slice 2) the decision pipeline.
+    synthesizer reader and the decision pipeline.
     """
     portfolio_state_config = load_portfolio_state_config(_PORTFOLIO_STATE_CONFIG_PATH)
     active_provider, prior_provider = _make_repository_providers(active_risk_parameters)
@@ -934,28 +905,10 @@ async def _assemble_phase1_snapshot(
     return await assemble_snapshot(
         repository=repository,
         price_provider=price_provider,
-        sector_resolver=_adapt_sector_resolver_for_snapshot(sector_resolver),
+        sector_resolver=adapt_ticker_sector_resolver(sector_resolver),
         config=portfolio_state_config,
         now=datetime.now(UTC),
     )
-
-
-def _adapt_sector_resolver_for_snapshot(
-    sector_resolver: Callable[[str], str],
-) -> Callable[[Any], str | None]:
-    """Adapt a ticker→sector resolver to the position-shaped one the assembler consumes.
-
-    Mirrors ``alphamind.pipeline.decision._adapt_sector_resolver_for_assembler``
-    (the decision pipeline's own copy); both will fold into a single shared
-    helper once Slice 2 lands the snapshot-passing signature change.
-    """
-    from alphamind.portfolio_state.consumers.synthesizer import _ticker_from_position
-
-    def _adapter(position: Any) -> str | None:
-        ticker = _ticker_from_position(position)
-        return sector_resolver(ticker) if ticker else None
-
-    return _adapter
 
 
 async def _run_analysis(
@@ -965,17 +918,13 @@ async def _run_analysis(
     config_dir: Path,
     archive_root: Path,
     now: datetime,
-    portfolio_reader: SnapshotBackedSynthesizerReader,
+    portfolio_reader: SynthesizerPortfolioStateReader,
 ) -> Any:
     """Compose ``run_analysis_pipeline`` inputs from the loaded config + handle.
 
-    Extracted out of :func:`run_invocation` to keep the main orchestrator
-    body readable; threads the synthesizer portfolio reader, distillation
-    config, agents config + overrides, and the ticker scope through to
-    the analysis composition. The reader is built upstream by
-    :func:`_build_snapshot_backed_synthesizer_reader` so the synthesizer
-    projects the same post-Phase-1 snapshot the decision pipeline will
-    consume.
+    The reader is built upstream by ``run_invocation`` (after the snapshot
+    assembly) so the synthesizer projects the same post-Phase-1 snapshot
+    the decision pipeline consumes.
     """
     from alphamind.scripts._common import load_distillation_config
 

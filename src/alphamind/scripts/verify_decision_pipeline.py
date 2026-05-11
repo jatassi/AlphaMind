@@ -987,27 +987,22 @@ async def _run_pipeline(
 ) -> DecisionPipelineResult:
     """Compose runner kwargs and invoke ``run_decision_pipeline``.
 
-    Per ALP-449 Slice 2, ``run_decision_pipeline`` accepts a pre-built
-    ``AssembledSnapshot`` (the orchestrator builds it between phases in
-    production); this script mirrors that by calling ``assemble_snapshot``
-    once against the stub repository before invoking the runner.
+    Mirrors the orchestrator: assemble the snapshot once against the stub
+    repository, then pass the pre-built :class:`AssembledSnapshot` into the
+    runner.
     """
     from alphamind.portfolio_state.assembler import assemble_snapshot
-    from alphamind.portfolio_state.consumers.synthesizer import _ticker_from_position
+    from alphamind.portfolio_state.consumers.synthesizer import adapt_ticker_sector_resolver
 
     repository = StubPortfolioStateRepository(build_fixture_repository(invocation_id=invocation_id))
     quotes = build_fixture_price_provider()
     price_provider = StubCurrentPriceProvider(quotes, _AS_OF)
     library_config = build_fixture_library_config()
 
-    def _position_sector_resolver(position: Any) -> str | None:
-        ticker = _ticker_from_position(position)
-        return _sector_resolver(ticker) if ticker else None
-
     assembled = await assemble_snapshot(
         repository=repository,
         price_provider=price_provider,
-        sector_resolver=_position_sector_resolver,
+        sector_resolver=adapt_ticker_sector_resolver(_sector_resolver),
         config=_load_portfolio_state_config(),
         now=_AS_OF,
     )

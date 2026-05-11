@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
@@ -92,6 +93,23 @@ def _ticker_from_position(pos: PositionRecord | PositionView) -> str:
     optional), so unresolvable strategies surface as ``""`` rather than ``None``.
     """
     return resolve_ticker(pos.details) or ""
+
+
+def adapt_ticker_sector_resolver(
+    sector_resolver: Callable[[str], str],
+) -> SectorResolver:
+    """Adapt a ticker→sector resolver to the position-shaped :data:`SectorResolver`.
+
+    Public surface accepts ``Callable[[str], str]`` per parent decision (H);
+    the assembler and analyst-view projector thread a position-based
+    resolver. Returns ``None`` when the position's ticker is unresolvable.
+    """
+
+    def _adapter(position: PositionRecord | PositionView) -> str | None:
+        ticker = _ticker_from_position(position)
+        return sector_resolver(ticker) if ticker else None
+
+    return _adapter
 
 
 def _project_positions(

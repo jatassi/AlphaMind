@@ -60,14 +60,13 @@ from alphamind.portfolio_state.consumers.portfolio_manager import (
     project_portfolio_manager_view,
 )
 from alphamind.portfolio_state.consumers.strategist import project_strategist_view
+from alphamind.portfolio_state.consumers.synthesizer import adapt_ticker_sector_resolver
 from alphamind.portfolio_state.freshness import AssembledSnapshot
 from alphamind.portfolio_state.library_snapshot import (
     LibrarySnapshot,
     to_library_snapshot,
 )
-from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
-from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -252,7 +251,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     # 4. Project per-consumer views.
     analyst_view = project_analyst_view(
         pydantic_snapshot,
-        sector_resolver=_adapt_sector_resolver_for_assembler(sector_resolver),
+        sector_resolver=adapt_ticker_sector_resolver(sector_resolver),
         per_position_size_rule_id="position_max_size_pct",
         total_portfolio_value_usd=library_snapshot.portfolio_value_usd,
     )
@@ -380,33 +379,6 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
         pre_processor_bundle=pre_processor_bundle,
         pm_result=pm_result,
     )
-
-
-# ---------------------------------------------------------------------------
-# sector_resolver adapter for the assembler + analyst-view projector
-# ---------------------------------------------------------------------------
-
-
-def _adapt_sector_resolver_for_assembler(
-    sector_resolver: Callable[[str], str],
-) -> Callable[[PositionRecord | PositionView], str | None]:
-    """Adapt a ticker→sector resolver to the position-based shape the
-    assembler and analyst-view projector consume.
-
-    The runner's public surface accepts ``Callable[[str], str]`` per parent
-    decision (H); the assembler and analyst-view projector thread a
-    position-based resolver. Reuses
-    :func:`alphamind.portfolio_state.consumers.synthesizer._ticker_from_position`
-    which already handles the ``PositionRecord | PositionView`` ↦ ticker
-    extraction across equity, options, and strategy details.
-    """
-    from alphamind.portfolio_state.consumers.synthesizer import _ticker_from_position
-
-    def _adapter(position: PositionRecord | PositionView) -> str | None:
-        ticker = _ticker_from_position(position)
-        return sector_resolver(ticker) if ticker else None
-
-    return _adapter
 
 
 # ---------------------------------------------------------------------------

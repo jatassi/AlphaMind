@@ -135,12 +135,14 @@ async def _pipeline_inputs_from_fixture(
         }
     )
 
+    from alphamind.portfolio_state.consumers.synthesizer import adapt_ticker_sector_resolver
+
     repository = StubPortfolioStateRepository(fixture)
     price_provider = StubCurrentPriceProvider(quotes, now)
     assembled = await assemble_snapshot(
         repository=repository,
         price_provider=price_provider,
-        sector_resolver=_sector_resolver_for_assembler,
+        sector_resolver=adapt_ticker_sector_resolver(_sector_resolver),
         config=config,
         now=now,
     )
@@ -206,14 +208,6 @@ async def _make_minimal_inputs() -> dict[str, Any]:
         now,
         active_sectors=("tech", "semis", "financials", "energy"),
     )
-
-
-def _sector_resolver_for_assembler(position: Any) -> str | None:
-    """Position-shaped sector resolver for ``assemble_snapshot``."""
-    from alphamind.portfolio_state.consumers.synthesizer import _ticker_from_position
-
-    ticker = _ticker_from_position(position)
-    return _sector_resolver(ticker) if ticker else None
 
 
 def _sector_resolver(ticker: str) -> str:
