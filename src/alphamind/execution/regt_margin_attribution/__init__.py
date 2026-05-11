@@ -11,6 +11,10 @@ orchestrator, and Phase 1 wedge modules.
 
 from __future__ import annotations
 
+from alphamind.execution.regt_margin_attribution.class_groups import (
+    ClassGroup,
+    compose_class_groups,
+)
 from alphamind.execution.regt_margin_attribution.config import (
     IvShockMultipliers,
     RegTMarginAttributionConfig,
@@ -19,8 +23,10 @@ from alphamind.execution.regt_margin_attribution.config import (
 )
 
 __all__ = [
+    "ClassGroup",
     "IvShockMultipliers",
     "RegTMarginAttributionConfig",
     "ShockParameters",
+    "compose_class_groups",
     "load_regt_margin_attribution_config",
 ]
