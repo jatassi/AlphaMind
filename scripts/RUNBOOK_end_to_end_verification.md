@@ -109,6 +109,7 @@ they read time-dependent DB state.
 | 8 | Decision: proposal pre-processor | proposal_pre_processor (4 scenarios) | No | <1s |
 | 9 | Decision: portfolio manager | pm (normal + halt + emergency + synchronous_rejection scenarios) | Yes (Opus) | ~20–30 min |
 | 9c | Decision: pipeline composition | decision_pipeline (normal scenario) | Yes (Opus, x4 agents) | ~3–10 min |
+| 9d | Operational: pipeline scheduler | pipeline_scheduler (one --once invocation) | Yes (full pipeline) | ~5–15 min |
 | 10 | Reporting | build_e2e_report (HTML render of the archive) | No | <2s |
 
 ## Phase 0 — Type-layer self-check
@@ -908,6 +909,71 @@ per-agent modal coverage independently — but a 9c FAIL flags a
 wiring-level regression that should be triaged before relying on the
 composition runner in production.
 
+## Phase 9d — Pipeline scheduler
+
+End-to-end check of the pipeline scheduler (ALP-431 work tree) — the
+main entrypoint that drives the full Phase 1 → analysis pipeline →
+decision pipeline → Phase 2 envelope dispatch sequence through one
+`run_invocation` orchestrator pass and writes every artifact the
+feedback loop joins against.
+
+This phase runs **after** Phase 9c (the decision-pipeline composition
+verifier) since the scheduler's orchestrator threads the decision
+pipeline as one of its five phases — a 9c FAIL invalidates 9d, and
+isolating decision-layer failures via 9c first is the cheaper path. It
+also runs **after** Phase 1b (state-persistence substrate), Phase 1c
+(OMS commands), Phase 1d (broker adapter), and Phase 5b (guardrail
+enforcement) for the same reason: the scheduler composes every prior
+layer's substrate, and a regression in any of them surfaces more
+clearly when isolated.
+
+```bash
+uv run python scripts/verify_pipeline_scheduler.py \
+    --archive-root "$ARCHIVE_ROOT"
+```
+
+Verifies nine checks against the paper DB: auth (`CLAUDE_CODE_OAUTH_TOKEN`
++ `ALPACA_PAPER_KEY` + `ALPACA_PAPER_SECRET` present); schema
+(`invocations` / `process_lifetimes` / `activity_log` tables exist with
+expected columns); process_lifetime row write (record_process_lifetime
+returns a row id); one `--once` manual invocation through
+`run_invocation` returns an `InvocationSummary`; the 22-field
+`invocations` row is fully populated (`phase1_completed_at` /
+`phase2_completed_at` set, JSON columns parse, snapshot paths exist on
+disk); at least one `activity_log` entry was emitted for this
+invocation; the archive directory under
+`<archive-root>/invocations/<invocation_id>/` exists with
+`resolved_config.json`; the story 04b vocabulary additions are wired
+(`RunType.emergency`, `EventType.EMERGENCY_INVOCATION_REQUESTED`,
+`config/run_types/emergency.yaml`, cooldown=30). Exit 0 on all-pass.
+
+The script drives `trigger_type=manual` /
+`trigger_source=verify_pipeline_scheduler` end-to-end against the
+production-shape paper DB (no fixture DBs), so it doubles as the
+production-readiness gate for the scheduler. Cost is the full pipeline
+invocation — one Sonnet pass through the analysis layer and one Opus
+pass through the four decision-layer agents (~$1–$5).
+
+Per the verify script's convention, the testable predicates are
+factored into helpers under
+`alphamind.scripts.verify_pipeline_scheduler`; the end-to-end `--once`
+invocation is exercised by the verify script itself, not by the unit
+tests.
+
+Runbook: `scripts/RUNBOOK_pipeline_scheduler.md`. The
+**downstream consumer** of Phase 9d is the continuous-monitor phase
+(future, owned by ALP-441) which depends on the scheduler being green
+before it can be exercised end-to-end.
+
+**On failure:** read the runbook's failure-mode triage section. The
+verify script prints one PASS/FAIL line per check; the FAIL line names
+the failing step and a one-line diagnostic. The most common causes are
+(a) the operator forgot to source `.env` before running (FAIL: auth),
+(b) the DB hasn't been migrated to head (FAIL: schema), or (c) the
+orchestrator hit a per-layer failure inside `run_invocation` (FAIL:
+once_invocation; the exception's type and message names the failing
+layer, and the per-layer runbook covers the triage).
+
 ## When complete
 
 Report a one-line summary to the operator:
@@ -924,6 +990,8 @@ End-to-end verification: <PASS|FAIL|WARN-only>
 - Phase 7 (strategist): normal=PASS, defensive_posture=PASS, emergency=PASS
 - Phase 8 (proposal pre-processor): normal=PASS, halt=PASS, emergency=PASS, normal_with_breach=PASS
 - Phase 9 (portfolio manager): normal=PASS, halt=PASS, emergency=PASS, synchronous_rejection=PASS
+- Phase 9c (decision-pipeline composition): normal=PASS
+- Phase 9d (pipeline scheduler): 9/9 checks PASS
 Total LLM cost: ~Xk Sonnet input + Yk Sonnet output, ~Zk Opus input + Wk Opus output
 Archives under .archive/verify-pipeline-YYYYMMDD/
 Fixtures at tests/fixtures/decision/{analyst,strategist,proposal_pre_processor,pm}/*.json
