@@ -106,7 +106,7 @@ Per-fill RegTMarginAttribution:
       pm_equivalent_after         =     <numeric>
       pm_marginal_consumption     =     <numeric>
       regt_excess_over_pm         =     <numeric>
-      pm_model_version            = ibkr_mirror_v1_2026Q2
+      pm_model_version            = occ_tims_v1_2026Q2
   Fill verify-regt-fill-amd-sell:
       regt_margin_before          =     <numeric>
       regt_margin_after           =     <numeric>
@@ -115,7 +115,7 @@ Per-fill RegTMarginAttribution:
       pm_equivalent_after         =     <numeric>
       pm_marginal_consumption     =     <numeric>
       regt_excess_over_pm         =     <numeric>
-      pm_model_version            = ibkr_mirror_v1_2026Q2
+      pm_model_version            = occ_tims_v1_2026Q2
 ----------------------------------------------------------------------
 Trailing-window aggregates (from assembled CashLedger):
   regt_excess_trailing_30d_usd =     <numeric>

@@ -1,28 +1,51 @@
-# Reg T Margin Attribution — IBKR-mirror v1 config snapshot
+# Reg T Margin Attribution — OCC TIMS / FINRA 4210 baseline v1 config snapshot
 #
-# pm_model_version: ibkr_mirror_v1_2026Q2
-#   Version string embedded in every per-fill attribution record so aggregates
-#   are filterable when the methodology snapshot is refreshed.
+# Methodology source:
+#   OCC TIMS RBH/CPM User Guide v1.13 (November 2021), page 1, paragraph 4.
+#   This is the customer-portfolio-margin methodology FINRA Rule 4210(g) points
+#   to, and is the public, citeable, broker-neutral reference model the
+#   AlphaMind Reg T attribution module uses to compute the PM-equivalent
+#   margin against which Reg T's per-leg consumption is compared.
 #
-# IBKR disclosure research status: design-doc defaults applied — IBKR research deferred
-#   Attempted source: https://www.interactivebrokers.com/en/trading/margin-stocks.php
-#   Access date: 2026-05-10
-#   Result: HTTP 403 Forbidden; page was not reachable during research.
-#   All per_symbol_overrides below are design-doc defaults per
-#   regt-margin-attribution.md § Portfolio-margin reference model:
-#     SPY, QQQ, DIA, VOO → 0.15 (high-cap index ETF default)
-#     IWM → 0.20 (small-cap index ETF default)
-#   Sector SPDR and top S&P 500 entries below use the asset-class defaults
-#   (high_cap_equity: 0.15) per design-doc guidance for symbols not
-#   individually researchable from IBKR's disclosure.
+# Source URL (Wayback snapshot):
+#   https://web.archive.org/web/20260129221213/https://www.theocc.com/getmedia/cc2a75c2-294e-4667-a94f-7470ddc78fe8/RBH-CPM_UserGuide.pdf
+# Access date: 2026-05-10.
 #
-# Operator refresh contract: when IBKR's margin-methodology disclosure is
-#   accessible, re-research each symbol in the minimum coverage list, update
-#   per_symbol_overrides with researched values (recording source URL +
-#   access date in a comment alongside each entry), bump pm_model_version,
-#   and filter historical aggregates by version when comparing across snapshots.
+# Verbatim tier percentages (OCC TIMS RBH/CPM User Guide v1.13, p. 1, ¶ 4):
+#   * High-capitalization diversified indexes: +6% / -8% (ASYMMETRIC).
+#   * Non-high-capitalization diversified indexes: ±10%.
+#   * Narrow-based indexes: ±15%.
+#   * Equities: ±15%.
+#
+# Asymmetry handling (high-cap diversified +6/-8):
+#   The implementation schema (ShockParameters.per_symbol_overrides) is a
+#   single symmetric float per symbol. Rather than expand the schema to
+#   support asymmetric (up/down) shocks, we apply the larger absolute
+#   magnitude (0.08 = -8%) symmetrically. This is conservatively wrong:
+#   it OVERSTATES the PM-equivalent margin (a 8% up-shock is harsher than
+#   the true 6%), which in turn UNDERSTATES regt_excess_over_pm — the safe
+#   direction for a broker-switch signal (a smaller, harder-to-justify
+#   excess is preferable to an inflated one). If/when the schema gains
+#   asymmetric support, switch to native +0.06/-0.08 for these symbols.
+#
+# House-conservatism layer:
+#   The asset-class defaults (`high_cap_equity: 0.15`, `small_cap_equity: 0.20`,
+#   `unmapped_default: 0.20`) sit ABOVE OCC's 15% equity baseline. They apply
+#   only when a symbol is not in `per_symbol_overrides` and its class is
+#   ambiguous from the ticker alone; raising the floor in those cases
+#   biases the PM number upward (regt_excess_over_pm downward — same safe
+#   direction as above).
+#
+# Operator refresh contract:
+#   When OCC publishes a revision of the RBH/CPM User Guide, re-read § 4 of
+#   page 1, refresh any changed tier percentages above, bump `pm_model_version`
+#   to a new operator-chosen string (so historical aggregates are filterable
+#   across the methodology change), and re-run
+#   `scripts/verify_regt_margin_attribution.py`. The PDF lives behind a CDN
+#   that may rotate; if the live URL 404s, fetch the Wayback snapshot above
+#   and record the new access date in this comment block.
 
-pm_model_version: "ibkr_mirror_v1_2026Q2"
+pm_model_version: "occ_tims_v1_2026Q2"
 
 # Annualised risk-free rate reference.
 # Source: US 3-month T-bill yield as of 2026-05-10 (design-doc reference value).
@@ -36,42 +59,42 @@ iv_shock:
   worst_up_multiplier: 0.95
 
 shock_parameters:
-  # Asset-class defaults per parent ALP-126 pre-resolved configuration decision (C).
+  # Asset-class defaults (house-conservatism layer above OCC's 15% equity baseline,
+  # applied only when symbol classification is ambiguous from ticker alone).
   # All values in decimal form: 0.15 = ±15%, 0.20 = ±20%.
-  high_cap_equity: 0.15    # ±15% — IBKR high-cap S&P 500 equity default
-  small_cap_equity: 0.20   # ±20% — IBKR small-cap equity default
-  unmapped_default: 0.20   # ±20% — conservative fallback for unmapped symbols
+  high_cap_equity: 0.15    # ±15% — OCC equities baseline
+  small_cap_equity: 0.20   # ±20% — house-conservatism above OCC's 15% equity baseline
+  unmapped_default: 0.20   # ±20% — house-conservatism fallback for unmapped symbols
 
   per_symbol_overrides:
-    # Major US-equity ETFs — design-doc defaults (IBKR research deferred; see header)
-    SPY: 0.15   # S&P 500 ETF — high-cap index, design-doc default
-    QQQ: 0.15   # Nasdaq-100 ETF — high-cap index, design-doc default
-    IWM: 0.20   # Russell 2000 ETF — small-cap index, design-doc default
-    DIA: 0.15   # Dow Jones ETF — high-cap index, design-doc default
-    VTI: 0.15   # Total Market ETF — broad market, design-doc default (high-cap weight)
-    VOO: 0.15   # S&P 500 ETF (Vanguard) — high-cap index, design-doc default
-
-    # Sector SPDR ETFs — design-doc defaults (high_cap_equity applies; IBKR research deferred)
-    XLF: 0.15   # Financial Select Sector SPDR
-    XLE: 0.15   # Energy Select Sector SPDR
-    XLK: 0.15   # Technology Select Sector SPDR
-    XLV: 0.15   # Health Care Select Sector SPDR
-    XLY: 0.15   # Consumer Discretionary Select Sector SPDR
-    XLP: 0.15   # Consumer Staples Select Sector SPDR
-    XLU: 0.15   # Utilities Select Sector SPDR
-    XLI: 0.15   # Industrials Select Sector SPDR
-    XLB: 0.15   # Materials Select Sector SPDR
-    XLRE: 0.15  # Real Estate Select Sector SPDR
-    XLC: 0.15   # Communication Services Select Sector SPDR
-
-    # Top S&P 500 names by market cap — design-doc defaults (IBKR research deferred)
-    AAPL: 0.15   # Apple Inc.
-    MSFT: 0.15   # Microsoft Corp.
-    NVDA: 0.15   # NVIDIA Corp.
-    GOOGL: 0.15  # Alphabet Inc. (Class A)
-    AMZN: 0.15   # Amazon.com Inc.
-    META: 0.15   # Meta Platforms Inc.
-    BRK.B: 0.15  # Berkshire Hathaway Inc. (Class B)
-    TSLA: 0.20   # Tesla Inc. — higher volatility; using small_cap_equity default
-    JPM: 0.15    # JPMorgan Chase & Co.
-    UNH: 0.15    # UnitedHealth Group Inc.
+    # Mapped per OCC TIMS RBH/CPM User Guide v1.13, page 1, paragraph 4.
+    # High-capitalization diversified indexes — verbatim +6/-8 asymmetric,
+    # applied symmetrically at 0.08 (the larger absolute magnitude) per the
+    # asymmetry-handling note in the header block above.
+    SPY:    0.08    # high-cap diversified — S&P 500
+    QQQ:    0.08    # high-cap diversified — NDX
+    DIA:    0.08    # high-cap diversified — DJX
+    VTI:    0.08    # high-cap diversified — broad US
+    VOO:    0.08    # high-cap diversified — S&P 500
+    IWM:    0.10    # non-high-cap diversified — Russell 2000
+    XLF:    0.15    # narrow-based index — financials sector SPDR
+    XLE:    0.15    # narrow-based index — energy sector SPDR
+    XLK:    0.15    # narrow-based index — technology sector SPDR
+    XLV:    0.15    # narrow-based index — health-care sector SPDR
+    XLY:    0.15    # narrow-based index — consumer-discretionary sector SPDR
+    XLP:    0.15    # narrow-based index — consumer-staples sector SPDR
+    XLU:    0.15    # narrow-based index — utilities sector SPDR
+    XLI:    0.15    # narrow-based index — industrials sector SPDR
+    XLB:    0.15    # narrow-based index — materials sector SPDR
+    XLRE:   0.15    # narrow-based index — real-estate sector SPDR
+    XLC:    0.15    # narrow-based index — communication-services sector SPDR
+    AAPL:   0.15    # equity
+    MSFT:   0.15    # equity
+    NVDA:   0.15    # equity
+    GOOGL:  0.15    # equity
+    AMZN:   0.15    # equity
+    META:   0.15    # equity
+    BRK.B:  0.15    # equity
+    TSLA:   0.15    # equity
+    JPM:    0.15    # equity
+    UNH:    0.15    # equity

@@ -1,8 +1,10 @@
-"""Reg T margin attribution — IBKR-mirror v1 reference model.
+"""Reg T margin attribution — OCC TIMS / FINRA 4210 baseline v1 reference model.
 
 Per ``regt-margin-attribution.md``, the OMS computes, per fill, the marginal
 Reg T margin consumed and the marginal portfolio-margin-equivalent that would
-have been consumed under a published broker portfolio-margin model.
+have been consumed under a published portfolio-margin model. The PM-equivalent
+side uses the OCC TIMS RBH/CPM User Guide (the methodology FINRA Rule 4210(g)
+points to) as its versioned, publicly-citable reference.
 
 This package provides the configuration skeleton (story 01a). Later stories
 add the class-group composition, stress revaluation, aggregator, per-fill

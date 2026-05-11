@@ -1,9 +1,10 @@
-"""Configuration for the Reg T margin attribution module (IBKR-mirror v1).
+"""Configuration for the Reg T margin attribution module (OCC TIMS / FINRA 4210 baseline v1).
 
 Per ``regt-margin-attribution.md`` § Portfolio-margin reference model, the
-shock parameter table is a versioned snapshot of IBKR's published margin
-methodology. Refresh is operator-driven; ``pm_model_version`` pins the snapshot
-so aggregates over time are filterable when methodology changes.
+shock parameter table is a versioned snapshot of the OCC TIMS RBH/CPM User
+Guide (the methodology FINRA Rule 4210(g) points to). Refresh is
+operator-driven; ``pm_model_version`` pins the snapshot so aggregates over
+time are filterable when methodology changes.
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ class IvShockMultipliers(BaseModel):
 
 
 class ShockParameters(BaseModel):
-    """Per-asset-class shock percentages (decimal form) for the IBKR-mirror model.
+    """Per-asset-class shock percentages (decimal form) for the OCC TIMS baseline.
 
     All percentage values are in ``(0.0, 1.0)`` — e.g., ``0.15`` for ±15%.
     Per-symbol override keys are normalised to upper-case on construction.

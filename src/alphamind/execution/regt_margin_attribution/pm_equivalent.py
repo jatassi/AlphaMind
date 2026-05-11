@@ -2,10 +2,10 @@
 
 Ships the thin pure function ``compute_pm_equivalent_margin`` that composes
 class-group composition and per-class-group stress into the portfolio-aggregate
-IBKR-mirror v1 PM-equivalent margin.
+OCC TIMS / FINRA 4210 baseline v1 PM-equivalent margin.
 
 Per ``regt-margin-attribution.md § Aggregation``: no inter-class offsets in v1.
-The sum biases the result upward relative to IBKR's actual product-group
+The sum biases the result upward relative to OCC TIMS's actual product-group
 methodology output (biasing ``regt_excess_over_pm`` downward — the conservative
 direction).
 
@@ -26,14 +26,14 @@ def compute_pm_equivalent_margin(
     market_inputs: MarketInputs,
     config: RegTMarginAttributionConfig,
 ) -> float:
-    """Sum IBKR-mirror v1 per-class-group margins into the portfolio aggregate.
+    """Sum OCC TIMS baseline per-class-group margins into the portfolio aggregate.
 
     Pure function. Composition of ``compose_class_groups`` and
     ``stress_class_group``. Returns the portfolio-aggregate PM-equivalent
     initial-margin requirement in USD.
 
     Per ``regt-margin-attribution.md § Aggregation``: no inter-class
-    offsets in v1. The sum biases the result upward relative to IBKR's
+    offsets in v1. The sum biases the result upward relative to OCC TIMS's
     actual product-group methodology output (and therefore biases
     ``regt_excess_over_pm`` downward — the conservative direction).
 

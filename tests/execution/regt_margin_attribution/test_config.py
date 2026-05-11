@@ -181,7 +181,7 @@ def test_default_path_yaml_loads_cleanly() -> None:
 
     cfg = load_regt_margin_attribution_config()
 
-    assert cfg.pm_model_version == "ibkr_mirror_v1_2026Q2"
+    assert cfg.pm_model_version == "occ_tims_v1_2026Q2"
 
     overrides = cfg.shock_parameters.per_symbol_overrides
     # All major ETF + sector SPDR symbols must be present
