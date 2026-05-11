@@ -21,6 +21,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import cast
 
@@ -35,6 +36,7 @@ from alphamind.execution.state_persistence.process_lifetime import (
     record_process_lifetime,
 )
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
+from alphamind.scheduler.driver import run_pipeline_scheduler_task
 from alphamind.scheduler.logging_setup import configure_pipeline_logging
 from alphamind.scheduler.orchestrator import run_invocation
 from alphamind.scheduler.session import PipelineMode, new_session
@@ -142,13 +144,16 @@ async def _run_once(args: argparse.Namespace) -> None:
 
 
 async def _run_daemon(*, mode: PipelineMode) -> None:
-    """Daemon path — empty registry in this story; later stories register tasks."""
+    """Daemon path — register the APScheduler driver and run until shutdown."""
     configure_pipeline_logging()
     cfg = SchedulerConfig.model_validate(read_yaml_file(_CONFIG_DIR / "scheduler.yaml"))
     shutdown_timeout = cfg.supervisor_shutdown_timeout_seconds
 
     archive_root = _DEFAULT_ARCHIVE_ROOT
     archive_root.mkdir(parents=True, exist_ok=True)
+
+    venue_config = _load_venue_config(_CONFIG_DIR)
+    execution_mode = ExecutionMode.live if mode == "live" else ExecutionMode.paper
 
     engine = make_async_engine()
     session_factory = make_async_session_factory(engine)
@@ -168,8 +173,19 @@ async def _run_daemon(*, mode: PipelineMode) -> None:
             session=session,
             shutdown_timeout_seconds=shutdown_timeout,
         )
-        # Story 04a / 04b call ``supervisor.register_task(...)`` here; in
-        # story 01 the registry is empty by design.
+        supervisor.register_task(
+            name="apscheduler",
+            coro_fn=partial(
+                run_pipeline_scheduler_task,
+                scheduler_config=cfg,
+                session_factory=session_factory,
+                archive_root=archive_root,
+                config_dir=_CONFIG_DIR,
+                env_path=_DEFAULT_ENV_PATH,
+                venue_config=venue_config,
+                execution_mode=execution_mode,
+            ),
+        )
         await supervisor.run()
         log.info("pipeline scheduler session end: process_lifetime_id=%s", process_lifetime_id)
     finally:
