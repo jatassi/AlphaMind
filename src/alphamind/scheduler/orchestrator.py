@@ -1,20 +1,39 @@
-"""End-to-end phase orchestrator — ``run_invocation`` (story 03b / ALP-445).
+"""End-to-end phase orchestrator — ``run_invocation`` (ALP-449 three-tx model).
 
 Single async entrypoint the APScheduler driver (story 04a), the emergency
-receiver (story 04b), and the CLI ``--once`` path call. Threads Phase 1
-fill integration → analysis pipeline → decision pipeline → Phase 2
-envelope dispatch through one :class:`InvocationContext` transaction.
+receiver (story 04b), and the CLI ``--once`` path call. Per the design's
+snapshot-isolation contract
+(``docs/design/05-execution-layer/state-persistence.md`` § Snapshot isolation),
+it runs three separate transactions per invocation:
 
-Per parent issue ``ALP-431`` § Notes for the orchestrator, any exception
-from any phase propagates out; the surrounding context manager rolls back
-the open transaction. The long-running caller catches and continues per
-parent decision (H).
+  1. Row insert: ``insert_invocation_row`` commits the ``invocations`` row in
+     its own short transaction so the row is durable + visible to fresh-session
+     reads from the moment Phase 1 starts.
+  2. Phase 1: one transaction wrapping fill integration + activity-log writes
+     + the ``phase1_completed_at`` stamp. Commits at the close of the phase.
+  3. Snapshot read between phases: ``assemble_snapshot`` uses fresh sessions
+     via the repository factory; it now correctly sees the committed
+     ``phase1_completed_at`` and produces a real :class:`AssembledSnapshot`.
+     The snapshot feeds :class:`SnapshotBackedSynthesizerReader` (consumed by
+     the analysis pipeline) and the decision pipeline.
+  4. Phase 2: one transaction wrapping envelope dispatch + the
+     ``phase2_completed_at`` stamp + row summary writeback.
+
+Per ``docs/design/mid-pipeline-failure-handling.md``:
+  * A Phase 1 abort rolls back Phase 1's writes; the invocation row stays
+    with ``phase1_completed_at IS NULL``, and the repository's consistency
+    guard refuses snapshot reads against it — next invocation retries fills.
+  * Between-phase aborts (snapshot assembly, analysis, decision) leave Phase
+    1 committed and skip Phase 2; the next scheduled invocation regenerates
+    briefs from current state.
+  * Phase 2 aborts roll back the in-flight envelope; already-committed work
+    from prior envelopes remains durable.
 
 The function composes existing layer primitives without inventing new
-submission paths: ``gather_phase1_inputs`` (this story),
+submission paths: ``gather_phase1_inputs`` (story 03b / ALP-445),
 ``process_unprocessed_fills`` (story 07 / ALP-365), ``run_analysis_pipeline``
 (ALP-276), ``run_decision_pipeline`` (ALP-403), and ``dispatch_phase2``
-(this story).
+(story 03b).
 """
 
 from __future__ import annotations
@@ -31,7 +50,7 @@ from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alphamind.config.load import PipelineConfig, load_full_config
+from alphamind.config.load import PipelineConfig
 from alphamind.config.loaders import load_overlays, read_yaml_file
 from alphamind.config.models.main import ExecutionMode, MainConfig
 from alphamind.config.models.modes import Mode
@@ -74,9 +93,11 @@ from alphamind.pipeline.analysis import run_analysis_pipeline
 from alphamind.pipeline.decision import run_decision_pipeline
 from alphamind.portfolio_state import load_portfolio_state_config
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.consumers.synthesizer import (
-    SynthesizerPortfolioStateReader,
+    SnapshotBackedSynthesizerReader,
 )
+from alphamind.portfolio_state.freshness import AssembledSnapshot
 from alphamind.portfolio_state.pricing import (
     PriceQuote,
     PriceSource,
@@ -113,7 +134,7 @@ from alphamind.risk_guardrails.state_delivery.config import (
     StateDeliveryConfig,
     load_state_delivery_config,
 )
-from alphamind.scheduler.invocation import open_invocation
+from alphamind.scheduler.invocation import insert_invocation_record
 from alphamind.scheduler.phase1_inputs import gather_phase1_inputs
 from alphamind.scheduler.phase2_dispatch import (
     Phase2Summary,
@@ -156,6 +177,11 @@ _REGIME_TO_LABEL: dict[Regime, RegimeLabel] = {
     Regime.elevated: RegimeLabel.ELEVATED,
     Regime.crisis: RegimeLabel.CRISIS,
 }
+
+
+_PORTFOLIO_STATE_CONFIG_PATH = (
+    Path(__file__).resolve().parents[3] / "config" / "portfolio_state.yaml"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +374,7 @@ async def _update_row_phase1(
     if row is None:
         msg = (
             f"invocations row {handle.invocation_id!r} disappeared mid-Phase-1 update; "
-            "InvocationContext should have inserted it on enter"
+            "insert_invocation_record should have committed it before this phase opened"
         )
         raise RuntimeError(msg)
     row.fill_collection_summary_json = json.dumps(
@@ -373,7 +399,7 @@ async def _update_row_phase2(
     if row is None:
         msg = (
             f"invocations row {handle.invocation_id!r} disappeared mid-Phase-2 update; "
-            "InvocationContext should have inserted it on enter"
+            "insert_invocation_record should have committed it before this phase opened"
         )
         raise RuntimeError(msg)
     row.command_execution_summary_json = json.dumps(
@@ -445,8 +471,8 @@ async def _emit_baseline_config_change_entry(
     if row is None:
         msg = (
             f"invocations row {handle.invocation_id!r} disappeared before "
-            "baseline DISTILLATION_CONFIG_CHANGE emission; InvocationContext "
-            "should have inserted it on enter"
+            "baseline DISTILLATION_CONFIG_CHANGE emission; "
+            "insert_invocation_record should have committed it before Phase 1 opened"
         )
         raise RuntimeError(msg)
     entry_id = (
@@ -469,10 +495,8 @@ async def _emit_baseline_config_change_entry(
 
 def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads each layer's inputs through one builder.
     *,
-    handle: InvocationHandle,
-    session_factory: async_sessionmaker[AsyncSession],
+    invocation_id: str,
     pipeline_config: PipelineConfig,
-    state_persistence_config: StatePersistenceConfig,
     analysis_result: Any,
     phase1_market_inputs: MarketInputs,
     mode_literal: Literal["normal", "halt"],
@@ -480,30 +504,19 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     now: datetime,
     archive_root: Path,
     state_delivery_config: StateDeliveryConfig,
-    active_risk_parameters: ActiveRiskParameterSet,
     sector_resolver: Callable[[str], str],
+    assembled_snapshot: AssembledSnapshot,
 ) -> dict[str, Any]:
-    """Assemble the ~22 kwargs ``run_decision_pipeline`` requires.
+    """Assemble the kwargs ``run_decision_pipeline`` requires.
 
     Pulls from the loaded :class:`PipelineConfig` (resolved feature flags,
-    active sectors, agents config + overrides), the open
-    :class:`InvocationHandle` (repository), and the Phase 1 market inputs
-    (so the library projector reads consistent prices). The composed
-    ``active_risk_parameters`` is threaded into the repository providers
-    (current and prior — both yield the same set as a pre-review triage
-    simplification documented in :func:`_make_repository_providers`).
+    active sectors, agents config + overrides), the pre-built
+    :class:`AssembledSnapshot` (the same one the synthesizer reader
+    projected from), and the Phase 1 market inputs (so the library
+    projector reads consistent prices).
     """
     resolved = pipeline_config.resolved
 
-    active_provider, prior_provider = _make_repository_providers(active_risk_parameters)
-    repository = build_sql_portfolio_state_repository(
-        session_factory=session_factory,
-        invocation_id=handle.invocation_id,
-        active_risk_parameters_provider=active_provider,
-        prior_active_risk_parameters_provider=prior_provider,
-        config=state_persistence_config,
-    )
-    price_provider = _price_provider_from_phase1(phase1_market_inputs)
     feature_flags = FeatureFlagsView(
         options_enabled=resolved.feature_flags.options_enabled,
         short_selling_enabled=resolved.feature_flags.short_selling_enabled,
@@ -520,11 +533,7 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     library_market = phase1_market_inputs
 
     return {
-        "repository": repository,
-        "price_provider": price_provider,
-        "portfolio_state_config": load_portfolio_state_config(
-            Path(__file__).resolve().parents[3] / "config" / "portfolio_state.yaml"
-        ),
+        "assembled_snapshot": assembled_snapshot,
         "synthesizer_text": analysis_result.synthesizer_result.synthesis_text,
         "retrieval_store": analysis_result.synthesizer_result.retrieval_store,
         "mode": mode_literal,
@@ -540,9 +549,8 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
         "options_enabled": feature_flags.options_enabled,
         "short_selling_enabled": feature_flags.short_selling_enabled,
         "active_sectors": frozenset(library_config.active_sectors),
-        "invocation_id": handle.invocation_id,
+        "invocation_id": invocation_id,
         "timestamp": now,
-        "now": now,
         "archive_root": archive_root,
     }
 
@@ -657,24 +665,40 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
     execution_mode: ExecutionMode,
     now: datetime,
 ) -> InvocationSummary:
-    """Drive one pipeline invocation end-to-end through all five phases.
+    """Drive one pipeline invocation through the design's three-transaction model.
 
     Sequences:
 
     1. Resolve runtime dimensions against a short read-only session.
-    2. Enter :func:`open_invocation` — opens the per-invocation transaction.
-    3. Phase 1 (collect): gather inputs → ``process_unprocessed_fills``
-       (which stamps ``phase1_completed_at`` internally) → update row.
-    4. Phase 2 (distill + analyze): ``run_analysis_pipeline``.
-    5. Phase 3 (decide): ``run_decision_pipeline``.
-    6. Phase 4 (execute): ``dispatch_phase2`` → update row →
-       ``stamp_phase_completion(handle, column="phase2_completed_at")``.
-    7. Exit context manager — commits.
-    8. Return :class:`InvocationSummary`.
+    2. :func:`insert_invocation_record` inserts + commits the invocation row
+       in its own short transaction. The row is durable + visible to
+       fresh-session reads from this point forward.
+    3. **Phase 1 transaction** — one session wrapping the baseline
+       ``DISTILLATION_CONFIG_CHANGE`` emission, ``gather_phase1_inputs``,
+       ``process_unprocessed_fills`` (stamps ``phase1_completed_at``), and
+       the row's Phase 1 summary writeback. Commits at close.
+    4. **Snapshot read between phases** — ``assemble_snapshot`` opens fresh
+       sessions via the repository factory and reads the now-committed
+       Phase 1 state. Feeds :class:`SnapshotBackedSynthesizerReader`.
+    5. **Analysis + decision** (read-only) — ``run_analysis_pipeline`` and
+       ``run_decision_pipeline`` run against fresh sessions. The snapshot
+       built above flows through both. No transaction commits here.
+    6. **Phase 2 transaction** — one session wrapping ``dispatch_phase2``,
+       the row's Phase 2 summary writeback, and the
+       ``phase2_completed_at`` stamp. Commits at close.
+    7. Return :class:`InvocationSummary`.
 
-    Any exception in any step propagates; the surrounding
-    ``InvocationContext`` rolls back per
-    ``docs/design/mid-pipeline-failure-handling.md``.
+    Failure semantics (per ``docs/design/mid-pipeline-failure-handling.md``):
+      * Phase 1 abort: Phase 1's tx rolls back; the row stays with
+        ``phase1_completed_at IS NULL``; the repository's consistency guard
+        refuses snapshot reads against this invocation; the next invocation
+        retries fills.
+      * Between-phase abort (snapshot/analysis/decision): Phase 1 stays
+        committed; Phase 2 is skipped; the next scheduled invocation
+        regenerates briefs from current state.
+      * Phase 2 abort: Phase 2's tx rolls back; ``phase2_completed_at``
+        stays NULL; already-committed envelopes from prior loop iterations
+        remain durable (per-envelope split lands in Slice 3 / ALP-449).
     """
     start_perf = time.monotonic()
     state_persistence_config = load_state_persistence_config(
@@ -729,8 +753,11 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
             stress_decision=stress_decision,
         )
 
-    # Step 2: open the per-invocation transaction.
-    async with open_invocation(
+    # Step 2: insert the invocation row in its own short transaction. The
+    # row is committed before Phase 1 opens, so fresh-session reads (from
+    # the SQL repository in particular) can see it across the rest of the
+    # invocation.
+    invocation_id, pipeline_config = await insert_invocation_record(
         session_factory=session_factory,
         process_lifetime_id=process_lifetime_id,
         trigger_type=trigger_type,
@@ -742,53 +769,43 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
         config_dir=config_dir,
         env_path=env_path,
         now=now,
-    ) as handle:
-        # Re-load the pipeline config inside the transaction so the snapshot
-        # the orchestrator uses agrees with the one persisted on the row.
-        pipeline_config = load_full_config(
-            config_dir=config_dir,
-            env_path=env_path,
-            archive_root=archive_root,
-            invocation_id=handle.invocation_id,
-            runtime=runtime,
-            today=now.astimezone(UTC).date(),
-        )
+    )
 
-        # Compose the current invocation's active_risk_parameters from the
-        # resolved fold (profile * regime * overlays * feature-flags). Threaded
-        # into the repository providers (current + prior) so the snapshot
-        # assembler reads the same values the decision pipeline consumes.
-        active_risk_parameters = _build_active_risk_parameters(
-            rule_values=pipeline_config.resolved.rule_values,
-            regime=runtime.active_regime,
-        )
+    # Compose the current invocation's active_risk_parameters from the
+    # resolved fold (profile * regime * overlays * feature-flags). Threaded
+    # into the repository providers (current + prior) so the snapshot
+    # assembler reads the same values the decision pipeline consumes.
+    active_risk_parameters = _build_active_risk_parameters(
+        rule_values=pipeline_config.resolved.rule_values,
+        regime=runtime.active_regime,
+    )
 
+    # Step 3 — Phase 1 transaction. One session wraps the baseline config
+    # change entry, fill integration, the Phase 1 summary writeback, and the
+    # ``phase1_completed_at`` stamp (which ``process_unprocessed_fills``
+    # emits at write_paths/phase1.py:294). Commits on context exit.
+    async with session_factory() as session:
+        phase1_handle = InvocationHandle(session=session, invocation_id=invocation_id)
         # Emit a baseline DISTILLATION_CONFIG_CHANGE entry on first invocation
-        # per config-version. The helper's hash-check de-dup
-        # (``read_most_recent_config_change_new_hash``) suppresses no-op
-        # re-emissions on subsequent invocations with byte-identical
-        # distillation config. Always passing ``prior=None`` is safe per the
-        # helper's docstring: it builds a baseline entry on every call and
-        # the de-dup gate handles redundancy. Guarantees at least one
-        # ``activity_log`` entry per invocation on a fresh DB so the verify
-        # script's ``check_activity_log`` succeeds even when Phase 1 / Phase
-        # 2 emit zero entries (clean paper-DB invocation with no fills + no
-        # commands).
+        # per config-version. The helper's hash-check de-dup suppresses
+        # no-op re-emissions on subsequent invocations with byte-identical
+        # distillation config; on a fresh DB this guarantees at least one
+        # ``activity_log`` entry per invocation so the verify script's
+        # ``check_activity_log`` succeeds even when Phase 1 / Phase 2 emit
+        # zero entries (clean paper-DB invocation with no fills, no commands).
         await _emit_baseline_config_change_entry(
-            handle=handle,
+            handle=phase1_handle,
             config_dir=config_dir,
             now=now,
         )
-
-        # Phase 1 — collect.
         phase1_inputs = await gather_phase1_inputs(
-            handle=handle,
+            handle=phase1_handle,
             venue_config=venue_config,
             execution_mode=execution_mode,
             as_of=now,
         )
         phase1_summary = await process_unprocessed_fills(
-            handle,
+            phase1_handle,
             phase1_inputs.ca_activities,
             phase1_inputs.alpaca_positions,
             phase1_inputs.alpaca_account,
@@ -796,41 +813,36 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
             config=state_persistence_config,
         )
         await _update_row_phase1(
-            handle,
+            phase1_handle,
             phase1_summary=phase1_summary,
             staleness_flag=phase1_inputs.staleness_flag,
         )
-        # ``process_unprocessed_fills`` already stamped ``phase1_completed_at``
-        # at write_paths/phase1.py:294. The orchestrator's role here is the
-        # phase-1 row-summary update only; re-stamping would overwrite the
-        # write-path-internal timestamp with one slightly later.
+        await session.commit()
 
-        # Build the per-invocation sector resolver from the resolved assets
-        # config; threaded into both the synthesizer reader and the decision
-        # pipeline so both see the same ticker→sector map.
-        sector_resolver = _build_sector_resolver(pipeline_config.resolved)
+    # Step 4 — Between-phase snapshot read. Fresh sessions via the
+    # repository factory now correctly see the committed Phase 1 state.
+    sector_resolver = _build_sector_resolver(pipeline_config.resolved)
+    assembled = await _assemble_phase1_snapshot(
+        session_factory=session_factory,
+        invocation_id=invocation_id,
+        state_persistence_config=state_persistence_config,
+        active_risk_parameters=active_risk_parameters,
+        phase1_market_inputs=phase1_inputs.market_inputs,
+        sector_resolver=sector_resolver,
+    )
+    portfolio_reader = SnapshotBackedSynthesizerReader(
+        assembled.snapshot,
+        sector_resolver=_adapt_sector_resolver_for_snapshot(sector_resolver),
+    )
 
-        # Phase 2 — distill + analyze.
-        #
-        # NOTE: ``_EmptySynthesizerReader`` is a deferred-wiring stub. The
-        # natural production wiring is ``SnapshotBackedSynthesizerReader``
-        # backed by ``assemble_snapshot`` (see
-        # :func:`alphamind.portfolio_state.consumers.synthesizer.SnapshotBackedSynthesizerReader`
-        # at ``src/alphamind/portfolio_state/consumers/synthesizer.py:175``).
-        # Wiring it here requires the snapshot to read Phase-1-committed
-        # data, but the orchestrator's transaction does not commit until
-        # ``InvocationContext.__aexit__`` — a fresh session opened by
-        # ``build_sql_portfolio_state_repository`` cannot see the open
-        # transaction's uncommitted ``invocations`` / ``phase1_completed_at``
-        # write. The same transaction-visibility constraint applies to
-        # ``run_decision_pipeline``'s own ``assemble_snapshot`` call in
-        # ``_build_decision_kwargs``; resolving it likely requires threading
-        # the open ``handle.session`` through the assembler (or staging a
-        # post-Phase-1 commit). Deferring to a follow-up story scoped to
-        # cross-transaction snapshot visibility.
-        portfolio_reader = _EmptySynthesizerReader()
+    # Step 5 — Read-only analysis + decision pipelines. The analysis
+    # pipeline consumes a fresh session for its distillation-layer reads;
+    # the decision pipeline's repository opens its own sessions via the
+    # session_factory.
+    async with session_factory() as read_session:
+        analysis_handle = InvocationHandle(session=read_session, invocation_id=invocation_id)
         analysis_result = await _run_analysis(
-            handle=handle,
+            handle=analysis_handle,
             pipeline_config=pipeline_config,
             config_dir=config_dir,
             archive_root=archive_root,
@@ -838,35 +850,40 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
             portfolio_reader=portfolio_reader,
         )
 
-        # Phase 3 — decide.
-        mode_literal = _mode_to_decision_literal(runtime.active_mode)
-        decision_kwargs = _build_decision_kwargs(
-            handle=handle,
-            session_factory=session_factory,
-            pipeline_config=pipeline_config,
-            state_persistence_config=state_persistence_config,
-            analysis_result=analysis_result,
-            phase1_market_inputs=phase1_inputs.market_inputs,
-            mode_literal=mode_literal,
-            halt_state=halt_state,
-            now=now,
-            archive_root=archive_root,
-            state_delivery_config=state_delivery_config,
-            active_risk_parameters=active_risk_parameters,
-            sector_resolver=sector_resolver,
-        )
-        decision_result = await run_decision_pipeline(**decision_kwargs)
+    mode_literal = _mode_to_decision_literal(runtime.active_mode)
+    decision_kwargs = _build_decision_kwargs(
+        invocation_id=invocation_id,
+        pipeline_config=pipeline_config,
+        analysis_result=analysis_result,
+        phase1_market_inputs=phase1_inputs.market_inputs,
+        mode_literal=mode_literal,
+        halt_state=halt_state,
+        now=now,
+        archive_root=archive_root,
+        state_delivery_config=state_delivery_config,
+        sector_resolver=sector_resolver,
+        assembled_snapshot=assembled,
+    )
+    decision_result = await run_decision_pipeline(**decision_kwargs)
 
-        # Phase 4 — execute.
-        phase2_summary = await dispatch_phase2(
-            handle=handle,
-            pm_result=decision_result.pm_result,
-            state_persistence_config=state_persistence_config,
-        )
-        await _update_row_phase2(handle, phase2_summary=phase2_summary)
-        await stamp_phase_completion(handle, column="phase2_completed_at")
-
-        invocation_id = handle.invocation_id
+    # Step 6 — Phase 2. ``dispatch_phase2`` commits each envelope's
+    # writes in its own transaction so a mid-batch persistence failure
+    # leaves earlier envelopes durable (per ``docs/design/
+    # mid-pipeline-failure-handling.md`` "commands submitted before the
+    # abort remain committed"). Once dispatch returns, a final short
+    # transaction writes the Phase 2 summary onto the invocation row and
+    # stamps ``phase2_completed_at``.
+    phase2_summary = await dispatch_phase2(
+        session_factory=session_factory,
+        invocation_id=invocation_id,
+        pm_result=decision_result.pm_result,
+        state_persistence_config=state_persistence_config,
+    )
+    async with session_factory() as session:
+        phase2_handle = InvocationHandle(session=session, invocation_id=invocation_id)
+        await _update_row_phase2(phase2_handle, phase2_summary=phase2_summary)
+        await stamp_phase_completion(phase2_handle, column="phase2_completed_at")
+        await session.commit()
 
     duration = time.monotonic() - start_perf
     return InvocationSummary(
@@ -881,6 +898,66 @@ async def run_invocation(  # noqa: PLR0913 — composition surface threads typed
     )
 
 
+async def _assemble_phase1_snapshot(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    invocation_id: str,
+    state_persistence_config: StatePersistenceConfig,
+    active_risk_parameters: ActiveRiskParameterSet,
+    phase1_market_inputs: MarketInputs,
+    sector_resolver: Callable[[str], str],
+) -> AssembledSnapshot:
+    """Build the post-Phase-1 portfolio snapshot once per invocation.
+
+    Opens fresh sessions through the repository factory; relies on Phase 1
+    having already committed so the repository's
+    ``phase1_completed_at IS NULL → RepositoryConsistencyError`` guard
+    sees a satisfied row. The same ``AssembledSnapshot`` feeds the
+    synthesizer reader and (post-Slice 2) the decision pipeline.
+    """
+    portfolio_state_config = load_portfolio_state_config(_PORTFOLIO_STATE_CONFIG_PATH)
+    active_provider, prior_provider = _make_repository_providers(active_risk_parameters)
+    repository = build_sql_portfolio_state_repository(
+        session_factory=session_factory,
+        invocation_id=invocation_id,
+        active_risk_parameters_provider=active_provider,
+        prior_active_risk_parameters_provider=prior_provider,
+        config=state_persistence_config,
+    )
+    price_provider = _price_provider_from_phase1(phase1_market_inputs)
+    # ``snapshot_assembled_at`` must be >= ``phase1_committed_at`` per
+    # ``PortfolioStateSnapshot``'s ordering validator. Phase 1 stamps the row
+    # with wall-clock-at-stamp-time; using a fresh ``datetime.now(UTC)`` here
+    # guarantees the snapshot reflects post-Phase-1 reality even when the
+    # orchestrator's logical ``now`` predates Phase 1's actual completion
+    # (the common case under test fixtures with a frozen ``now``).
+    return await assemble_snapshot(
+        repository=repository,
+        price_provider=price_provider,
+        sector_resolver=_adapt_sector_resolver_for_snapshot(sector_resolver),
+        config=portfolio_state_config,
+        now=datetime.now(UTC),
+    )
+
+
+def _adapt_sector_resolver_for_snapshot(
+    sector_resolver: Callable[[str], str],
+) -> Callable[[Any], str | None]:
+    """Adapt a ticker→sector resolver to the position-shaped one the assembler consumes.
+
+    Mirrors ``alphamind.pipeline.decision._adapt_sector_resolver_for_assembler``
+    (the decision pipeline's own copy); both will fold into a single shared
+    helper once Slice 2 lands the snapshot-passing signature change.
+    """
+    from alphamind.portfolio_state.consumers.synthesizer import _ticker_from_position
+
+    def _adapter(position: Any) -> str | None:
+        ticker = _ticker_from_position(position)
+        return sector_resolver(ticker) if ticker else None
+
+    return _adapter
+
+
 async def _run_analysis(
     *,
     handle: InvocationHandle,
@@ -888,7 +965,7 @@ async def _run_analysis(
     config_dir: Path,
     archive_root: Path,
     now: datetime,
-    portfolio_reader: SynthesizerPortfolioStateReader,
+    portfolio_reader: SnapshotBackedSynthesizerReader,
 ) -> Any:
     """Compose ``run_analysis_pipeline`` inputs from the loaded config + handle.
 
@@ -954,36 +1031,3 @@ def _sectors_config_from_assets(resolved: Any) -> dict[str, list[str]]:
         log.warning("resolved.assets has no 'sectors' attribute; sectors_config empty")
         return {}
     return {sector: list(tickers) for sector, tickers in resolved.assets.sectors.items()}
-
-
-class _EmptySynthesizerReader:
-    """Empty stand-in implementing :class:`SynthesizerPortfolioStateReader`.
-
-    Deferred-wiring stub. The production reader is
-    :class:`SnapshotBackedSynthesizerReader`
-    (``src/alphamind/portfolio_state/consumers/synthesizer.py:175``)
-    backed by ``assemble_snapshot``. The wiring is deferred until the
-    cross-transaction snapshot-visibility story lands — the orchestrator's
-    open ``InvocationContext`` transaction does not commit between Phase 1
-    and the synthesizer call, so a separate session opened by the
-    repository factory cannot read the row's ``phase1_completed_at`` until
-    that constraint is reworked. Tests stub ``run_analysis_pipeline`` so
-    the reader is never invoked under unit tests.
-    """
-
-    async def get_positions_summary(self) -> tuple[Any, ...]:
-        return ()
-
-    async def get_active_theses_summary(self) -> tuple[Any, ...]:
-        return ()
-
-    async def get_exposure_snapshot(self) -> Any:
-        from alphamind.portfolio_state.consumers.synthesizer import (
-            SynthesizerExposureSnapshot,
-        )
-
-        return SynthesizerExposureSnapshot(
-            sector_exposure_pct={},
-            net_directional_pct=0.0,
-            gross_exposure_pct=0.0,
-        )

@@ -115,8 +115,11 @@ def test_main_exits_nonzero_when_table_missing(tmp_path: Path) -> None:
 
 
 async def test_phase_b_passes_against_fresh_db(fresh_db: Path) -> None:
-    """Clean exit persists the row; raised exception rolls back. Both probed
-    in a single phase so a regression in either path surfaces immediately."""
+    """Three-tx InvocationContext semantics under both clean exit and exception.
+
+    Clean exit: row + phase writes commit. Exception inside the context:
+    row stays committed (separate transaction), phase writes roll back.
+    """
     from alphamind.scripts.verify_state_persistence import run_phase_b_invocation_context
 
     result = await run_phase_b_invocation_context(fresh_db)

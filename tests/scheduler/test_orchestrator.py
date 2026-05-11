@@ -1,9 +1,14 @@
 """Tests for ``alphamind.scheduler.orchestrator.run_invocation`` (story 03b).
 
 The orchestrator is the single async entrypoint the APScheduler driver
-(story 04a) and the emergency receiver (story 04b) both call. It threads
-Phase 1 fill integration → analysis pipeline → decision pipeline → Phase 2
-envelope dispatch through one ``InvocationContext`` transaction.
+(story 04a) and the emergency receiver (story 04b) both call. Per the
+design's snapshot-isolation contract
+(``docs/design/05-execution-layer/state-persistence.md`` § Snapshot isolation)
+it runs three separate transactions per invocation: Phase 1 commits → the
+snapshot read happens between phases → Phase 2 commits per envelope. The
+orchestrator wires the snapshot through ``SnapshotBackedSynthesizerReader``
+into the analysis pipeline and threads the same ``AssembledSnapshot`` into
+the decision pipeline.
 
 Tests stub the LLM-dependent inner stages (``run_analysis_pipeline``,
 ``run_decision_pipeline``) via monkeypatch so the orchestrator wiring is
@@ -266,13 +271,17 @@ def _patch_no_op_pipeline(
         if phase1_raises is not None:
             raise phase1_raises
         # Production ``process_unprocessed_fills`` stamps ``phase1_completed_at``
-        # on the bound row before returning (write_paths/phase1.py:294); the
-        # stub mirrors that so the orchestrator's post-Phase-1 invariants hold.
+        # on the bound row before returning (write_paths/phase1.py:294) AND
+        # seeds the ``cash_ledger`` + ``drawdown_state`` singletons as a side
+        # effect of fill integration. The stub mirrors both so the
+        # orchestrator's post-Phase-1 snapshot read finds the singletons + a
+        # stamped row.
         from alphamind.execution.state_persistence.invocation_context.context import (
             stamp_phase_completion,
         )
 
         handle = args[0]
+        await _seed_singletons_via_handle(handle)
         await stamp_phase_completion(handle, column="phase1_completed_at")
         return phase1_summary or _make_phase1_summary()
 
@@ -419,14 +428,22 @@ class TestRunInvocationHappyPath:
 
 
 class TestRunInvocationFailures:
-    async def test_phase1_exception_rolls_back_row(
+    async def test_phase1_exception_leaves_row_with_phase1_completed_at_null(
         self,
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """A Phase 1 exception propagates and no row remains in the DB."""
+        """Phase 1 abort: row stays (committed up-front), phase1_completed_at is NULL.
+
+        Under the three-transaction model the invocation row is committed by
+        ``insert_invocation_record`` before Phase 1 opens. A Phase 1 abort
+        rolls back Phase 1's own transaction only; the row persists with
+        ``phase1_completed_at IS NULL`` so the SQL repository's consistency
+        guard refuses snapshot reads against this invocation, and the next
+        invocation retries fills.
+        """
         from alphamind.scheduler.orchestrator import run_invocation
 
         _patch_no_op_pipeline(monkeypatch, phase1_raises=RuntimeError("phase 1 boom"))
@@ -448,16 +465,25 @@ class TestRunInvocationFailures:
 
         async with async_factory() as session:
             rows = (await session.execute(select(InvocationRow))).scalars().all()
-        assert rows == []
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.phase1_completed_at is None
+        assert row.phase2_completed_at is None
 
-    async def test_decision_exception_rolls_back_and_skips_dispatch(
+    async def test_decision_exception_leaves_phase1_committed_skips_phase2(
         self,
         async_factory: async_sessionmaker[AsyncSession],
         env_path: Path,
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Phase 3 exception propagates; phase2 dispatch skipped; row rolled back."""
+        """Between-phase abort: Phase 1 stays committed; Phase 2 is skipped.
+
+        Per ``docs/design/mid-pipeline-failure-handling.md`` an analysis /
+        decision-pipeline failure leaves the already-committed Phase 1
+        writes durable and skips Phase 2. The row carries
+        ``phase1_completed_at`` set, ``phase2_completed_at`` NULL.
+        """
         from alphamind.scheduler.orchestrator import run_invocation
 
         captured: dict[str, Any] = {}
@@ -484,7 +510,10 @@ class TestRunInvocationFailures:
 
         async with async_factory() as session:
             rows = (await session.execute(select(InvocationRow))).scalars().all()
-        assert rows == []
+        assert len(rows) == 1
+        row = rows[0]
+        assert row.phase1_completed_at is not None
+        assert row.phase2_completed_at is None
         assert "dispatch" not in captured
 
 
@@ -593,6 +622,184 @@ class TestRunInvocationModeAndStaleness:
 
         assert summary.staleness_flag is True
         assert row.staleness_flag == 1
+
+
+def _singleton_records() -> tuple[Any, Any]:
+    """Return ``(cash_ledger, drawdown_state)`` records for the snapshot singletons."""
+    from alphamind.portfolio_state.records.capital import CashLedger, DrawdownState
+    from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+
+    cash = CashLedger.model_validate(
+        {
+            "current_cash_usd": 100_000.0,
+            "settled_cash_usd": 100_000.0,
+            "reserved_capital_usd": 0.0,
+            "available_buying_power_usd": 100_000.0,
+            "margin_held_usd": 0.0,
+            "unsettled_proceeds": (),
+            "cash_pct_of_portfolio": 0.0,
+            "true_deployable_capital_usd": 0.0,
+            "regt_excess_trailing_30d_usd": 0.0,
+            "regt_excess_trailing_90d_usd": 0.0,
+            "regt_excess_lifetime_usd": 0.0,
+        }
+    )
+    drawdown = DrawdownState.model_validate(
+        {
+            "current_drawdown_pct": 0.0,
+            "equity_high_water_mark_usd": 100_000.0,
+            "drawdown_duration_hours": 0.0,
+            "lifetime_max_drawdown_pct": 0.0,
+            "intraday_drawdown_pct": 0.0,
+            "daily_zone": RiskZone.NORMAL,
+            "cumulative_zone": RiskZone.NORMAL,
+            "cumulative_tier": None,
+            "drawdown_by_source_pct": {},
+        }
+    )
+    return cash, drawdown
+
+
+async def _seed_singletons_via_handle(handle: Any) -> None:
+    """Seed the singletons inside Phase 1's open session.
+
+    Mimics what production ``process_unprocessed_fills`` does as a side
+    effect of fill integration; joins the Phase 1 transaction so the
+    singletons commit together with ``phase1_completed_at``.
+    """
+    from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
+        cash_ledger_record_to_row,
+    )
+    from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
+        drawdown_state_record_to_row,
+    )
+
+    cash, drawdown = _singleton_records()
+    handle.session.add(cash_ledger_record_to_row(cash, last_updated_at=_NOW))
+    handle.session.add(drawdown_state_record_to_row(drawdown, last_updated_at=_NOW))
+
+
+async def _seed_snapshot_singletons(
+    factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Seed the cash_ledger + drawdown_state singletons assemble_snapshot reads.
+
+    Both ``SqlPortfolioStateRepository.get_cash_ledger`` and
+    ``.get_drawdown_state`` raise ``RepositoryConsistencyError`` when the
+    singleton row is absent; the orchestrator's between-phase snapshot
+    assembly therefore requires either a real Phase 1 (which seeds them) or
+    explicit seeding in the test fixture.
+    """
+    from alphamind.execution.state_persistence.tables.cash_ledger_codec import (
+        cash_ledger_record_to_row,
+    )
+    from alphamind.execution.state_persistence.tables.drawdown_state_codec import (
+        drawdown_state_record_to_row,
+    )
+
+    cash, drawdown = _singleton_records()
+    async with factory() as session:
+        session.add(cash_ledger_record_to_row(cash, last_updated_at=_NOW))
+        session.add(drawdown_state_record_to_row(drawdown, last_updated_at=_NOW))
+        await session.commit()
+
+
+class TestRunInvocationSnapshotWiring:
+    """The orchestrator threads a real ``AssembledSnapshot`` between phases.
+
+    Pre-ALP-449 the orchestrator wired a deferred ``_EmptySynthesizerReader``
+    stub because the unified-transaction model prevented a fresh-session
+    snapshot read from seeing the open transaction's ``phase1_completed_at``
+    write. The three-transaction refactor commits Phase 1 before the snapshot
+    read, so ``SnapshotBackedSynthesizerReader`` wires correctly.
+    """
+
+    async def test_analysis_pipeline_receives_snapshot_backed_synthesizer_reader(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """run_analysis_pipeline gets a SnapshotBackedSynthesizerReader, not an empty stub.
+
+        Forces the three-transaction restructure: Phase 1 commits, then the
+        orchestrator assembles a snapshot via fresh sessions (which now see
+        committed ``phase1_completed_at``), then wires that snapshot through
+        the synthesizer reader into the analysis pipeline.
+        """
+        from alphamind.portfolio_state.consumers.synthesizer import (
+            SnapshotBackedSynthesizerReader,
+        )
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        # The Phase 1 stub seeds the snapshot singletons via the handle's
+        # open session, mimicking what production fill integration does.
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        await run_invocation(
+            session_factory=async_factory,
+            process_lifetime_id="proc-orch-1",
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            archive_root=archive_root,
+            config_dir=SHIPPED_CONFIG_DIR,
+            env_path=env_path,
+            venue_config=_make_venue_config(),
+            execution_mode=ExecutionMode.paper,
+            now=_NOW,
+        )
+
+        portfolio_reader = captured["analysis"]["portfolio_reader"]
+        assert isinstance(portfolio_reader, SnapshotBackedSynthesizerReader)
+
+    async def test_decision_pipeline_receives_assembled_snapshot(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        env_path: Path,
+        archive_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """run_decision_pipeline gets a pre-built AssembledSnapshot, not a repository.
+
+        Slice 2 of ALP-449: the decision pipeline no longer assembles its
+        own snapshot; the orchestrator builds the snapshot once and threads
+        the same value through both the synthesizer reader and the decision
+        pipeline. The legacy ``repository`` / ``price_provider`` /
+        ``portfolio_state_config`` / ``now`` kwargs drop from the signature.
+        """
+        from alphamind.portfolio_state.freshness import AssembledSnapshot
+        from alphamind.scheduler.orchestrator import run_invocation
+
+        captured: dict[str, Any] = {}
+        _patch_no_op_pipeline(monkeypatch, captured=captured)
+
+        await run_invocation(
+            session_factory=async_factory,
+            process_lifetime_id="proc-orch-1",
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            firing_run_type=RunType.market_hours_rolling,
+            archive_root=archive_root,
+            config_dir=SHIPPED_CONFIG_DIR,
+            env_path=env_path,
+            venue_config=_make_venue_config(),
+            execution_mode=ExecutionMode.paper,
+            now=_NOW,
+        )
+
+        decision_kwargs = captured["decision"]
+        assert isinstance(decision_kwargs["assembled_snapshot"], AssembledSnapshot)
+        # The legacy snapshot-assembly kwargs no longer appear on the
+        # signature — surfacing them indicates the runner is still doing
+        # its own assemble_snapshot call.
+        assert "repository" not in decision_kwargs
+        assert "price_provider" not in decision_kwargs
+        assert "portfolio_state_config" not in decision_kwargs
 
 
 class TestModeToDecisionLiteral:

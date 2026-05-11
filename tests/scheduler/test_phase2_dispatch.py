@@ -1,10 +1,15 @@
-"""Tests for ``alphamind.scheduler.phase2_dispatch.dispatch_phase2`` (story 03b).
+"""Tests for ``alphamind.scheduler.phase2_dispatch.dispatch_phase2`` (ALP-449).
 
-The dispatcher iterates the PM result's ``submission_log``, persists each
-envelope's outcome via the Phase 2 write path, and aggregates accepted /
-rejected counts into the :class:`Phase2Summary` the orchestrator records.
-Per the parent issue's fail-closed invariant, any submission exception
-propagates so the surrounding :class:`InvocationContext` rolls back.
+The dispatcher iterates the PM result's ``submission_log`` and persists each
+envelope's outcome via the Phase 2 write path — **each envelope in its own
+transaction** per the design's "each command's mutations commit atomically"
+guarantee
+(``docs/design/05-execution-layer/state-persistence.md`` § Phase 2 write
+path). Aggregates accepted / rejected counts into the
+:class:`Phase2Summary` the orchestrator records. Per the parent issue's
+fail-closed invariant, any submission exception propagates so the
+in-flight envelope's transaction rolls back — earlier envelopes' commits
+stand.
 """
 
 from __future__ import annotations
@@ -27,9 +32,6 @@ from alphamind.execution.oms.submit_envelope_mcp import (
     SubmissionResult,
 )
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationHandle,
-)
 from alphamind.execution.state_persistence.invocation_context.records import (
     ProcessLifetimeRecord,
     process_lifetime_record_to_row,
@@ -97,8 +99,7 @@ def _make_state_persistence_config() -> StatePersistenceConfig:
     )
 
 
-def _make_handle(session: AsyncSession, invocation_id: str = "inv-x") -> InvocationHandle:
-    return InvocationHandle(session=session, invocation_id=invocation_id)
+_INVOCATION_ID = "inv-x"
 
 
 def _make_acknowledgment() -> Acknowledgment:
@@ -149,13 +150,12 @@ class TestDispatchPhase2:
             dispatch_phase2,
         )
 
-        async with async_factory() as session:
-            handle = _make_handle(session)
-            summary = await dispatch_phase2(
-                handle=handle,
-                pm_result=_make_pm_result(submission_log=()),
-                state_persistence_config=_make_state_persistence_config(),
-            )
+        summary = await dispatch_phase2(
+            session_factory=async_factory,
+            invocation_id=_INVOCATION_ID,
+            pm_result=_make_pm_result(submission_log=()),
+            state_persistence_config=_make_state_persistence_config(),
+        )
 
         assert summary == Phase2Summary(commands_submitted=0, commands_rejected=0)
 
@@ -181,13 +181,12 @@ class TestDispatchPhase2:
         )
         from alphamind.scheduler.phase2_dispatch import dispatch_phase2
 
-        async with async_factory() as session:
-            handle = _make_handle(session)
-            summary = await dispatch_phase2(
-                handle=handle,
-                pm_result=_make_pm_result(submission_log=(entry,)),
-                state_persistence_config=_make_state_persistence_config(),
-            )
+        summary = await dispatch_phase2(
+            session_factory=async_factory,
+            invocation_id=_INVOCATION_ID,
+            pm_result=_make_pm_result(submission_log=(entry,)),
+            state_persistence_config=_make_state_persistence_config(),
+        )
 
         assert summary.commands_submitted == 2
         assert summary.commands_rejected == 1
@@ -214,14 +213,13 @@ class TestDispatchPhase2:
         )
         entry = SubmissionLogEntry(envelope=cast(Any, envelope), submission_results=results)
 
-        async with async_factory() as session:
-            handle = _make_handle(session)
-            with pytest.raises(RuntimeError, match="phase 2 write failed"):
-                await dispatch_phase2(
-                    handle=handle,
-                    pm_result=_make_pm_result(submission_log=(entry,)),
-                    state_persistence_config=_make_state_persistence_config(),
-                )
+        with pytest.raises(RuntimeError, match="phase 2 write failed"):
+            await dispatch_phase2(
+                session_factory=async_factory,
+                invocation_id=_INVOCATION_ID,
+                pm_result=_make_pm_result(submission_log=(entry,)),
+                state_persistence_config=_make_state_persistence_config(),
+            )
 
     async def test_multiple_envelopes_each_persisted(
         self,
@@ -254,14 +252,163 @@ class TestDispatchPhase2:
             ),
         )
 
-        async with async_factory() as session:
-            handle = _make_handle(session)
-            summary = await dispatch_phase2(
-                handle=handle,
-                pm_result=_make_pm_result(submission_log=entries),
-                state_persistence_config=_make_state_persistence_config(),
-            )
+        summary = await dispatch_phase2(
+            session_factory=async_factory,
+            invocation_id=_INVOCATION_ID,
+            pm_result=_make_pm_result(submission_log=entries),
+            state_persistence_config=_make_state_persistence_config(),
+        )
 
         assert persist_mock.await_count == 2
         assert summary.commands_submitted == 1
         assert summary.commands_rejected == 1
+
+    async def test_each_envelope_runs_in_its_own_transaction(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Each envelope's persist call receives a distinct session.
+
+        Per ALP-449 Slice 3, ``dispatch_phase2`` opens a fresh session per
+        envelope so that envelope-N abort cannot roll back envelope
+        0..N-1's writes (matches the design's "each command's mutations
+        commit atomically" guarantee).
+        """
+        from alphamind.scheduler import phase2_dispatch as module
+        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+
+        captured_sessions: list[AsyncSession] = []
+
+        async def _capture_session_persist(
+            handle: Any, envelope: Any, results: Any, *, config: Any
+        ) -> None:
+            captured_sessions.append(handle.session)
+
+        monkeypatch.setattr(module, "persist_envelope_outcome", _capture_session_persist)
+
+        entries = tuple(
+            SubmissionLogEntry(
+                envelope=cast(Any, _StubEnvelope(f"ENV-REC-{i}")),
+                submission_results=(
+                    _make_submission_result(
+                        command_ordinal=0, command_id=f"cmd-{i}", status="accepted"
+                    ),
+                ),
+            )
+            for i in range(3)
+        )
+
+        await dispatch_phase2(
+            session_factory=async_factory,
+            invocation_id=_INVOCATION_ID,
+            pm_result=_make_pm_result(submission_log=entries),
+            state_persistence_config=_make_state_persistence_config(),
+        )
+
+        assert len(captured_sessions) == 3
+        # Each envelope sees its own session — three distinct identities.
+        assert len({id(s) for s in captured_sessions}) == 3
+
+    async def test_mid_batch_failure_leaves_earlier_envelopes_committed(
+        self,
+        async_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Per-envelope commits: envelope-N failure does not unwind 0..N-1.
+
+        Drives the stub to write a marker row via each envelope's session;
+        on the third envelope the stub writes then raises. The first two
+        markers must persist (visible to a fresh session post-run); the
+        third's write rolls back with its session.
+        """
+        from sqlalchemy import select, text
+
+        from alphamind.execution.state_persistence.invocation_context.context import (
+            insert_invocation_row,
+        )
+        from alphamind.execution.state_persistence.invocation_context.records import (
+            InvocationRecord,
+        )
+        from alphamind.execution.state_persistence.tables.invocations import InvocationRow
+        from alphamind.scheduler import phase2_dispatch as module
+        from alphamind.scheduler.phase2_dispatch import dispatch_phase2
+
+        # Seed an invocation row that the per-envelope stubs can update as
+        # their "marker" — the stub writes ``staleness_flag = <envelope_idx>``
+        # to prove the per-envelope session reached commit.
+        record = InvocationRecord(
+            invocation_id=_INVOCATION_ID,
+            process_lifetime_id="proc-p2-1",
+            start_at="2026-05-07T14:30:00Z",
+            phase1_completed_at="2026-05-07T14:30:01Z",
+            phase2_completed_at=None,
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason="test",
+            git_sha_at_invocation="a" * 40,
+            active_profile="medium",
+            active_regime="normal",
+            active_mode="normal",
+            active_overlays_json="[]",
+            resolved_config_hash="0" * 64,
+            resolved_config_snapshot_path="/tmp/r.json",
+            feature_flags_snapshot_json="{}",
+            data_calibration_state_snapshot_path="/tmp/c.json",
+            data_source_freshness_json="{}",
+            fill_collection_summary_json=None,
+            command_execution_summary_json=None,
+            staleness_flag=None,
+            snapshot_metadata_json=None,
+        )
+        await insert_invocation_row(async_factory, record)
+
+        async def _marker_persist(handle: Any, envelope: Any, results: Any, *, config: Any) -> None:
+            # Stamp the row's command_execution_summary_json with the
+            # current envelope_id as a marker for "this envelope's session
+            # reached persist". Each envelope sees a fresh session; on
+            # commit, the value lands.
+            envelope_idx = int(envelope.envelope_id.rsplit("-", 1)[-1])
+            await handle.session.execute(
+                text(
+                    "UPDATE invocations SET command_execution_summary_json = :v "
+                    "WHERE invocation_id = :iid"
+                ),
+                {"v": str(envelope_idx), "iid": _INVOCATION_ID},
+            )
+            if envelope_idx == 2:
+                raise RuntimeError("simulated failure on envelope 2")
+
+        monkeypatch.setattr(module, "persist_envelope_outcome", _marker_persist)
+
+        entries = tuple(
+            SubmissionLogEntry(
+                envelope=cast(Any, _StubEnvelope(f"ENV-REC-{i}")),
+                submission_results=(
+                    _make_submission_result(
+                        command_ordinal=0, command_id=f"cmd-{i}", status="accepted"
+                    ),
+                ),
+            )
+            for i in range(4)
+        )
+
+        with pytest.raises(RuntimeError, match="simulated failure on envelope 2"):
+            await dispatch_phase2(
+                session_factory=async_factory,
+                invocation_id=_INVOCATION_ID,
+                pm_result=_make_pm_result(submission_log=entries),
+                state_persistence_config=_make_state_persistence_config(),
+            )
+
+        async with async_factory() as session:
+            row = (
+                await session.execute(
+                    select(InvocationRow).where(InvocationRow.invocation_id == _INVOCATION_ID)
+                )
+            ).scalar_one()
+
+        # Envelope 1's update is the latest commit before envelope 2 raised.
+        # Envelope 2's update rolled back (was in its own transaction).
+        # Envelope 3 never ran.
+        assert row.command_execution_summary_json == "1"

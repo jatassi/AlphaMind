@@ -357,7 +357,7 @@ class SqlPortfolioStateRepository:
             if row is None:
                 msg = (
                     f"invocations row {self._invocation_id!r} is missing — "
-                    "InvocationContext should have inserted it before snapshot read"
+                    "insert_invocation_record should have committed it before snapshot read"
                 )
                 raise RepositoryConsistencyError(msg)
             if row.phase1_completed_at is None:
@@ -369,7 +369,14 @@ class SqlPortfolioStateRepository:
             return CurrentInvocationMetadata(
                 invocation_id=row.invocation_id,
                 phase1_committed_at=datetime.fromisoformat(row.phase1_completed_at),
-                pipeline_invocation_started_at=datetime.fromisoformat(row.start_at),
+                # ``pipeline_invocation_started_at`` is left ``None`` at snapshot
+                # assembly time per the snapshot design (see archive ref in
+                # ``PortfolioStateSnapshot``). The field is meant to be populated
+                # later by the pipeline runtime that consumes the snapshot —
+                # populating it from the row's ``start_at`` (which predates the
+                # snapshot assembly) violates the assembled-snapshot ordering
+                # invariant ``pipeline_invocation_started_at >= snapshot_assembled_at``.
+                pipeline_invocation_started_at=None,
             )
 
     async def get_prior_invocation_context(self) -> PriorInvocationContext:

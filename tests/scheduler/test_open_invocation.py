@@ -1,12 +1,13 @@
-"""Tests for ``alphamind.scheduler.invocation.open_invocation`` (story 03a).
+"""Tests for ``alphamind.scheduler.invocation.insert_invocation_record`` (ALP-449).
 
-The context manager mints the invocation id, loads + persists the resolved
-config, persists the data-calibration snapshot, computes the freshness JSON,
-builds the ``InvocationRecord``, opens the per-invocation transaction, and
-yields the :class:`InvocationHandle` the orchestrator (story 03b) wraps.
+The function mints the invocation id, loads + persists the resolved config,
+persists the data-calibration snapshot, computes the freshness JSON, builds
+the ``InvocationRecord``, and inserts it via the short-transaction
+:func:`insert_invocation_row`. Returns ``(invocation_id, pipeline_config)``.
 
-Each test pins exactly one behavior the spec lists under acceptance criteria
-for the public context manager.
+Replaces the pre-ALP-449 ``open_invocation`` async-context-manager which
+conflated row insertion with a long-running transaction spanning every
+phase — incompatible with the design's snapshot-isolation contract.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind.config.models.modes import Mode
@@ -36,7 +38,7 @@ from alphamind.persistence.session import (
     make_engine,
     make_session_factory,
 )
-from alphamind.scheduler.invocation import open_invocation
+from alphamind.scheduler.invocation import insert_invocation_record
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 SHIPPED_CONFIG_DIR = REPO_ROOT / "config"
@@ -90,8 +92,9 @@ def _make_process_lifetime_record() -> ProcessLifetimeRecord:
 async def async_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     """Yield an async session factory bound to an initialized SQLite DB.
 
-    Seeds the FK parent ``process_lifetimes`` row so the ``open_invocation``
-    insert can satisfy the foreign-key constraint without further setup.
+    Seeds the FK parent ``process_lifetimes`` row so
+    :func:`insert_invocation_record` can satisfy the foreign-key constraint
+    without further setup.
     """
     db_path = tmp_path / "alphamind.db"
 
@@ -124,7 +127,7 @@ def _baseline_runtime() -> RuntimeDimensions:
     )
 
 
-class TestOpenInvocation:
+class TestInsertInvocationRecord:
     async def test_minted_invocation_id_matches_id_pattern(
         self,
         env_path: Path,
@@ -132,7 +135,7 @@ class TestOpenInvocation:
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         now = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
-        async with open_invocation(
+        invocation_id, _ = await insert_invocation_record(
             session_factory=async_factory,
             process_lifetime_id="proc-open-1",
             trigger_type="scheduled",
@@ -144,17 +147,24 @@ class TestOpenInvocation:
             config_dir=SHIPPED_CONFIG_DIR,
             env_path=env_path,
             now=now,
-        ) as handle:
-            assert _INVOCATION_ID_RE.match(handle.invocation_id) is not None
+        )
+        assert _INVOCATION_ID_RE.match(invocation_id) is not None
 
-    async def test_enters_inserts_one_row_with_correct_scaffolding(
+    async def test_inserts_one_row_visible_to_fresh_session(
         self,
         env_path: Path,
         archive_root: Path,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
+        """The row must be committed + visible to fresh-session reads on return.
+
+        The downstream snapshot read (between Phase 1 and Phase 2) reads
+        the row via fresh sessions through the SQL repository — the
+        function's contract is that the row is durable by the time it
+        returns, not later.
+        """
         now = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
-        async with open_invocation(
+        invocation_id, _ = await insert_invocation_record(
             session_factory=async_factory,
             process_lifetime_id="proc-open-1",
             trigger_type="scheduled",
@@ -166,29 +176,32 @@ class TestOpenInvocation:
             config_dir=SHIPPED_CONFIG_DIR,
             env_path=env_path,
             now=now,
-        ) as handle:
-            captured_id = handle.invocation_id
+        )
 
-        # Verify the row in a fresh session post-exit.
         async with async_factory() as session:
             rows = (await session.execute(select(InvocationRow))).scalars().all()
 
         assert len(rows) == 1
         row = rows[0]
-        assert row.invocation_id == captured_id
+        assert row.invocation_id == invocation_id
         assert row.start_at == "2026-05-07T14:30:00Z"
         assert row.phase1_completed_at is None
         assert row.phase2_completed_at is None
 
-    async def test_clean_exit_commits_transaction(
+    async def test_returns_resolved_pipeline_config(
         self,
         env_path: Path,
         archive_root: Path,
         async_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """The row must be visible in a fresh session post-exit (committed)."""
+        """The returned pipeline_config matches what was persisted on the row.
+
+        Callers reuse the returned ``PipelineConfig`` without re-loading;
+        the persisted ``resolved_config_snapshot_path`` on the row points
+        to the same resolved snapshot.
+        """
         now = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
-        async with open_invocation(
+        invocation_id, pipeline_config = await insert_invocation_record(
             session_factory=async_factory,
             process_lifetime_id="proc-open-1",
             trigger_type="scheduled",
@@ -200,41 +213,56 @@ class TestOpenInvocation:
             config_dir=SHIPPED_CONFIG_DIR,
             env_path=env_path,
             now=now,
-        ) as handle:
-            invocation_id = handle.invocation_id
+        )
 
         async with async_factory() as session:
             row = await session.get(InvocationRow, invocation_id)
 
         assert row is not None
-        assert row.phase1_completed_at is None
-        assert row.phase2_completed_at is None
+        assert row.resolved_config_hash == pipeline_config.snapshot.hash
+        assert row.resolved_config_snapshot_path == str(pipeline_config.snapshot.path)
 
-    async def test_exception_inside_body_rolls_back(
+    async def test_fk_violation_raises_and_no_row_lands(
         self,
         env_path: Path,
         archive_root: Path,
-        async_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
     ) -> None:
-        """An exception in the ``async with`` body must abort the insert."""
-        now = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
-        with pytest.raises(RuntimeError, match="forced abort"):
-            async with open_invocation(
-                session_factory=async_factory,
-                process_lifetime_id="proc-open-1",
-                trigger_type="scheduled",
-                trigger_source="morning-cron",
-                trigger_reason="0 9 * * 1-5",
-                firing_run_type=RunType.pre_open,
-                runtime=_baseline_runtime(),
-                archive_root=archive_root,
-                config_dir=SHIPPED_CONFIG_DIR,
-                env_path=env_path,
-                now=now,
-            ):
-                raise RuntimeError("forced abort")
+        """FK violation on the ``process_lifetime`` reference aborts the insert.
 
-        async with async_factory() as session:
-            rows = (await session.execute(select(InvocationRow))).scalars().all()
+        Bypasses the seeded fixture so the parent ``process_lifetimes`` row
+        does not exist; the row insertion must raise ``IntegrityError`` and
+        leave no row in the DB.
+        """
+        db_path = tmp_path / "alphamind.db"
 
-        assert rows == []
+        import alphamind.execution.state_persistence.tables  # noqa: F401
+
+        sync_engine = make_engine(str(db_path))
+        Base.metadata.create_all(sync_engine)
+        sync_engine.dispose()
+
+        async_engine = make_async_engine(str(db_path))
+        factory = make_async_session_factory(async_engine)
+        try:
+            now = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
+            with pytest.raises(IntegrityError):
+                await insert_invocation_record(
+                    session_factory=factory,
+                    process_lifetime_id="proc-does-not-exist",
+                    trigger_type="scheduled",
+                    trigger_source="morning-cron",
+                    trigger_reason="0 9 * * 1-5",
+                    firing_run_type=RunType.pre_open,
+                    runtime=_baseline_runtime(),
+                    archive_root=archive_root,
+                    config_dir=SHIPPED_CONFIG_DIR,
+                    env_path=env_path,
+                    now=now,
+                )
+
+            async with factory() as session:
+                rows = (await session.execute(select(InvocationRow))).scalars().all()
+            assert rows == []
+        finally:
+            await async_engine.dispose()

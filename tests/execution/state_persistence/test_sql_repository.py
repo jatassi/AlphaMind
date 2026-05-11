@@ -1320,7 +1320,14 @@ async def test_get_current_invocation_metadata_returns_committed_metadata(
 
     assert result.invocation_id == _INV_ID
     assert result.phase1_committed_at == _PHASE1_AT
-    assert result.pipeline_invocation_started_at == _NOW
+    # ``pipeline_invocation_started_at`` is left None at snapshot assembly
+    # time per the design (see ``PortfolioStateSnapshot`` field docstring
+    # + the archived 04a-master-snapshot spec). Populating it from the
+    # row's ``start_at`` violates the
+    # ``pipeline_invocation_started_at >= snapshot_assembled_at`` ordering
+    # invariant when the snapshot is assembled mid-invocation (which it
+    # is under the ALP-449 three-tx model).
+    assert result.pipeline_invocation_started_at is None
 
 
 async def test_get_current_invocation_metadata_phase1_uncommitted_raises(
