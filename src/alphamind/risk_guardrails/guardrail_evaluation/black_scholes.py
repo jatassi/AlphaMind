@@ -125,3 +125,49 @@ def bs_greeks(
 
     theta = theta_per_year / _DAYS_PER_YEAR
     return Greeks(delta=delta, gamma=gamma, theta=theta, vega=vega)
+
+
+def bs_price(
+    *,
+    spot: float,
+    strike: float,
+    time_to_expiration_years: float,
+    risk_free_rate: float,
+    implied_volatility: float,
+    contract_type: ContractType,
+) -> float:
+    """Closed-form Black-Scholes price for a European option.
+
+    Returns the option premium in the same currency units as ``spot`` and
+    ``strike``. Conventions match ``bs_greeks``: ``time_to_expiration_years``
+    is calendar-day-anchored; non-positive ``spot``, ``strike``, or
+    ``implied_volatility`` raise ``ValueError`` because those are upstream
+    contract violations.
+
+    At ``time_to_expiration_years <= 0`` the function returns intrinsic
+    value: ``max(spot - strike, 0)`` for calls and ``max(strike - spot, 0)``
+    for puts. ATM at expiry returns ``0.0``.
+
+    Negative ``risk_free_rate`` is accepted; the closed form handles it.
+    """
+
+    if spot <= 0:
+        raise ValueError(f"Spot must be positive, got {spot}")
+    if strike <= 0:
+        raise ValueError(f"Strike must be positive, got {strike}")
+    if implied_volatility <= 0:
+        raise ValueError(f"Implied volatility must be positive, got {implied_volatility}")
+
+    if time_to_expiration_years <= 0:
+        if contract_type is ContractType.CALL:
+            return max(spot - strike, 0.0)
+        return max(strike - spot, 0.0)
+
+    sqrt_t = math.sqrt(time_to_expiration_years)
+    d1 = _d1(spot, strike, time_to_expiration_years, risk_free_rate, implied_volatility, sqrt_t)
+    d2 = _d2(d1, implied_volatility, sqrt_t)
+    discount = math.exp(-risk_free_rate * time_to_expiration_years)
+
+    if contract_type is ContractType.CALL:
+        return spot * _norm_cdf(d1) - strike * discount * _norm_cdf(d2)
+    return strike * discount * _norm_cdf(-d2) - spot * _norm_cdf(-d1)

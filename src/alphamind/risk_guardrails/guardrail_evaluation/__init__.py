@@ -7,7 +7,7 @@ combined-set check, and the engine T3 enforcement check); story 01 lays the
 boundary contract every later story builds on.
 """
 
-from alphamind.risk_guardrails.guardrail_evaluation.black_scholes import bs_greeks
+from alphamind.risk_guardrails.guardrail_evaluation.black_scholes import bs_greeks, bs_price
 from alphamind.risk_guardrails.guardrail_evaluation.delta_adjusted import (
     compute_delta_adjusted_exposure,
 )
@@ -112,6 +112,7 @@ __all__ = [
     "RuleSpec",
     "Status",
     "bs_greeks",
+    "bs_price",
     "build_active_specs",
     "classify_feature_gate",
     "compute_delta_adjusted_exposure",
