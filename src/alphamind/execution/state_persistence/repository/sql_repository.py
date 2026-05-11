@@ -244,7 +244,19 @@ class SqlPortfolioStateRepository:
         predating the attribution module (``regt_attribution_json IS NULL``)
         contribute zero to every window. Defense-in-depth: rows with
         ``processing_status != 'processed'`` are also excluded.
+
+        ``now`` must be timezone-aware (UTC convention). Naive datetimes
+        produce timezone-implicit ISO strings whose lex order does not match
+        the absolute order of stored UTC timestamps, so the window cutoffs
+        would silently misclassify rows.
+
+        Implementation uses ``json_extract``, a SQLite-native function.
+        AlphaMind is SQLite-only per CLAUDE.md; a Postgres migration would
+        need to rewrite this query.
         """
+        if now.tzinfo is None:
+            msg = "now must be timezone-aware (UTC convention)"
+            raise ValueError(msg)
         cutoff_30d = (now - timedelta(days=30)).isoformat()
         cutoff_90d = (now - timedelta(days=90)).isoformat()
         excess_expr = func.json_extract(

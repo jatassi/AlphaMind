@@ -333,15 +333,22 @@ def _iter_merged_events(
 
 
 async def _read_all_positions(handle: InvocationHandle) -> tuple[PositionRecord, ...]:
-    """Snapshot every ``positions`` row, rehydrated to typed records.
+    """Snapshot OPEN + PENDING ``positions`` rows, rehydrated to typed records.
 
     Used by the per-fill Reg T attribution wedge (story 06a / ALP-428) to
-    capture pre- and post-fill state. Returns positions of every status —
-    the attribution math filters internally to ``Status.OPEN`` so the
-    snapshot stays a thin database read with no domain shaping. Called twice
-    per fill (cheap; no caching).
+    capture pre- and post-fill state. CLOSED positions are filtered at the
+    SQL boundary: their contribution to the attribution math is zero by
+    construction (closed positions hold no contracts and no shares), so
+    including them would be a no-op that scales linearly with the
+    position-history table — a cost the table will pay every fill, every
+    time. PENDING is retained because a fill can transition PENDING → OPEN
+    inside the wedge (pre = PENDING, post = OPEN); excluding PENDING would
+    drop the post-snapshot's just-opened row when the assembler downstream
+    only inspects the attribution payload.
     """
-    stmt = select(PositionRow)
+    stmt = select(PositionRow).where(
+        PositionRow.status.in_([PositionStatus.OPEN.value, PositionStatus.PENDING.value])
+    )
     rows = (await handle.session.execute(stmt)).scalars()
     return tuple(position_row_to_record(row) for row in rows)
 

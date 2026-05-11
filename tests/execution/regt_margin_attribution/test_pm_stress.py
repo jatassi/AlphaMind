@@ -453,23 +453,13 @@ def test_short_call_class_group_worst_loss_on_up_shock() -> None:
 def test_hedged_equity_plus_long_call_class_group_smaller_than_unhedged_call() -> None:
     """Short equity + long call hedge → combined worst loss < standalone short equity.
 
-    The story-spec parenthetical ("long equity + long call") is contradictory
-    with the test name's "hedged" descriptor — long equity and long call are
-    both bullish, so they concentrate (not offset) on the down-shock. The
-    intent — a class group whose paired instruments produce a smaller worst
-    loss than one of them in isolation — only holds when the two positions
-    offset. The natural interpretation of "hedged equity plus long call" is
-    a short-equity hedge: a long call insures the short stock against
-    upside-shock loss.
-
-    Down-shock: short equity gains, long call loses (small).
-    Up-shock: short equity loses (large), long call gains (partially offsets).
-
-    With a sufficiently sized long-call hedge the combined worst loss across
-    the grid is strictly less than the standalone short-equity worst loss
-    (which is unbounded on +shock direction within the grid). This also
-    verifies that within a class group the per-grid-point net P/L is the
-    sum of per-instrument P/Ls (no max-of-instruments offset).
+    A long call insures a short equity position against upside-shock loss:
+    on the +shock direction the short stock loses (large) while the long
+    call gains (partially offsetting), so the combined class-group worst
+    loss across the grid is strictly less than the standalone short-equity
+    worst loss. This also verifies that within a class group the
+    per-grid-point net P/L is the sum of per-instrument P/Ls (no
+    max-of-instruments offset).
     """
     shock_pct = 0.20
     cfg = _config(per_symbol_overrides={"AAPL": shock_pct})
@@ -519,8 +509,6 @@ def test_iv_shock_paired_to_price_shock_direction() -> None:
     (used at the +1.0 grid endpoint) and the maximum equals
     ``baseline_iv * worst_down_multiplier`` (used at -1.0).
     """
-    from unittest.mock import patch
-
     call = _option_position(
         position_id="p1",
         underlying_ticker="AAPL",
@@ -799,3 +787,38 @@ def test_unmapped_symbol_falls_through_to_unmapped_default() -> None:
 
     # Worst loss = 0.25 * 10 * 100 = 250.0
     assert margin == pytest.approx(0.25 * 10.0 * 100.0)
+
+
+def test_lower_case_underlying_ticker_resolves_both_price_and_iv() -> None:
+    """A lower-case ``underlying_ticker`` on an option leg resolves through both
+    ``underlying_prices`` and the IV provider.
+
+    ``OptionsPositionDetails.underlying_ticker`` (and ``StrategyLeg.options.``)
+    carries no normalisation, so the baseline-lookup helper must normalise once
+    and reuse for both lookups; otherwise the price read upper-cases the key
+    while the IV lookup passes the raw (lower-case) ticker and silently misses
+    the surface entry. This regression test confirms the lookups are unified.
+    """
+    call = _option_position(
+        position_id="p1",
+        underlying_ticker="aapl",  # lower-case — class-group symbol is upper-case
+        strike=100.0,
+        contract_count=1.0,
+        contract_type=OptionContractType.CALL,
+        direction=Direction.LONG,
+    )
+    group = ClassGroup(underlying_symbol="AAPL", positions=(call,))
+    cfg = _config(per_symbol_overrides={"AAPL": 0.20})
+
+    # ``underlying_prices`` keyed upper-case; ``FixtureIvProvider.surface``
+    # also keyed upper-case (the production case). Without the unified
+    # normalisation, the IV lookup would miss the AAPL surface entry on the
+    # raw lower-case ticker and raise IvLookupError.
+    margin = stress_class_group(
+        class_group=group,
+        market_inputs=_market(underlying="AAPL", spot=100.0),
+        config=cfg,
+    )
+
+    # Sanity: a positive worst-case loss (matches the long-call class-group case).
+    assert margin > 0

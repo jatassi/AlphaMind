@@ -1252,11 +1252,20 @@ def _collect_assertion_failures(
     attributions: Sequence[AttributionRow],
     *,
     trailing_30d_usd: float,
+    trailing_90d_usd: float | None = None,
+    lifetime_usd: float | None = None,
 ) -> tuple[str, ...]:
     """Return the structured FAIL messages; empty tuple on a clean PASS.
 
     Each message names the failing assertion in the runbook's failure-mode
     triage table so the operator's first move is a triage-table lookup.
+
+    Both seeded fills fall within 30 days of ``now`` by construction, so all
+    three windows (``trailing_30d_usd``, ``trailing_90d_usd``, ``lifetime_usd``)
+    must equal the per-fill ``regt_excess_over_pm`` sum within ``_TOL``. The
+    longer-window arguments default to ``None`` so unit tests that pre-date
+    the cross-window guard keep compiling; production calls pass all three
+    (a Step 11 wiring regression that drops one window surfaces here).
     """
     failures: list[str] = []
 
@@ -1283,9 +1292,15 @@ def _collect_assertion_failures(
             )
 
     expected_sum = sum(row.attribution.regt_excess_over_pm for row in attributions)
-    if abs(trailing_30d_usd - expected_sum) > _TOL:
+    for label, value in (
+        ("trailing-30d", trailing_30d_usd),
+        ("trailing-90d", trailing_90d_usd),
+        ("lifetime", lifetime_usd),
+    ):
+        if value is None or abs(value - expected_sum) <= _TOL:
+            continue
         failures.append(
-            f"trailing-30d aggregate {trailing_30d_usd} does not equal sum of per-fill "
+            f"{label} aggregate {value} does not equal sum of per-fill "
             f"regt_excess_over_pm {expected_sum} (tol={_TOL}); "
             f"see runbook § Failure-mode triage row 'trailing-30d aggregate mismatch'"
         )
@@ -1323,6 +1338,8 @@ async def run_verify(db_path: Path, *, invocation_id: str) -> VerifyResult:
         failures = _collect_assertion_failures(
             attributions,
             trailing_30d_usd=cash.regt_excess_trailing_30d_usd,
+            trailing_90d_usd=cash.regt_excess_trailing_90d_usd,
+            lifetime_usd=cash.regt_excess_lifetime_usd,
         )
         return VerifyResult(
             attributions=attributions,

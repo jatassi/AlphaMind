@@ -1030,6 +1030,24 @@ async def test_get_cash_ledger_missing_singleton_raises_consistency_error(
         await repo.get_cash_ledger()
 
 
+async def test_get_regt_excess_aggregates_rejects_naive_datetime(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """``get_regt_excess_aggregates`` raises ``ValueError`` on a naive ``now``.
+
+    Naive datetimes produce timezone-implicit ISO strings whose lex order
+    against stored UTC timestamps would silently misclassify rows at the
+    trailing-window cutoffs; the guard fires before any query runs.
+    """
+    _, factory = db
+    await _seed_minimal_invocation(factory)
+
+    repo = await _build_repo(factory)
+    naive_now = datetime(2026, 5, 8, 12, 0, 0)  # noqa: DTZ001 — deliberate; exercises the guard
+    with pytest.raises(ValueError, match="timezone-aware"):
+        await repo.get_regt_excess_aggregates(naive_now)
+
+
 async def test_get_regt_excess_aggregates_empty_table_returns_zeros(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:

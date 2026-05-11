@@ -87,7 +87,7 @@ def stress_class_group(
     market_inputs: MarketInputs,
     config: RegTMarginAttributionConfig,
 ) -> float:
-    """Compute the IBKR-mirror v1 per-class-group margin.
+    """Compute the OCC TIMS / FINRA 4210 baseline v1 per-class-group margin.
 
     Pure function. Returns the absolute value of the worst-case P/L magnitude
     across a 10-point equidistant shock grid applied to all instruments in
@@ -236,10 +236,16 @@ def _baseline_for_leg(
     signed_contracts: float,
     market_inputs: MarketInputs,
 ) -> _LegBaseline:
-    spot = market_inputs.underlying_prices[underlying_ticker.upper()]
+    # Normalise the ticker once and reuse for both lookups. ``OptionsPositionDetails``
+    # / ``StrategyLeg.options`` carry no normalisation, so an option whose
+    # ``underlying_ticker`` drifts in casing from its parent class group's symbol
+    # would otherwise resolve in ``underlying_prices`` (upper-cased) but
+    # ``IvLookupError`` against the IV provider (raw).
+    normalised_ticker = underlying_ticker.upper()
+    spot = market_inputs.underlying_prices[normalised_ticker]
     library_contract_type = _OPTION_CONTRACT_TYPE_MAP[contract_type]
     iv_result = market_inputs.iv_provider.lookup_iv(
-        underlying=underlying_ticker,
+        underlying=normalised_ticker,
         strike=strike,
         expiration=expiration,
         contract_type=library_contract_type,
