@@ -41,6 +41,7 @@ from alphamind.scheduler.driver import run_pipeline_scheduler_task
 from alphamind.scheduler.emergency import run_emergency_receiver_task
 from alphamind.scheduler.logging_setup import configure_pipeline_logging
 from alphamind.scheduler.orchestrator import run_invocation
+from alphamind.scheduler.run_context import RunInvocationContext
 from alphamind.scheduler.session import PipelineMode, new_session
 from alphamind.scheduler.supervisor import PipelineSupervisor
 
@@ -121,18 +122,21 @@ async def _run_once(args: argparse.Namespace) -> None:
             process_role="pipeline",
             archive_root=archive_root,
         )
-        summary = await run_invocation(
+        context = RunInvocationContext(
             session_factory=session_factory,
             process_lifetime_id=process_lifetime_id,
-            trigger_type="manual",
-            trigger_source="cli",
-            trigger_reason=args.reason,
-            firing_run_type=RunType(args.once),
             archive_root=archive_root,
             config_dir=_CONFIG_DIR,
             env_path=_DEFAULT_ENV_PATH,
             venue_config=venue_config,
             execution_mode=execution_mode,
+        )
+        summary = await run_invocation(
+            context=context,
+            trigger_type="manual",
+            trigger_source="cli",
+            trigger_reason=args.reason,
+            firing_run_type=RunType(args.once),
             now=datetime.now(UTC),
         )
     finally:
@@ -169,6 +173,15 @@ async def _run_daemon(*, mode: PipelineMode) -> None:
             process_role="pipeline",
             archive_root=archive_root,
         )
+        context = RunInvocationContext(
+            session_factory=session_factory,
+            process_lifetime_id=process_lifetime_id,
+            archive_root=archive_root,
+            config_dir=_CONFIG_DIR,
+            env_path=_DEFAULT_ENV_PATH,
+            venue_config=venue_config,
+            execution_mode=execution_mode,
+        )
         session = new_session(process_lifetime_id=process_lifetime_id, mode=mode)
         log.info(
             "pipeline scheduler session start: process_lifetime_id=%s mode=%s",
@@ -184,12 +197,7 @@ async def _run_daemon(*, mode: PipelineMode) -> None:
             coro_fn=partial(
                 run_pipeline_scheduler_task,
                 scheduler_config=cfg,
-                session_factory=session_factory,
-                archive_root=archive_root,
-                config_dir=_CONFIG_DIR,
-                env_path=_DEFAULT_ENV_PATH,
-                venue_config=venue_config,
-                execution_mode=execution_mode,
+                context=context,
             ),
         )
         supervisor.register_task(
@@ -198,12 +206,7 @@ async def _run_daemon(*, mode: PipelineMode) -> None:
                 run_emergency_receiver_task,
                 poll_interval_seconds=cfg.emergency_poll_interval_seconds,
                 cooldown_minutes=breach_behavior_config.emergency_invocation_cooldown_minutes,
-                session_factory=session_factory,
-                archive_root=archive_root,
-                config_dir=_CONFIG_DIR,
-                env_path=_DEFAULT_ENV_PATH,
-                venue_config=venue_config,
-                execution_mode=execution_mode,
+                context=context,
             ),
         )
         await supervisor.run()

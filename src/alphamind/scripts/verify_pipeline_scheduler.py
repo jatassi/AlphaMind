@@ -228,11 +228,14 @@ async def check_process_lifetime_row(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     archive_root: Path,
-) -> CheckResult:
+) -> tuple[CheckResult, str | None]:
     """Drive one ``record_process_lifetime`` call and confirm the row landed.
 
-    Returns a FAIL with the underlying exception's message on writer
-    failure; the most common cause is ``git rev-parse HEAD`` returning
+    Returns ``(check_result, process_lifetime_id)``. On success the second
+    element is the id the writer minted (threaded forward into the e2e
+    invocation so the same row is reused — only one row lands per verify
+    run). On writer failure the second element is ``None`` and the check
+    is FAIL; the most common cause is ``git rev-parse HEAD`` returning
     non-zero (missing git binary, detached worktree).
     """
     try:
@@ -244,15 +247,21 @@ async def check_process_lifetime_row(
     except Exception as exc:
         # The writer's failure modes are intentionally varied (git missing,
         # DB unwritable, pip-freeze fails); surface the raw message.
-        return CheckResult(
-            label="process_lifetime",
-            passed=False,
-            message=f"record_process_lifetime raised: {exc}",
+        return (
+            CheckResult(
+                label="process_lifetime",
+                passed=False,
+                message=f"record_process_lifetime raised: {exc}",
+            ),
+            None,
         )
-    return CheckResult(
-        label="process_lifetime",
-        passed=True,
-        message=f"row landed: process_lifetime_id={process_lifetime_id}",
+    return (
+        CheckResult(
+            label="process_lifetime",
+            passed=True,
+            message=f"row landed: process_lifetime_id={process_lifetime_id}",
+        ),
+        process_lifetime_id,
     )
 
 
@@ -560,16 +569,22 @@ async def _drive_once_invocation(
     archive_root: Path,
     run_type: RunType,
     mode: str,
+    process_lifetime_id: str,
 ) -> str:
     """Drive one ``--once`` invocation end-to-end and return the invocation id.
 
     Mirrors the CLI's ``_run_once`` body in :mod:`alphamind.scheduler.__main__`;
     we cannot directly call that private helper because it parses argparse
     namespaces, but its semantics are identical.
+
+    ``process_lifetime_id`` is supplied by the upstream smoke-test check
+    (``check_process_lifetime_row``) so the e2e invocation reuses that
+    row instead of writing a second one.
     """
     from alphamind.config.loaders import read_yaml_file
     from alphamind.scheduler.logging_setup import configure_pipeline_logging
     from alphamind.scheduler.orchestrator import run_invocation
+    from alphamind.scheduler.run_context import RunInvocationContext
 
     configure_pipeline_logging()
     await asyncio.to_thread(archive_root.mkdir, parents=True, exist_ok=True)
@@ -580,23 +595,21 @@ async def _drive_once_invocation(
     engine = make_async_engine()
     session_factory = make_async_session_factory(engine)
     try:
-        process_lifetime_id = await record_process_lifetime(
-            session_factory=session_factory,
-            process_role="pipeline",
-            archive_root=archive_root,
-        )
-        summary = await run_invocation(
+        context = RunInvocationContext(
             session_factory=session_factory,
             process_lifetime_id=process_lifetime_id,
-            trigger_type="manual",
-            trigger_source="verify_pipeline_scheduler",
-            trigger_reason="e2e verify",
-            firing_run_type=run_type,
             archive_root=archive_root,
             config_dir=_CONFIG_DIR,
             env_path=_DEFAULT_ENV_PATH,
             venue_config=venue_config,
             execution_mode=execution_mode,
+        )
+        summary = await run_invocation(
+            context=context,
+            trigger_type="manual",
+            trigger_source="verify_pipeline_scheduler",
+            trigger_reason="e2e verify",
+            firing_run_type=run_type,
             now=datetime.now(UTC),
         )
     finally:
@@ -614,12 +627,12 @@ def _run_schema_check() -> CheckResult:
         engine.dispose()
 
 
-def _run_process_lifetime_check(archive_root: Path) -> CheckResult:
+def _run_process_lifetime_check(archive_root: Path) -> tuple[CheckResult, str | None]:
     """Drive ``check_process_lifetime_row`` against a one-shot async engine."""
     async_engine = make_async_engine()
     async_factory = make_async_session_factory(async_engine)
 
-    async def _run() -> CheckResult:
+    async def _run() -> tuple[CheckResult, str | None]:
         try:
             return await check_process_lifetime_row(
                 session_factory=async_factory, archive_root=archive_root
@@ -631,17 +644,25 @@ def _run_process_lifetime_check(archive_root: Path) -> CheckResult:
 
 
 def _run_once_invocation(
-    *, archive_root: Path, run_type: RunType, mode: str
+    *, archive_root: Path, run_type: RunType, mode: str, process_lifetime_id: str
 ) -> tuple[CheckResult, str | None]:
     """Drive one ``--once`` invocation and bundle the outcome.
 
     Returns ``(check_result, invocation_id)``. On success the second
     element is the new invocation id (consumed by the downstream row /
     activity-log / archive checks); on failure it is ``None``.
+
+    ``process_lifetime_id`` is reused from the upstream smoke-test row so
+    the e2e invocation writes only the orchestrator's ``invocations`` row.
     """
     try:
         invocation_id = asyncio.run(
-            _drive_once_invocation(archive_root=archive_root, run_type=run_type, mode=mode)
+            _drive_once_invocation(
+                archive_root=archive_root,
+                run_type=run_type,
+                mode=mode,
+                process_lifetime_id=process_lifetime_id,
+            )
         )
     except Exception as exc:
         # Any orchestrator failure is a FAIL for this check; the exception's
@@ -709,17 +730,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not results[-1].passed:
         _print_summary(results)
         return 1
-    _emit(results, _run_process_lifetime_check(args.archive_root))
-    if not results[-1].passed:
+    plt_check, process_lifetime_id = _run_process_lifetime_check(args.archive_root)
+    _emit(results, plt_check)
+    if not plt_check.passed or process_lifetime_id is None:
         _print_summary(results)
         return 1
 
     # End-to-end --once invocation. The downstream checks depend on this
     # invocation_id existing in the DB / on disk; on FAIL the script bails.
+    # The smoke-test row's process_lifetime_id is reused so the e2e
+    # invocation does not write a second row.
     invocation_result, invocation_id = _run_once_invocation(
         archive_root=args.archive_root,
         run_type=RunType(args.run_type),
         mode=args.mode,
+        process_lifetime_id=process_lifetime_id,
     )
     _emit(results, invocation_result)
     if not invocation_result.passed or invocation_id is None:

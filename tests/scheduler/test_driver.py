@@ -107,6 +107,25 @@ def _make_venue_config() -> VenueConfig:
     )
 
 
+def _make_context(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> Any:
+    """Compose the standard ``RunInvocationContext`` driver tests use."""
+    from alphamind.scheduler.run_context import RunInvocationContext
+
+    return RunInvocationContext(
+        session_factory=session_factory,
+        process_lifetime_id="proc-driver-1",
+        archive_root=tmp_path / "archive",
+        config_dir=SHIPPED_CONFIG_DIR,
+        env_path=tmp_path / ".env",
+        venue_config=_make_venue_config(),
+        execution_mode=ExecutionMode.paper,
+    )
+
+
 def _make_process_lifetime_record() -> ProcessLifetimeRecord:
     return ProcessLifetimeRecord(
         process_lifetime_id="proc-driver-1",
@@ -209,13 +228,7 @@ class TestRegisterPipelineJobsTriggerResolution:
             register_pipeline_jobs(
                 scheduler=sched,
                 scheduler_config=cfg,
-                session_factory=async_factory,
-                process_lifetime_id="proc-driver-1",
-                archive_root=tmp_path / "archive",
-                config_dir=SHIPPED_CONFIG_DIR,
-                env_path=tmp_path / ".env",
-                venue_config=_make_venue_config(),
-                execution_mode=ExecutionMode.paper,
+                context=_make_context(session_factory=async_factory, tmp_path=tmp_path),
             )
             registered = {job.id for job in sched.get_jobs()}
         finally:
@@ -246,13 +259,7 @@ class TestRegisterPipelineJobsTriggerResolution:
             register_pipeline_jobs(
                 scheduler=sched,
                 scheduler_config=cfg,
-                session_factory=async_factory,
-                process_lifetime_id="proc-driver-1",
-                archive_root=tmp_path / "archive",
-                config_dir=SHIPPED_CONFIG_DIR,
-                env_path=tmp_path / ".env",
-                venue_config=_make_venue_config(),
-                execution_mode=ExecutionMode.paper,
+                context=_make_context(session_factory=async_factory, tmp_path=tmp_path),
             )
 
 
@@ -325,14 +332,8 @@ class TestMakeScheduledJobHappyPath:
             trigger_key="weekend_saturday",
             run_type=RunType.weekend_saturday,
             cron_expression=cfg.triggers["weekend_saturday"],
-            session_factory=async_factory,
             scheduler_config=cfg,
-            process_lifetime_id="proc-driver-1",
-            archive_root=tmp_path / "archive",
-            config_dir=SHIPPED_CONFIG_DIR,
-            env_path=tmp_path / ".env",
-            venue_config=_make_venue_config(),
-            execution_mode=ExecutionMode.paper,
+            context=_make_context(session_factory=async_factory, tmp_path=tmp_path),
         )
 
         with caplog.at_level(logging.INFO, logger="alphamind.scheduler.driver"):
@@ -344,7 +345,7 @@ class TestMakeScheduledJobHappyPath:
         assert kwargs["trigger_source"] == "weekend_saturday"
         assert kwargs["trigger_reason"] == cfg.triggers["weekend_saturday"]
         assert kwargs["firing_run_type"] is RunType.weekend_saturday
-        assert kwargs["process_lifetime_id"] == "proc-driver-1"
+        assert kwargs["context"].process_lifetime_id == "proc-driver-1"
 
         completion_messages = [
             record.getMessage() for record in caplog.records if "completed" in record.getMessage()
@@ -382,14 +383,8 @@ class TestMakeScheduledJobMarketCalendarGuard:
             trigger_key="pre_open",
             run_type=RunType.pre_open,
             cron_expression=cfg.triggers["pre_open"],
-            session_factory=async_factory,
             scheduler_config=cfg,
-            process_lifetime_id="proc-driver-1",
-            archive_root=tmp_path / "archive",
-            config_dir=SHIPPED_CONFIG_DIR,
-            env_path=tmp_path / ".env",
-            venue_config=_make_venue_config(),
-            execution_mode=ExecutionMode.paper,
+            context=_make_context(session_factory=async_factory, tmp_path=tmp_path),
         )
 
         with caplog.at_level(logging.INFO, logger="alphamind.scheduler.driver"):
@@ -424,14 +419,8 @@ class TestMakeScheduledJobMarketCalendarGuard:
             trigger_key="weekend_saturday",
             run_type=RunType.weekend_saturday,
             cron_expression=cfg.triggers["weekend_saturday"],
-            session_factory=async_factory,
             scheduler_config=cfg,
-            process_lifetime_id="proc-driver-1",
-            archive_root=tmp_path / "archive",
-            config_dir=SHIPPED_CONFIG_DIR,
-            env_path=tmp_path / ".env",
-            venue_config=_make_venue_config(),
-            execution_mode=ExecutionMode.paper,
+            context=_make_context(session_factory=async_factory, tmp_path=tmp_path),
         )
 
         await job()
@@ -494,14 +483,8 @@ class TestMakeScheduledJobDedupGuard:
             trigger_key="market_hours_rolling",
             run_type=RunType.market_hours_rolling,
             cron_expression=cfg.triggers["market_hours_rolling"],
-            session_factory=async_factory,
             scheduler_config=cfg,
-            process_lifetime_id="proc-driver-1",
-            archive_root=tmp_path / "archive",
-            config_dir=SHIPPED_CONFIG_DIR,
-            env_path=tmp_path / ".env",
-            venue_config=_make_venue_config(),
-            execution_mode=ExecutionMode.paper,
+            context=_make_context(session_factory=async_factory, tmp_path=tmp_path),
         )
 
         with caplog.at_level(logging.INFO, logger="alphamind.scheduler.driver"):
@@ -542,14 +525,8 @@ class TestMakeScheduledJobDedupGuard:
             trigger_key="pre_close",
             run_type=RunType.pre_close,
             cron_expression=cfg.triggers["pre_close"],
-            session_factory=async_factory,
             scheduler_config=cfg,
-            process_lifetime_id="proc-driver-1",
-            archive_root=tmp_path / "archive",
-            config_dir=SHIPPED_CONFIG_DIR,
-            env_path=tmp_path / ".env",
-            venue_config=_make_venue_config(),
-            execution_mode=ExecutionMode.paper,
+            context=_make_context(session_factory=async_factory, tmp_path=tmp_path),
         )
 
         await job()
@@ -583,14 +560,8 @@ class TestMakeScheduledJobExceptionSwallowed:
             trigger_key="weekend_saturday",  # bypass both gates so we reach dispatch.
             run_type=RunType.weekend_saturday,
             cron_expression=cfg.triggers["weekend_saturday"],
-            session_factory=async_factory,
             scheduler_config=cfg,
-            process_lifetime_id="proc-driver-1",
-            archive_root=tmp_path / "archive",
-            config_dir=SHIPPED_CONFIG_DIR,
-            env_path=tmp_path / ".env",
-            venue_config=_make_venue_config(),
-            execution_mode=ExecutionMode.paper,
+            context=_make_context(session_factory=async_factory, tmp_path=tmp_path),
         )
 
         with caplog.at_level(logging.ERROR, logger="alphamind.scheduler.driver"):
@@ -643,12 +614,7 @@ class TestRunPipelineSchedulerTask:
                 run_pipeline_scheduler_task(
                     session,
                     scheduler_config=cfg,
-                    session_factory=async_factory,
-                    archive_root=tmp_path / "archive",
-                    config_dir=SHIPPED_CONFIG_DIR,
-                    env_path=tmp_path / ".env",
-                    venue_config=_make_venue_config(),
-                    execution_mode=ExecutionMode.paper,
+                    context=_make_context(session_factory=async_factory, tmp_path=tmp_path),
                 )
             )
             # Yield so the task gets a chance to start the scheduler and log

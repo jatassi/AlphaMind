@@ -21,14 +21,11 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.run_types import RunType
-from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
 from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.portfolio_state.events.activity_log import (
@@ -36,6 +33,7 @@ from alphamind.portfolio_state.events.activity_log import (
     EventType,
 )
 from alphamind.scheduler.orchestrator import run_invocation
+from alphamind.scheduler.run_context import RunInvocationContext
 from alphamind.scheduler.session import PipelineSession
 
 __all__ = ["run_emergency_receiver_task"]
@@ -114,17 +112,12 @@ def _is_cooldown_active(
     return most_recent_completed_at >= now - timedelta(minutes=cooldown_minutes)
 
 
-async def run_emergency_receiver_task(  # noqa: PLR0913 — composition surface threads typed inputs
+async def run_emergency_receiver_task(
     session: PipelineSession,
     *,
     poll_interval_seconds: float,
     cooldown_minutes: int,
-    session_factory: async_sessionmaker[AsyncSession],
-    archive_root: Path,
-    config_dir: Path,
-    env_path: Path,
-    venue_config: VenueConfig,
-    execution_mode: ExecutionMode,
+    context: RunInvocationContext,
 ) -> None:
     """Poll ``activity_log`` for emergency requests and dispatch ``run_invocation``.
 
@@ -145,7 +138,7 @@ async def run_emergency_receiver_task(  # noqa: PLR0913 — composition surface 
     Tests monkey-patch the module-level :func:`run_invocation` import to
     observe dispatch kwargs without running the full orchestrator.
     """
-    last_seen_entry_id = await _read_initial_high_water_mark(session_factory)
+    last_seen_entry_id = await _read_initial_high_water_mark(context.session_factory)
     log.info(
         "emergency receiver task start: process_lifetime_id=%s last_seen_entry_id=%s",
         session.process_lifetime_id,
@@ -160,34 +153,22 @@ async def run_emergency_receiver_task(  # noqa: PLR0913 — composition surface 
             raise
 
         new_rows = await _read_new_emergency_entries(
-            session_factory, last_seen_entry_id=last_seen_entry_id
+            context.session_factory, last_seen_entry_id=last_seen_entry_id
         )
         for row in new_rows:
             last_seen_entry_id = row.entry_id
             await _process_one_entry(
                 row,
-                session=session,
                 cooldown_minutes=cooldown_minutes,
-                session_factory=session_factory,
-                archive_root=archive_root,
-                config_dir=config_dir,
-                env_path=env_path,
-                venue_config=venue_config,
-                execution_mode=execution_mode,
+                context=context,
             )
 
 
-async def _process_one_entry(  # noqa: PLR0913 — composition surface threads typed inputs
+async def _process_one_entry(
     row: ActivityLogRow,
     *,
-    session: PipelineSession,
     cooldown_minutes: int,
-    session_factory: async_sessionmaker[AsyncSession],
-    archive_root: Path,
-    config_dir: Path,
-    env_path: Path,
-    venue_config: VenueConfig,
-    execution_mode: ExecutionMode,
+    context: RunInvocationContext,
 ) -> None:
     """Parse, cooldown-check, and dispatch one emergency-request row.
 
@@ -201,7 +182,7 @@ async def _process_one_entry(  # noqa: PLR0913 — composition surface threads t
         return
 
     if detail.trigger_type != "margin_call":
-        most_recent = await _most_recent_completed_emergency_at(session_factory)
+        most_recent = await _most_recent_completed_emergency_at(context.session_factory)
         if _is_cooldown_active(
             most_recent_completed_at=most_recent,
             now=datetime.now(UTC),
@@ -218,17 +199,11 @@ async def _process_one_entry(  # noqa: PLR0913 — composition surface threads t
 
     try:
         summary = await run_invocation(
-            session_factory=session_factory,
-            process_lifetime_id=session.process_lifetime_id,
+            context=context,
             trigger_type="emergency",
             trigger_source="continuous_monitor",
             trigger_reason=detail.trigger_reason,
             firing_run_type=RunType.emergency,
-            archive_root=archive_root,
-            config_dir=config_dir,
-            env_path=env_path,
-            venue_config=venue_config,
-            execution_mode=execution_mode,
             now=datetime.now(UTC),
         )
     except Exception:
