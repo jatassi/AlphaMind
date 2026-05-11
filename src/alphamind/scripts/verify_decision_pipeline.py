@@ -985,15 +985,29 @@ async def _run_pipeline(
     invocation_id: str,
     archive_root: Path,
 ) -> DecisionPipelineResult:
-    """Compose runner kwargs and invoke ``run_decision_pipeline``."""
+    """Compose runner kwargs and invoke ``run_decision_pipeline``.
+
+    Mirrors the orchestrator: assemble the snapshot once against the stub
+    repository, then pass the pre-built :class:`AssembledSnapshot` into the
+    runner.
+    """
+    from alphamind.portfolio_state.assembler import assemble_snapshot
+    from alphamind.portfolio_state.consumers.synthesizer import adapt_ticker_sector_resolver
+
     repository = StubPortfolioStateRepository(build_fixture_repository(invocation_id=invocation_id))
     quotes = build_fixture_price_provider()
     price_provider = StubCurrentPriceProvider(quotes, _AS_OF)
     library_config = build_fixture_library_config()
-    return await run_decision_pipeline(
+
+    assembled = await assemble_snapshot(
         repository=repository,
         price_provider=price_provider,
-        portfolio_state_config=_load_portfolio_state_config(),
+        sector_resolver=adapt_ticker_sector_resolver(_sector_resolver),
+        config=_load_portfolio_state_config(),
+        now=_AS_OF,
+    )
+    return await run_decision_pipeline(
+        assembled_snapshot=assembled,
         synthesizer_text=build_fixture_synthesizer_text(),
         retrieval_store=build_fixture_retrieval_store(),
         mode="normal",
@@ -1011,7 +1025,6 @@ async def _run_pipeline(
         active_sectors=frozenset(library_config.active_sectors),
         invocation_id=invocation_id,
         timestamp=_AS_OF,
-        now=_AS_OF,
         archive_root=archive_root,
     )
 

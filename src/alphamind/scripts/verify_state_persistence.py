@@ -739,10 +739,20 @@ _PHASE_B_LABEL = "Phase B — invocation context"
 
 
 async def run_phase_b_invocation_context(db_path: Path) -> PhaseResult:
-    """Open + close an ``InvocationContext`` cleanly, then again with an injected
-    exception. The first run must persist; the second must roll back so the
-    invocation row count remains unchanged."""
+    """Probe the ALP-449 three-tx ``InvocationContext`` semantics.
+
+    Probe 1 — clean exit: the invocation row persists *and* the phase
+    session's writes commit (the stamp on ``phase1_completed_at`` lands).
+
+    Probe 2 — exception inside the context: the invocation row stays
+    (its commit happened before the phase opened) but the phase session's
+    writes roll back (``phase1_completed_at`` stays NULL).
+    """
     from sqlalchemy import select
+
+    from alphamind.execution.state_persistence.invocation_context.context import (
+        stamp_phase_completion,
+    )
 
     engine, factory = _open_async_factory(db_path)
     try:
@@ -751,11 +761,11 @@ async def run_phase_b_invocation_context(db_path: Path) -> PhaseResult:
         commit_inv_id = f"{_INV_ID_BASE}-phase-b-commit"
         rollback_inv_id = f"{_INV_ID_BASE}-phase-b-rollback"
 
-        # Probe 1 — clean exit commits.
+        # Probe 1 — clean exit: row + phase writes commit.
         async with InvocationContext(
             session_factory=factory, record=_invocation_record(commit_inv_id)
-        ):
-            pass
+        ) as handle:
+            await stamp_phase_completion(handle, column="phase1_completed_at")
 
         async with factory() as sess:
             committed = (
@@ -763,18 +773,22 @@ async def run_phase_b_invocation_context(db_path: Path) -> PhaseResult:
                     select(InvocationRow).where(InvocationRow.invocation_id == commit_inv_id)
                 )
             ).scalar_one_or_none()
-        if committed is None:
+        if committed is None or committed.phase1_completed_at is None:
             return PhaseResult(
                 label=_PHASE_B_LABEL,
                 ok=False,
-                detail="clean-exit invocation row did not persist",
+                detail="clean-exit invocation row or phase1 stamp did not persist",
             )
 
-        # Probe 2 — exception inside the context rolls back.
+        # Probe 2 — exception inside the context: row stays, phase writes
+        # roll back. The pre-ALP-449 model rolled back the row too; the
+        # three-tx model commits the row up-front so it stays for the
+        # snapshot-isolation guard to refuse reads against it.
         try:
             async with InvocationContext(
                 session_factory=factory, record=_invocation_record(rollback_inv_id)
-            ):
+            ) as handle:
+                await stamp_phase_completion(handle, column="phase1_completed_at")
                 _raise_synthetic_downstream()
         except _SyntheticDownstreamError:
             pass
@@ -785,11 +799,17 @@ async def run_phase_b_invocation_context(db_path: Path) -> PhaseResult:
                     select(InvocationRow).where(InvocationRow.invocation_id == rollback_inv_id)
                 )
             ).scalar_one_or_none()
-        if rolled is not None:
+        if rolled is None:
             return PhaseResult(
                 label=_PHASE_B_LABEL,
                 ok=False,
-                detail="rollback probe persisted the invocation row instead of rolling back",
+                detail="rollback-probe invocation row missing — row commit should precede phase",
+            )
+        if rolled.phase1_completed_at is not None:
+            return PhaseResult(
+                label=_PHASE_B_LABEL,
+                ok=False,
+                detail="rollback probe persisted the phase1 stamp instead of rolling back",
             )
 
         return PhaseResult(label=_PHASE_B_LABEL, ok=True)

@@ -326,23 +326,18 @@ and the future ``alphamind-monitor``).
    The runbook's daemon-mode sanity check covers the wiring; a true
    end-to-end production validation lives under the central runbook's
    pipeline-scheduler phase plus the operator's monitoring.
-3. **Known orchestrator stub: ``_EmptySynthesizerReader``.** The
-   orchestrator currently wires an empty synthesizer reader (returns
-   no positions / theses / exposure) at
-   ``src/alphamind/scheduler/orchestrator.py``'s ``_EmptySynthesizerReader``.
-   The natural production reader is
+3. **Synthesizer reader wired post-ALP-449.** The orchestrator wires
    :class:`SnapshotBackedSynthesizerReader`
    (``src/alphamind/portfolio_state/consumers/synthesizer.py:175``)
-   backed by ``assemble_snapshot``. Wiring it requires a snapshot
-   that reads Phase-1-committed data, but the orchestrator's
-   ``InvocationContext`` transaction does not commit between Phase 1
-   and the synthesizer call — a separate session opened by the
-   repository factory cannot see the open transaction's uncommitted
-   row. Deferred to a follow-up story scoped to cross-transaction
-   snapshot visibility. Tests stub ``run_analysis_pipeline`` so the
-   empty reader is never invoked under unit tests; the ``--once``
-   verify path may exhibit reduced synthesizer fidelity until the
-   deferred wiring lands.
+   backed by a snapshot assembled between Phase 1 and the analysis
+   pipeline. Per the design's snapshot-isolation contract
+   (``docs/design/05-execution-layer/state-persistence.md`` §
+   Snapshot isolation) Phase 1 commits in its own transaction before
+   the snapshot read; the SQL repository's fresh-session reads
+   correctly see the committed ``phase1_completed_at`` and produce a
+   real :class:`AssembledSnapshot`. The same snapshot threads through
+   :func:`run_decision_pipeline` so the synthesizer reader and the
+   decision pipeline see one consistent portfolio state.
 
 ## References
 

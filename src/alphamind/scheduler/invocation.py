@@ -1,9 +1,15 @@
-"""Per-invocation context assembly + row-metadata population (story 03a).
+"""Per-invocation row composition (story 03a / ALP-449 three-tx model).
 
-Builds the 22-field ``InvocationRecord`` every pipeline invocation writes on
-enter and opens the per-invocation transaction. Story 03b's
-``run_invocation`` orchestrator wraps the open handle with the actual
-Phase 1 / Phase 2 wiring; this story owns the entry-point composition.
+Builds the 22-field ``InvocationRecord`` every pipeline invocation writes
+and inserts it via :func:`insert_invocation_row` in its own short
+transaction so the row is durable + visible to fresh-session reads before
+Phase 1 opens.
+
+The orchestrator entry-point :func:`insert_invocation_record` composes the
+record (minting the invocation_id, loading + persisting the pipeline-config
+snapshot, computing the data-source freshness JSON) and returns the
+``(invocation_id, pipeline_config)`` pair the orchestrator threads through
+the per-phase transactions.
 
 See ``docs/design/05-execution-layer/state-persistence.md`` § Invocation
 records for the column contract and parent issue ``ALP-431`` § Pre-resolved
@@ -16,8 +22,6 @@ import json
 import re
 import secrets
 import subprocess
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path
@@ -31,8 +35,7 @@ from alphamind.config.models.run_types import RunType
 from alphamind.config.resolver import RuntimeDimensions
 from alphamind.config.snapshot import _atomic_write
 from alphamind.execution.state_persistence.invocation_context.context import (
-    InvocationContext,
-    InvocationHandle,
+    insert_invocation_row,
 )
 from alphamind.execution.state_persistence.invocation_context.records import (
     ActiveMode,
@@ -267,8 +270,7 @@ def _mint_invocation_id(now: datetime) -> str:
     return f"inv-{stamp}-{secrets.token_hex(4)}"
 
 
-@asynccontextmanager
-async def open_invocation(  # noqa: PLR0913 — signature pinned by story 03a spec
+async def insert_invocation_record(  # noqa: PLR0913 — composition surface threads typed inputs
     *,
     session_factory: async_sessionmaker[AsyncSession],
     process_lifetime_id: str,
@@ -281,22 +283,26 @@ async def open_invocation(  # noqa: PLR0913 — signature pinned by story 03a sp
     config_dir: Path,
     env_path: Path,
     now: datetime,
-) -> AsyncIterator[InvocationHandle]:
-    """Build the row, persist provenance, and open the per-invocation transaction.
+) -> tuple[str, PipelineConfig]:
+    """Compose the invocation record, persist provenance, and insert the row.
 
     Steps in order:
 
     1. Mint ``invocation_id`` via :func:`_mint_invocation_id`.
     2. Open a short read-only session for the freshness query.
-    3. Call :func:`load_full_config` to validate, compose, and persist the resolved
-       configuration snapshot.
-    4. Build the ``InvocationRecord`` via :func:`build_invocation_record` — this
-       step persists the data-calibration snapshot inline and computes the freshness
-       JSON against the short session.
-    5. Open the ``InvocationContext`` transaction and yield the handle.
+    3. Call :func:`load_full_config` to validate, compose, and persist the
+       resolved configuration snapshot under ``<archive_root>/invocations/
+       <invocation_id>/resolved_config.json``.
+    4. Build the ``InvocationRecord`` via :func:`build_invocation_record` —
+       this step persists the data-calibration snapshot inline and computes
+       the freshness JSON against the short session.
+    5. Call :func:`insert_invocation_row` to insert + commit the row in its
+       own short-lived transaction.
 
-    On exception inside the ``async with`` body the underlying
-    ``InvocationContext`` rolls back; on clean exit it commits.
+    Returns ``(invocation_id, pipeline_config)``. The orchestrator threads
+    both through the per-phase transactions: the id identifies the row that
+    Phase 1 / Phase 2 stamp; the config is the resolved snapshot the row's
+    ``resolved_config_snapshot_path`` points at, reused without re-loading.
     """
     invocation_id = _mint_invocation_id(now)
 
@@ -323,6 +329,5 @@ async def open_invocation(  # noqa: PLR0913 — signature pinned by story 03a sp
             now=now,
         )
 
-    ctx = InvocationContext(session_factory=session_factory, record=record)
-    async with ctx as handle:
-        yield handle
+    await insert_invocation_row(session_factory, record)
+    return invocation_id, pipeline_config

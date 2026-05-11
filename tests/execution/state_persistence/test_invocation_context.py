@@ -148,10 +148,20 @@ class TestInvocationContext:
             assert persisted.trigger_type == "scheduled"
             assert persisted.process_lifetime_id == "proc-1"
 
-    async def test_exception_inside_context_rolls_back(
+    async def test_exception_inside_context_leaves_row_committed(
         self,
         async_engine_and_factory: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     ) -> None:
+        """Under the three-tx model the row commits up-front; phase aborts don't undo it.
+
+        The pre-ALP-449 InvocationContext rolled the row back on any
+        exception. Per ``docs/design/05-execution-layer/state-persistence.md``
+        § Snapshot isolation the row commit precedes phase work, so an
+        exception inside the ``async with`` body rolls back only the
+        phase's writes — the invocation row stays for the next invocation
+        to see (and the SQL repository's ``phase1_completed_at IS NULL``
+        guard refuses snapshot reads against it).
+        """
         _, factory = async_engine_and_factory
         record = _make_invocation_record(invocation_id="inv-rollback-1")
 
@@ -161,16 +171,17 @@ class TestInvocationContext:
         ctx = InvocationContext(session_factory=factory, record=record)
         with pytest.raises(_BoomError):
             async with ctx:
-                # InvocationRecord has been INSERTed into the session by
-                # __aenter__; raising here MUST roll back the transaction.
                 raise _BoomError("simulated downstream failure")
 
-        # Verify the row did NOT land.
+        # The row stays — its commit happened before the phase opened.
         async with factory() as sess:
             result = await sess.execute(
                 select(InvocationRow).where(InvocationRow.invocation_id == "inv-rollback-1")
             )
-            assert result.scalar_one_or_none() is None
+            row = result.scalar_one_or_none()
+            assert row is not None
+            assert row.phase1_completed_at is None
+            assert row.phase2_completed_at is None
 
     async def test_context_handle_session_can_join_same_transaction(
         self,
@@ -200,15 +211,19 @@ class TestInvocationContext:
             assert persisted is not None
             assert persisted.phase1_completed_at == "2026-05-07T14:31:00Z"
 
-    async def test_fk_violation_raises_and_rolls_back(
+    async def test_fk_violation_raises_and_no_row_lands(
         self,
         tmp_path: Path,
     ) -> None:
-        """Emulate ALP-356 acceptance criterion: insert invocation referencing
-        nonexistent process_lifetime fails (the schema FK + InvocationContext
-        rollback path together)."""
-        # Build a fresh DB without the parent process_lifetime row — bypass the
-        # default fixture to test the FK-rejection-then-rollback path.
+        """FK violation on row insert raises before the phase opens; no orphan.
+
+        Per ALP-356 acceptance criterion: the row-insert short transaction
+        (``insert_invocation_row``) raises ``IntegrityError`` when the FK
+        to ``process_lifetimes`` does not resolve. Under the three-tx
+        model this happens *before* the phase session opens, so no orphan
+        row lands in the DB.
+        """
+        # Build a fresh DB without the parent process_lifetime row.
         db_path = tmp_path / "alphamind.db"
 
         import alphamind.execution.state_persistence.tables  # noqa: F401
@@ -225,7 +240,6 @@ class TestInvocationContext:
                 async with InvocationContext(session_factory=factory, record=record):
                     pass
 
-            # Confirm the orphan didn't land.
             async with factory() as sess:
                 result = await sess.execute(
                     select(InvocationRow).where(InvocationRow.invocation_id == "inv-orphan-1")

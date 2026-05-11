@@ -54,24 +54,19 @@ from alphamind.decision.proposal_pre_processor import (
 from alphamind.decision.proposal_pre_processor.models import CombinedSetImpact
 from alphamind.decision.strategist.runner import StrategistResult, run_strategist
 from alphamind.pipeline._shared import apply_agent_overrides
-from alphamind.portfolio_state import PortfolioStateConfig
-from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.consumers.analyst import project_analyst_view
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     SnapshotBackedThesisComponentReader,
     project_portfolio_manager_view,
 )
 from alphamind.portfolio_state.consumers.strategist import project_strategist_view
+from alphamind.portfolio_state.consumers.synthesizer import adapt_ticker_sector_resolver
 from alphamind.portfolio_state.freshness import AssembledSnapshot
 from alphamind.portfolio_state.library_snapshot import (
     LibrarySnapshot,
     to_library_snapshot,
 )
-from alphamind.portfolio_state.pricing import CurrentPriceProvider
-from alphamind.portfolio_state.records.positions import PositionRecord
-from alphamind.portfolio_state.repository import PortfolioStateRepository
 from alphamind.portfolio_state.snapshot import PortfolioStateSnapshot
-from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -183,9 +178,7 @@ def _derive_cross_constraint_impact(
 
 async def run_decision_pipeline(  # noqa: PLR0913 — composition surface threads typed inputs through every stage
     *,
-    repository: PortfolioStateRepository,
-    price_provider: CurrentPriceProvider,
-    portfolio_state_config: PortfolioStateConfig,
+    assembled_snapshot: AssembledSnapshot,
     synthesizer_text: str,
     retrieval_store: RetrievalStore,
     mode: Literal["normal", "halt"],
@@ -203,7 +196,6 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     active_sectors: frozenset[str],
     invocation_id: str,
     timestamp: datetime,
-    now: datetime,
     archive_root: Path | None = None,
     sector_label_display: dict[str, str] | None = None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...] = (),
@@ -214,10 +206,13 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
 ) -> DecisionPipelineResult:
     """Run the decision-layer composition end-to-end.
 
-    See module docstring for the seven-stage sequence. The runner is pure
-    in the sense that it assembles a fresh snapshot, fresh validation-state
-    cells, and fresh submit-envelope state on every invocation — no
-    module-level state survives between calls.
+    See module docstring for the six-stage sequence. The runner consumes
+    a pre-built :class:`AssembledSnapshot` (assembled by the orchestrator
+    between Phase 1 and analysis per the three-transaction model in
+    ``docs/design/05-execution-layer/state-persistence.md`` § Snapshot
+    isolation) and produces fresh validation-state cells + submit-envelope
+    state on every invocation — no module-level state survives between
+    calls.
 
     Per the fail-closed policy in
     ``docs/design/llm-agent-failure-handling.md``, any failure in any stage
@@ -225,14 +220,9 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     on the analyst+strategist branch cancels the in-flight sibling when
     one raises.
 
-    The two clock-shaped kwargs serve different roles: ``now`` flows only
-    into :func:`assemble_snapshot` as the assembler-side clock for
-    freshness checks against the price provider; ``timestamp`` flows into
-    each of the four agent runners as the per-invocation timestamp the
-    agents stamp into their structured outputs. Callers typically pass
-    the same ``datetime`` for both, but the runner keeps them separate so
-    a deterministic-replay harness can pin the snapshot clock to a
-    fixture without disturbing the agent-side timestamp.
+    ``timestamp`` flows into each of the four agent runners as the
+    per-invocation timestamp the agents stamp into their structured
+    outputs.
     """
     # Halt-mode requires a halt_state. Surface the gap with a clear message
     # before the parallel branch starts so callers don't wait on a runner
@@ -246,14 +236,9 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     # 1. Apply per-trigger overrides → string-keyed mapping for runners.
     resolved_agents = apply_agent_overrides(agents_config, agent_overrides)
 
-    # 2. Assemble snapshot — fresh per invocation.
-    assembled = await assemble_snapshot(
-        repository=repository,
-        price_provider=price_provider,
-        sector_resolver=_adapt_sector_resolver_for_assembler(sector_resolver),
-        config=portfolio_state_config,
-        now=now,
-    )
+    # 2. Pre-built snapshot threaded from the orchestrator (single source of
+    # truth — same snapshot the synthesizer reader projected from).
+    assembled = assembled_snapshot
     pydantic_snapshot = assembled.snapshot
 
     # 3. Translate to library shape.
@@ -266,7 +251,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     # 4. Project per-consumer views.
     analyst_view = project_analyst_view(
         pydantic_snapshot,
-        sector_resolver=_adapt_sector_resolver_for_assembler(sector_resolver),
+        sector_resolver=adapt_ticker_sector_resolver(sector_resolver),
         per_position_size_rule_id="position_max_size_pct",
         total_portfolio_value_usd=library_snapshot.portfolio_value_usd,
     )
@@ -394,33 +379,6 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
         pre_processor_bundle=pre_processor_bundle,
         pm_result=pm_result,
     )
-
-
-# ---------------------------------------------------------------------------
-# sector_resolver adapter for the assembler + analyst-view projector
-# ---------------------------------------------------------------------------
-
-
-def _adapt_sector_resolver_for_assembler(
-    sector_resolver: Callable[[str], str],
-) -> Callable[[PositionRecord | PositionView], str | None]:
-    """Adapt a ticker→sector resolver to the position-based shape the
-    assembler and analyst-view projector consume.
-
-    The runner's public surface accepts ``Callable[[str], str]`` per parent
-    decision (H); the assembler and analyst-view projector thread a
-    position-based resolver. Reuses
-    :func:`alphamind.portfolio_state.consumers.synthesizer._ticker_from_position`
-    which already handles the ``PositionRecord | PositionView`` ↦ ticker
-    extraction across equity, options, and strategy details.
-    """
-    from alphamind.portfolio_state.consumers.synthesizer import _ticker_from_position
-
-    def _adapter(position: PositionRecord | PositionView) -> str | None:
-        ticker = _ticker_from_position(position)
-        return sector_resolver(ticker) if ticker else None
-
-    return _adapter
 
 
 # ---------------------------------------------------------------------------

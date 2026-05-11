@@ -30,6 +30,7 @@ from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
 )
+from alphamind.execution.state_persistence.invocation_context.context import InvocationHandle
 from alphamind.execution.state_persistence.invocation_context.records import (
     ProcessLifetimeRecord,
     process_lifetime_record_to_row,
@@ -45,7 +46,7 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
     MarketInputs,
 )
-from alphamind.scheduler.invocation import open_invocation
+from alphamind.scheduler.invocation import insert_invocation_record
 
 _NOW = datetime(2026, 5, 7, 14, 30, 0, tzinfo=UTC)
 _VENUE_ENV_KEYS: tuple[str, ...] = (
@@ -197,6 +198,46 @@ class _StubCorporateActionsQueries:
         return ()
 
 
+async def _open_phase1_handle(
+    *,
+    async_factory: async_sessionmaker[AsyncSession],
+    env_path: Path,
+    archive_root: Path,
+) -> tuple[AsyncSession, InvocationHandle]:
+    """Insert the invocation row + open a fresh Phase 1 session.
+
+    Returns ``(session, handle)``; caller is responsible for closing the
+    session (use ``async with closing(session)`` or call
+    ``await session.close()`` in a finally block).
+    """
+    from alphamind.config.models.modes import Mode
+    from alphamind.config.models.regimes import Regime
+    from alphamind.config.models.run_types import RunType
+    from alphamind.config.resolver import RuntimeDimensions
+
+    runtime = RuntimeDimensions(
+        active_regime=Regime.normal,
+        active_mode=Mode.normal,
+        active_overlays=(),
+        firing_trigger=RunType.pre_open,
+    )
+    invocation_id, _ = await insert_invocation_record(
+        session_factory=async_factory,
+        process_lifetime_id="proc-p1-1",
+        trigger_type="scheduled",
+        trigger_source="cron",
+        trigger_reason="test",
+        firing_run_type=RunType.pre_open,
+        runtime=runtime,
+        archive_root=archive_root,
+        config_dir=SHIPPED_CONFIG_DIR,
+        env_path=env_path,
+        now=_NOW,
+    )
+    session = async_factory()
+    return session, InvocationHandle(session=session, invocation_id=invocation_id)
+
+
 class TestGatherPhase1Inputs:
     async def test_returns_populated_bundle_on_happy_path(
         self,
@@ -221,37 +262,20 @@ class TestGatherPhase1Inputs:
             lambda venue_config, execution_mode: _StubCorporateActionsQueries(),
         )
 
-        from alphamind.config.models.modes import Mode
-        from alphamind.config.models.regimes import Regime
-        from alphamind.config.models.run_types import RunType
-        from alphamind.config.resolver import RuntimeDimensions
-
-        runtime = RuntimeDimensions(
-            active_regime=Regime.normal,
-            active_mode=Mode.normal,
-            active_overlays=(),
-            firing_trigger=RunType.pre_open,
-        )
-
-        async with open_invocation(
-            session_factory=async_factory,
-            process_lifetime_id="proc-p1-1",
-            trigger_type="scheduled",
-            trigger_source="cron",
-            trigger_reason="test",
-            firing_run_type=RunType.pre_open,
-            runtime=runtime,
-            archive_root=archive_root,
-            config_dir=SHIPPED_CONFIG_DIR,
+        session, handle = await _open_phase1_handle(
+            async_factory=async_factory,
             env_path=env_path,
-            now=_NOW,
-        ) as handle:
+            archive_root=archive_root,
+        )
+        try:
             inputs = await module.gather_phase1_inputs(
                 handle=handle,
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
                 as_of=_NOW,
             )
+        finally:
+            await session.close()
 
         assert inputs.alpaca_account == account
         assert inputs.alpaca_positions == positions
@@ -291,36 +315,20 @@ class TestGatherPhase1Inputs:
             lambda venue_config, execution_mode: _StubCorporateActionsQueries(),
         )
 
-        from alphamind.config.models.modes import Mode
-        from alphamind.config.models.regimes import Regime
-        from alphamind.config.models.run_types import RunType
-        from alphamind.config.resolver import RuntimeDimensions
-
-        runtime = RuntimeDimensions(
-            active_regime=Regime.normal,
-            active_mode=Mode.normal,
-            active_overlays=(),
-            firing_trigger=RunType.pre_open,
-        )
-        async with open_invocation(
-            session_factory=async_factory,
-            process_lifetime_id="proc-p1-1",
-            trigger_type="scheduled",
-            trigger_source="cron",
-            trigger_reason="test",
-            firing_run_type=RunType.pre_open,
-            runtime=runtime,
-            archive_root=archive_root,
-            config_dir=SHIPPED_CONFIG_DIR,
+        session, handle = await _open_phase1_handle(
+            async_factory=async_factory,
             env_path=env_path,
-            now=_NOW,
-        ) as handle:
+            archive_root=archive_root,
+        )
+        try:
             inputs = await module.gather_phase1_inputs(
                 handle=handle,
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
                 as_of=_NOW,
             )
+        finally:
+            await session.close()
 
         assert inputs.alpaca_account is None
         assert inputs.staleness_flag is True
@@ -347,36 +355,20 @@ class TestGatherPhase1Inputs:
             lambda venue_config, execution_mode: _StubCorporateActionsQueries(),
         )
 
-        from alphamind.config.models.modes import Mode
-        from alphamind.config.models.regimes import Regime
-        from alphamind.config.models.run_types import RunType
-        from alphamind.config.resolver import RuntimeDimensions
-
-        runtime = RuntimeDimensions(
-            active_regime=Regime.normal,
-            active_mode=Mode.normal,
-            active_overlays=(),
-            firing_trigger=RunType.pre_open,
-        )
-        async with open_invocation(
-            session_factory=async_factory,
-            process_lifetime_id="proc-p1-1",
-            trigger_type="scheduled",
-            trigger_source="cron",
-            trigger_reason="test",
-            firing_run_type=RunType.pre_open,
-            runtime=runtime,
-            archive_root=archive_root,
-            config_dir=SHIPPED_CONFIG_DIR,
+        session, handle = await _open_phase1_handle(
+            async_factory=async_factory,
             env_path=env_path,
-            now=_NOW,
-        ) as handle:
+            archive_root=archive_root,
+        )
+        try:
             inputs = await module.gather_phase1_inputs(
                 handle=handle,
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
                 as_of=_NOW,
             )
+        finally:
+            await session.close()
 
         assert inputs.alpaca_account is None
         assert inputs.alpaca_positions == ()
@@ -410,36 +402,20 @@ class TestGatherPhase1Inputs:
             lambda venue_config, execution_mode: _StubCorporateActionsQueries(),
         )
 
-        from alphamind.config.models.modes import Mode
-        from alphamind.config.models.regimes import Regime
-        from alphamind.config.models.run_types import RunType
-        from alphamind.config.resolver import RuntimeDimensions
-
-        runtime = RuntimeDimensions(
-            active_regime=Regime.normal,
-            active_mode=Mode.normal,
-            active_overlays=(),
-            firing_trigger=RunType.pre_open,
-        )
-        async with open_invocation(
-            session_factory=async_factory,
-            process_lifetime_id="proc-p1-1",
-            trigger_type="scheduled",
-            trigger_source="cron",
-            trigger_reason="test",
-            firing_run_type=RunType.pre_open,
-            runtime=runtime,
-            archive_root=archive_root,
-            config_dir=SHIPPED_CONFIG_DIR,
+        session, handle = await _open_phase1_handle(
+            async_factory=async_factory,
             env_path=env_path,
-            now=_NOW,
-        ) as handle:
+            archive_root=archive_root,
+        )
+        try:
             inputs = await module.gather_phase1_inputs(
                 handle=handle,
                 venue_config=_make_venue_config(),
                 execution_mode=ExecutionMode.paper,
                 as_of=_NOW,
             )
+        finally:
+            await session.close()
 
         assert dict(inputs.market_inputs.underlying_prices) == {
             "AAPL": 175.0,
