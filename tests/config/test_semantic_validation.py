@@ -384,8 +384,10 @@ def test_options_residue_in_micro_profile_raises() -> None:
 def test_enumerate_compositions_produces_full_matrix() -> None:
     loaded = _shipped_loaded()
     composed = enumerate_compositions(loaded)
-    # 4 profiles x 4 regimes x 2 modes x 4 overlay subsets x 6 run-types = 768
-    assert len(composed) == 4 * 4 * 2 * 4 * 6
+    # 4 profiles x 4 regimes x 2 modes x 4 overlay subsets x 7 run-types = 896
+    # The 7th run-type is ``emergency`` — non-cron, dispatched by the
+    # pipeline scheduler's emergency receiver (story 04b).
+    assert len(composed) == 4 * 4 * 2 * 4 * 7
 
 
 # ---------------------------------------------------------------------------

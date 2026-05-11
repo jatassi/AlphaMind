@@ -130,6 +130,7 @@ def default_config() -> BreachBehaviorConfig:
         multi_rule_breach_simultaneous_deferred_rules_count=2,
         cascade_max_steps=3,
         delta_buffer_secondary_check_buffer_factor=1.0,
+        emergency_invocation_cooldown_minutes=30,
     )
 
 
@@ -746,6 +747,7 @@ def test_buffer_factor_propagated_to_library(proposed_close: ProposedClose) -> N
         multi_rule_breach_simultaneous_deferred_rules_count=2,
         cascade_max_steps=3,
         delta_buffer_secondary_check_buffer_factor=1.25,
+        emergency_invocation_cooldown_minutes=30,
     )
     baseline = _StubLibraryOutput(per_rule=(_projection("net_long_pct", "PASS"),))
     post_close = _StubLibraryOutput(per_rule=(_projection("net_long_pct", "PASS"),))

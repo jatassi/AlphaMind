@@ -268,6 +268,9 @@ def _valid_scheduler_raw() -> dict[str, object]:
         "timezone": "US/Eastern",
         "max_instances": 1,
         "overlap_dedup_lookback_minutes": 30,
+        "emergency_poll_interval_seconds": 5,
+        "market_calendar_exchange": "XNYS",
+        "supervisor_shutdown_timeout_seconds": 10,
         "triggers": {"pre_open": "0 9 * * mon-fri"},
     }
 

@@ -1,0 +1,328 @@
+"""Per-invocation context assembly + row-metadata population (story 03a).
+
+Builds the 22-field ``InvocationRecord`` every pipeline invocation writes on
+enter and opens the per-invocation transaction. Story 03b's
+``run_invocation`` orchestrator wraps the open handle with the actual
+Phase 1 / Phase 2 wiring; this story owns the entry-point composition.
+
+See ``docs/design/05-execution-layer/state-persistence.md`` § Invocation
+records for the column contract and parent issue ``ALP-431`` § Pre-resolved
+configuration decisions (J) for the bootstrap path on first-ever invocation.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import secrets
+import subprocess
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from functools import cache
+from pathlib import Path
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from alphamind.config.load import PipelineConfig, load_full_config
+from alphamind.config.models.modes import Mode
+from alphamind.config.models.run_types import RunType
+from alphamind.config.resolver import RuntimeDimensions
+from alphamind.config.snapshot import _atomic_write
+from alphamind.execution.state_persistence.invocation_context.context import (
+    InvocationContext,
+    InvocationHandle,
+)
+from alphamind.execution.state_persistence.invocation_context.records import (
+    ActiveMode,
+    InvocationRecord,
+    TriggerType,
+)
+from alphamind.persistence.models import CollectionRuns
+
+
+def _mode_to_active_mode_literal(mode: Mode) -> ActiveMode:
+    """Translate the config-layer ``Mode`` enum into the row-layer ``ActiveMode``.
+
+    Direct ``.value`` is wrong: ``Mode.halt.value == "halt"``, but the row's
+    ``active_mode`` column accepts ``"normal" | "defensive_posture" | "halted"``.
+    ``defensive_posture`` is unreachable from this story's caller until a future
+    story lands the operator-pinning mechanism (parent issue ``ALP-431`` § Notes
+    for the orchestrator — surfacing condition iv).
+    """
+    if mode is Mode.normal:
+        return "normal"
+    if mode is Mode.halt:
+        return "halted"
+    msg = f"unexpected Mode member {mode!r}; story 03a knows only normal | halt"
+    raise ValueError(msg)
+
+
+async def build_invocation_record(  # noqa: PLR0913 — signature pinned by story 03a spec
+    *,
+    session: AsyncSession,
+    process_lifetime_id: str,
+    trigger_type: TriggerType,
+    trigger_source: str,
+    trigger_reason: str,
+    firing_run_type: RunType,
+    runtime: RuntimeDimensions,
+    pipeline_config: PipelineConfig,
+    archive_root: Path,
+    invocation_id: str,
+    now: datetime,
+) -> InvocationRecord:
+    """Compose all 22 ``InvocationRecord`` fields from the supplied inputs.
+
+    ``firing_run_type`` is also carried on ``runtime.firing_trigger``; the two
+    must agree because they describe the same identity dimension. We assert the
+    invariant here so a story-03b orchestrator bug that diverges them fails
+    fast at record build rather than letting a misattributed row reach the DB.
+    """
+    if firing_run_type is not runtime.firing_trigger:
+        msg = (
+            f"firing_run_type={firing_run_type!r} disagrees with "
+            f"runtime.firing_trigger={runtime.firing_trigger!r}"
+        )
+        raise ValueError(msg)
+
+    start_at = _isoformat_z(now)
+    git_sha = _git_rev_parse_head()
+    calibration_path = _persist_data_calibration_snapshot(
+        archive_root=archive_root, invocation_id=invocation_id
+    )
+    data_source_freshness_json = await _compute_data_source_freshness_json(session)
+
+    return InvocationRecord(
+        invocation_id=invocation_id,
+        process_lifetime_id=process_lifetime_id,
+        start_at=start_at,
+        phase1_completed_at=None,
+        phase2_completed_at=None,
+        trigger_type=trigger_type,
+        trigger_source=trigger_source,
+        trigger_reason=trigger_reason,
+        git_sha_at_invocation=git_sha,
+        active_profile=pipeline_config.resolved.profile_label,
+        active_regime=runtime.active_regime.value,
+        active_mode=_mode_to_active_mode_literal(runtime.active_mode),
+        active_overlays_json=json.dumps([o.value for o in runtime.active_overlays]),
+        resolved_config_hash=pipeline_config.snapshot.hash,
+        resolved_config_snapshot_path=str(pipeline_config.snapshot.path),
+        feature_flags_snapshot_json=json.dumps(
+            pipeline_config.snapshot.feature_flags_snapshot, sort_keys=True
+        ),
+        data_calibration_state_snapshot_path=str(calibration_path),
+        data_source_freshness_json=data_source_freshness_json,
+        fill_collection_summary_json=None,
+        command_execution_summary_json=None,
+        staleness_flag=None,
+        snapshot_metadata_json=None,
+    )
+
+
+def _isoformat_z(now: datetime) -> str:
+    """Format ``now`` as ISO 8601 with a literal ``Z`` UTC suffix."""
+    return now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+_INVOCATION_ID_PATTERN = re.compile(r"^inv-\d{8}T\d{6}Z-[0-9a-f]{8}$")
+_CALIBRATION_SNAPSHOT_FILENAME = "data_calibration_state.json"
+_INVOCATIONS_DIRNAME = "invocations"
+
+
+def _persist_data_calibration_snapshot(
+    *,
+    archive_root: Path,
+    invocation_id: str,
+) -> Path:
+    """Copy the most recent prior invocation's calibration state into this invocation's dir.
+
+    Implements the bootstrap path described in parent issue ``ALP-431`` § Pre-resolved
+    configuration decisions (J). Scans ``<archive_root>/invocations/`` for the
+    lexicographically-greatest invocation-id directory (excluding ``invocation_id``)
+    whose ``data_calibration_state.json`` exists, and atomically copies that content
+    into ``<archive_root>/invocations/<invocation_id>/data_calibration_state.json``.
+    When no prior snapshot is found (first-ever invocation) the target file is
+    initialized to ``{}``.
+
+    The :mod:`alphamind.distillation.calibration_snapshot` module does not currently
+    expose a "latest snapshot path" helper, so the directory scan lives inline here
+    per story 03a's spec.
+    """
+    invocations_dir = archive_root / _INVOCATIONS_DIRNAME
+    target_path = invocations_dir / invocation_id / _CALIBRATION_SNAPSHOT_FILENAME
+
+    prior_content = _find_latest_prior_calibration_content(
+        invocations_dir=invocations_dir, current_invocation_id=invocation_id
+    )
+    payload = prior_content if prior_content is not None else "{}"
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(target_path, payload)
+    return target_path
+
+
+def _find_latest_prior_calibration_content(
+    *,
+    invocations_dir: Path,
+    current_invocation_id: str,
+) -> str | None:
+    """Return the content of the latest prior calibration snapshot, or ``None``."""
+    if not invocations_dir.exists():
+        return None
+
+    candidates = sorted(
+        (
+            entry
+            for entry in invocations_dir.iterdir()
+            if entry.is_dir()
+            and entry.name != current_invocation_id
+            and _INVOCATION_ID_PATTERN.match(entry.name) is not None
+        ),
+        key=lambda entry: entry.name,
+        reverse=True,
+    )
+    for candidate in candidates:
+        snapshot_path = candidate / _CALIBRATION_SNAPSHOT_FILENAME
+        if snapshot_path.exists():
+            return snapshot_path.read_text()
+    return None
+
+
+async def _compute_data_source_freshness_json(session: AsyncSession) -> str:
+    """Build the freshness JSON map ``{provider: latest_pull_isoformat or null}``.
+
+    The provider list is derived from ``config/data_sources.yaml``'s top-level
+    ``providers`` keys. The per-provider value is the ``completed_at`` of the
+    most recent ``collection_runs`` row whose ``status='success'`` and whose
+    ``collector`` prefix (before the first ``.``) matches the provider name.
+    Providers with no successful pull map to ``null``.
+    """
+    providers = _data_source_provider_names()
+    freshness: dict[str, str | None] = dict.fromkeys(providers, None)
+
+    stmt = select(CollectionRuns.collector, CollectionRuns.completed_at).where(
+        CollectionRuns.status == "success",
+        CollectionRuns.completed_at.is_not(None),
+    )
+    result = await session.execute(stmt)
+    for collector, completed_at in result.all():
+        provider, _, _ = collector.partition(".")
+        if provider not in freshness:
+            continue
+        current = freshness[provider]
+        if current is None or completed_at > current:
+            freshness[provider] = completed_at
+
+    return json.dumps(freshness, sort_keys=True)
+
+
+@cache
+def _data_source_provider_names() -> tuple[str, ...]:
+    """Return the alphabetized tuple of provider names defined in ``data_sources.yaml``.
+
+    Cached so repeated invocations do not re-read the YAML file. The provider
+    set is process-stable: a config edit requires a process restart per the
+    pre-resolved-configuration decisions in ``ALP-431``.
+    """
+    import yaml  # local import keeps module-load cost lean
+
+    config_path = Path(__file__).resolve().parents[3] / "config" / "data_sources.yaml"
+    with config_path.open(encoding="utf-8") as fh:
+        payload: dict[str, object] = yaml.safe_load(fh) or {}
+    providers = payload.get("providers", {})
+    if not isinstance(providers, dict):
+        msg = f"data_sources.yaml providers must be a mapping, got {type(providers)!r}"
+        raise TypeError(msg)
+    return tuple(sorted(providers))
+
+
+def _git_rev_parse_head() -> str:
+    """Return the 40-character SHA of ``HEAD`` via ``git rev-parse``.
+
+    A non-zero exit raises :class:`subprocess.CalledProcessError`; the spec
+    requires the error to propagate to the caller so the invocation can be
+    aborted before the row is composed.
+    """
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return completed.stdout.strip()
+
+
+def _mint_invocation_id(now: datetime) -> str:
+    """Mint a fresh invocation id: ``inv-YYYYMMDDTHHMMSSZ-<8-hex>``.
+
+    The timestamp prefix sorts lexicographically — critical for the
+    ``_persist_data_calibration_snapshot`` directory scan that picks the most
+    recent prior invocation. The 8-hex suffix is drawn from ``secrets.token_hex``
+    so concurrent invocations within the same second do not collide.
+    """
+    stamp = now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return f"inv-{stamp}-{secrets.token_hex(4)}"
+
+
+@asynccontextmanager
+async def open_invocation(  # noqa: PLR0913 — signature pinned by story 03a spec
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    process_lifetime_id: str,
+    trigger_type: TriggerType,
+    trigger_source: str,
+    trigger_reason: str,
+    firing_run_type: RunType,
+    runtime: RuntimeDimensions,
+    archive_root: Path,
+    config_dir: Path,
+    env_path: Path,
+    now: datetime,
+) -> AsyncIterator[InvocationHandle]:
+    """Build the row, persist provenance, and open the per-invocation transaction.
+
+    Steps in order:
+
+    1. Mint ``invocation_id`` via :func:`_mint_invocation_id`.
+    2. Open a short read-only session for the freshness query.
+    3. Call :func:`load_full_config` to validate, compose, and persist the resolved
+       configuration snapshot.
+    4. Build the ``InvocationRecord`` via :func:`build_invocation_record` — this
+       step persists the data-calibration snapshot inline and computes the freshness
+       JSON against the short session.
+    5. Open the ``InvocationContext`` transaction and yield the handle.
+
+    On exception inside the ``async with`` body the underlying
+    ``InvocationContext`` rolls back; on clean exit it commits.
+    """
+    invocation_id = _mint_invocation_id(now)
+
+    async with session_factory() as short_session:
+        pipeline_config = load_full_config(
+            config_dir=config_dir,
+            env_path=env_path,
+            archive_root=archive_root,
+            invocation_id=invocation_id,
+            runtime=runtime,
+            today=now.astimezone(UTC).date(),
+        )
+        record = await build_invocation_record(
+            session=short_session,
+            process_lifetime_id=process_lifetime_id,
+            trigger_type=trigger_type,
+            trigger_source=trigger_source,
+            trigger_reason=trigger_reason,
+            firing_run_type=firing_run_type,
+            runtime=runtime,
+            pipeline_config=pipeline_config,
+            archive_root=archive_root,
+            invocation_id=invocation_id,
+            now=now,
+        )
+
+    ctx = InvocationContext(session_factory=session_factory, record=record)
+    async with ctx as handle:
+        yield handle

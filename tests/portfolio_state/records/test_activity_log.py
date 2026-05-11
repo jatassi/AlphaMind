@@ -31,6 +31,7 @@ from alphamind.portfolio_state.records.activity_log import (
     CorporateActionAppliedDetail,
     CorporateActionType,
     DistillationConfigChange,
+    EmergencyInvocationRequestedDetail,
     EnvelopeParseFailedDetail,
     EnvelopeRejectionDetail,
     EventGroup,
@@ -121,8 +122,8 @@ class TestEnumMembers:
     def test_event_type_is_str_enum(self) -> None:
         assert issubclass(EventType, StrEnum)
 
-    def test_event_type_has_exactly_39_members(self) -> None:
-        assert len(EventType) == 39
+    def test_event_type_has_exactly_40_members(self) -> None:
+        assert len(EventType) == 40
 
     def test_event_type_position_lifecycle_members(self) -> None:
         for name in ("POSITION_OPENED", "POSITION_CLOSED", "POSITION_ADDED", "POSITION_REDUCED"):
@@ -174,7 +175,12 @@ class TestEnumMembers:
             assert hasattr(EventType, name), f"Missing EventType.{name}"
 
     def test_event_type_risk_and_guardrail_members(self) -> None:
-        for name in ("GUARDRAIL_REJECTION", "RISK_LIMIT_APPROACHED", "RISK_PARAMETER_CHANGED"):
+        for name in (
+            "GUARDRAIL_REJECTION",
+            "RISK_LIMIT_APPROACHED",
+            "RISK_PARAMETER_CHANGED",
+            "EMERGENCY_INVOCATION_REQUESTED",
+        ):
             assert hasattr(EventType, name), f"Missing EventType.{name}"
 
     def test_event_type_pm_decision_members(self) -> None:
@@ -303,9 +309,9 @@ class TestMappingExhaustiveness:
 class TestAnyDetailTypeAlias:
     """AnyDetailType is exported and covers all detail-payload classes."""
 
-    def test_any_detail_type_has_39_members(self) -> None:
+    def test_any_detail_type_has_40_members(self) -> None:
         members = get_args(AnyDetailType)
-        assert len(members) == 39
+        assert len(members) == 40
 
     def test_any_detail_type_covers_all_detail_classes(self) -> None:
         members = set(get_args(AnyDetailType))
@@ -642,6 +648,64 @@ class TestDetailClassHappyPaths:
             resulting_position_status="OPEN",
         )
         assert d.action_type == CorporateActionType.SPLIT
+
+    def test_emergency_invocation_requested_detail(self) -> None:
+        d = EmergencyInvocationRequestedDetail(
+            trigger_type="regime_jump",
+            trigger_reason="Regime jump: normal -> crisis",
+            cooldown_remaining_seconds=0,
+        )
+        assert d.trigger_type == "regime_jump"
+        assert d.cooldown_remaining_seconds == 0
+
+
+# ---------------------------------------------------------------------------
+# EmergencyInvocationRequestedDetail validator
+# ---------------------------------------------------------------------------
+
+
+class TestEmergencyInvocationRequestedDetail:
+    """EmergencyInvocationRequestedDetail is frozen and validates inputs."""
+
+    def test_is_frozen(self) -> None:
+        d = EmergencyInvocationRequestedDetail(
+            trigger_type="margin_call",
+            trigger_reason="Broker margin call",
+            cooldown_remaining_seconds=0,
+        )
+        with pytest.raises(ValidationError):
+            d.__setattr__("trigger_reason", "tampered")
+
+    def test_negative_cooldown_remaining_seconds_raises(self) -> None:
+        with pytest.raises(ValidationError):
+            EmergencyInvocationRequestedDetail(
+                trigger_type="regime_jump",
+                trigger_reason="Regime jump",
+                cooldown_remaining_seconds=-1,
+            )
+
+    def test_unknown_trigger_type_raises(self) -> None:
+        with pytest.raises(ValidationError):
+            EmergencyInvocationRequestedDetail(
+                trigger_type="unknown_trigger",  # type: ignore[arg-type]
+                trigger_reason="bogus",
+                cooldown_remaining_seconds=0,
+            )
+
+    def test_event_type_is_risk_and_guardrail_group(self) -> None:
+        assert (
+            EVENT_TYPE_TO_GROUP[EventType.EMERGENCY_INVOCATION_REQUESTED]
+            is EventGroup.RISK_AND_GUARDRAIL
+        )
+
+    def test_event_type_maps_to_emergency_detail_class(self) -> None:
+        assert (
+            EVENT_TYPE_TO_DETAIL_CLASS[EventType.EMERGENCY_INVOCATION_REQUESTED]
+            is EmergencyInvocationRequestedDetail
+        )
+
+    def test_event_type_value_matches_member_name(self) -> None:
+        assert EventType.EMERGENCY_INVOCATION_REQUESTED.value == "EMERGENCY_INVOCATION_REQUESTED"
 
 
 # ---------------------------------------------------------------------------

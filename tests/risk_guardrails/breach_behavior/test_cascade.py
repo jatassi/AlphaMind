@@ -314,6 +314,7 @@ def default_config() -> BreachBehaviorConfig:
         multi_rule_breach_simultaneous_deferred_rules_count=2,
         cascade_max_steps=8,
         delta_buffer_secondary_check_buffer_factor=1.0,
+        emergency_invocation_cooldown_minutes=30,
     )
 
 
@@ -821,6 +822,7 @@ def test_search_for_alternate_position_bound_by_cascade_max_steps(
         multi_rule_breach_simultaneous_deferred_rules_count=2,
         cascade_max_steps=2,
         delta_buffer_secondary_check_buffer_factor=1.0,
+        emergency_invocation_cooldown_minutes=30,
     )
     primary_selection = _full_close_selection_on(a7_positions[0].position_id)
     # Both candidates the search visits cause secondary; would-be-clean 3rd never reached.
@@ -1033,6 +1035,7 @@ def test_orchestrate_margin_call_cascade_step_limit_exceeded(
         multi_rule_breach_simultaneous_deferred_rules_count=2,
         cascade_max_steps=2,
         delta_buffer_secondary_check_buffer_factor=1.0,
+        emergency_invocation_cooldown_minutes=30,
     )
     _ = default_config  # suppress unused-fixture lint
     context = CascadeContext(

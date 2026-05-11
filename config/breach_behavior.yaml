@@ -11,3 +11,4 @@ breach_behavior:
     max_steps: 8                                # defensive cap on cascade chain length; cascade orchestration aborts and surfaces if exceeded
   delta_buffer:
     secondary_check_buffer_factor: 1.0          # multiplier applied to guardrail-evaluation's buffered delta when checking secondary breaches; default 1.0 reuses the library's buffer unchanged
+  emergency_invocation_cooldown_minutes: 30     # see breach-behavior.md § Cooldown — minimum 30 min between emergency triggers; margin_call bypasses

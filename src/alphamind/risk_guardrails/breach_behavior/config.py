@@ -22,6 +22,7 @@ class BreachBehaviorConfig(BaseModel):
     multi_rule_breach_simultaneous_deferred_rules_count: Annotated[int, Field(ge=2)]
     cascade_max_steps: Annotated[int, Field(gt=0)]
     delta_buffer_secondary_check_buffer_factor: Annotated[float, Field(gt=0.0)]
+    emergency_invocation_cooldown_minutes: Annotated[int, Field(ge=1)]
 
 
 def _flatten_breach_behavior_yaml(raw: dict[str, Any]) -> dict[str, Any]:
@@ -44,6 +45,7 @@ def _flatten_breach_behavior_yaml(raw: dict[str, Any]) -> dict[str, Any]:
         ],
         "cascade_max_steps": cas["max_steps"],
         "delta_buffer_secondary_check_buffer_factor": db["secondary_check_buffer_factor"],
+        "emergency_invocation_cooldown_minutes": bb["emergency_invocation_cooldown_minutes"],
     }
 
 
