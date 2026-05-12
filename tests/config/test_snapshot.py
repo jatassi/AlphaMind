@@ -158,10 +158,10 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     """
     resolved = _fixture_resolved()
     digest = compute_snapshot_hash(serialize_resolved_config(resolved))
-    # Pin updated 2026-05-11 after story ALP-434 added
-    # ``subscription_refresh_seconds`` to ``ContinuousMonitorConfig`` — the
-    # fixture's canonical bytes shifted by exactly that one new key.
-    expected = "66e0646a190b8ff0990de3a6655c66e1e911466d35f039d8b75e1644988bf636"
+    # Pin updated 2026-05-11 after story ALP-436 added
+    # ``greeks_refresh_inspection_cadence_seconds`` to ``ContinuousMonitorConfig``
+    # — the fixture's canonical bytes shifted by exactly that one new key.
+    expected = "e0eaea3364cff19daf9cb8b383a472803128f7ba0d47fc86bba5b539503fc810"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

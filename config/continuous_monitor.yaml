@@ -17,6 +17,13 @@ greeks_refresh_interval_minutes: 15
 # stream the monitor already consumes — no extra subscription.
 greeks_refresh_underlying_move_threshold_pct: 2.0
 
+# Per-loop inspection cadence for the greeks-refresh task (story 03a). Distinct
+# from greeks_refresh_interval_minutes which is the per-position scheduled
+# refresh interval — this knob is how often the task wakes to evaluate
+# triggers and consider due positions. Default 30s balances move-trigger
+# responsiveness against database / IV-provider load during heavy chains.
+greeks_refresh_inspection_cadence_seconds: 30
+
 # Live underlying-price stream provider. Single-value Literal today; decision (B)
 # pins Alpaca StockDataStream / IEX after the 2026-05-10 paper-account smoke
 # test. Story 02b's vendor surface lives here.

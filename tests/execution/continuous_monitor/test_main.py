@@ -105,13 +105,14 @@ def test_main_rejects_unknown_subcommand(
         monitor_main(["bogus"])
 
 
-def test_main_registers_wave_2_tasks(
+def test_main_registers_wave_2_and_3_tasks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     _silent_logger: None,
 ) -> None:
-    """Wave-2 (02b + 02c) — the daemon wires both ``underlying_stream`` and
-    ``fill_stream_consumer`` onto the supervisor.
+    """Waves 2 + 3 — the daemon wires ``underlying_stream`` (02b),
+    ``fill_stream_consumer`` (02c), ``greeks_refresh`` (03a), and
+    ``breach_loop`` (03b) onto the supervisor.
 
     The patch on ``MonitorSupervisor.run`` captures ``self`` so we can read
     the registered task names without driving the asyncio loop.
@@ -135,11 +136,5 @@ def test_main_registers_wave_2_tasks(
     supervisor = captured.get("supervisor")
     assert supervisor is not None
     task_names = supervisor.task_names()  # type: ignore[attr-defined]
-    assert "underlying_stream" in task_names, (
-        f"underlying_stream not registered; got {task_names!r}"
-    )
-    assert "fill_stream_consumer" in task_names, (
-        f"fill_stream_consumer not registered; got {task_names!r}"
-    )
-    # Wave-3 (03b) — the breach-evaluation loop wires alongside the wave-2 tasks.
-    assert "breach_loop" in task_names, f"breach_loop not registered; got {task_names!r}"
+    for expected in ("underlying_stream", "fill_stream_consumer", "greeks_refresh", "breach_loop"):
+        assert expected in task_names, f"{expected} not registered; got {task_names!r}"

@@ -77,6 +77,7 @@ class TestContinuousMonitorConfigModel:
             "breach_evaluation_cadence_seconds": 60,
             "greeks_refresh_interval_minutes": 15,
             "greeks_refresh_underlying_move_threshold_pct": 2.0,
+            "greeks_refresh_inspection_cadence_seconds": 30,
             "underlying_stream_provider": "alpaca-iex",
             "subscription_refresh_seconds": 30,
             "max_reconnect_attempts": 5,
@@ -88,10 +89,19 @@ class TestContinuousMonitorConfigModel:
         assert cfg.breach_evaluation_cadence_seconds == 60
         assert cfg.greeks_refresh_interval_minutes == 15
         assert cfg.greeks_refresh_underlying_move_threshold_pct == 2.0
+        assert cfg.greeks_refresh_inspection_cadence_seconds == 30
         assert cfg.underlying_stream_provider == "alpaca-iex"
         assert cfg.subscription_refresh_seconds == 30
         assert cfg.max_reconnect_attempts == 5
         assert cfg.supervisor_shutdown_timeout_seconds == 5
+
+    def test_inspection_cadence_defaults_to_30_when_absent(self) -> None:
+        """Story 03a adds ``greeks_refresh_inspection_cadence_seconds`` with a
+        default so existing YAML files continue to parse without explicit edits."""
+        payload = self._valid_payload()
+        del payload["greeks_refresh_inspection_cadence_seconds"]
+        cfg = ContinuousMonitorConfig(**payload)  # type: ignore[arg-type]
+        assert cfg.greeks_refresh_inspection_cadence_seconds == 30
 
     def test_model_is_frozen(self) -> None:
         cfg = ContinuousMonitorConfig(**self._valid_payload())  # type: ignore[arg-type]
@@ -103,6 +113,7 @@ class TestContinuousMonitorConfigModel:
         [
             "breach_evaluation_cadence_seconds",
             "greeks_refresh_interval_minutes",
+            "greeks_refresh_inspection_cadence_seconds",
             "max_reconnect_attempts",
             "supervisor_shutdown_timeout_seconds",
             "subscription_refresh_seconds",
@@ -153,6 +164,7 @@ class TestContinuousMonitorYamlWiring:
         assert cm.breach_evaluation_cadence_seconds == 60
         assert cm.greeks_refresh_interval_minutes == 15
         assert cm.greeks_refresh_underlying_move_threshold_pct == 2.0
+        assert cm.greeks_refresh_inspection_cadence_seconds == 30
         assert cm.underlying_stream_provider == "alpaca-iex"
         assert cm.subscription_refresh_seconds == 30
         assert cm.max_reconnect_attempts == 5
