@@ -40,6 +40,7 @@ from alphamind.execution.continuous_monitor.bracket_stops.triggers import (
     evaluate_pl_target_trigger,
     evaluate_price_based_trigger,
 )
+from alphamind.execution.continuous_monitor.cascade_dispatch import TriggerIdGenerator
 from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingPriceCache,
@@ -169,6 +170,7 @@ async def _run_bracket_stop_cycle(  # noqa: PLR0913 — kernel surfaces every co
     submitter: BracketCloseSubmitter,
     activity_log: ActivityLogEmitter,
     invocation_id_provider: InvocationIdProvider,
+    trigger_ids: TriggerIdGenerator,
     monitor_session_id: str,
     now: datetime,
     risk_free_rate: float,
@@ -204,6 +206,7 @@ async def _run_bracket_stop_cycle(  # noqa: PLR0913 — kernel surfaces every co
             submitter=submitter,
             activity_log=activity_log,
             invocation_id_provider=invocation_id_provider,
+            trigger_ids=trigger_ids,
             monitor_session_id=monitor_session_id,
             now=now,
             risk_free_rate=risk_free_rate,
@@ -219,6 +222,7 @@ async def _evaluate_bracket_legs(  # noqa: PLR0913 — fans out the cycle's per-
     submitter: BracketCloseSubmitter,
     activity_log: ActivityLogEmitter,
     invocation_id_provider: InvocationIdProvider,
+    trigger_ids: TriggerIdGenerator,
     monitor_session_id: str,
     now: datetime,
     risk_free_rate: float,
@@ -249,6 +253,7 @@ async def _evaluate_bracket_legs(  # noqa: PLR0913 — fans out the cycle's per-
             submitter=submitter,
             activity_log=activity_log,
             invocation_id_provider=invocation_id_provider,
+            trigger_ids=trigger_ids,
             monitor_session_id=monitor_session_id,
             now=now,
         )
@@ -299,16 +304,20 @@ async def _fire_leg(  # noqa: PLR0913 — fan-out parameters for the closer call
     submitter: BracketCloseSubmitter,
     activity_log: ActivityLogEmitter,
     invocation_id_provider: InvocationIdProvider,
+    trigger_ids: TriggerIdGenerator,
     monitor_session_id: str,
     now: datetime,
 ) -> None:
     """Submit the closing order + write the POSITION_CLOSED activity-log entry."""
     trigger_reason = _trigger_reason_for_leg(leg)
     estimated_exit_price, realized_pnl_usd = _estimated_exit_price_for(position, spot)
-    # Use leg_id-derived trigger_id space to namespace per-leg fires within
-    # the session. ``derive_engine_command_id`` requires a non-negative int;
-    # hashing the leg_id gives a deterministic per-leg integer.
-    trigger_id = abs(hash((bracket.bracket_id, leg.leg_id))) % (10**9)
+    # The same monotonic per-session counter the cascade dispatcher uses;
+    # threaded in from ``_register_breach_loop`` so a bracket-stop fire and a
+    # cascade dispatch in the same session cannot collide on
+    # ``MON.{session}.{trigger}.0`` (the engine-originated client_order_id
+    # pattern shared by both). The prior PYTHONHASHSEED-randomized hash had
+    # an unbounded collision space against the cascade's 1-based counter.
+    trigger_id = trigger_ids.next()
     try:
         await submit_options_bracket_close(
             position=position,
@@ -351,6 +360,7 @@ async def run_options_bracket_watcher(  # noqa: PLR0913 — orchestrator surface
     activity_log: ActivityLogEmitter,
     invocation_id_provider: InvocationIdProvider,
     risk_free_rate_provider: RiskFreeRateProvider,
+    trigger_ids: TriggerIdGenerator,
     now: NowProvider = lambda: datetime.now(UTC),
     sleep: SleepCallable = asyncio.sleep,
 ) -> None:
@@ -378,6 +388,7 @@ async def run_options_bracket_watcher(  # noqa: PLR0913 — orchestrator surface
                 submitter=submitter,
                 activity_log=activity_log,
                 invocation_id_provider=invocation_id_provider,
+                trigger_ids=trigger_ids,
                 monitor_session_id=session.session_id,
                 now=now(),
                 risk_free_rate=await risk_free_rate_provider(),

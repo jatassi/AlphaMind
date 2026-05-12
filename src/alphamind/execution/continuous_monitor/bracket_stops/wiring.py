@@ -41,6 +41,7 @@ from alphamind.execution.continuous_monitor.bracket_stops.closer import (
 from alphamind.execution.continuous_monitor.bracket_stops.task import (
     run_options_bracket_watcher,
 )
+from alphamind.execution.continuous_monitor.cascade_dispatch import TriggerIdGenerator
 from alphamind.execution.continuous_monitor.greeks_refresh.wiring import (
     make_activity_log_emitter,
     make_invocation_id_provider,
@@ -396,6 +397,7 @@ def register_options_bracket_watcher_task(
     cache: UnderlyingPriceCache,
     session_factory: async_sessionmaker[AsyncSession],
     submitter: BracketCloseSubmitter,
+    trigger_ids: TriggerIdGenerator,
 ) -> None:
     """Register the ``bracket_stops`` task on *supervisor*.
 
@@ -404,6 +406,12 @@ def register_options_bracket_watcher_task(
     risk-free-rate provider, and invocation-id provider re-use the
     greeks-refresh wiring so the monitor process has one canonical set of
     these helpers (no near-duplicate envelopes).
+
+    ``trigger_ids`` is the cascade-dispatch :class:`TriggerIdGenerator`
+    constructed once per monitor session in ``_register_breach_loop``.
+    Sharing the instance keeps a bracket-stop fire and a cascade dispatch
+    in the same session from minting the same engine-originated
+    ``client_order_id`` (both encode ``MON.{session}.{trigger}.0``).
     """
     bracket_repository = SqlBracketRepository(session_factory)
     activity_log = make_activity_log_emitter(session_factory)
@@ -421,6 +429,7 @@ def register_options_bracket_watcher_task(
             activity_log=activity_log,
             invocation_id_provider=invocation_id_provider,
             risk_free_rate_provider=risk_free_rate_provider,
+            trigger_ids=trigger_ids,
         )
 
     supervisor.register_task(name="bracket_stops", coro_fn=_coro)

@@ -45,6 +45,7 @@ from alphamind.execution.continuous_monitor.bracket_stops import (
 from alphamind.execution.continuous_monitor.breach_loop import (
     register_breach_loop_task,
 )
+from alphamind.execution.continuous_monitor.cascade_dispatch import TriggerIdGenerator
 from alphamind.execution.continuous_monitor.greeks_refresh import (
     register_greeks_refresh_task,
 )
@@ -155,6 +156,12 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         cache=underlying_cache,
         session_factory=db_session_factory,
     )
+    # Constructed once per monitor session so the cascade dispatcher and
+    # bracket-stops watcher mint trigger ids from the same monotonic
+    # sequence — both encode ``MON.{session}.{trigger}.0`` into the
+    # engine-originated ``client_order_id`` and a collision would land two
+    # broker submissions with identical IDs.
+    trigger_ids = TriggerIdGenerator(session_id=session.session_id)
     _register_breach_loop(
         supervisor,
         underlying_cache=underlying_cache,
@@ -162,6 +169,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         breach_behavior_config=breach_behavior_config,
         breach_response_lookup=breach_response_lookup,
         db_session_factory=db_session_factory,
+        trigger_ids=trigger_ids,
     )
     register_options_bracket_watcher_task(
         supervisor,
@@ -172,6 +180,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
             client_factory=AlpacaClientFactory(venue_config, mode),
             execution_config=execution_config,
         ),
+        trigger_ids=trigger_ids,
     )
     try:
         await supervisor.run()
@@ -228,6 +237,7 @@ def _register_breach_loop(
     breach_behavior_config: BreachBehaviorConfig,
     breach_response_lookup: Mapping[str, BreachResponse],
     db_session_factory: async_sessionmaker[AsyncSession],
+    trigger_ids: TriggerIdGenerator,
 ) -> None:
     """Register the ``breach_loop`` task (story 03b / ALP-437) with the cascade
     dispatcher (story 04a / ALP-438) on ``on_immediate_breach`` and the
@@ -255,9 +265,6 @@ def _register_breach_loop(
     from collections.abc import Iterable
     from datetime import datetime
 
-    from alphamind.execution.continuous_monitor.cascade_dispatch import (
-        TriggerIdGenerator,
-    )
     from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
         BreachDispatchContext,
         CascadeDispatcher,
@@ -317,7 +324,6 @@ def _register_breach_loop(
             event.reason,
         )
 
-    trigger_ids = TriggerIdGenerator(session_id=session.session_id)
     dispatcher = CascadeDispatcher(
         monitor_session_id=session.session_id,
         breach_config=breach_behavior_config,

@@ -1334,6 +1334,7 @@ async def run_scenario_i_bracket_stop_fires() -> ScenarioResult:
         submitter=submitter,
         activity_log=activity_log.emit,
         invocation_id_provider=_verify_invocation_id,
+        trigger_ids=TriggerIdGenerator(session_id=_SESSION_ID),
         monitor_session_id=_SESSION_ID,
         now=_NOW,
         risk_free_rate=0.045,

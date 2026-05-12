@@ -20,6 +20,7 @@ from alphamind.execution.continuous_monitor.bracket_stops.closer import (
 from alphamind.execution.continuous_monitor.bracket_stops.task import (
     _run_bracket_stop_cycle,
 )
+from alphamind.execution.continuous_monitor.cascade_dispatch import TriggerIdGenerator
 from alphamind.execution.continuous_monitor.underlying_stream.cache import (
     UnderlyingPriceCache,
     UnderlyingQuote,
@@ -68,6 +69,11 @@ def _const_float(value: float):  # type: ignore[no-untyped-def]
         return value
 
     return _inner
+
+
+def _trigger_ids(*, session_id: str = "mon-S") -> TriggerIdGenerator:
+    """Fresh trigger-id generator scoped to *session_id* for isolation across tests."""
+    return TriggerIdGenerator(session_id=session_id)
 
 
 def _config(*, cadence: float = 1.0) -> ContinuousMonitorConfig:
@@ -281,6 +287,7 @@ class TestPriceStopFiring:
             activity_log=log.emit,
             invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
             now=_NOW,
             risk_free_rate=0.045,
             fired_legs=fired_ids,
@@ -305,6 +312,7 @@ class TestPriceStopFiring:
             activity_log=log.emit,
             invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
             now=_NOW,
             risk_free_rate=0.045,
             fired_legs=set(),
@@ -337,6 +345,7 @@ class TestAlreadyFiredTracking:
                 activity_log=log.emit,
                 invocation_id_provider=_const_str("inv-001"),
                 monitor_session_id="mon-S",
+                trigger_ids=_trigger_ids(),
                 now=_NOW,
                 risk_free_rate=0.045,
                 fired_legs=fired_legs,
@@ -344,6 +353,71 @@ class TestAlreadyFiredTracking:
         # Exactly one fire even though the trigger remains satisfied.
         assert len(submitter.options_calls) == 1
         assert len(log.entries) == 1
+
+
+class TestTriggerIdsSharedWithCascade:
+    """Regression — bracket-stop fires consume from the shared TriggerIdGenerator.
+
+    The prior implementation derived ``trigger_id`` from
+    ``abs(hash((bracket.bracket_id, leg.leg_id))) % (10**9)`` — non-deterministic
+    (PYTHONHASHSEED-randomized) and able to collide with the cascade
+    dispatcher's monotonic 1-based counter. Both producers encode
+    ``MON.{session}.{trigger}.0`` as the engine-originated
+    ``client_order_id``; a collision lands two broker submissions with
+    identical IDs.
+
+    The fix threads the cascade dispatcher's :class:`TriggerIdGenerator`
+    instance into the bracket-stops wiring. This test asserts:
+
+    1. The bracket-stop fire advances the shared sequence (consumes ``.next()``).
+    2. A subsequent dispatcher ``.next()`` returns the *next* id, not a
+       collision with the bracket-stop's id.
+    """
+
+    async def test_fire_consumes_shared_generator(self) -> None:
+        from alphamind.execution.oms.command_ids import derive_engine_command_id
+
+        shared = _trigger_ids(session_id="mon-X")
+        # Burn one to seed the generator at 2 — matches "cascade fired first".
+        first_cascade_id = shared.next()
+        assert first_cascade_id == 1
+
+        position = _options_position(direction=Direction.LONG)
+        bracket = _price_stop_bracket(threshold=865.0, direction="LTE")
+        cache = await _seed_cache({"NVDA": 860.0})
+        submitter = FakeSubmitter()
+        log = FakeActivityLog()
+        await _run_bracket_stop_cycle(
+            config=_config(),
+            position_repository=FakePositionRepository((position,)),
+            bracket_repository=FakeBracketRepository((bracket,)),
+            cache=cache,
+            submitter=submitter,
+            activity_log=log.emit,
+            invocation_id_provider=_const_str("inv-001"),
+            monitor_session_id="mon-X",
+            trigger_ids=shared,
+            now=_NOW,
+            risk_free_rate=0.045,
+            fired_legs=set(),
+        )
+
+        # The bracket fire took the next slot (2) from the shared generator.
+        assert len(submitter.options_calls) == 1
+        _, client_order_id = submitter.options_calls[0]
+        expected_brk = derive_engine_command_id(
+            monitor_session_id="mon-X", trigger_id=2, command_ordinal=0
+        )
+        assert client_order_id == expected_brk
+
+        # A subsequent dispatcher pull lands at 3 — no collision with the
+        # bracket-stop's slot 2 (or the cascade's earlier slot 1).
+        second_cascade_id = shared.next()
+        assert second_cascade_id == 3
+
+        # The cascade's previous id and the bracket-stop's id are distinct,
+        # which is the property the deterministic fix guarantees.
+        assert first_cascade_id != 2
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +446,7 @@ class TestPLTargetFiring:
             activity_log=log.emit,
             invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
             now=_NOW,
             risk_free_rate=0.045,
             fired_legs=set(),
@@ -442,6 +517,7 @@ class TestEquityPositionsSkipped:
             activity_log=log.emit,
             invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
             now=_NOW,
             risk_free_rate=0.045,
             fired_legs=set(),
@@ -502,6 +578,7 @@ class TestLegStatusFiltering:
             activity_log=log.emit,
             invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
             now=_NOW,
             risk_free_rate=0.045,
             fired_legs=set(),
@@ -533,6 +610,7 @@ class TestCacheMiss:
             activity_log=log.emit,
             invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-S",
+            trigger_ids=_trigger_ids(),
             now=_NOW,
             risk_free_rate=0.045,
             fired_legs=set(),
@@ -633,6 +711,7 @@ class TestRunForeverLoop:
                 activity_log=log.emit,
                 invocation_id_provider=_const_str("inv-001"),
                 risk_free_rate_provider=_const_float(0.045),
+                trigger_ids=_trigger_ids(session_id=session.session_id),
                 now=lambda: _NOW,
                 sleep=_record_sleep,
             )
