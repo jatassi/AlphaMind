@@ -513,6 +513,9 @@ async def test_trigger_id_appears_in_entry_id() -> None:
     assert len(log.entries) == 1
     # Generator hands out monotonic integers — entry_id contains it.
     assert session.session_id in log.entries[0].entry_id
+    # ``mon-emt-`` prefix groups emergency-trigger entries within the
+    # continuous-monitor ``mon-`` vocabulary.
+    assert log.entries[0].entry_id.startswith("mon-emt-")
 
 
 @pytest.mark.asyncio

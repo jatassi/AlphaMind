@@ -545,6 +545,10 @@ class TestIVFetchFailure:
         entry = activity_log.entries[0]
         assert entry.event_type == EventType.GREEKS_REFRESH_FAILED
         assert entry.position_id == "pos-5"
+        # ``mon-`` prefix groups all continuous-monitor entry IDs so operators
+        # can ``grep monitor.log | grep '^mon-'``; ``mon-grf-`` namespaces the
+        # greeks-refresh subsystem within that union.
+        assert entry.entry_id.startswith("mon-grf-")
         detail = entry.detail
         assert isinstance(detail, GreeksRefreshFailedDetail)
         assert detail.underlying_ticker == "AAPL"

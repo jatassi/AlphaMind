@@ -841,6 +841,8 @@ def _make_position_closed_entry(
     source: EventSource,
     exit_method: PositionExitMethod,
     order_id: str | None = None,
+    exit_price: float = 150.0,
+    realized_pnl_usd: float = -100.0,
 ) -> ActivityLogEntry:
     return ActivityLogEntry(
         entry_id=entry_id,
@@ -854,8 +856,8 @@ def _make_position_closed_entry(
         source=source,
         detail=PositionClosedDetail(
             exit_method=exit_method,
-            exit_price=150.0,
-            realized_pnl_usd=-100.0,
+            exit_price=exit_price,
+            realized_pnl_usd=realized_pnl_usd,
             thesis_resolution_category="invalidated",
         ),
     )
@@ -1069,3 +1071,42 @@ class TestBetweenInvocationClosuresProjection:
         )
         with pytest.raises(ValidationError):
             closure.position_id = "POS-002"
+
+    def test_rationale_renders_em_dash_for_zero_exit_price(self) -> None:
+        """Strategy-position closures emit ``exit_price=0.0`` (Phase 1
+        reconciliation overwrites the persisted P/L with the actual fill once
+        the order lands). Rendering as ``$0.00`` reads as "filled at zero"
+        and is operator-confusing; the rationale uses ``"—"`` instead.
+        """
+        entry = _make_position_closed_entry(
+            entry_id="ENTRY-CLOSE-STRAT",
+            position_id="POS-001",
+            timestamp=_T0,
+            source=EventSource.BRACKET_MANAGER,
+            exit_method=PositionExitMethod.STOP_TRIGGERED,
+            exit_price=0.0,
+            realized_pnl_usd=0.0,
+        )
+        snapshot = _make_snapshot(intra_invocation_changelog=(entry,))
+        view = project_strategist_view(snapshot)
+        rationale = view.between_invocation_closures[0].rationale
+        assert "exit_price=—" in rationale
+        assert "exit_price=$0.00" not in rationale
+
+    def test_rationale_renders_dollar_for_positive_exit_price(self) -> None:
+        """Single-leg options closures supply a real ``exit_price`` (prior
+        premium per contract) and render as the dollar string unchanged.
+        """
+        entry = _make_position_closed_entry(
+            entry_id="ENTRY-CLOSE-OPT",
+            position_id="POS-001",
+            timestamp=_T0,
+            source=EventSource.BRACKET_MANAGER,
+            exit_method=PositionExitMethod.STOP_TRIGGERED,
+            exit_price=12.75,
+            realized_pnl_usd=275.0,
+        )
+        snapshot = _make_snapshot(intra_invocation_changelog=(entry,))
+        view = project_strategist_view(snapshot)
+        rationale = view.between_invocation_closures[0].rationale
+        assert "exit_price=$12.75" in rationale

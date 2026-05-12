@@ -21,9 +21,13 @@ from alphamind.portfolio_state.records.activity_log import (
     ActivityLogEntry,
     BracketModificationSource,
     BracketModifiedDetail,
+    EmergencyInvocationRequestedDetail,
     EventGroup,
     EventSource,
     EventType,
+    GreeksRefreshFailedDetail,
+    HaltActivatedDetail,
+    HaltLiftedDetail,
     PMDecisionDetail,
     PMVerdict,
     PositionExitMethod,
@@ -944,6 +948,106 @@ def test_intra_invocation_changelog_section_present() -> None:
     )
     assert "=== ACTIVITY LOG (intra-invocation) ===" in out
     assert "PM raised target on momentum" in out
+
+
+def _make_monitor_entry(
+    *, entry_id: str, event_type: EventType, detail: object
+) -> ActivityLogEntry:
+    """Build an ActivityLogEntry for a continuous-monitor RISK_AND_GUARDRAIL event."""
+    return ActivityLogEntry(
+        entry_id=entry_id,
+        invocation_id=_INVOCATION_ID,
+        timestamp=_TIMESTAMP,
+        event_type=event_type,
+        event_group=EventGroup.RISK_AND_GUARDRAIL,
+        position_id=None,
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.GUARDRAIL_LAYER,
+        detail=detail,
+    )
+
+
+def test_halt_activated_summary_surfaces_drawdown_and_limit() -> None:
+    """``HALT_ACTIVATED`` entries render with halt_type + drawdown + limit."""
+    entry = _make_monitor_entry(
+        entry_id="ALE-HALT-1",
+        event_type=EventType.HALT_ACTIVATED,
+        detail=HaltActivatedDetail(
+            halt_type="daily_drawdown",
+            current_drawdown_pct=0.045,
+            limit_pct=0.04,
+            detected_at=_TIMESTAMP,
+        ),
+    )
+    view = _make_strategist_view(intra_invocation_changelog=(entry,))
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(strategist_view=view),  # type: ignore[arg-type]
+        sector_label_display=_SECTOR_LABELS,
+    )
+    assert "daily_drawdown halt activated at drawdown=4.50% limit=4.00%" in out
+    assert "HaltActivatedDetail" not in out  # not the bare class name
+
+
+def test_halt_lifted_summary_surfaces_halt_type_and_drawdown() -> None:
+    """``HALT_LIFTED`` entries render with halt_type + current drawdown."""
+    entry = _make_monitor_entry(
+        entry_id="ALE-HALT-2",
+        event_type=EventType.HALT_LIFTED,
+        detail=HaltLiftedDetail(
+            halt_type="cumulative_drawdown_tier3",
+            current_drawdown_pct=0.08,
+            lifted_at=_TIMESTAMP,
+        ),
+    )
+    view = _make_strategist_view(intra_invocation_changelog=(entry,))
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(strategist_view=view),  # type: ignore[arg-type]
+        sector_label_display=_SECTOR_LABELS,
+    )
+    assert "cumulative_drawdown_tier3 halt lifted at drawdown=8.00%" in out
+    assert "HaltLiftedDetail" not in out
+
+
+def test_greeks_refresh_failed_summary_surfaces_symbol_and_reason() -> None:
+    """``GREEKS_REFRESH_FAILED`` entries render with occ_symbol + failure_reason."""
+    entry = _make_monitor_entry(
+        entry_id="ALE-GRF-1",
+        event_type=EventType.GREEKS_REFRESH_FAILED,
+        detail=GreeksRefreshFailedDetail(
+            underlying_ticker="AAPL",
+            occ_symbol="O:AAPL260619C00200000",
+            failure_reason="iv_fetch_no_row",
+            prior_as_of=_TIMESTAMP,
+        ),
+    )
+    view = _make_strategist_view(intra_invocation_changelog=(entry,))
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(strategist_view=view),  # type: ignore[arg-type]
+        sector_label_display=_SECTOR_LABELS,
+    )
+    assert "greeks refresh failed: O:AAPL260619C00200000 (iv_fetch_no_row)" in out
+    assert "GreeksRefreshFailedDetail" not in out
+
+
+def test_emergency_invocation_requested_summary_surfaces_trigger() -> None:
+    """``EMERGENCY_INVOCATION_REQUESTED`` entries render with trigger_type + reason."""
+    entry = _make_monitor_entry(
+        entry_id="ALE-EMT-1",
+        event_type=EventType.EMERGENCY_INVOCATION_REQUESTED,
+        detail=EmergencyInvocationRequestedDetail(
+            trigger_type="regime_jump",
+            trigger_reason="NORMAL → CRISIS",
+            cooldown_remaining_seconds=0,
+        ),
+    )
+    view = _make_strategist_view(intra_invocation_changelog=(entry,))
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(strategist_view=view),  # type: ignore[arg-type]
+        sector_label_display=_SECTOR_LABELS,
+    )
+    assert "emergency invocation requested: regime_jump — NORMAL → CRISIS" in out
+    assert "EmergencyInvocationRequestedDetail" not in out
 
 
 def test_pm_decision_log_section_present() -> None:

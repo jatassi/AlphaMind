@@ -26,6 +26,10 @@ from alphamind.portfolio_state.consumers.strategist import (
 )
 from alphamind.portfolio_state.records.activity_log import (
     ActivityLogEntry,
+    EmergencyInvocationRequestedDetail,
+    GreeksRefreshFailedDetail,
+    HaltActivatedDetail,
+    HaltLiftedDetail,
     PMDecisionDetail,
 )
 from alphamind.portfolio_state.records.capital import DrawdownState
@@ -649,6 +653,23 @@ def _summarize_activity_detail(entry: ActivityLogEntry) -> str:
     if field_changed is not None and old_value is not None and new_value is not None:
         rationale_str = f" ({rationale})" if rationale else ""
         return f"{field_changed}: {old_value} → {new_value}{rationale_str}"
+    # Continuous-monitor RISK_AND_GUARDRAIL details — surface the operationally
+    # meaningful fields instead of the bare class name. The four event types
+    # are emitted by the breach-evaluation loop (halt transitions), the
+    # greeks-refresh task (IV-fetch failure), and the emergency-invocation
+    # trigger evaluator (cooldown-gated emergency request).
+    if isinstance(detail, HaltActivatedDetail):
+        return (
+            f"{detail.halt_type} halt activated at "
+            f"drawdown={detail.current_drawdown_pct:.2%} "
+            f"limit={detail.limit_pct:.2%}"
+        )
+    if isinstance(detail, HaltLiftedDetail):
+        return f"{detail.halt_type} halt lifted at drawdown={detail.current_drawdown_pct:.2%}"
+    if isinstance(detail, GreeksRefreshFailedDetail):
+        return f"greeks refresh failed: {detail.occ_symbol} ({detail.failure_reason})"
+    if isinstance(detail, EmergencyInvocationRequestedDetail):
+        return f"emergency invocation requested: {detail.trigger_type} — {detail.trigger_reason}"
     return type(detail).__name__
 
 

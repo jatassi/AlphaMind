@@ -399,10 +399,14 @@ class EmergencyTriggerEvaluator:
 def _format_entry_id(*, session_id: str, trigger_id: int) -> str:
     """Format a session-scoped, monotonic, collision-resistant entry_id.
 
-    Pattern: ``emt-{session_id}-{trigger_id:012d}-{nonce}``.
+    Pattern: ``mon-emt-{session_id}-{trigger_id:012d}-{nonce}``.
 
-    * ``emt-`` prefix mirrors the ``grf-`` prefix the greeks-refresh task
-      uses (and the engine envelope's ``MON.`` prefix for cascade IDs).
+    * ``mon-emt-`` prefix is the continuous-monitor + emergency-trigger
+      pair. The shared ``mon-`` prefix across greeks-refresh
+      (``mon-grf-``), emergency-trigger (``mon-emt-``), bracket-stops
+      (``mon-brk-``), and breach-loop halt transitions (``mon-alp-``)
+      lets operators ``grep monitor.log | grep '^mon-'`` to find the
+      union of monitor-emitted activity-log entries.
     * ``session_id`` participates so cross-session log queries pick the
       right entries.
     * ``trigger_id`` is the monotonic per-session sequence; it appears in
@@ -411,7 +415,7 @@ def _format_entry_id(*, session_id: str, trigger_id: int) -> str:
       case a future implementation emits multiple entries in one tick.
     """
     nonce = secrets.token_hex(4)
-    return f"emt-{session_id}-{trigger_id:012d}-{nonce}"
+    return f"mon-emt-{session_id}-{trigger_id:012d}-{nonce}"
 
 
 __all__ = [

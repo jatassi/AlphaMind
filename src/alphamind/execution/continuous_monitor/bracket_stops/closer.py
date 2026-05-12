@@ -203,7 +203,7 @@ def _build_position_closed_entry(
     feedback loop can attribute outcomes uniformly.
     """
     suffix = secrets.token_hex(4)
-    entry_id = f"brk-{now.strftime('%Y%m%dT%H%M%S%fZ')}-{suffix}"
+    entry_id = f"mon-brk-{now.strftime('%Y%m%dT%H%M%S%fZ')}-{suffix}"
     return ActivityLogEntry(
         entry_id=entry_id,
         invocation_id=invocation_id,

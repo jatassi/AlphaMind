@@ -294,6 +294,9 @@ class TestSingleLegClose:
         assert entry.detail.realized_pnl_usd == -200.0
         # The activity-log row's order_id is the closing order ID.
         assert entry.order_id == submitter.options_calls[0][1]
+        # ``mon-brk-`` prefix groups bracket-stop entries within the
+        # continuous-monitor ``mon-`` vocabulary.
+        assert entry.entry_id.startswith("mon-brk-")
 
     async def test_target_reached_exit_method_recorded(self) -> None:
         position = _options_position()

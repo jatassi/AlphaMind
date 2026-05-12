@@ -241,11 +241,20 @@ def _rationale_for_closure(
     detail: PositionClosedDetail,
     origin: BetweenInvocationClosureOrigin,
 ) -> str:
-    """Short human-readable summary of the closure for strategist scanning."""
+    """Short human-readable summary of the closure for strategist scanning.
+
+    Strategy-position closures emit a zeroed ``exit_price`` per
+    ``bracket_stops.task._estimated_exit_price_for`` (Phase 1 reconciliation
+    overwrites the persisted P/L with the actual fill once the order lands).
+    Rendering ``$0.00`` is operator-confusing for a position that did fill;
+    surface ``"—"`` instead so the strategist's view distinguishes
+    "fill-time price unavailable" from "filled at zero".
+    """
     method = detail.exit_method.value
     exit_price = detail.exit_price
     pnl = detail.realized_pnl_usd
-    parts = [f"{origin}: exit_method={method}", f"exit_price=${exit_price:.2f}"]
+    exit_price_str = f"${exit_price:.2f}" if exit_price > 0.0 else "—"
+    parts = [f"{origin}: exit_method={method}", f"exit_price={exit_price_str}"]
     if pnl != 0.0:
         parts.append(f"realized P/L=${pnl:.2f}")
     if entry.order_id is not None:

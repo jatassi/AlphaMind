@@ -141,8 +141,12 @@ async def run_breach_loop(  # noqa: PLR0913 — fan-in is the seam, not incident
     entry_counter = {"n": 0}
 
     def _entry_id_factory(local: int) -> str:
+        # ``mon-alp-`` prefix mirrors the rest of the continuous-monitor
+        # entry vocabulary (``mon-grf-``, ``mon-emt-``, ``mon-brk-``) so
+        # operators can ``grep monitor.log | grep '^mon-'`` for the
+        # union of monitor-emitted activity-log entries.
         entry_counter["n"] += 1
-        return f"alp-{entry_counter['n']:012d}-{local:02d}"
+        return f"mon-alp-{entry_counter['n']:012d}-{local:02d}"
 
     while True:
         as_of = now()
@@ -170,7 +174,7 @@ async def run_breach_loop(  # noqa: PLR0913 — fan-in is the seam, not incident
             )
         except asyncio.CancelledError:
             raise
-        except BaseException:
+        except Exception:
             log.exception("breach_loop tick raised; sleeping until next cycle")
 
         await asyncio.sleep(cadence_seconds)

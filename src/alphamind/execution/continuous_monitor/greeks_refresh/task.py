@@ -236,7 +236,7 @@ def _build_failure_entry(
     so the activity-log FK to ``invocations`` holds.
     """
     suffix = secrets.token_hex(4)
-    entry_id = f"grf-{now.strftime('%Y%m%dT%H%M%S%fZ')}-{suffix}"
+    entry_id = f"mon-grf-{now.strftime('%Y%m%dT%H%M%S%fZ')}-{suffix}"
     return ActivityLogEntry(
         entry_id=entry_id,
         invocation_id=invocation_id,

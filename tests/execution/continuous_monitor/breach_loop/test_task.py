@@ -793,6 +793,9 @@ async def test_halt_onset_emits_halt_activated_then_persists_silent(
     halt_activated_tick = [e for e in entries_per_tick[0]]
     assert len(halt_activated_tick) == 1
     assert halt_activated_tick[0].event_type is EventType.HALT_ACTIVATED
+    # ``mon-alp-`` prefix groups breach-loop halt entries within the
+    # continuous-monitor ``mon-`` vocabulary.
+    assert halt_activated_tick[0].entry_id.startswith("mon-alp-")
     persistence_entries = [e for e in entries_per_tick[1]]
     assert persistence_entries == []
 
