@@ -55,6 +55,7 @@ from alphamind.analysis.tools import TOOLS
 from alphamind.analysis.tools._sdk_adapter import build_analysis_mcp_server
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
 from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
+from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 
 __all__ = [
     "ContextOverflowFailure",
@@ -449,7 +450,11 @@ class _DiagState:
         if self.archive_root is None:
             return
         diag_dir = (
-            self.archive_root / "invocations" / self.invocation_id / "analysis" / self.agent_name
+            self.archive_root
+            / INVOCATIONS_DIRNAME
+            / self.invocation_id
+            / "analysis"
+            / self.agent_name
         )
         diag_dir.mkdir(parents=True, exist_ok=True)
 

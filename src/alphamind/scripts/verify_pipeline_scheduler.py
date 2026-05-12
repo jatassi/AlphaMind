@@ -49,6 +49,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.run_types import RunType
 from alphamind.config.models.venue import VenueConfig
+from alphamind.execution.state_persistence.invocation_paths import (
+    INVOCATIONS_DIRNAME,
+    RESOLVED_CONFIG_FILENAME,
+)
 from alphamind.execution.state_persistence.process_lifetime import (
     record_process_lifetime,
 )
@@ -407,19 +411,19 @@ def check_archive_directory(*, archive_root: Path, invocation_id: str) -> CheckR
     and to contain at least ``resolved_config.json``; the orchestrator
     also writes ``data_calibration_state.json`` in the same directory.
     """
-    inv_dir = archive_root / "invocations" / invocation_id
+    inv_dir = archive_root / INVOCATIONS_DIRNAME / invocation_id
     if not inv_dir.is_dir():
         return CheckResult(
             label="archive",
             passed=False,
             message=f"archive directory missing: {inv_dir}",
         )
-    resolved_cfg = inv_dir / "resolved_config.json"
+    resolved_cfg = inv_dir / RESOLVED_CONFIG_FILENAME
     if not resolved_cfg.is_file():
         return CheckResult(
             label="archive",
             passed=False,
-            message=f"resolved_config.json missing under {inv_dir}",
+            message=f"{RESOLVED_CONFIG_FILENAME} missing under {inv_dir}",
         )
     return CheckResult(
         label="archive",

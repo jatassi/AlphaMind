@@ -41,6 +41,7 @@ from alphamind.decision.portfolio_manager.runner import (
     run_portfolio_manager,
 )
 from alphamind.decision.proposal_pre_processor.models import ProposalPreProcessorBundle
+from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     PortfolioManagerThesisComponentReader,
     PortfolioManagerView,
@@ -195,7 +196,7 @@ def read_synthesizer_text(
     """
     response_path = (
         archive_root
-        / "invocations"
+        / INVOCATIONS_DIRNAME
         / synthesizer_invocation_id
         / "analysis"
         / "synthesizer"

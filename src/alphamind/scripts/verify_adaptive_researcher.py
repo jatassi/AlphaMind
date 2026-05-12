@@ -68,6 +68,7 @@ from alphamind.config.models.agents import (
 )
 from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
 from alphamind.distillation.orchestrator import DistillationOutputs, _default_archive_root
+from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.scripts._artifact_io import (
     dump_adaptive_brief,
@@ -118,7 +119,7 @@ _INPUT_BUNDLE_SECTION_MARKERS: tuple[str, ...] = (
 
 def _diagnostic_dir(archive_root: Path, invocation_id: str, agent_name: str) -> Path:
     """Mirror the harness's diagnostic-archive layout."""
-    return archive_root / "invocations" / invocation_id / "analysis" / agent_name
+    return archive_root / INVOCATIONS_DIRNAME / invocation_id / "analysis" / agent_name
 
 
 # ---------------------------------------------------------------------------

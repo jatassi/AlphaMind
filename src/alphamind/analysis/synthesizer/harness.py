@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.portfolio_tools import build_portfolio_state_mcp_server
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
+from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 from alphamind.portfolio_state.consumers.synthesizer import SynthesizerPortfolioStateReader
 
 __all__ = [
@@ -314,7 +315,11 @@ class _DiagState:
         if self.archive_root is None:
             return
         diag_dir = (
-            self.archive_root / "invocations" / self.invocation_id / "analysis" / self.agent_name
+            self.archive_root
+            / INVOCATIONS_DIRNAME
+            / self.invocation_id
+            / "analysis"
+            / self.agent_name
         )
         diag_dir.mkdir(parents=True, exist_ok=True)
 

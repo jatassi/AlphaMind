@@ -44,6 +44,7 @@ from alphamind.decision.strategist.runner import (
     load_strategist_agent_config,
     run_strategist,
 )
+from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 from alphamind.portfolio_state.consumers.strategist import (
     StrategistPositionView,
     StrategistView,
@@ -199,7 +200,7 @@ def read_synthesizer_text(
     """
     response_path = (
         archive_root
-        / "invocations"
+        / INVOCATIONS_DIRNAME
         / synthesizer_invocation_id
         / "analysis"
         / "synthesizer"
