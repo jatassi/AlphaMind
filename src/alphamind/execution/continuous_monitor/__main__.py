@@ -229,38 +229,51 @@ def _register_breach_loop(
     breach_response_lookup: Mapping[str, BreachResponse],
     db_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Register the ``breach_loop`` task (story 03b / ALP-437) + emergency callback.
+    """Register the ``breach_loop`` task (story 03b / ALP-437) with the cascade
+    dispatcher (story 04a / ALP-438) on ``on_immediate_breach`` and the
+    emergency-trigger callback (story 04b / ALP-439) on ``on_emergency_input``.
 
-    Story 03b ships the loop itself; the production wiring of its non-callback
-    dependencies (snapshot_provider via the assembler, regime_provider via
-    ``resolve_regime_adaptation``, iv_provider from open-positions greeks,
-    market_hours via ``TradingCalendarCache``, library_config_factory via the
-    resolver adapter) is deferred to follow-up stories that wire the SQL
-    repository, regime resolver, and calendar cache into the monitor process.
-
-    Until those land, this helper registers the task with conservative
-    placeholders that allow the supervisor to start and run cleanly: the
-    breach loop's ``market_hours`` stub reports closed so the loop sleeps
-    indefinitely without touching the repository or the empty cache.
-
-    Story 04b (ALP-439) wires a real ``on_emergency_input`` callback via
+    Story 03b shipped the loop itself with no-op callbacks; this helper
+    replaces both with real callbacks. ``on_immediate_breach`` is
+    :meth:`CascadeDispatcher.handle_immediate_breach` (one dispatcher
+    instance per session so the :class:`TriggerIdGenerator` stays monotonic
+    across breaches). ``on_emergency_input`` is the callback returned by
     :func:`make_emergency_callback` — it consults the live cooldown tracker,
-    the trigger primitives, and writes ``EMERGENCY_INVOCATION_REQUESTED``
-    activity-log entries through ``db_session_factory``. The cascade
-    dispatcher (story 04a) plugs in ``on_immediate_breach`` separately.
+    runs the trigger evaluators, and writes ``EMERGENCY_INVOCATION_REQUESTED``
+    activity-log entries through ``db_session_factory``.
+
+    The production wiring of the loop's non-callback dependencies
+    (``snapshot_provider``, ``regime_provider``, ``library_config_factory``,
+    ``market_hours`` via ``TradingCalendarCache``, ``progressive_tiers``
+    from the cumulative-drawdown rule) and the dispatcher's per-tick
+    ``context_provider`` + ``submit_envelope`` paths remain deferred to
+    follow-up stories that wire the SQL repository, regime resolver,
+    calendar cache, and invocation-handle factory into the monitor process.
+    Until those land, the loop's ``market_hours`` stub reports closed so the
+    loop sleeps indefinitely without exercising either path.
     """
     from collections.abc import Iterable
     from datetime import datetime
 
     from alphamind.execution.continuous_monitor.breach_loop.result import (
         BreachLoopResult,
-        RuleEvaluation,
+    )
+    from alphamind.execution.continuous_monitor.cascade_dispatch import (
+        TriggerIdGenerator,
+    )
+    from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
+        BreachDispatchContext,
+        CascadeDispatcher,
+        DeferralEvent,
     )
     from alphamind.execution.continuous_monitor.emergency_trigger import (
         make_emergency_callback,
     )
     from alphamind.execution.continuous_monitor.underlying_stream.cache import (
         UnderlyingPriceCache,
+    )
+    from alphamind.execution.oms.engine_envelope import (
+        EngineEnvelope as OmsEngineEnvelope,
     )
     from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
     from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -271,9 +284,6 @@ def _register_breach_loop(
         def is_market_open(self, at: datetime) -> bool:
             del at
             return False
-
-    async def _no_op_immediate(_r: BreachLoopResult, _e: RuleEvaluation) -> None:
-        return None
 
     async def _no_op_sink(_entries: Iterable[ActivityLogEntry]) -> None:
         return None
@@ -290,6 +300,36 @@ def _register_breach_loop(
         msg = "library_config_factory not yet wired; deferred follow-up"
         raise RuntimeError(msg)
 
+    def _empty_dispatch_context_provider() -> BreachDispatchContext:
+        msg = "cascade dispatch context_provider not yet wired; deferred follow-up"
+        raise RuntimeError(msg)
+
+    async def _empty_submit_envelope(_envelope: OmsEngineEnvelope) -> Any:
+        msg = "submit_envelope path not yet wired; deferred follow-up"
+        raise RuntimeError(msg)
+
+    async def _log_deferral(event: DeferralEvent) -> None:
+        log.info(
+            "engine envelope deferred to PM: rule=%s position=%s session=%s "
+            "trigger=%d cascade=%s reason=%s",
+            event.rule_breached,
+            event.candidate_position_id,
+            event.monitor_session_id,
+            event.trigger_id,
+            event.cascade_id,
+            event.reason,
+        )
+
+    trigger_ids = TriggerIdGenerator(session_id=session.session_id)
+    dispatcher = CascadeDispatcher(
+        monitor_session_id=session.session_id,
+        breach_config=breach_behavior_config,
+        trigger_ids=trigger_ids,
+        context_provider=_empty_dispatch_context_provider,
+        submit_envelope=_empty_submit_envelope,
+        deferral_sink=_log_deferral,
+        per_rule_kwargs_providers={},
+    )
     on_emergency_input = make_emergency_callback(
         session=session,
         breach_behavior_config=breach_behavior_config,
@@ -309,7 +349,7 @@ def _register_breach_loop(
         risk_free_rate=0.045,
         breach_response_lookup=breach_response_lookup,
         market_hours=_ClosedMarket(),
-        on_immediate_breach=_no_op_immediate,
+        on_immediate_breach=dispatcher.handle_immediate_breach,
         on_emergency_input=on_emergency_input,
         activity_log_sink=_no_op_sink,
     )
