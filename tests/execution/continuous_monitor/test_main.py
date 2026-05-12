@@ -141,3 +141,35 @@ def test_main_registers_wave_2_tasks(
     assert "fill_stream_consumer" in task_names, (
         f"fill_stream_consumer not registered; got {task_names!r}"
     )
+
+
+def test_main_registers_wave_3_greeks_refresh_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _silent_logger: None,
+) -> None:
+    """Wave-3 (03a / ALP-436) — the daemon wires ``greeks_refresh`` onto the
+    supervisor alongside the wave-2 tasks. The patch on ``MonitorSupervisor.run``
+    captures ``self`` so we can read the registered task names without driving
+    the asyncio loop.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
+    monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
+
+    captured: dict[str, object] = {}
+
+    async def _no_op_run(self: object) -> None:
+        captured["supervisor"] = self
+
+    with mock.patch(
+        "alphamind.execution.continuous_monitor.__main__.MonitorSupervisor.run",
+        _no_op_run,
+    ):
+        monitor_main(["run", "--mode", "paper"])
+
+    supervisor = captured.get("supervisor")
+    assert supervisor is not None
+    task_names = supervisor.task_names()  # type: ignore[attr-defined]
+    assert "greeks_refresh" in task_names, f"greeks_refresh not registered; got {task_names!r}"

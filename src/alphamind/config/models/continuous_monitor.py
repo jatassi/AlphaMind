@@ -4,9 +4,13 @@ The continuous monitor's Class A tunables per parent issue ALP-123's
 pre-resolved decision (E):
 
 * ``breach_evaluation_cadence_seconds`` — how often the breach loop wakes.
-* ``greeks_refresh_interval_minutes`` — scheduled greeks refresh cadence.
+* ``greeks_refresh_interval_minutes`` — scheduled greeks refresh cadence
+  (per-position).
 * ``greeks_refresh_underlying_move_threshold_pct`` — underlying move that
   triggers an out-of-cadence greeks refresh.
+* ``greeks_refresh_inspection_cadence_seconds`` — how often the refresh
+  task wakes to evaluate triggers and consider due positions (independent
+  of the per-position scheduled interval above). Added by story 03a.
 * ``underlying_stream_provider`` — single-value ``Literal`` today; story 02b
   may extend the union if a second provider gets validated.
 * ``subscription_refresh_seconds`` — cadence at which the underlying-price
@@ -37,6 +41,7 @@ class ContinuousMonitorConfig(BaseModel):
     breach_evaluation_cadence_seconds: int = Field(ge=1)
     greeks_refresh_interval_minutes: int = Field(ge=1)
     greeks_refresh_underlying_move_threshold_pct: float = Field(gt=0.0)
+    greeks_refresh_inspection_cadence_seconds: int = Field(default=30, ge=1)
     underlying_stream_provider: Literal["alpaca-iex"]
     subscription_refresh_seconds: int = Field(default=30, ge=1)
     max_reconnect_attempts: int = Field(ge=1)

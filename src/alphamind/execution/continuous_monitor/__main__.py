@@ -4,8 +4,13 @@ The continuous monitor is a parallel NSSM service to the collector and the
 pipeline scheduler. Story 01 (ALP-432) shipped the supervisor + session +
 logging + config; subsequent stories register their long-running tasks:
 
+* 02b (ALP-434) — ``underlying_stream``: live Alpaca StockDataStream / IEX
+  feed feeding the shared :class:`UnderlyingPriceCache`.
 * 02c (ALP-435) — ``fill_stream_consumer``: drains alpaca-py ``trade_updates``
   and writes each fill to ``fill_records`` via :func:`append_fill_record`.
+* 03a (ALP-436) — ``greeks_refresh``: per-position greeks refresh against
+  the collector-populated ``options_contract_snapshots`` table on a
+  scheduled + move-triggered cadence.
 
 Subcommand layout:
 
@@ -31,6 +36,9 @@ from alphamind.config.loaders import read_yaml_file
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.broker_adapter import AccountStateQueries, AlpacaClientFactory
+from alphamind.execution.continuous_monitor.greeks_refresh import (
+    register_greeks_refresh_task,
+)
 from alphamind.execution.continuous_monitor.logging_setup import (
     configure_monitor_logging,
 )
@@ -103,11 +111,17 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     db_session_factory = make_async_session_factory(engine)
     open_positions_reader = SqlOpenPositionsReader(db_session_factory)
     supervisor = MonitorSupervisor(session=session, config=config)
-    register_underlying_stream_task(supervisor, repository=open_positions_reader)
+    underlying_cache = register_underlying_stream_task(supervisor, repository=open_positions_reader)
     _register_fill_stream_consumer(
         supervisor,
         venue_config=venue_config,
         db_session_factory=db_session_factory,
+    )
+    register_greeks_refresh_task(
+        supervisor,
+        repository=open_positions_reader,
+        cache=underlying_cache,
+        session_factory=db_session_factory,
     )
     try:
         await supervisor.run()
