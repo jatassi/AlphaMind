@@ -332,6 +332,7 @@ def _stub_pipeline_result(
         strategist_result=strategist_result,
         pre_processor_bundle=bundle,
         pm_result=pm_result,
+        drawdown_tier=None,
     )
 
 
@@ -429,6 +430,7 @@ def test_validate_pipeline_result_fails_on_analyst_mode_mismatch() -> None:
         strategist_result=result.strategist_result,
         pre_processor_bundle=result.pre_processor_bundle,
         pm_result=result.pm_result,
+        drawdown_tier=result.drawdown_tier,
     )
     verdict, errors = validate_pipeline_result(drifted_result)
     assert verdict is Verdict.FAIL

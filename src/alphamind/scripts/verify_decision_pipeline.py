@@ -416,7 +416,9 @@ def _make_risk_budget() -> RiskBudgetConsumption:
 
 
 def _make_active_risk_parameters() -> ActiveRiskParameterSet:
-    """Active risk-parameter set — must include ``position_max_size_pct``."""
+    """Active risk-parameter set — must include ``position_max_size_pct``
+    and ``gross_exposure_pct`` so the Phase 1 enforcement override applier
+    has the two rule entries it edits (story ALP-433)."""
     return ActiveRiskParameterSet(
         regime_label=RegimeLabel.NORMAL,
         transition_state=RegimeTransitionState.STABLE,
@@ -430,6 +432,14 @@ def _make_active_risk_parameters() -> ActiveRiskParameterSet:
                 unit="% of portfolio",
                 regime_multiplier_applied=1.0,
                 base_value=5.0,
+            ),
+            ActiveRiskParameterEntry(
+                rule_id="gross_exposure_pct",
+                rule_label="Gross exposure",
+                value=200.0,
+                unit="% of portfolio",
+                regime_multiplier_applied=1.0,
+                base_value=200.0,
             ),
             ActiveRiskParameterEntry(
                 rule_id="daily_drawdown_pct",
@@ -988,9 +998,13 @@ async def _run_pipeline(
     """Compose runner kwargs and invoke ``run_decision_pipeline``.
 
     Mirrors the orchestrator: assemble the snapshot once against the stub
-    repository, then pass the pre-built :class:`AssembledSnapshot` into the
-    runner.
+    repository, then pass the pre-built :class:`AssembledSnapshot` plus
+    the Phase 1 enforcement-composition inputs (repository, synthetic
+    regime output, progressive tiers — story ALP-433) into the runner.
     """
+    from alphamind.config.guardrails_helpers import (
+        load_cumulative_drawdown_progressive_tiers,
+    )
     from alphamind.portfolio_state.assembler import assemble_snapshot
     from alphamind.portfolio_state.consumers.synthesizer import adapt_ticker_sector_resolver
 
@@ -1008,6 +1022,9 @@ async def _run_pipeline(
     )
     return await run_decision_pipeline(
         assembled_snapshot=assembled,
+        repository=repository,
+        regime_output=_build_verify_regime_output(invocation_id=invocation_id),
+        progressive_tiers=load_cumulative_drawdown_progressive_tiers(),
         synthesizer_text=build_fixture_synthesizer_text(),
         retrieval_store=build_fixture_retrieval_store(),
         mode="normal",
@@ -1026,6 +1043,49 @@ async def _run_pipeline(
         invocation_id=invocation_id,
         timestamp=_AS_OF,
         archive_root=archive_root,
+    )
+
+
+def _build_verify_regime_output(*, invocation_id: str) -> Any:
+    """Build a fixture ``RegimeAdaptationOutput`` for the verify-script run.
+
+    Wraps :func:`_make_active_risk_parameters` (the same regime-resolved
+    parameter set the stub repository returns) in a synthetic NORMAL-regime
+    output so the pipeline's Phase 1 enforcement composition has a stable
+    regime-side input. Drawdown is zero in the verify fixture, so the
+    composition is a no-op and the parameter set passes through unchanged.
+    """
+    from alphamind.config.models.regimes import Regime
+    from alphamind.risk_guardrails.regime_adaptation import (
+        RegimeAdaptationOutput,
+        RegimeAdaptationState,
+    )
+
+    parameters = _make_active_risk_parameters()
+    state = RegimeAdaptationState(
+        as_of=_AS_OF.isoformat().replace("+00:00", "Z"),
+        invocation_id=invocation_id,
+        active_regime=Regime.normal,
+        prior_regime=None,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        transition_started_invocation_id=None,
+        transition_origin_regime=None,
+        active_overlays=(),
+        distillation_regime_label="normal",
+        distillation_vix_level=18.0,
+        regime_skip_emergency=False,
+    )
+    return RegimeAdaptationOutput(
+        runtime_dimensions_active_regime=Regime.normal,
+        runtime_dimensions_active_overlays=(),
+        overlay_activation_decisions=(),
+        effective_limits={},
+        active_risk_parameter_set=parameters,
+        regime_transition_breaches=(),
+        regime_skip_emergency=False,
+        new_persisted_state=state,
+        audit_log_entries=(),
     )
 
 
