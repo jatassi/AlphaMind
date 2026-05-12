@@ -36,6 +36,13 @@ from alphamind.execution.continuous_monitor.session import (
     new_session,
 )
 from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
+from alphamind.execution.continuous_monitor.underlying_stream import (
+    register_underlying_stream_task,
+)
+from alphamind.execution.continuous_monitor.underlying_stream.reader import (
+    SqlOpenPositionsReader,
+)
+from alphamind.persistence.session import make_async_engine, make_async_session_factory
 
 # ``python -m alphamind.execution.continuous_monitor`` sets ``__name__`` to
 # ``__main__`` (outside the alphamind hierarchy) so messages would not reach
@@ -67,7 +74,10 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 async def _run_daemon(*, mode: MonitorMode) -> None:
     """Daemon path — load config, build supervisor, run until shutdown.
 
-    The registry is empty in story 01; later stories register their tasks here.
+    Stories 02a / 02b / 02c register their tasks on the supervisor below.
+    The async engine + session factory share the monitor process's lifetime
+    so cross-invocation reads (e.g. underlying-stream subscription targets)
+    have a stable handle.
     """
     configure_monitor_logging()
     config = ContinuousMonitorConfig.model_validate(read_yaml_file(_CONFIG_PATH))
@@ -77,10 +87,15 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         session.session_id,
         session.mode,
     )
+    engine = make_async_engine()
+    session_factory = make_async_session_factory(engine)
+    open_positions_reader = SqlOpenPositionsReader(session_factory)
     supervisor = MonitorSupervisor(session=session, config=config)
+    register_underlying_stream_task(supervisor, repository=open_positions_reader)
     try:
         await supervisor.run()
     finally:
+        await engine.dispose()
         log.info("monitor session end: session_id=%s", session.session_id)
 
 

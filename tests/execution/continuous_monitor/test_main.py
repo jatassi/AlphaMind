@@ -103,3 +103,35 @@ def test_main_rejects_unknown_subcommand(
     monkeypatch.delenv("USERPROFILE", raising=False)
     with pytest.raises(SystemExit):
         monitor_main(["bogus"])
+
+
+def test_main_registers_underlying_stream_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _silent_logger: None,
+) -> None:
+    """Story 02b — the daemon wires ``underlying_stream`` onto the supervisor.
+
+    The patch on ``MonitorSupervisor.run`` captures ``self`` so we can read
+    the registered task names without driving the asyncio loop.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
+    monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
+
+    captured: dict[str, tuple[str, ...]] = {}
+
+    async def _no_op_run(self: object) -> None:
+        captured["task_names"] = self.task_names()  # type: ignore[attr-defined]
+
+    with mock.patch(
+        "alphamind.execution.continuous_monitor.__main__.MonitorSupervisor.run",
+        _no_op_run,
+    ):
+        monitor_main(["run", "--mode", "paper"])
+
+    task_names = captured.get("task_names", ())
+    assert "underlying_stream" in task_names, (
+        f"underlying_stream not registered; got {task_names!r}"
+    )

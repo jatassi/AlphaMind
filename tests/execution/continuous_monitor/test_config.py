@@ -78,6 +78,7 @@ class TestContinuousMonitorConfigModel:
             "greeks_refresh_interval_minutes": 15,
             "greeks_refresh_underlying_move_threshold_pct": 2.0,
             "underlying_stream_provider": "alpaca-iex",
+            "subscription_refresh_seconds": 30,
             "max_reconnect_attempts": 5,
             "supervisor_shutdown_timeout_seconds": 5,
         }
@@ -88,6 +89,7 @@ class TestContinuousMonitorConfigModel:
         assert cfg.greeks_refresh_interval_minutes == 15
         assert cfg.greeks_refresh_underlying_move_threshold_pct == 2.0
         assert cfg.underlying_stream_provider == "alpaca-iex"
+        assert cfg.subscription_refresh_seconds == 30
         assert cfg.max_reconnect_attempts == 5
         assert cfg.supervisor_shutdown_timeout_seconds == 5
 
@@ -103,6 +105,7 @@ class TestContinuousMonitorConfigModel:
             "greeks_refresh_interval_minutes",
             "max_reconnect_attempts",
             "supervisor_shutdown_timeout_seconds",
+            "subscription_refresh_seconds",
         ],
     )
     def test_non_positive_int_fields_rejected(self, field: str) -> None:
@@ -151,6 +154,7 @@ class TestContinuousMonitorYamlWiring:
         assert cm.greeks_refresh_interval_minutes == 15
         assert cm.greeks_refresh_underlying_move_threshold_pct == 2.0
         assert cm.underlying_stream_provider == "alpaca-iex"
+        assert cm.subscription_refresh_seconds == 30
         assert cm.max_reconnect_attempts == 5
 
     def test_malformed_yaml_raises_validation_error(

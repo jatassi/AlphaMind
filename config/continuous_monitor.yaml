@@ -22,6 +22,12 @@ greeks_refresh_underlying_move_threshold_pct: 2.0
 # test. Story 02b's vendor surface lives here.
 underlying_stream_provider: alpaca-iex
 
+# Cadence at which the underlying-price stream task (story 02b) re-computes its
+# subscription target set against the open-position set and issues
+# subscribe_quotes / unsubscribe_quotes deltas to alpaca-py. Default 30 s
+# balances new-position responsiveness against websocket-control-frame load.
+subscription_refresh_seconds: 30
+
 # Websocket reconnect ceiling per session (story 02b / 02c). Once exhausted the
 # supervisor's task raises and NSSM's restart policy kicks in.
 max_reconnect_attempts: 5

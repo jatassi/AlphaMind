@@ -9,6 +9,9 @@ pre-resolved decision (E):
   triggers an out-of-cadence greeks refresh.
 * ``underlying_stream_provider`` — single-value ``Literal`` today; story 02b
   may extend the union if a second provider gets validated.
+* ``subscription_refresh_seconds`` — cadence at which the underlying-price
+  stream (story 02b) diffs its target subscription set against the
+  open-position set and issues add / remove deltas.
 * ``max_reconnect_attempts`` — websocket-reconnect ceiling per session.
 * ``supervisor_shutdown_timeout_seconds`` — per-task cancellation budget the
   ``MonitorSupervisor`` enforces at shutdown (scope section 7 default = 5s).
@@ -35,5 +38,6 @@ class ContinuousMonitorConfig(BaseModel):
     greeks_refresh_interval_minutes: int = Field(ge=1)
     greeks_refresh_underlying_move_threshold_pct: float = Field(gt=0.0)
     underlying_stream_provider: Literal["alpaca-iex"]
+    subscription_refresh_seconds: int = Field(default=30, ge=1)
     max_reconnect_attempts: int = Field(ge=1)
     supervisor_shutdown_timeout_seconds: int = Field(ge=1)
