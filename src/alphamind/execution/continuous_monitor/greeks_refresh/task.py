@@ -449,6 +449,8 @@ async def _refresh_options_position(
             prior_greeks=details.greeks,
             writer=writer,
             activity_log=activity_log,
+            states=states,
+            spot=spot,
             ctx=ctx,
         )
         return
@@ -497,6 +499,8 @@ async def _refresh_strategy_position(
             prior_greeks=details.strategy_greeks,
             writer=writer,
             activity_log=activity_log,
+            states=states,
+            spot=spot,
             ctx=ctx,
         )
         return
@@ -513,6 +517,8 @@ async def _refresh_strategy_position(
                 prior_greeks=details.strategy_greeks,
                 writer=writer,
                 activity_log=activity_log,
+                states=states,
+                spot=spot,
                 ctx=ctx,
             )
             return
@@ -536,7 +542,7 @@ async def _refresh_strategy_position(
     )
 
 
-async def _emit_failure(
+async def _emit_failure(  # noqa: PLR0913 — fan-out parameters for the failure path
     *,
     position: PositionRecord,
     underlying_ticker: str,
@@ -545,6 +551,8 @@ async def _emit_failure(
     prior_greeks: OptionGreeks,
     writer: GreeksWriter,
     activity_log: ActivityLogEmitter,
+    states: dict[str, LastRefreshState],
+    spot: float,
     ctx: _CycleContext,
 ) -> None:
     """Failure path: preserve prior greeks, flip ``refresh_failed=True``, emit
@@ -554,6 +562,14 @@ async def _emit_failure(
     with the prior per-leg greeks preserved and the aggregated greeks set to
     the failure variant. This keeps the persisted strategy in lockstep with
     the per-leg snapshot — no torn state across the leg boundary.
+
+    Bumps the position's ``LastRefreshState.last_refreshed_at`` to ``ctx.now``
+    and resets ``underlying_price_at_last_refresh`` to the current spot so the
+    next *scheduled* trigger waits a full interval. Without this, every
+    inspection cycle would re-evaluate the failing position, re-emit a
+    ``GREEKS_REFRESH_FAILED`` entry, and flood the activity log indefinitely
+    — the position can still re-fire mid-interval via the move-trigger if
+    spot drifts past the threshold.
     """
     details = position.details
     failed = _build_failed_greeks(prior_greeks)
@@ -578,6 +594,11 @@ async def _emit_failure(
         invocation_id=ctx.invocation_id,
     )
     await activity_log(entry)
+    states[position.position_id] = LastRefreshState(
+        position_id=position.position_id,
+        last_refreshed_at=ctx.now,
+        underlying_price_at_last_refresh=spot,
+    )
 
 
 # ---------------------------------------------------------------------------

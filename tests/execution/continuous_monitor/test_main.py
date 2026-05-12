@@ -144,3 +144,55 @@ def test_main_registers_wave_2_and_3_tasks(
         "bracket_stops",
     ):
         assert expected in task_names, f"{expected} not registered; got {task_names!r}"
+
+
+def test_main_shares_trigger_id_generator_across_breach_loop_and_bracket_stops(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _silent_logger: None,
+) -> None:
+    """Regression — the cascade dispatcher's TriggerIdGenerator instance is
+    also passed to ``register_options_bracket_watcher_task``.
+
+    Per Fix 3 (ALP-123 PR-48 review): a bracket-stop fire and a cascade
+    dispatch in the same session must consume from the *same* monotonic
+    counter so the engine-originated ``client_order_id``
+    (``MON.{session}.{trigger}.0``) cannot collide across producers.
+    """
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
+    monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
+
+    captured: dict[str, object] = {}
+
+    async def _no_op_run(self: object) -> None:
+        captured["supervisor"] = self
+
+    real_breach = "alphamind.execution.continuous_monitor.__main__._register_breach_loop"
+    real_bracket = (
+        "alphamind.execution.continuous_monitor.__main__.register_options_bracket_watcher_task"
+    )
+
+    def _capture_breach(*args: object, **kwargs: object) -> None:
+        captured["breach_trigger_ids"] = kwargs.get("trigger_ids")
+
+    def _capture_bracket(*args: object, **kwargs: object) -> None:
+        captured["bracket_trigger_ids"] = kwargs.get("trigger_ids")
+
+    with (
+        mock.patch(
+            "alphamind.execution.continuous_monitor.__main__.MonitorSupervisor.run",
+            _no_op_run,
+        ),
+        mock.patch(real_breach, _capture_breach),
+        mock.patch(real_bracket, _capture_bracket),
+    ):
+        monitor_main(["run", "--mode", "paper"])
+
+    breach_trigger_ids = captured.get("breach_trigger_ids")
+    bracket_trigger_ids = captured.get("bracket_trigger_ids")
+    assert breach_trigger_ids is not None
+    assert bracket_trigger_ids is not None
+    # The same instance is threaded to both — not two independent generators.
+    assert breach_trigger_ids is bracket_trigger_ids

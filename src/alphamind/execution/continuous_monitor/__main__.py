@@ -273,6 +273,9 @@ def _register_breach_loop(
     from alphamind.execution.continuous_monitor.emergency_trigger import (
         make_emergency_callback,
     )
+    from alphamind.execution.continuous_monitor.greeks_refresh.wiring import (
+        make_activity_log_emitter,
+    )
     from alphamind.execution.continuous_monitor.underlying_stream.cache import (
         UnderlyingPriceCache,
     )
@@ -284,13 +287,31 @@ def _register_breach_loop(
         FixtureIvProvider,
     )
 
+    # NOTE: When ``_ClosedMarket`` is removed (coupled change with the breach
+    # loop's market-hours wiring in a follow-up story), the
+    # ``HALT_ACTIVATED``/``HALT_LIFTED`` entries emitted by the breach loop's
+    # ``HaltTransitionTracker`` start surfacing and the ``activity_log_sink``
+    # below begins persisting them via ``db_session_factory``. The previous
+    # ``_no_op_sink`` would have silently dropped them once ``_ClosedMarket``
+    # lifted — see ALP-453 for the coupled removal.
     class _ClosedMarket:
         def is_market_open(self, at: datetime) -> bool:
             del at
             return False
 
-    async def _no_op_sink(_entries: Iterable[ActivityLogEntry]) -> None:
-        return None
+    _single_entry_emitter = make_activity_log_emitter(db_session_factory)
+
+    async def _activity_log_sink(entries: Iterable[ActivityLogEntry]) -> None:
+        """Persist each emitted ``ActivityLogEntry`` via the session factory.
+
+        Reuses the per-emit codec pattern from
+        ``greeks_refresh.wiring.make_activity_log_emitter`` — one entry per
+        transaction so a single bad row cannot poison the rest of the batch.
+        The breach loop emits 0..2 entries per tick (one per halt-flag
+        transition), so the per-row overhead is negligible.
+        """
+        for entry in entries:
+            await _single_entry_emitter(entry)
 
     async def _empty_snapshot_provider() -> object:
         msg = "snapshot_provider not yet wired; deferred follow-up"
@@ -354,7 +375,7 @@ def _register_breach_loop(
         market_hours=_ClosedMarket(),
         on_immediate_breach=dispatcher.handle_immediate_breach,
         on_emergency_input=on_emergency_input,
-        activity_log_sink=_no_op_sink,
+        activity_log_sink=_activity_log_sink,
     )
 
 

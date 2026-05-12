@@ -593,6 +593,74 @@ class TestIVFetchFailure:
         assert isinstance(detail, GreeksRefreshFailedDetail)
         assert detail.failure_reason == "iv_fetch_db_error"
 
+    async def test_failure_bumps_last_refreshed_at_to_avoid_per_cycle_flood(self) -> None:
+        """Regression — a position whose refresh fails advances its scheduled
+        anchor so the next inspection-cycle does not re-fire instantly.
+
+        Without this guard, ``last_refreshed_at`` stays at the original anchor
+        (>= the scheduled interval ago) and every subsequent cycle re-evaluates
+        the failure, emitting a fresh ``GREEKS_REFRESH_FAILED`` entry every
+        ``greeks_refresh_inspection_cadence_seconds`` indefinitely.
+
+        After the fix, the cycle bumps the anchor to ``ctx.now`` and the
+        next-cycle scheduled trigger does not re-fire until a full interval
+        has elapsed. (The move-trigger still re-fires if spot drifts past the
+        threshold mid-interval.)
+        """
+        config = _config(interval_minutes=15, move_threshold_pct=2.0)
+        now1 = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
+        last = now1 - timedelta(minutes=20)
+        position = _options_position(position_id="pos-flood", as_of_timestamp=last)
+        cache = await _seeded_cache({"AAPL": 200.0}, now1)
+        iv_provider = FakeIVProvider(quotes={})  # always fails
+        writer = FakeGreeksWriter()
+        activity_log = FakeActivityLog()
+        states = {
+            "pos-flood": LastRefreshState(
+                position_id="pos-flood",
+                last_refreshed_at=last,
+                underlying_price_at_last_refresh=200.0,
+            )
+        }
+
+        # Cycle 1: position is overdue → fails → bumps anchor to now1.
+        await _run_refresh_cycle(
+            config=config,
+            repository=FakeRepository((position,)),
+            cache=cache,
+            states=states,
+            iv_fetch=iv_provider.fetch,
+            writer=writer,
+            activity_log=activity_log.emit,
+            risk_free_rate=0.045,
+            now=now1,
+            invocation_id_provider=_const_str("inv-flood-1"),
+            market_open=True,
+        )
+        assert len(activity_log.entries) == 1
+        assert states["pos-flood"].last_refreshed_at == now1
+        assert states["pos-flood"].underlying_price_at_last_refresh == 200.0
+
+        # Cycle 2: 30 seconds later — well under the 15-minute interval, no
+        # underlying move. Position is NOT due; no new failure entry.
+        now2 = now1 + timedelta(seconds=30)
+        await _run_refresh_cycle(
+            config=config,
+            repository=FakeRepository((position,)),
+            cache=cache,
+            states=states,
+            iv_fetch=iv_provider.fetch,
+            writer=writer,
+            activity_log=activity_log.emit,
+            risk_free_rate=0.045,
+            now=now2,
+            invocation_id_provider=_const_str("inv-flood-2"),
+            market_open=True,
+        )
+        assert len(activity_log.entries) == 1, (
+            "second cycle re-fired a GREEKS_REFRESH_FAILED entry — anchor was not bumped"
+        )
+
 
 class TestOffHours:
     async def test_market_closed_yields_no_writes_and_no_emissions(self) -> None:
