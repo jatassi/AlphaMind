@@ -105,12 +105,13 @@ def test_main_rejects_unknown_subcommand(
         monitor_main(["bogus"])
 
 
-def test_main_registers_underlying_stream_task(
+def test_main_registers_wave_2_tasks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     _silent_logger: None,
 ) -> None:
-    """Story 02b — the daemon wires ``underlying_stream`` onto the supervisor.
+    """Wave-2 (02b + 02c) — the daemon wires both ``underlying_stream`` and
+    ``fill_stream_consumer`` onto the supervisor.
 
     The patch on ``MonitorSupervisor.run`` captures ``self`` so we can read
     the registered task names without driving the asyncio loop.
@@ -120,10 +121,10 @@ def test_main_registers_underlying_stream_task(
     monkeypatch.setenv("ALPACA_PAPER_KEY", "test-key")
     monkeypatch.setenv("ALPACA_PAPER_SECRET", "test-secret")
 
-    captured: dict[str, tuple[str, ...]] = {}
+    captured: dict[str, object] = {}
 
     async def _no_op_run(self: object) -> None:
-        captured["task_names"] = self.task_names()  # type: ignore[attr-defined]
+        captured["supervisor"] = self
 
     with mock.patch(
         "alphamind.execution.continuous_monitor.__main__.MonitorSupervisor.run",
@@ -131,7 +132,12 @@ def test_main_registers_underlying_stream_task(
     ):
         monitor_main(["run", "--mode", "paper"])
 
-    task_names = captured.get("task_names", ())
+    supervisor = captured.get("supervisor")
+    assert supervisor is not None
+    task_names = supervisor.task_names()  # type: ignore[attr-defined]
     assert "underlying_stream" in task_names, (
         f"underlying_stream not registered; got {task_names!r}"
+    )
+    assert "fill_stream_consumer" in task_names, (
+        f"fill_stream_consumer not registered; got {task_names!r}"
     )
