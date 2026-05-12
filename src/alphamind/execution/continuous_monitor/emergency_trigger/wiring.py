@@ -30,6 +30,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.config.models.guardrails import BreachResponse
 from alphamind.execution.continuous_monitor.breach_loop.result import BreachLoopResult
+from alphamind.execution.continuous_monitor.cascade_dispatch.trigger_ids import (
+    TriggerIdGenerator,
+)
 from alphamind.execution.continuous_monitor.emergency_trigger.cooldown import (
     CooldownTracker,
 )
@@ -38,7 +41,6 @@ from alphamind.execution.continuous_monitor.emergency_trigger.evaluator import (
     EmergencyTriggerEvaluator,
     MarginCallObserver,
     NoMarginCallObserver,
-    TriggerIdGenerator,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
@@ -117,14 +119,14 @@ def make_emergency_callback(
     coroutine the breach loop awaits.
 
     ``trigger_ids`` is optional; when omitted, a fresh generator scoped
-    to the monitor session is created. The cascade dispatcher (story 04a)
-    is expected to share the same instance via the wiring path that
-    follows; until then each callback gets its own generator and the
-    sequences are session-local but not cross-task.
+    to the monitor session is created. The daemon's ``_register_breach_loop``
+    threads the shared cascade-dispatch :class:`TriggerIdGenerator` so the
+    emergency callback and the cascade dispatcher mint trigger ids from one
+    monotonic sequence within a session.
 
-    ``margin_call_observer`` defaults to :class:`NoMarginCallObserver`
-    until the broker adapter exposes a live margin-call surface
-    (story 04b's "margin-call event sourcing" scope item).
+    ``margin_call_observer`` defaults to :class:`NoMarginCallObserver` for
+    tests; production wires :class:`AlpacaMarginCallObserver` so the
+    broker's ``GET /v2/account`` surface drives the margin-call trigger.
     """
     writer = make_emergency_invocation_writer(session_factory)
     cooldown = CooldownTracker(
@@ -134,7 +136,7 @@ def make_emergency_callback(
         session=session,
         breach_behavior_config=breach_behavior_config,
         cooldown=cooldown,
-        trigger_ids=trigger_ids or TriggerIdGenerator(monitor_session_id=session.session_id),
+        trigger_ids=trigger_ids or TriggerIdGenerator(session_id=session.session_id),
         margin_call_observer=margin_call_observer or NoMarginCallObserver(),
         activity_log_writer=writer,
         breach_response_lookup=breach_response_lookup,

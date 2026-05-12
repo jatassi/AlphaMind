@@ -23,13 +23,15 @@ from alphamind.execution.continuous_monitor.breach_loop.result import (
     BreachLoopResult,
     RuleEvaluation,
 )
+from alphamind.execution.continuous_monitor.cascade_dispatch.trigger_ids import (
+    TriggerIdGenerator,
+)
 from alphamind.execution.continuous_monitor.emergency_trigger.cooldown import (
     CooldownTracker,
 )
 from alphamind.execution.continuous_monitor.emergency_trigger.evaluator import (
     EmergencyTriggerEvaluator,
     MarginCallObserver,
-    TriggerIdGenerator,
 )
 from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.execution.guardrail_enforcement import Phase1EnforcementResult
@@ -222,7 +224,7 @@ def _make_evaluator(
         session=_session(),
         breach_behavior_config=cfg,
         cooldown=cooldown,
-        trigger_ids=trigger_ids or TriggerIdGenerator(monitor_session_id=_session().session_id),
+        trigger_ids=trigger_ids or TriggerIdGenerator(session_id=_session().session_id),
         margin_call_observer=observer,
         activity_log_writer=log,
         breach_response_lookup=rule_lookup,
@@ -502,7 +504,7 @@ async def test_determinism_two_identical_runs_produce_identical_decisions() -> N
 async def test_trigger_id_appears_in_entry_id() -> None:
     """Entries carry a session-scoped trigger ID via ``TriggerIdGenerator``."""
     session = _session()
-    gen = TriggerIdGenerator(monitor_session_id=session.session_id)
+    gen = TriggerIdGenerator(session_id=session.session_id)
     evaluator, log = _make_evaluator(trigger_ids=gen)
     t0 = _now()
     await evaluator.handle_emergency_input(_result(as_of=t0, regime_label=RegimeLabel.NORMAL))
@@ -542,7 +544,7 @@ async def test_trigger_id_generator_monotonic_across_two_emits() -> None:
 
 def test_trigger_id_generator_shape() -> None:
     """The generator returns monotonic integer-suffixed IDs scoped by session."""
-    gen = TriggerIdGenerator(monitor_session_id="mon-20260511T143000Z-abcdef01")
+    gen = TriggerIdGenerator(session_id="mon-20260511T143000Z-abcdef01")
     first = gen.next()
     second = gen.next()
     assert second > first

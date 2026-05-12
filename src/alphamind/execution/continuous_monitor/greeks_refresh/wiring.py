@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -289,47 +288,6 @@ def make_invocation_id_provider(
     return _provider
 
 
-def make_market_open_predicate() -> MarketOpenPredicate:
-    """Return a callable that returns ``True`` during the US regular session.
-
-    Per ``docs/design/05-execution-layer/architecture.md`` § 4d, the refresh
-    task pauses outside market hours. Story 03a ships a lightweight ET-clock
-    predicate (9:30-16:00 ET weekdays) rather than the full
-    ``TradingCalendarCache`` because:
-
-    * The cache requires an ``AccountStateQueries`` instance, which pulls
-      Alpaca's ``/v2/calendar`` — coupling the refresh task to broker
-      connectivity for what is fundamentally a clock decision.
-    * On a US market holiday (e.g., NYSE closed), the predicate returns
-      ``True`` but the refresh attempts fail safely: the
-      ``options_contract_snapshots`` table has no new rows that day, so
-      every position routes through the ``iv_fetch_no_row`` failure path,
-      preserves prior greeks, and emits a routine activity-log entry.
-
-    Future iteration can swap this for the cache-backed predicate when the
-    monitor lifecycle owns its own ``AccountStateQueries`` reference;
-    story 03a stays narrowly scoped.
-    """
-    from zoneinfo import ZoneInfo
-
-    et = ZoneInfo("America/New_York")
-    open_time = (9, 30)
-    close_time = (16, 0)
-
-    def _open(at: datetime) -> bool:
-        if at.tzinfo is None:
-            return False
-        local = at.astimezone(et)
-        if local.weekday() >= 5:  # Saturday=5, Sunday=6
-            return False
-        minutes = local.hour * 60 + local.minute
-        open_min = open_time[0] * 60 + open_time[1]
-        close_min = close_time[0] * 60 + close_time[1]
-        return open_min <= minutes < close_min
-
-    return _open
-
-
 # ---------------------------------------------------------------------------
 # Activity-log emitter — opens a fresh session per emit and commits
 # ---------------------------------------------------------------------------
@@ -367,6 +325,7 @@ def register_greeks_refresh_task(
     repository: OpenPositionsReader,
     cache: UnderlyingPriceCache,
     session_factory: async_sessionmaker[AsyncSession],
+    market_open: MarketOpenPredicate,
 ) -> None:
     """Register the ``greeks_refresh`` task on *supervisor*.
 
@@ -374,13 +333,15 @@ def register_greeks_refresh_task(
     run-forever entry point consumes. The cache is shared with the
     underlying-stream task (story 02b) so spots flow lock-free; the
     session_factory is shared with the fill-stream consumer (story 02c)
-    and the future breach loop / cascade dispatcher.
+    and the breach loop / cascade dispatcher. ``market_open`` is the
+    monitor-process-wide :class:`TradingCalendarCache`'s ``is_market_open``
+    so the refresh task and the breach loop pause on the same calendar
+    (per ALP-453's market-hours consolidation).
     """
     writer = SqlGreeksWriter(session_factory)
     iv_fetch = make_iv_fetcher(session_factory)
     risk_free_rate_provider = make_risk_free_rate_provider(session_factory)
     invocation_id_provider = make_invocation_id_provider(session_factory)
-    market_open = make_market_open_predicate()
     activity_log = make_activity_log_emitter(session_factory)
 
     async def _coro(session: MonitorSession, config: ContinuousMonitorConfig) -> None:
@@ -405,7 +366,6 @@ __all__ = [
     "make_activity_log_emitter",
     "make_invocation_id_provider",
     "make_iv_fetcher",
-    "make_market_open_predicate",
     "make_risk_free_rate_provider",
     "register_greeks_refresh_task",
 ]

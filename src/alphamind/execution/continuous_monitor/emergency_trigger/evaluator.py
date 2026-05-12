@@ -30,6 +30,9 @@ from alphamind.execution.continuous_monitor.breach_loop.result import (
     BreachLoopResult,
     RuleEvaluation,
 )
+from alphamind.execution.continuous_monitor.cascade_dispatch.trigger_ids import (
+    TriggerIdGenerator,
+)
 from alphamind.execution.continuous_monitor.emergency_trigger.cooldown import (
     CooldownTracker,
 )
@@ -106,30 +109,6 @@ class ActivityLogWriter(Protocol):
     """
 
     async def __call__(self, entry: ActivityLogEntry) -> None: ...
-
-
-class TriggerIdGenerator:
-    """Monotonic per-session trigger-ID sequence.
-
-    Trigger IDs are integers shared across the cascade dispatcher (story
-    04a) and the emergency-invocation trigger (this story) so envelope and
-    emergency-request IDs do not collide within one monitor session. The
-    generator is pure in-memory; restarts reset the sequence (which is
-    fine because the engine-envelope ID pattern includes the session ID).
-    """
-
-    def __init__(self, *, monitor_session_id: str) -> None:
-        self._session_id = monitor_session_id
-        self._n = 0
-
-    @property
-    def monitor_session_id(self) -> str:
-        return self._session_id
-
-    def next(self) -> int:
-        """Return the next monotonic trigger ID for this session."""
-        self._n += 1
-        return self._n
 
 
 def _max_lookback_minutes(config: BreachBehaviorConfig) -> int:
@@ -423,5 +402,4 @@ __all__ = [
     "EmergencyTriggerEvaluator",
     "MarginCallObserver",
     "NoMarginCallObserver",
-    "TriggerIdGenerator",
 ]
