@@ -1,0 +1,32 @@
+# Continuous-monitor process tunables. Class A per the configuration-management
+# taxonomy — operator-tuned, validated at load. See
+# docs/design/05-execution-layer/continuous-monitor-runtime.md for the process
+# shape these knobs configure and parent issue ALP-123 § Pre-resolved
+# decision (E) for the source of the named defaults.
+
+# Cadence at which the breach-evaluation loop (story 03b) wakes and walks the
+# active rule set.
+breach_evaluation_cadence_seconds: 60
+
+# Scheduled cadence for the greeks-refresh task (story 03a); move-based triggers
+# are gated by the threshold below.
+greeks_refresh_interval_minutes: 15
+
+# Underlying move (percent, cumulative from the last refresh) that forces an
+# out-of-cadence greeks recompute. Decision (C): measured against the live
+# stream the monitor already consumes — no extra subscription.
+greeks_refresh_underlying_move_threshold_pct: 2.0
+
+# Live underlying-price stream provider. Single-value Literal today; decision (B)
+# pins Alpaca StockDataStream / IEX after the 2026-05-10 paper-account smoke
+# test. Story 02b's vendor surface lives here.
+underlying_stream_provider: alpaca-iex
+
+# Websocket reconnect ceiling per session (story 02b / 02c). Once exhausted the
+# supervisor's task raises and NSSM's restart policy kicks in.
+max_reconnect_attempts: 5
+
+# Per-task cancellation budget the asyncio supervisor enforces at shutdown.
+# Stops a task that swallows CancelledError from stalling the process so NSSM
+# can restart promptly. Defaulted at 5s per ALP-432 scope section 7.
+supervisor_shutdown_timeout_seconds: 5

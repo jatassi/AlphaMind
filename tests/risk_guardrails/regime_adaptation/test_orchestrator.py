@@ -34,6 +34,7 @@ from alphamind.config.loaders import (
 )
 from alphamind.config.models.agents import AgentsConfig
 from alphamind.config.models.assets import AssetsConfig
+from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.digest import DigestConfig
 from alphamind.config.models.execution import ExecutionConfig
 from alphamind.config.models.guardrails import GuardrailsConfig
@@ -156,6 +157,9 @@ def loaded_config_session_scoped() -> LoadedConfig:
         digest=DigestConfig.model_validate(_read_yaml("digest.yaml")),
         assets=AssetsConfig.model_validate(_read_yaml("assets.yaml")),
         agents=AgentsConfig.model_validate(_read_yaml("agents.yaml")),
+        continuous_monitor=ContinuousMonitorConfig.model_validate(
+            _read_yaml("continuous_monitor.yaml")
+        ),
         profiles=load_profiles(CONFIG_DIR),
         regimes=load_regimes(CONFIG_DIR),
         modes=load_modes(CONFIG_DIR),

@@ -50,7 +50,7 @@ Each pipeline invocation has two phases:
 
 ## 4. Continuous monitor
 
-A first-class system component running persistently during market hours — peer of the OMS, adapter, and guardrail layer. Five responsibilities span both paper and live trading.
+A first-class system component running persistently during market hours — peer of the OMS, adapter, and guardrail layer. Five responsibilities span both paper and live trading. The process-supervision shape (NSSM service layout, asyncio runtime, log file, configuration surface) lives in the paired runtime doc [continuous-monitor-runtime.md](continuous-monitor-runtime.md); this section covers the per-responsibility behavior.
 
 ### 4a. Alpaca fill-stream consumption
 

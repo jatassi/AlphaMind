@@ -23,6 +23,7 @@ from alphamind.config.loaders import (
 from alphamind.config.models import (
     AgentsConfig,
     AssetsConfig,
+    ContinuousMonitorConfig,
     DigestConfig,
     ExecutionConfig,
     GuardrailsConfig,
@@ -66,6 +67,7 @@ _LLM_FAILURE = LLMFailureConfig.model_validate(_read("llm_failure.yaml"))
 _DIGEST = DigestConfig.model_validate(_read("digest.yaml"))
 _ASSETS = AssetsConfig.model_validate(_read("assets.yaml"))
 _AGENTS = AgentsConfig.model_validate(_read("agents.yaml"))
+_CONTINUOUS_MONITOR = ContinuousMonitorConfig.model_validate(_read("continuous_monitor.yaml"))
 _PROFILES = load_profiles(CONFIG_DIR)
 _RAW_REGIMES = load_regimes(CONFIG_DIR)
 _MODES = load_modes(CONFIG_DIR)
@@ -105,6 +107,7 @@ def _fixture_resolved() -> ResolvedConfig:
         digest=_DIGEST,
         assets=_ASSETS,
         agents=_AGENTS,
+        continuous_monitor=_CONTINUOUS_MONITOR,
         profiles=dict(_PROFILES),
         regimes=dict(_REGIMES),
         modes=dict(_MODES),
@@ -155,7 +158,7 @@ def test_pinned_fixture_hash_matches_known_value() -> None:
     """
     resolved = _fixture_resolved()
     digest = compute_snapshot_hash(serialize_resolved_config(resolved))
-    expected = "72429c87a075ff9f3970e6eebf3af151b7206273d3f5a477772052dba07299a2"
+    expected = "1bff8b27467f661d07d57aafbfb77156b663daf58c38454b2615e3133b706b8b"
     assert digest == expected, (
         f"Snapshot hash drift detected. Got {digest}; expected {expected}. "
         f"If the inputs intentionally changed, update the pinned value."

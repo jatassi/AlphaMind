@@ -25,6 +25,7 @@ from alphamind.config.models import (
     AgentsConfig,
     AssetsConfig,
     BreachResponse,
+    ContinuousMonitorConfig,
     DigestConfig,
     EnforcementTier,
     ExecutionConfig,
@@ -82,6 +83,9 @@ def _resolved_for_profile(profile: Profile) -> ResolvedConfig:
         digest=DigestConfig.model_validate(_read_yaml("digest.yaml")),
         assets=AssetsConfig.model_validate(_read_yaml("assets.yaml")),
         agents=AgentsConfig.model_validate(_read_yaml("agents.yaml")),
+        continuous_monitor=ContinuousMonitorConfig.model_validate(
+            _read_yaml("continuous_monitor.yaml")
+        ),
         profiles=dict(load_profiles(CONFIG_DIR)),
         regimes=dict(load_regimes(CONFIG_DIR)),
         modes=dict(load_modes(CONFIG_DIR)),

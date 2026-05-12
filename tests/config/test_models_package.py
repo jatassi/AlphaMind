@@ -25,6 +25,7 @@ _EXPECTED_PUBLIC_NAMES = {
     "CollectorEntry",
     "CollectorScheduleConfig",
     "CommandType",
+    "ContinuousMonitorConfig",
     "CredibilityTier",
     "CriticalityTier",
     "CrossReferenceError",
