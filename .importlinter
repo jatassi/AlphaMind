@@ -1,0 +1,121 @@
+[importlinter]
+root_package = alphamind
+include_external_packages = True
+
+# ---------------------------------------------------------------------------
+# Lenient import-linter scaffolding (ALP-455).
+#
+# The contracts below encode layer rules that *already hold* against the
+# codebase at the time of authoring. Story ALP-459 ("Tighten import-linter")
+# extends this scaffolding once the cycle-fix stories (ALP-456: _kernel
+# extraction, ALP-457: commands/ kernel + decision <-> execution split,
+# ALP-458: punch-list items 2 and 4) have eliminated the upward imports.
+#
+# Layer-ordering convention (per the import-linter ``layers`` contract):
+# layers are listed from highest to lowest. Higher layers may import lower
+# layers; lower may not import higher. A literal ``A : B`` in a layer entry
+# means A and B are non-independent siblings — they may import each other.
+#
+# The story-specified target layering — boundaries (config/persistence/
+# data_sources) above the numerical core (distillation) above the LLM
+# tier (analysis/decision) above the egress tier (execution) — has 192
+# upward-import edges today, none of them gratuitous. Encoding it now
+# under ``ignore_imports`` would convert a structural goal into a
+# kept-in-sync exception list; ALP-459 introduces it as the codebase
+# converges on it.
+# ---------------------------------------------------------------------------
+
+# Composition-root rule: only the orchestration entry points (``scheduler``
+# and ``pipeline``) may consume the rest of the domain. The domain packages
+# below them must not reach upward into composition.
+[importlinter:contract:composition-root-layering]
+name = Composition roots (scheduler, pipeline) sit above the domain
+type = layers
+layers =
+    alphamind.scheduler
+    alphamind.pipeline
+    alphamind.analysis : alphamind.collector : alphamind.command_center : alphamind.config : alphamind.data_sources : alphamind.decision : alphamind.distillation : alphamind.execution : alphamind.feedback_loop : alphamind.persistence : alphamind.portfolio_state : alphamind.risk_guardrails
+
+# Forbidden contract: ``alphamind.distillation.*`` must not import sqlalchemy.
+# Per audit finding L6, distillation is supposed to be a pure compute core
+# but threads SQLAlchemy ``Session`` calls into the assembly path. Every
+# entry in ``ignore_imports`` below is eliminated by the same punch-list
+# item:
+#
+#     Punch-list #9 — Split distillation compute/load boundary
+#     (Finding L6). For each ``q*/assemble.py``: create ``q*/loaders.py``
+#     (DB shell) and ``q*/compute.py`` (pure core). Once the loaders own
+#     all session reads, the compute modules drop sqlalchemy entirely.
+#
+# When that punch-list item lands, the corresponding entry is removed
+# and the contract tightens automatically. Two indirect violations
+# (q7.correlation_regime_change -> data_sources._common -> sqlalchemy, and
+# replay_harness.engine -> persistence.models -> sqlalchemy) are also
+# present and would be cleared by punch-list #22 (split data_sources/_common)
+# and the same #9 split respectively.
+[importlinter:contract:distillation-no-sqlalchemy]
+name = Distillation compute core has no sqlalchemy imports
+type = forbidden
+source_modules =
+    alphamind.distillation
+forbidden_modules =
+    sqlalchemy
+ignore_imports =
+    # Punch-list #9: each direct sqlalchemy import disappears when the
+    # corresponding assemble.py splits into loaders.py (keeps sqlalchemy)
+    # and compute.py (loses sqlalchemy). Until then, record the violation.
+    alphamind.distillation.baselines -> sqlalchemy
+    alphamind.distillation.calibration -> sqlalchemy
+    alphamind.distillation.contract_scope -> sqlalchemy
+    alphamind.distillation.orchestrator -> sqlalchemy
+    alphamind.distillation.q12_corporate_actions -> sqlalchemy
+    alphamind.distillation.q1.assemble -> sqlalchemy
+    alphamind.distillation.q1.gap -> sqlalchemy
+    alphamind.distillation.q3.anomalies -> sqlalchemy
+    alphamind.distillation.q3.assemble -> sqlalchemy
+    alphamind.distillation.q3.atm_iv_baseline -> sqlalchemy
+    alphamind.distillation.q3.flow_classification -> sqlalchemy
+    alphamind.distillation.q6_macro -> sqlalchemy
+    alphamind.distillation.q7._helpers -> sqlalchemy
+    alphamind.distillation.q7.assemble -> sqlalchemy
+    alphamind.distillation.q7.breadth_internals -> sqlalchemy
+    alphamind.distillation.q7.correlation_regime_change -> sqlalchemy
+    alphamind.distillation.q7.cross_sector_rotation -> sqlalchemy
+    alphamind.distillation.q7.intermarket_regime -> sqlalchemy
+    alphamind.distillation.q7.intra_sector_correlation -> sqlalchemy
+    alphamind.distillation.q7.lead_lag -> sqlalchemy
+    alphamind.distillation.qualitative_derived -> sqlalchemy
+    alphamind.distillation.regime -> sqlalchemy
+    alphamind.distillation.replay_harness.engine -> sqlalchemy
+    alphamind.distillation.sector_assembly -> sqlalchemy
+    # Indirect via data_sources._common (punch-list #22 — split
+    # data_sources/_common into focused modules; the shared HTTP/retry
+    # primitives the q7 module wants will live in _common/retry.py and
+    # _common/rate_limit.py, neither of which imports sqlalchemy).
+    alphamind.distillation.q7.correlation_regime_change -> alphamind.data_sources._common
+    # Indirect via persistence.models (also retired by punch-list #9: once
+    # the distillation modules consume a loaders/repository protocol
+    # instead of importing ORM declarative classes directly, the indirect
+    # path to sqlalchemy via persistence.models disappears).
+    alphamind.distillation.baselines -> alphamind.persistence.models
+    alphamind.distillation.calibration -> alphamind.persistence.models
+    alphamind.distillation.contract_scope -> alphamind.persistence.models
+    alphamind.distillation.orchestrator -> alphamind.persistence.models
+    alphamind.distillation.q12_corporate_actions -> alphamind.persistence.models
+    alphamind.distillation.q1.assemble -> alphamind.persistence.models
+    alphamind.distillation.q1.gap -> alphamind.persistence.models
+    alphamind.distillation.q3.anomalies -> alphamind.persistence.models
+    alphamind.distillation.q3.assemble -> alphamind.persistence.models
+    alphamind.distillation.q3.atm_iv_baseline -> alphamind.persistence.models
+    alphamind.distillation.q3.flow_classification -> alphamind.persistence.models
+    alphamind.distillation.q6_macro -> alphamind.persistence.models
+    alphamind.distillation.q7._helpers -> alphamind.persistence.models
+    alphamind.distillation.q7.assemble -> alphamind.persistence.models
+    alphamind.distillation.q7.correlation_regime_change -> alphamind.persistence.models
+    alphamind.distillation.q7.intermarket_regime -> alphamind.persistence.models
+    alphamind.distillation.q7.intra_sector_correlation -> alphamind.persistence.models
+    alphamind.distillation.q7.lead_lag -> alphamind.persistence.models
+    alphamind.distillation.qualitative_derived -> alphamind.persistence.models
+    alphamind.distillation.regime -> alphamind.persistence.models
+    alphamind.distillation.replay_harness.engine -> alphamind.persistence.models
+    alphamind.distillation.sector_assembly -> alphamind.persistence.models

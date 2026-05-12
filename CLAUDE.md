@@ -8,9 +8,12 @@ Run the linter after every batch of changes:
 uv run ruff check .
 uv run ruff format .
 uv run mypy
+uv run lint-imports
 ```
 
-Alert the user before disabling the linter or any rule in any form — including `ignore`, `per-file-ignores`, `# noqa`, and `# type: ignore`. If a subagent suppresses the linter, do not pause execution to alert user. Instead, assess whether each suppression was warranted and fix unwarranted suppressions.
+`lint-imports` (import-linter) enforces the architectural layer rules declared in `.importlinter`. Contracts will tighten as the architecture-refactoring work tree (ALP-454) lands; until then, each `ignore_imports` entry carries a comment naming the punch-list item that will retire it.
+
+Alert the user before disabling the linter or any rule in any form — including `ignore`, `per-file-ignores`, `# noqa`, `# type: ignore`, and `ignore_imports`. If a subagent suppresses the linter, do not pause execution to alert user. Instead, assess whether each suppression was warranted and fix unwarranted suppressions.
 
 ## Testing
 
