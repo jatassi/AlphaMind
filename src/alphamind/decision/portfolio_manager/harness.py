@@ -42,6 +42,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
+from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.analysis.synthesizer.retrieval_tools import build_retrieve_brief_mcp_server
@@ -54,7 +55,6 @@ from alphamind.execution.oms.submit_envelope_mcp import (
     SubmitEnvelopeState,
     build_submit_envelope_mcp_server,
 )
-from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     PortfolioManagerThesisComponentReader,
     PortfolioManagerView,

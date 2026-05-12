@@ -39,7 +39,7 @@ from alphamind.config.models.distillation import (
 )
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience, OutputBlock, format_block
-from alphamind.distillation.q7_cross_asset import (
+from alphamind.distillation.q7 import (
     assemble_q7_blocks,
     compute_pair_correlations,
 )

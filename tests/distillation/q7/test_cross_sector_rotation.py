@@ -16,7 +16,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.output import OutputAudience
-from alphamind.distillation.q7_cross_asset import compute_cross_sector_rotation
+from alphamind.distillation.q7 import compute_cross_sector_rotation
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,

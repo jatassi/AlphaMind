@@ -46,13 +46,13 @@ from sqlalchemy import Connection, inspect
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alphamind.config.models.main import ExecutionMode
-from alphamind.config.models.run_types import RunType
-from alphamind.config.models.venue import VenueConfig
-from alphamind.execution.state_persistence.invocation_paths import (
+from alphamind._kernel.invocations import (
     INVOCATIONS_DIRNAME,
     RESOLVED_CONFIG_FILENAME,
 )
+from alphamind.config.models.main import ExecutionMode
+from alphamind.config.models.run_types import RunType
+from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.state_persistence.process_lifetime import (
     record_process_lifetime,
 )

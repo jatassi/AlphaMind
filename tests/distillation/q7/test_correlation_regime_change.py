@@ -17,7 +17,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.output import OutputAudience
-from alphamind.distillation.q7_cross_asset import (
+from alphamind.distillation.q7 import (
     NARRATIVE_LAG_REGIME_TAGS,
     CorrelationRegimeChangeConfig,
     compute_correlation_regime_change,

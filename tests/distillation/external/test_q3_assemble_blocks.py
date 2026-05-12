@@ -30,7 +30,7 @@ from alphamind.config.models.distillation import (
     RegimeTransition,
 )
 from alphamind.distillation.output import OutputAudience, OutputBlock
-from alphamind.distillation.q3_options import assemble_q3_blocks
+from alphamind.distillation.q3 import assemble_q3_blocks
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,

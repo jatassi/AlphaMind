@@ -33,6 +33,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
 from alphamind.analysis.adaptive_research.models import AdaptiveBrief
 from alphamind.analysis.domain_researchers.models import SectorBrief
 from alphamind.analysis.qualitative_research.models import QualitativeBrief
@@ -46,7 +47,6 @@ from alphamind.distillation.output import (
     OutputBlock,
 )
 from alphamind.distillation.sector_assembly import SectorOutput
-from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 
 __all__ = [
     "ADAPTIVE_BRIEF_FILENAME",

@@ -31,10 +31,10 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
+from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.portfolio_tools import build_portfolio_state_mcp_server
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
-from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 from alphamind.portfolio_state.consumers.synthesizer import SynthesizerPortfolioStateReader
 
 __all__ = [

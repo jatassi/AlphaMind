@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.output import OutputAudience
-from alphamind.distillation.q7_cross_asset import (
+from alphamind.distillation.q7 import (
     LeadLagPair,
     compute_lead_lag,
 )

@@ -20,6 +20,7 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from alphamind.analysis.news_clustering.clustering import refresh_news_clusters
 from alphamind.data_sources._common import default_session_factory
 from alphamind.data_sources.bls.macro import collect_series as bls_macro_collect_series
 from alphamind.data_sources.eia.energy import collect_series as eia_energy_collect_series
@@ -42,7 +43,6 @@ from alphamind.data_sources.iborrowdesk.borrow_cost import (
     collect_borrow_cost as iborrowdesk_collect_borrow_cost,
 )
 from alphamind.data_sources.marketaux.news import collect_news as marketaux_news_collect_news
-from alphamind.data_sources.news.clustering import refresh_news_clusters
 from alphamind.data_sources.polygon.corporate_actions import collect_corporate_actions
 from alphamind.data_sources.polygon.equity import collect_universe_bars
 from alphamind.data_sources.polygon.options import collect_options_chains

@@ -30,6 +30,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
+from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
 from alphamind.decision.analyst.harness import (
@@ -46,7 +47,6 @@ from alphamind.decision.analyst.validation import (
     ValidationResult,
     validate_analyst_output,
 )
-from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 from alphamind.portfolio_state.consumers.analyst import (
     AnalystAvailableCapital,
     AnalystView,

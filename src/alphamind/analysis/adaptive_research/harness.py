@@ -37,6 +37,7 @@ from typing import Any, cast
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
 from alphamind.analysis._schema_tightening import _tighten_conditional_schema
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.adaptive_research.models import (
@@ -55,7 +56,6 @@ from alphamind.analysis.tools import TOOLS
 from alphamind.analysis.tools._sdk_adapter import build_analysis_mcp_server
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
 from alphamind.distillation.correlation_brief import CorrelationRegimeBrief
-from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 
 __all__ = [
     "ContextOverflowFailure",

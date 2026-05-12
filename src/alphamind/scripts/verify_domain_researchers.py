@@ -43,6 +43,7 @@ from typing import Any
 import yaml
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
 from alphamind.analysis._shared import Sector
 from alphamind.analysis.domain_researchers.orchestrator import (
     DomainResearchersOutput,
@@ -56,7 +57,6 @@ from alphamind.distillation.orchestrator import (
     _default_archive_root,
     run_external_distillation,
 )
-from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.scripts._artifact_io import (
     dump_sector_briefs,

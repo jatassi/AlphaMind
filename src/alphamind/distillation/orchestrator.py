@@ -75,9 +75,9 @@ from alphamind.distillation.output import (
     format_block,
 )
 from alphamind.distillation.q1 import assemble_q1_blocks
-from alphamind.distillation.q3_options import assemble_q3_blocks
+from alphamind.distillation.q3 import assemble_q3_blocks
 from alphamind.distillation.q6_macro import compute_q6_blocks
-from alphamind.distillation.q7_cross_asset import (
+from alphamind.distillation.q7 import (
     assemble_q7_blocks,
     compute_pair_correlations,
 )

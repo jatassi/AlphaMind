@@ -27,11 +27,11 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from alphamind.config.resolver import ResolvedConfig
-from alphamind.execution.state_persistence.invocation_paths import (
+from alphamind._kernel.invocations import (
     INVOCATIONS_DIRNAME,
     RESOLVED_CONFIG_FILENAME,
 )
+from alphamind.config.resolver import ResolvedConfig
 
 
 @dataclass(frozen=True, slots=True)

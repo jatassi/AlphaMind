@@ -21,7 +21,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from alphamind.execution.state_persistence.invocation_paths import (
+from alphamind._kernel.invocations import (
     CALIBRATION_SNAPSHOT_FILENAME,
     INVOCATIONS_DIRNAME,
     RESOLVED_CONFIG_FILENAME,

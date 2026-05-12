@@ -14,7 +14,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from alphamind.distillation.output import OutputAudience
-from alphamind.distillation.q7_cross_asset import compute_breadth_internals
+from alphamind.distillation.q7 import compute_breadth_internals
 from alphamind.persistence.models import (
     AssetUniverse,
     Base,

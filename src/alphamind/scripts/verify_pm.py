@@ -32,6 +32,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
+from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AgentName
 from alphamind.decision.portfolio_manager.harness import HarnessFailure, SDKFailure
@@ -41,7 +42,6 @@ from alphamind.decision.portfolio_manager.runner import (
     run_portfolio_manager,
 )
 from alphamind.decision.proposal_pre_processor.models import ProposalPreProcessorBundle
-from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     PortfolioManagerThesisComponentReader,
     PortfolioManagerView,

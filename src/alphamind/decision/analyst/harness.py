@@ -30,6 +30,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
+from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.analysis.synthesizer.retrieval_tools import build_retrieve_brief_mcp_server
@@ -40,7 +41,6 @@ from alphamind.decision.analyst.validation import (
     ValidationResult,
     validate_analyst_output,
 )
-from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationToolState
 from alphamind.risk_guardrails.state_delivery.validation_tool_mcp import (
     build_validate_guardrail_mcp_server,

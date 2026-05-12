@@ -28,6 +28,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
+from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
 from alphamind.analysis._shared import Sector, TokensUsed
 from alphamind.analysis.domain_researchers.models import SectorBrief
 from alphamind.analysis.domain_researchers.parser import ParseError, parse_brief
@@ -36,7 +37,6 @@ from alphamind.analysis.domain_researchers.validation import (
     validate_brief,
 )
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
-from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 
 __all__ = [
     "ContextOverflowFailure",
