@@ -174,7 +174,7 @@ class ValidationResult(BaseModel):
     sourced from the IV surface (or realized-vol fallback) per
     ``iv_sourcing.py``. ``None`` for equity proposals (no IV needed) and for
     ADJUST/CANCEL/disabled-feature early-exits where greeks are zero/None.
-    Plumbed through to :class:`alphamind.execution.oms.submit_envelope_mcp`
+    Plumbed through to :class:`alphamind.decision.portfolio_manager.submit_envelope`
     ``Acknowledgment.validation_metadata.implied_volatility`` and on to
     persisted ``OptionGreeks.iv_used`` (ALP-399).
     """

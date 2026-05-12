@@ -31,11 +31,14 @@ import re
 import typing
 from collections.abc import Callable, Iterable
 
-from pydantic import BaseModel
-
 from alphamind.analysis.synthesizer.models import parse_reference_id
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
-from alphamind.decision.portfolio_manager.models import (
+from alphamind.commands.command_models import (
+    EquityInstrument,
+    OptionInstrument,
+    StrategyInstrument,
+)
+from alphamind.commands.pm_envelope import (
     AddCommand,
     AntiPattern,
     CloseCommand,
@@ -45,12 +48,12 @@ from alphamind.decision.portfolio_manager.models import (
     PositionActionEvaluation,
     ThesisQualityEvaluation,
 )
-from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
-from alphamind.execution.oms.command_models import (
-    EquityInstrument,
-    OptionInstrument,
-    StrategyInstrument,
+from alphamind.commands.validation_results import (
+    ValidationError,
+    ValidationResult,
+    ValidationWarning,
 )
+from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 
 __all__ = [
@@ -61,38 +64,11 @@ __all__ = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Public types — mirror analyst's shape
-# ---------------------------------------------------------------------------
-
-
-class ValidationError(BaseModel, frozen=True):
-    """A single Layer-2/3 violation found in a :class:`PMEnvelope`."""
-
-    field_path: str
-    message: str
-    criterion: str | None = None
-
-
-class ValidationWarning(BaseModel, frozen=True):
-    """A soft Layer-2 violation that does not disqualify the envelope."""
-
-    field_path: str
-    message: str
-    criterion: str | None = None
-
-
-class ValidationResult(BaseModel, frozen=True):
-    """Aggregate outcome of running :func:`validate_pm_envelope`."""
-
-    envelope_id: str
-    errors: tuple[ValidationError, ...]
-    warnings: tuple[ValidationWarning, ...]
-
-    @property
-    def is_valid(self) -> bool:
-        """``True`` iff ``errors`` is empty. Warnings never disqualify."""
-        return len(self.errors) == 0
+# ValidationError / ValidationResult / ValidationWarning are re-exported from
+# :mod:`alphamind.commands.validation_results` per ALP-458 — they ride from
+# this validator into the execution-side Phase 2 write path's rejection
+# persistence, so the wire shape lives in the commands kernel where both
+# decision and execution can import without re-introducing the cycle.
 
 
 # ---------------------------------------------------------------------------

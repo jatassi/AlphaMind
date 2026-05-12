@@ -5,22 +5,23 @@ specified in :doc:`docs/design/oms-command-ids.md`. Two derivation functions
 (PM-originated / engine-originated), a helper that counts post-rejection
 modifications on a :class:`PMEnvelope`, and inverse parsers.
 
-The module is the canonical home for this logic. Story 03 (engine-stub
-upgrade) swaps the inline ``_format_command_id`` in
-:mod:`alphamind.execution.oms.submit_envelope_mcp` for
+The module is the canonical home for this logic. The engine-stub
+(:mod:`alphamind.decision.portfolio_manager.submit_envelope`) calls
 :func:`derive_pm_command_id`; the continuous-monitor work tree consumes
 :func:`derive_engine_command_id` when emitting envelopes.
+
+After ALP-458 the :class:`PMEnvelope` type lives in
+:mod:`alphamind.commands.pm_envelope` — execution imports the wire-format
+kernel downward to read the modification list for ``attempt_seq``.
 """
 
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
-if TYPE_CHECKING:
-    from alphamind.decision.portfolio_manager import PMEnvelope
+from alphamind.commands.pm_envelope import PMEnvelope
 
 __all__ = [
     "EngineCommandIdComponents",

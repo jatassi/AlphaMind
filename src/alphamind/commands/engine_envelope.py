@@ -33,7 +33,7 @@ from pydantic import (
     model_validator,
 )
 
-from alphamind.execution.oms.command_models import CloseCommand
+from alphamind.commands.command_models import CloseCommand
 
 __all__ = [
     "BreachDetails",

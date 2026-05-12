@@ -809,7 +809,7 @@ async def test_runner_returns_pmresult_with_submission_log(
     from alphamind.decision.portfolio_manager import models as pm_models
     from alphamind.decision.portfolio_manager import runner as runner_module
     from alphamind.decision.portfolio_manager.harness import HarnessSuccess
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         Acknowledgment,
         SubmissionLogEntry,
         SubmissionResult,

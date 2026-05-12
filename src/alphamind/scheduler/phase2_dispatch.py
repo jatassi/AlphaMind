@@ -21,9 +21,7 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from alphamind.execution.oms.submit_envelope_mcp import (
-    SubmissionLogEntry,
-)
+from alphamind.commands.submission_log import SubmissionLogEntry
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationHandle,

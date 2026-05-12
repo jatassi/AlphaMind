@@ -23,6 +23,19 @@ from alphamind._kernel.regime import (
 )
 from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
+from alphamind.commands.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+)
+from alphamind.commands.command_models import (
+    ThesisComponent as OMSThesisComponent,
+)
 from alphamind.decision.portfolio_manager.models import (
     AddCommand,
     CancelCommand,
@@ -51,19 +64,6 @@ from alphamind.decision.proposal_pre_processor.models import (
     WrappedPendingOrderAssessment,
     WrappedPositionAssessment,
     WrappedRecommendation,
-)
-from alphamind.execution.oms.command_models import (
-    BracketOrderParameters,
-    EntryOrder,
-    EquityInstrument,
-    PositionSize,
-    PriceCondition,
-    PriceLeg,
-    Target,
-    Thesis,
-)
-from alphamind.execution.oms.command_models import (
-    ThesisComponent as OMSThesisComponent,
 )
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
@@ -588,7 +588,7 @@ def _build_state_and_server(
     auto-populates an analyst recommendation; ``ENV-SA-N`` an analyst-side
     position assessment; ``ENV-SA-ORD-N`` a pending-order assessment.
     """
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         build_initial_submit_envelope_state,
         build_submit_envelope_mcp_server,
     )
@@ -669,7 +669,7 @@ def _build_state_and_server(
 def test_factory_returns_mcp_server_and_allowed_tools() -> None:
     """The factory returns a ``(mcp_servers, allowed_tools)`` pair with the
     canonical server name and a single registered tool."""
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         build_initial_submit_envelope_state,
         build_submit_envelope_mcp_server,
     )
@@ -958,7 +958,7 @@ async def test_halt_mode_rejects_open_command() -> None:
 async def test_submission_log_captures_every_call() -> None:
     """Calling submit_envelope twice — once accepted, once rejected — appends
     two entries to ``state.submission_log`` in call order."""
-    from alphamind.execution.oms.submit_envelope_mcp import get_submission_log
+    from alphamind.decision.portfolio_manager.submit_envelope import get_submission_log
 
     cfg = _config()
 
@@ -1052,7 +1052,7 @@ async def test_layer_1_parse_failure_captured_in_failed_submission_log() -> None
     ``state.failed_submission_log`` — raw args, the formatted Pydantic error,
     and the synthetic command_id are all preserved for forensics. The parsed
     ``submission_log`` remains empty since no PMEnvelope was produced."""
-    from alphamind.execution.oms.submit_envelope_mcp import get_failed_submission_log
+    from alphamind.decision.portfolio_manager.submit_envelope import get_failed_submission_log
 
     state, server, _ = _build_state_and_server()
 
@@ -1095,7 +1095,7 @@ async def test_layer_1_failure_uses_fallback_envelope_id_when_missing() -> None:
     """When the raw payload omits ``envelope_id`` entirely, the rejection and
     the failed_submission_log both fall back to ``ENV-REC-INVALID`` so the
     synthetic command_id is still well-formed for downstream tooling."""
-    from alphamind.execution.oms.submit_envelope_mcp import get_failed_submission_log
+    from alphamind.decision.portfolio_manager.submit_envelope import get_failed_submission_log
 
     state, server, _ = _build_state_and_server()
 
@@ -1127,7 +1127,7 @@ async def test_handle_submit_envelope_persists_layer1_failure_via_phase2(
     from sqlalchemy import select as _select
 
     import alphamind.execution.state_persistence.tables  # noqa: F401
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
     )
@@ -1254,7 +1254,7 @@ async def test_handle_submit_envelope_persists_accepted_envelope_via_phase2(
     from sqlalchemy import select as _select
 
     import alphamind.execution.state_persistence.tables  # noqa: F401
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
     )
@@ -1412,7 +1412,7 @@ def test_submit_envelope_state_rejects_empty_invocation_id() -> None:
     """An empty ``invocation_id`` would propagate into ``derive_pm_command_id``
     and produce malformed IDs like ``inv-.{envelope_id}.0.0``; the constructor
     must reject it so the constraint is enforced at the type system."""
-    from alphamind.execution.oms.submit_envelope_mcp import SubmitEnvelopeState
+    from alphamind.decision.portfolio_manager.submit_envelope import SubmitEnvelopeState
 
     cfg = _config()
     validation_state = _make_validation_state(config=cfg)
@@ -1425,7 +1425,7 @@ def test_build_initial_submit_envelope_state_rejects_empty_invocation_id() -> No
     """The public assembler must propagate the empty-string rejection so
     composition pipelines that forget to thread the invocation id fail loudly
     at construction rather than silently producing malformed command IDs."""
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         build_initial_submit_envelope_state,
     )
 

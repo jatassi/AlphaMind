@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from alphamind.commands.engine_envelope import (
+    EngineEnvelope as OmsEngineEnvelope,
+)
 from alphamind.execution.continuous_monitor.cascade_dispatch.envelope_adapter import (
     to_oms_engine_envelope,
-)
-from alphamind.execution.oms.engine_envelope import (
-    EngineEnvelope as OmsEngineEnvelope,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,

@@ -23,8 +23,8 @@ from pydantic import TypeAdapter, ValidationError
 # Import portfolio_manager.models first to break the latent cycle between
 # alphamind.execution.oms (engine-stub MCP) and alphamind.decision.portfolio_manager.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
-from alphamind.execution.oms.command_models import CloseCommand
-from alphamind.execution.oms.engine_envelope import (
+from alphamind.commands.command_models import CloseCommand
+from alphamind.commands.engine_envelope import (
     BreachDetails,
     EngineEnvelope,
     GuardrailTriggerRecord,
@@ -317,20 +317,23 @@ class TestSchemaExport:
 
 
 class TestPackageReExports:
-    def test_engine_envelope_models_importable_from_package(self) -> None:
-        from alphamind.execution.oms import (
+    def test_engine_envelope_models_importable_from_commands_package(self) -> None:
+        """After ALP-458 the engine-envelope wire-format types live in
+        :mod:`alphamind.commands`; ``alphamind.commands`` re-exports them.
+        """
+        from alphamind.commands import (
             BreachDetails as PkgBreachDetails,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             EngineEnvelope as PkgEngineEnvelope,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             GuardrailTriggerRecord as PkgGuardrailTriggerRecord,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             SecondaryBreachCheckResult as PkgSecondaryBreachCheckResult,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             engine_envelope_schema as pkg_engine_envelope_schema,
         )
 

@@ -56,6 +56,17 @@ from alphamind._kernel.regime import (
     RegimeTransitionState,
 )
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
+from alphamind.commands.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    OptionInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+    ThesisComponent,
+)
 from alphamind.decision.portfolio_manager.models import (
     CriterionAssessment,
     OpenCommand,
@@ -76,17 +87,6 @@ from alphamind.decision.proposal_pre_processor.models import (
     ProposalPreProcessorBundle,
     StrategistSection,
     WrappedRecommendation,
-)
-from alphamind.execution.oms.command_models import (
-    BracketOrderParameters,
-    EntryOrder,
-    OptionInstrument,
-    PositionSize,
-    PriceCondition,
-    PriceLeg,
-    Target,
-    Thesis,
-    ThesisComponent,
 )
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.context import (
@@ -549,9 +549,9 @@ async def test_open_options_acknowledgment_greeks_match_persisted_position_greek
     expose a ``greeks`` field equal field-by-field (delta / gamma / theta /
     vega) to the Acknowledgment's ``validation_metadata.greeks``.
     """
-    from alphamind.execution.oms import build_submit_envelope_mcp_server
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         build_initial_submit_envelope_state,
+        build_submit_envelope_mcp_server,
     )
 
     _, factory = db

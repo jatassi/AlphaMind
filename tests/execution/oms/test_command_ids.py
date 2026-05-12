@@ -12,6 +12,17 @@ from typing import Any
 
 import pytest
 
+from alphamind.commands.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+    ThesisComponent,
+)
 from alphamind.decision.portfolio_manager.models import (
     CriterionAssessment,
     ModificationRecord,
@@ -29,17 +40,6 @@ from alphamind.execution.oms import (
     is_pm_originated,
     parse_engine_command_id,
     parse_pm_command_id,
-)
-from alphamind.execution.oms.command_models import (
-    BracketOrderParameters,
-    EntryOrder,
-    EquityInstrument,
-    PositionSize,
-    PriceCondition,
-    PriceLeg,
-    Target,
-    Thesis,
-    ThesisComponent,
 )
 
 # ---------------------------------------------------------------------------

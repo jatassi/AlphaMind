@@ -11,7 +11,10 @@ gate becomes a ``model_validator`` on the relevant variant.
 
 Three structural decisions trace back to the parent issue ALP-120:
 
-* **(A)** ``oms/`` is the canonical home; ``oms_commands/`` is removed.
+* **(A)** ``alphamind.commands`` is the canonical home (formerly
+  ``execution.oms.command_models``; relocated by ALP-458 to break the
+  decision↔execution import cycle by hoisting the LLM↔engine wire-format
+  types into a top-level kernel package).
 * **(B)** :class:`PositionSize` carries no ``sector`` field — sector is a
   risk-side concept derived by the guardrail layer.
 * **(E)** :class:`CloseCommand` ``close_rationale_type`` matches the design

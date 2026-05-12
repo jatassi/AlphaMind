@@ -23,17 +23,17 @@ This module bridges the two — a thin, pure translator that:
 
 from __future__ import annotations
 
-from alphamind.execution.oms.command_models import CloseCommand
-from alphamind.execution.oms.engine_envelope import (
+from alphamind.commands.command_models import CloseCommand
+from alphamind.commands.engine_envelope import (
     BreachDetails as OmsBreachDetails,
 )
-from alphamind.execution.oms.engine_envelope import (
+from alphamind.commands.engine_envelope import (
     EngineEnvelope as OmsEngineEnvelope,
 )
-from alphamind.execution.oms.engine_envelope import (
+from alphamind.commands.engine_envelope import (
     GuardrailTriggerRecord as OmsGuardrailTriggerRecord,
 )
-from alphamind.execution.oms.engine_envelope import (
+from alphamind.commands.engine_envelope import (
     SecondaryBreachCheckResult as OmsSecondaryBreachCheckResult,
 )
 from alphamind.risk_guardrails.breach_behavior import (

@@ -36,6 +36,19 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from alphamind._kernel.regime import RiskZone
+from alphamind.commands.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+)
+from alphamind.commands.command_models import (
+    ThesisComponent as OMSThesisComponent,
+)
 from alphamind.config.guardrails_helpers import (
     load_cumulative_drawdown_progressive_tiers,
 )
@@ -46,20 +59,7 @@ from alphamind.decision.portfolio_manager.models import (
     PMEnvelope,
     ThesisQualityEvaluation,
 )
-from alphamind.execution.oms.command_models import (
-    BracketOrderParameters,
-    EntryOrder,
-    EquityInstrument,
-    PositionSize,
-    PriceCondition,
-    PriceLeg,
-    Target,
-    Thesis,
-)
-from alphamind.execution.oms.command_models import (
-    ThesisComponent as OMSThesisComponent,
-)
-from alphamind.execution.oms.submit_envelope_mcp import (
+from alphamind.decision.portfolio_manager.submit_envelope import (
     Acknowledgment,
     FailedSubmissionEntry,
     SubmissionResult,
@@ -1109,7 +1109,7 @@ async def run_phase_e_layer1_parse_failure(db_path: Path) -> PhaseResult:
     from pydantic import ValidationError
     from sqlalchemy import select
 
-    from alphamind.execution.oms.submit_envelope_mcp import _validate_envelope_payload
+    from alphamind.decision.portfolio_manager.submit_envelope import _validate_envelope_payload
     from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
     from alphamind.execution.state_persistence.write_paths.phase2 import (
         persist_envelope_parse_failure,

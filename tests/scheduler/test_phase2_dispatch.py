@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 # cycle: importing PMEnvelope first ensures portfolio_manager's runner and
 # harness load before submit_envelope_mcp re-enters them.
 from alphamind.decision.portfolio_manager.models import PMEnvelope  # noqa: F401
-from alphamind.execution.oms.submit_envelope_mcp import (
+from alphamind.decision.portfolio_manager.submit_envelope import (
     Acknowledgment,
     SubmissionLogEntry,
     SubmissionResult,

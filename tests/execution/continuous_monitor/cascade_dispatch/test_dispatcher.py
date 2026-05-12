@@ -22,7 +22,14 @@ import pytest
 # ``tests/execution/oms/test_submit_engine_envelope.py``).
 import alphamind.decision.portfolio_manager.models  # noqa: F401
 from alphamind._kernel.regime import RegimeTransitionState
+from alphamind.commands.engine_envelope import (
+    EngineEnvelope as OmsEngineEnvelope,
+)
 from alphamind.config.models.guardrails import BreachResponse
+from alphamind.decision.portfolio_manager.submit_envelope import (
+    Acknowledgment,
+    SubmissionResult,
+)
 from alphamind.execution.continuous_monitor.breach_loop.result import (
     BreachLoopResult,
     RuleEvaluation,
@@ -37,13 +44,6 @@ from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
 )
 from alphamind.execution.guardrail_enforcement.orchestrator import (
     Phase1EnforcementResult,
-)
-from alphamind.execution.oms.engine_envelope import (
-    EngineEnvelope as OmsEngineEnvelope,
-)
-from alphamind.execution.oms.submit_envelope_mcp import (
-    Acknowledgment,
-    SubmissionResult,
 )
 from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterSet,

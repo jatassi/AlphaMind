@@ -35,16 +35,16 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from alphamind.execution.oms.command_ids import (
-    derive_engine_command_id,
-    parse_engine_command_id,
-)
-from alphamind.execution.oms.engine_envelope import EngineEnvelope
-from alphamind.execution.oms.submit_envelope_mcp import (
+from alphamind.commands.engine_envelope import EngineEnvelope
+from alphamind.commands.submission_results import (
     Acknowledgment,
     RejectionPayload,
     SubmissionResult,
     _BreachedRule,
+)
+from alphamind.execution.oms.command_ids import (
+    derive_engine_command_id,
+    parse_engine_command_id,
 )
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.context import (
@@ -250,9 +250,8 @@ async def submit_engine_envelope(
     # Threading engine-guardrail provenance + position_selection_rationale +
     # cascade_id (when set) + rule_breached through extra_metadata so the
     # activity-log detail surfaces them on the order_submitted entry.
-    # Lazy import: phase2.py imports submit_envelope_mcp.py for the
-    # SubmissionResult dataclass; routing through the package re-export
-    # would circle back here, so we import the module directly.
+    # Inline import kept to defer SQLAlchemy load until first use; the
+    # ALP-458 split eliminated the formerly-circular path through PM models.
     from alphamind.execution.state_persistence.write_paths.phase2 import (
         persist_engine_envelope_outcome,
     )
@@ -394,9 +393,9 @@ def _engine_close_dispatch_kwargs(
     """
     from typing import cast as _cast
 
+    from alphamind.commands.command_models import StrategyType
     from alphamind.execution.broker_adapter import MLEGLegAck
     from alphamind.execution.broker_adapter.order_options import build_occ_symbol
-    from alphamind.execution.oms.command_models import StrategyType
     from alphamind.portfolio_state.records.positions import (
         EquityPositionDetails,
         OptionsPositionDetails,

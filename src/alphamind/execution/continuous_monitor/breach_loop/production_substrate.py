@@ -33,6 +33,7 @@ from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
 )
+from alphamind.commands.engine_envelope import EngineEnvelope as OmsEngineEnvelope
 from alphamind.config.loaders import read_yaml_file
 from alphamind.config.models.guardrails import ProgressiveTier
 from alphamind.config.models.main import MainConfig
@@ -48,7 +49,6 @@ from alphamind.config.resolver import (
 from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
     BreachDispatchContext,
 )
-from alphamind.execution.oms.engine_envelope import EngineEnvelope as OmsEngineEnvelope
 from alphamind.execution.state_persistence.config import (
     StatePersistenceConfig,
 )
@@ -689,16 +689,12 @@ def make_submit_envelope(
     so duplicate-trigger protection holds across all envelopes the monitor
     submits within one session.
     """
-    # Lazy-import via ``alphamind.execution.oms`` so the package's
-    # ``__getattr__`` runs ``importlib.import_module`` — avoids the circular
-    # path that ``from ... .submit_engine_envelope import ...`` would trigger
-    # when the caller loads us mid-portfolio_manager package init.
-    import importlib
-
-    engine_module = importlib.import_module("alphamind.execution.oms.submit_engine_envelope")
-    submit_engine_envelope = engine_module.submit_engine_envelope
-    build_initial_submit_engine_envelope_state = (
-        engine_module.build_initial_submit_engine_envelope_state
+    # After ALP-458 the decision↔execution cycle is gone and the
+    # ``__getattr__`` lazy-loader has been deleted, so a direct import
+    # works at module-load time.
+    from alphamind.execution.oms.submit_engine_envelope import (
+        build_initial_submit_engine_envelope_state,
+        submit_engine_envelope,
     )
 
     state = build_initial_submit_engine_envelope_state(monitor_session_id=monitor_session_id)

@@ -23,7 +23,7 @@ from pydantic import TypeAdapter, ValidationError
 # alphamind.execution.oms (engine-stub MCP) and alphamind.decision.portfolio_manager
 # (harness imports back from the OMS). Mirrors test_submit_envelope_mcp.py.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
-from alphamind.execution.oms.command_models import (
+from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
     BracketAdjustment,
@@ -605,26 +605,30 @@ class TestSchemaExport:
 
 
 class TestPackageReExports:
-    def test_canonical_models_importable_from_package(self) -> None:
-        from alphamind.execution.oms import (
+    def test_canonical_models_importable_from_commands_package(self) -> None:
+        """After ALP-458 the OMS command discriminated union lives in
+        :mod:`alphamind.commands`; the public surface is re-exported from the
+        kernel ``__init__`` for one-line consumer imports.
+        """
+        from alphamind.commands import (
             AddCommand as PkgAddCommand,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             AdjustCommand as PkgAdjustCommand,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             CancelCommand as PkgCancelCommand,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             CloseCommand as PkgCloseCommand,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             OMSCommand as PkgOMSCommand,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             OpenCommand as PkgOpenCommand,
         )
-        from alphamind.execution.oms import (
+        from alphamind.commands import (
             oms_command_schema as pkg_oms_command_schema,
         )
 
@@ -636,6 +640,6 @@ class TestPackageReExports:
         assert PkgOMSCommand is OMSCommand
         assert pkg_oms_command_schema is oms_command_schema
 
-    def test_engine_stub_re_exports_preserved(self) -> None:
-        # SubmissionResult and friends are still re-exported from oms package.
-        from alphamind.execution.oms import SubmissionResult  # noqa: F401
+    def test_submission_result_re_exported_from_commands(self) -> None:
+        # SubmissionResult lives in commands/submission_results after ALP-458.
+        from alphamind.commands import SubmissionResult  # noqa: F401

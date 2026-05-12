@@ -24,6 +24,19 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind.commands.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+)
+from alphamind.commands.command_models import (
+    ThesisComponent as OMSThesisComponent,
+)
 from alphamind.decision.portfolio_manager.models import (
     AddCommand,
     AdjustCommand,
@@ -37,20 +50,7 @@ from alphamind.decision.portfolio_manager.models import (
     PositionActionEvaluation,
     ThesisQualityEvaluation,
 )
-from alphamind.execution.oms.command_models import (
-    BracketOrderParameters,
-    EntryOrder,
-    EquityInstrument,
-    PositionSize,
-    PriceCondition,
-    PriceLeg,
-    Target,
-    Thesis,
-)
-from alphamind.execution.oms.command_models import (
-    ThesisComponent as OMSThesisComponent,
-)
-from alphamind.execution.oms.submit_envelope_mcp import (
+from alphamind.decision.portfolio_manager.submit_envelope import (
     Acknowledgment,
     FailedSubmissionEntry,
     SubmissionResult,
@@ -433,7 +433,7 @@ def _adjust_command(
     replacement protective order. Pass ``with_stop_level=False`` for a
     thesis-only ADJUST that exercises the no-broker-mutation path.
     """
-    from alphamind.execution.oms.command_models import NewStopLevel
+    from alphamind.commands.command_models import NewStopLevel
 
     return AdjustCommand(
         command_type="adjust",
@@ -835,7 +835,7 @@ async def test_handle_submit_envelope_writes_envelope_rejection_on_layer23_failu
 ) -> None:
     """When the engine-stub passes Layer-1 but fails Layer-2/3, both surfaces
     populate: in-memory submission_log AND SQL envelope_rejected entry."""
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
     )
@@ -2127,7 +2127,7 @@ async def test_persist_envelope_parse_failure_without_handle_is_noop(
     """When the engine-stub wrapper has no InvocationHandle (legacy fixture
     callers), the in-memory failed_submission_log is mutated but no SQL
     write attempt is made — the SQL path is opt-in via the handle injection."""
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
     )
@@ -2169,7 +2169,7 @@ async def test_handle_submit_envelope_wires_sql_writeback_on_layer1_failure(
     """When InvocationHandle is supplied AND Layer-1 parse fails, both the
     in-memory failed_submission_log AND an envelope_parse_failed activity log
     entry are written."""
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
     )
@@ -2210,7 +2210,7 @@ async def test_handle_submit_envelope_wires_sql_writeback_on_accepted_envelope(
 ) -> None:
     """When InvocationHandle is supplied AND the envelope is accepted, the
     Phase 2 writeback runs alongside the in-memory cumulative-state advance."""
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
     )

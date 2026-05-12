@@ -46,15 +46,16 @@ from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.analysis.synthesizer.retrieval_tools import build_retrieve_brief_mcp_server
+from alphamind.commands.pm_envelope import PMCompletionRecord
+from alphamind.commands.protocols import BrokerDispatch
+from alphamind.commands.submission_log import SubmissionLogEntry
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
-from alphamind.decision.portfolio_manager.models import PMCompletionRecord
 from alphamind.decision.portfolio_manager.parser import ParseError, parse_pm_completion_record
-from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
-from alphamind.execution.oms.submit_envelope_mcp import (
-    SubmissionLogEntry,
+from alphamind.decision.portfolio_manager.submit_envelope import (
     SubmitEnvelopeState,
     build_submit_envelope_mcp_server,
 )
+from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     PortfolioManagerThesisComponentReader,
     PortfolioManagerView,
@@ -586,12 +587,19 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
     sector_resolver: Callable[[str], str],
     library_config: LibraryConfig,
     library_market: MarketInputs,
+    broker_dispatch: BrokerDispatch | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Compose the four MCP servers and merge their allowed-tool lists.
 
     Returns ``(merged_servers, merged_allowed_tools)`` ready for direct
     assignment to ``ClaudeAgentOptions.mcp_servers`` and
     ``ClaudeAgentOptions.allowed_tools``.
+
+    ``broker_dispatch`` is the composition-root-injected
+    :class:`alphamind.commands.protocols.BrokerDispatch` implementation
+    (ALP-458) — forwarded into the engine-stub assembler so the engine-stub
+    can route accepted commands through the broker without importing the
+    concrete dispatcher.
     """
     validation_servers, validation_tools = build_validate_guardrail_mcp_server(
         initial_validation_state
@@ -608,6 +616,7 @@ def _build_mcp_wiring(  # noqa: PLR0913 — runner-facing signature mirrors per-
         sector_resolver=sector_resolver,
         library_config=library_config,
         library_market=library_market,
+        broker_dispatch=broker_dispatch,
     )
     merged_servers: dict[str, Any] = {
         **validation_servers,
@@ -794,6 +803,7 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
     library_market: MarketInputs,
     archive_root: Path | None = None,
     sdk_query_fn: Callable[..., AsyncIterator[Any]] | None = None,
+    broker_dispatch: BrokerDispatch | None = None,
 ) -> HarnessSuccess:
     """Invoke the PM agent and return :class:`HarnessSuccess`.
 
@@ -880,6 +890,7 @@ async def invoke_pm(  # noqa: PLR0913 — public signature is fixed by ALP-329 �
         sector_resolver=sector_resolver,
         library_config=library_config,
         library_market=library_market,
+        broker_dispatch=broker_dispatch,
     )
     prompt_text = await _load_prompt(agent_config.prompt)
     options = _build_sdk_options(

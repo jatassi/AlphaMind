@@ -23,6 +23,17 @@ from typing import Any, get_args
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from alphamind.commands.command_models import (
+    BracketOrderParameters,
+    EntryOrder,
+    EquityInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+    ThesisComponent,
+)
 from alphamind.decision.portfolio_manager.models import (
     AddCommand,
     AdjustCommand,
@@ -43,17 +54,6 @@ from alphamind.decision.portfolio_manager.models import (
     VerdictSummary,
     completion_record_schema,
     envelope_schema,
-)
-from alphamind.execution.oms.command_models import (
-    BracketOrderParameters,
-    EntryOrder,
-    EquityInstrument,
-    PositionSize,
-    PriceCondition,
-    PriceLeg,
-    Target,
-    Thesis,
-    ThesisComponent,
 )
 
 # ---------------------------------------------------------------------------
@@ -1016,12 +1016,12 @@ class TestSchemaAccessors:
 
 class TestCanonicalReexport:
     def test_pm_reexports_canonical_command_types(self) -> None:
-        # Story 02b deletes PM's transitional ``oms_command_models.py``; PM's
-        # ``models`` module re-exports the canonical types from
-        # ``alphamind.execution.oms.command_models``. Identity (``is``) check
-        # confirms there's no second definition.
+        # After ALP-458 the canonical OMS command types live in
+        # ``alphamind.commands.command_models``; PM's ``models`` shim
+        # re-exports them. Identity (``is``) check confirms one canonical
+        # definition.
+        from alphamind.commands import command_models as canonical
         from alphamind.decision.portfolio_manager import models as pm_models
-        from alphamind.execution.oms import command_models as canonical
 
         assert pm_models.OpenCommand is canonical.OpenCommand
         assert pm_models.CloseCommand is canonical.CloseCommand

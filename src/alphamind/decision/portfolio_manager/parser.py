@@ -17,7 +17,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from alphamind.decision.portfolio_manager import PMCompletionRecord
+from alphamind.commands.pm_envelope import PMCompletionRecord
 
 __all__ = ["ParseError", "parse_pm_completion_record"]
 

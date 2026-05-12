@@ -19,11 +19,7 @@ from typing import Any, Literal
 from pydantic import TypeAdapter
 from sqlalchemy import select
 
-from alphamind.decision.portfolio_manager.models import PMEnvelope
-from alphamind.decision.portfolio_manager.validation import ValidationError as PMValidationError
-from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
-from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
-from alphamind.execution.oms.command_models import (
+from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
     BracketAdjustment,
@@ -46,10 +42,12 @@ from alphamind.execution.oms.command_models import (
     Target,
     TimeLeg,
 )
-from alphamind.execution.oms.submit_envelope_mcp import (
-    FailedSubmissionEntry,
-    SubmissionResult,
-)
+from alphamind.commands.pm_envelope import PMEnvelope
+from alphamind.commands.submission_log import FailedSubmissionEntry
+from alphamind.commands.submission_results import SubmissionResult
+from alphamind.commands.validation_results import ValidationError as PMValidationError
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
+from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.activity_log import (
     append_activity_log_entry,
@@ -163,7 +161,7 @@ def _instrument_ticker_key(
     Equity instruments expose ``ticker``; option / strategy expose
     ``underlying``. Mirrors helpers in
     :mod:`alphamind.decision.portfolio_manager.validation` and
-    :mod:`alphamind.execution.oms.submit_envelope_mcp`.
+    :mod:`alphamind.decision.portfolio_manager.submit_envelope`.
     """
     if isinstance(instrument, EquityInstrument):
         return instrument.ticker
@@ -1420,7 +1418,7 @@ def _protective_roles_for_change_fields(
 
     NewStopLevel → PRICE_STOP only; NewTargetLevel → TAKE_PROFIT only;
     new_time_expiration → TIME_STOP only. The OMS-side broker dispatcher
-    (:func:`alphamind.execution.oms.submit_envelope_mcp._adjust_command_context`)
+    (:func:`alphamind.decision.portfolio_manager.submit_envelope._adjust_command_context`)
     threads the matching protective leg's ``alpaca_order_id`` to
     :func:`submit_replace`; this helper keeps the OMS-state writeback in
     lockstep with the broker mutation so a stop-only ADJUST does not also

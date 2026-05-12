@@ -19,6 +19,14 @@ is appended to the submission log accessible via :func:`get_submission_log`.
 Mirrors the analyst's :mod:`alphamind.risk_guardrails.state_delivery.validation_tool_mcp`
 factory pattern: per-invocation server, mutable state cell captured by the tool
 closure, JSON content blocks for response.
+
+Relocated from ``execution.oms.submit_envelope_mcp`` to
+``decision.portfolio_manager.submit_envelope`` by ALP-458 to break the
+decision↔execution import cycle. The wire-format result shapes
+(:class:`Acknowledgment`, :class:`RejectionPayload`, :class:`SubmissionResult`,
+etc.) and the engine-side envelope contract types now live in
+:mod:`alphamind.commands.*`; this module imports them downward like every
+other consumer.
 """
 
 from __future__ import annotations
@@ -30,7 +38,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 if TYPE_CHECKING:
     from alpaca.trading.client import TradingClient
@@ -46,13 +54,7 @@ if TYPE_CHECKING:
     from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
-from alphamind.decision.portfolio_manager.models import PMEnvelope
-from alphamind.decision.portfolio_manager.validation import (
-    validate_pm_envelope,
-)
-from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
-from alphamind.execution.oms.command_ids import compute_attempt_seq, derive_pm_command_id
-from alphamind.execution.oms.command_models import (
+from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
     CancelCommand,
@@ -63,10 +65,25 @@ from alphamind.execution.oms.command_models import (
     OptionInstrument,
     StrategyInstrument,
 )
+from alphamind.commands.pm_envelope import PMEnvelope
+from alphamind.commands.protocols import BrokerDispatch
+from alphamind.commands.submission_log import FailedSubmissionEntry, SubmissionLogEntry
+from alphamind.commands.submission_results import (
+    Acknowledgment,
+    RejectionPayload,
+    SubmissionResult,
+    _BreachedRule,
+    _PerRuleHeadroomEntry,
+    _ValidationMetadata,
+)
+from alphamind.decision.portfolio_manager.validation import (
+    validate_pm_envelope,
+)
+from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
+from alphamind.execution.oms.command_ids import compute_attempt_seq, derive_pm_command_id
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 from alphamind.portfolio_state.records.positions import Direction, InstrumentType
 from alphamind.risk_guardrails.guardrail_evaluation import (
-    Greeks,
     LibraryConfig,
     MarketInputs,
     Status,
@@ -130,125 +147,18 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Per-command result shapes — minimal Pydantic models mirroring the design doc
+# Per-command result shapes, log entries, and state cell live in
+# :mod:`alphamind.commands.submission_results`,
+# :mod:`alphamind.commands.submission_log`, and the local state cell below.
+# Submitting through these wire-format types lets the execution-side Phase 2
+# write path consume the same shapes without re-introducing the
+# decision↔execution import cycle ALP-458 broke.
 # ---------------------------------------------------------------------------
 
 
-class _PerRuleHeadroomEntry(BaseModel):
-    """One projected per-rule headroom entry; appears on Acknowledgment and
-    RejectionPayload."""
-
-    model_config = ConfigDict(frozen=True)
-
-    rule: str
-    headroom_remaining: float
-    unit: str
-
-
-class _ValidationMetadata(BaseModel):
-    """Validation-time computation results attached to OPEN/ADD acknowledgments."""
-
-    model_config = ConfigDict(frozen=True)
-
-    greeks: Greeks | None = None
-    implied_volatility: float | None = None
-    delta_adjusted_exposure: float
-    per_rule_headroom: tuple[_PerRuleHeadroomEntry, ...]
-
-
-class Acknowledgment(BaseModel):
-    """Engine confirmation for an accepted command.
-
-    Per ``submit-envelope-tool-schema.md`` § acknowledgment, the populated
-    fields vary by command type — OPEN / ADD carry ``validation_metadata``;
-    CANCEL carries ``released_capital_usd``. Rather than encode a discriminated
-    union for the engine-stub, we model the union flat and leave inapplicable
-    fields ``None``.
-    """
-
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
-
-    position_id: str | None = None
-    order_id: str | None = None
-    validation_metadata: _ValidationMetadata | None = None
-    released_capital_usd: float | None = None
-
-
-class _BreachedRule(BaseModel):
-    """One breached-rule entry on a RejectionPayload."""
-
-    model_config = ConfigDict(frozen=True)
-
-    rule: str
-    current: float
-    limit: float
-    overage: float
-    unit: str
-
-
-class RejectionPayload(BaseModel):
-    """Synchronous rejection record per breach-behavior.md § Hard rejection
-    semantics. Identical shape to the engine-side rejection so the PM's
-    feedback handling treats stub and real-engine rejections uniformly.
-
-    ``gateway_reason`` carries the broker's
-    :class:`alphamind.execution.broker_adapter.PermanentRejection` code
-    (e.g. ``"insufficient_buying_power"``) when the rejection originated at
-    the broker after Layer-1/2/3 validation accepted the command — story 03e
-    (ALP-390) coordinated swap. ``None`` for guardrail-side rejections.
-    """
-
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
-
-    rules_breached: tuple[_BreachedRule, ...]
-    suggested_modification: str
-    headroom_after_suggestion: tuple[_PerRuleHeadroomEntry, ...] = ()
-    greeks: Greeks | None = None
-    delta_adjusted_exposure: float | None = None
-    feature_disabled: Literal["options", "short_selling", "sector"] | None = None
-    gateway_reason: str | None = None
-
-
-class SubmissionResult(BaseModel):
-    """One per-command result mirroring submit-envelope-tool-schema.md's
-    submission_result $def."""
-
-    model_config = ConfigDict(frozen=True)
-
-    command_ordinal: int
-    status: Literal["accepted", "rejected"]
-    command_id: str
-    acknowledgment: Acknowledgment | None = None
-    rejection_payload: RejectionPayload | None = None
-
-
 # ---------------------------------------------------------------------------
-# State cell + log entry types
+# State cell (engine-stub-local — carries ValidationToolState from risk_guardrails)
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class SubmissionLogEntry:
-    """One ``submit_envelope`` call's record — envelope + per-command results."""
-
-    envelope: PMEnvelope
-    submission_results: tuple[SubmissionResult, ...]
-
-
-@dataclass
-class FailedSubmissionEntry:
-    """One ``submit_envelope`` call that failed Layer-1 (Pydantic) parsing.
-
-    ``submission_log`` only records calls that produced a parsed
-    :class:`PMEnvelope`; this parallel log preserves the raw payload, the
-    Pydantic error text, and the synthetic ``command_id`` for every Layer-1
-    rejection so post-hoc forensics can reconstruct attempts that never
-    reached command processing.
-    """
-
-    raw_args: dict[str, Any]
-    validation_error_repr: str
-    command_id: str
 
 
 @dataclass
@@ -363,6 +273,7 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
     client: TradingClient | None = None,
     queries: AccountStateQueries | None = None,
     execution_config: ExecutionConfig | None = None,
+    broker_dispatch: BrokerDispatch | None = None,
 ) -> tuple[Mapping[str, McpSdkServerConfig], tuple[str, ...]]:
     """Build a per-invocation SDK MCP server bound to *state*.
 
@@ -392,11 +303,18 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
 
     When ``client`` + ``queries`` + ``execution_config`` are supplied
     (engine-stub coordinated swap, story 03e / ALP-390), each accepted
-    command additionally routes through :func:`dispatch_command_to_broker`
-    before persistence; the persisted entry / close / add / adjust order
-    carries Alpaca's real ``alpaca_order_id`` and the acknowledgment surfaces
-    it. Gateway-submission failures map to ``command_abandoned`` activity-log
+    command additionally routes through a broker-dispatch callable before
+    persistence; the persisted entry / close / add / adjust order carries
+    Alpaca's real ``alpaca_order_id`` and the acknowledgment surfaces it.
+    Gateway-submission failures map to ``command_abandoned`` activity-log
     entries; permanent rejections surface as synchronous OMS rejections.
+
+    The ``broker_dispatch`` parameter is the composition-root-injected
+    :class:`alphamind.commands.protocols.BrokerDispatch` implementation
+    (ALP-458). When ``None``, the engine-stub lazy-imports the concrete
+    :func:`alphamind.execution.oms.broker_dispatch.dispatch_command_to_broker`
+    for backwards compatibility with callers that haven't switched to the
+    Protocol-based wiring yet.
     """
     _ = (library_config, library_market)  # accepted for runner-signature parity
 
@@ -424,6 +342,7 @@ def build_submit_envelope_mcp_server(  # noqa: PLR0913 — runner-facing assembl
             client=client,
             queries=queries,
             execution_config=execution_config,
+            broker_dispatch=broker_dispatch,
         )
 
     server = create_sdk_mcp_server(name=_SERVER_NAME, tools=[_submit_envelope])
@@ -451,6 +370,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
     client: TradingClient | None = None,
     queries: AccountStateQueries | None = None,
     execution_config: ExecutionConfig | None = None,
+    broker_dispatch: BrokerDispatch | None = None,
 ) -> dict[str, Any]:
     """Coerce input → run validators → process commands → log + respond.
 
@@ -543,6 +463,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
             execution_config=execution_config,
             invocation_id=state.invocation_id,
             invocation_handle=invocation_handle,
+            broker_dispatch=broker_dispatch,
         )
 
     # Step 5: append to submission log (post-broker outcome).
@@ -590,9 +511,12 @@ async def _persist_envelope_outcome_via_phase2(
     *,
     dispatch_results: tuple[BrokerDispatchResult | None, ...] | None = None,
 ) -> None:
-    """Lazy import + dispatch to break the import cycle Phase 2 has on us."""
-    # Import lazily so submit_envelope_mcp itself stays importable from
-    # phase2.py at module-load time (phase2 imports FailedSubmissionEntry).
+    """Lazy import + dispatch to defer the SQLAlchemy load until first writeback."""
+    # Inline import kept to defer the SQLAlchemy/persistence load until the
+    # first Phase 2 writeback fires; the ALP-458 split eliminated the
+    # formerly-circular path through PM models, so an eager top-level
+    # import would also work — left lazy for parity with sibling persist_*
+    # helpers below.
     from alphamind.execution.state_persistence.write_paths.phase2 import (
         persist_envelope_outcome,
     )
@@ -1131,6 +1055,7 @@ async def _route_through_broker(
     execution_config: ExecutionConfig,
     invocation_id: str,
     invocation_handle: Any | None = None,
+    broker_dispatch: BrokerDispatch | None = None,
 ) -> tuple[
     tuple[SubmissionResult, ...],
     tuple[BrokerDispatchResult | None, ...],
@@ -1148,6 +1073,12 @@ async def _route_through_broker(
       ``_AbandonedCommandEntry`` appended for the writeback step.
     * Validator-accepted + ``PermanentRejectionError`` raised → flipped to rejected
       with the broker's ``PermanentRejection.code`` as the rule; dispatch entry None.
+
+    ``broker_dispatch`` is the composition-root-injected
+    :class:`BrokerDispatch` Protocol implementation (ALP-458); when
+    ``None`` the engine-stub falls back to the concrete
+    ``dispatch_command_to_broker`` via lazy import for backwards
+    compatibility.
     """
     # Lazy imports — broker_dispatch transitively imports the broker_adapter
     # package which in turn ships an alpaca-py dependency we don't want loaded
@@ -1160,7 +1091,19 @@ async def _route_through_broker(
     from alphamind.execution.broker_adapter.order_options import (
         PermanentRejectionError,
     )
-    from alphamind.execution.oms.broker_dispatch import dispatch_command_to_broker
+
+    dispatch: BrokerDispatch
+    if broker_dispatch is not None:
+        dispatch = broker_dispatch
+    else:
+        from alphamind.execution.oms.broker_dispatch import dispatch_command_to_broker
+
+        # The concrete dispatcher's explicit per-asset kwargs duck-type the
+        # Protocol's ``**context: Any`` shape; the assignment is structurally
+        # safe but mypy treats explicit-kwarg vs ``**context`` variance
+        # conservatively. The Protocol seam is exactly the boundary that
+        # lets callers swap implementations, so we accept the cast here.
+        dispatch = cast(BrokerDispatch, dispatch_command_to_broker)
 
     updated: list[SubmissionResult] = []
     dispatches: list[BrokerDispatchResult | None] = []
@@ -1175,7 +1118,7 @@ async def _route_through_broker(
             context_kwargs = await _dispatcher_context_for(
                 command, invocation_handle=invocation_handle
             )
-            outcome = await dispatch_command_to_broker(
+            outcome = await dispatch(
                 command,
                 client=client,
                 queries=queries,
@@ -1319,7 +1262,7 @@ async def _close_command_context(
     if isinstance(position.details, StrategyPositionDetails):
         # StrategyPositionDetails carries legs and a strategy_type_label; the
         # broker translator needs the typed StrategyType, so we coerce here.
-        from alphamind.execution.oms.command_models import StrategyType
+        from alphamind.commands.command_models import StrategyType
 
         legs = _persisted_legs_to_mleg_acks(position.details.legs)
         return {
@@ -1355,7 +1298,7 @@ async def _add_command_context(command: AddCommand, *, invocation_handle: Any) -
     if isinstance(position.details, OptionsPositionDetails):
         # Reconstruct the OptionInstrument the dispatcher needs from the
         # persisted contract fields.
-        from alphamind.execution.oms.command_models import OptionInstrument
+        from alphamind.commands.command_models import OptionInstrument
 
         instrument = OptionInstrument(
             asset_type="option",
@@ -1371,7 +1314,7 @@ async def _add_command_context(command: AddCommand, *, invocation_handle: Any) -
             "position_side": "long" if position.direction.value == "LONG" else "short",
         }
     if isinstance(position.details, StrategyPositionDetails):
-        from alphamind.execution.oms.command_models import StrategyType
+        from alphamind.commands.command_models import StrategyType
 
         legs = _persisted_legs_to_mleg_acks(position.details.legs)
         return {

@@ -49,17 +49,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 # ``tests/execution/oms/test_submit_engine_envelope.py``; without this the
 # transitive harness-side imports race with the lazy submodule load.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
-from alphamind.config.guardrails_helpers import (
-    load_cumulative_drawdown_progressive_tiers,
-)
-from alphamind.execution.oms.command_ids import (
-    compute_attempt_seq,
-    derive_engine_command_id,
-    derive_pm_command_id,
-    parse_engine_command_id,
-    parse_pm_command_id,
-)
-from alphamind.execution.oms.command_models import (
+from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
     BracketAdjustment,
@@ -80,10 +70,20 @@ from alphamind.execution.oms.command_models import (
     Thesis,
     ThesisComponent,
 )
-from alphamind.execution.oms.engine_envelope import (
+from alphamind.commands.engine_envelope import (
     BreachDetails,
     EngineEnvelope,
     GuardrailTriggerRecord,
+)
+from alphamind.config.guardrails_helpers import (
+    load_cumulative_drawdown_progressive_tiers,
+)
+from alphamind.execution.oms.command_ids import (
+    compute_attempt_seq,
+    derive_engine_command_id,
+    derive_pm_command_id,
+    parse_engine_command_id,
+    parse_pm_command_id,
 )
 from alphamind.persistence.session import make_engine
 from alphamind.portfolio_state.events.activity_log import EventType
@@ -1058,9 +1058,9 @@ async def run_phase_3_pm_envelope_path(db_path: Path) -> PhaseResult:
     ``thesis.components`` entry, (e) the activity log carries
     ``order_submitted`` + ``thesis_created`` + ``capital_reserved`` +
     ``pm_decision``."""
-    from alphamind.execution.oms import build_submit_envelope_mcp_server
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         build_initial_submit_envelope_state,
+        build_submit_envelope_mcp_server,
     )
     from alphamind.execution.state_persistence.invocation_context.context import (
         InvocationContext,

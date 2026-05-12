@@ -28,7 +28,7 @@ from alphamind.decision.portfolio_manager.runner import (
     PMResult,
     run_portfolio_manager,
 )
-from alphamind.execution.oms.submit_envelope_mcp import (
+from alphamind.decision.portfolio_manager.submit_envelope import (
     Acknowledgment,
     SubmissionLogEntry,
     SubmissionResult,
@@ -126,17 +126,17 @@ def _make_envelope_for_log(invocation_id: str = "inv-pm-001") -> Any:
     code only inspects ``submission_results``, so any well-formed
     envelope suffices.
     """
+    from alphamind.commands.command_models import (
+        EntryOrder,
+    )
+    from alphamind.commands.command_models import (
+        ThesisComponent as OMSThesisComponent,
+    )
     from alphamind.decision.portfolio_manager.models import (
         AddCommand,
         CriterionAssessment,
         PMAnalystEnvelope,
         ThesisQualityEvaluation,
-    )
-    from alphamind.execution.oms.command_models import (
-        EntryOrder,
-    )
-    from alphamind.execution.oms.command_models import (
-        ThesisComponent as OMSThesisComponent,
     )
 
     cmd = AddCommand(
@@ -178,7 +178,7 @@ def _make_envelope_for_log(invocation_id: str = "inv-pm-001") -> Any:
 
 def _make_rejected_submission_result() -> SubmissionResult:
     """Build a SubmissionResult with status='rejected'."""
-    from alphamind.execution.oms.submit_envelope_mcp import RejectionPayload, _BreachedRule
+    from alphamind.commands.submission_results import RejectionPayload, _BreachedRule
 
     return SubmissionResult(
         command_ordinal=0,

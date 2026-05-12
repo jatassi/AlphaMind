@@ -30,6 +30,9 @@ from pydantic import BaseModel, ConfigDict
 
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
+from alphamind.commands.pm_envelope import PMCompletionRecord
+from alphamind.commands.protocols import BrokerDispatch
+from alphamind.commands.submission_log import SubmissionLogEntry
 from alphamind.config.models.agents import (
     AgentName,
     AgentsConfig,
@@ -43,12 +46,10 @@ from alphamind.decision.portfolio_manager.input_bundle import (
     assemble_input_bundle_halt,
     assemble_input_bundle_normal,
 )
-from alphamind.decision.portfolio_manager.models import PMCompletionRecord
-from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
-from alphamind.execution.oms.submit_envelope_mcp import (
-    SubmissionLogEntry,
+from alphamind.decision.portfolio_manager.submit_envelope import (
     build_initial_submit_envelope_state,
 )
+from alphamind.decision.proposal_pre_processor import ProposalPreProcessorBundle
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.consumers.portfolio_manager import (
@@ -240,6 +241,7 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
     agent_config: BaseAgentConfig | None = None,
     borrow_cost_resolver: Callable[[str], float] | None = None,
     prior_health_snapshots: tuple[ThesisHealthSnapshot, ...] = (),
+    broker_dispatch: BrokerDispatch | None = None,
 ) -> PMResult:
     """Invoke the portfolio manager and return a :class:`PMResult`.
 
@@ -349,6 +351,7 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
         library_market=library_market,
         archive_root=archive_root,
         sdk_query_fn=sdk_query_fn,
+        broker_dispatch=broker_dispatch,
     )
     logger.info(
         "portfolio_manager harness invoked "

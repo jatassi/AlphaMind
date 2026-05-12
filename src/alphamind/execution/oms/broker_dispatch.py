@@ -6,7 +6,7 @@ Dispatches each canonical :class:`OMSCommand` variant to the right
 :class:`BrokerDispatchResult` shape the OMS persists onto the
 :class:`OrderRecord` produced by the Phase 2 write path. Replaces the
 synthetic-acknowledgment behavior of the engine-stub
-(:mod:`alphamind.execution.oms.submit_envelope_mcp` /
+(:mod:`alphamind.decision.portfolio_manager.submit_envelope` /
 :mod:`alphamind.execution.oms.submit_engine_envelope`) — per parent
 ALP-121 decision (C), broker routing was deferred and lands here.
 
@@ -42,6 +42,18 @@ from typing import Any, Literal
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide
 
+from alphamind.commands.command_models import (
+    AddCommand,
+    AdjustCommand,
+    CancelCommand,
+    CloseCommand,
+    EquityInstrument,
+    OMSCommand,
+    OpenCommand,
+    OptionInstrument,
+    StrategyInstrument,
+    StrategyType,
+)
 from alphamind.config.models.execution import ExecutionConfig
 from alphamind.execution.broker_adapter import (
     AccountStateQueries,
@@ -72,18 +84,6 @@ from alphamind.execution.broker_adapter.order_modify import (
 )
 from alphamind.execution.broker_adapter.order_modify import (
     ReplaceFields,
-)
-from alphamind.execution.oms.command_models import (
-    AddCommand,
-    AdjustCommand,
-    CancelCommand,
-    CloseCommand,
-    EquityInstrument,
-    OMSCommand,
-    OpenCommand,
-    OptionInstrument,
-    StrategyInstrument,
-    StrategyType,
 )
 
 __all__ = [

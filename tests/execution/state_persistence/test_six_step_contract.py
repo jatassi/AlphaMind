@@ -44,14 +44,7 @@ from alphamind._kernel.regime import (
     RegimeTransitionState,
     RiskZone,
 )
-from alphamind.decision.portfolio_manager.models import (
-    CriterionAssessment,
-    OpenCommand,
-    PMAnalystEnvelope,
-    PMEnvelope,
-    ThesisQualityEvaluation,
-)
-from alphamind.execution.oms.command_models import (
+from alphamind.commands.command_models import (
     BracketOrderParameters,
     EntryOrder,
     EquityInstrument,
@@ -61,10 +54,17 @@ from alphamind.execution.oms.command_models import (
     Target,
     Thesis,
 )
-from alphamind.execution.oms.command_models import (
+from alphamind.commands.command_models import (
     ThesisComponent as OMSThesisComponent,
 )
-from alphamind.execution.oms.submit_envelope_mcp import (
+from alphamind.decision.portfolio_manager.models import (
+    CriterionAssessment,
+    OpenCommand,
+    PMAnalystEnvelope,
+    PMEnvelope,
+    ThesisQualityEvaluation,
+)
+from alphamind.decision.portfolio_manager.submit_envelope import (
     Acknowledgment,
     SubmissionResult,
 )

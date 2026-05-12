@@ -26,10 +26,7 @@ from alpaca.trading.enums import OrderClass, OrderSide, OrderStatus, TimeInForce
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-# Pre-resolve the latent cycle between submit_envelope_mcp and PM models.
-import alphamind.decision.portfolio_manager.models  # noqa: F401
-from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
-from alphamind.execution.oms.command_models import (
+from alphamind.commands.command_models import (
     BracketOrderParameters,
     CloseCommand,
     EntryOrder,
@@ -45,11 +42,12 @@ from alphamind.execution.oms.command_models import (
     Thesis,
     ThesisComponent,
 )
-from alphamind.execution.oms.engine_envelope import (
+from alphamind.commands.engine_envelope import (
     BreachDetails,
     EngineEnvelope,
     GuardrailTriggerRecord,
 )
+from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationContext,
@@ -668,11 +666,11 @@ async def test_pm_envelope_open_equity_routes_through_dispatcher(
     MCP factory, an accepted OPEN equity command routes through
     ``dispatch_command_to_broker``; the persisted entry order carries the real
     Alpaca order id."""
-    from alphamind.execution.broker_adapter import AccountStateQueries
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
     )
+    from alphamind.execution.broker_adapter import AccountStateQueries
     from tests.execution.oms.test_submit_envelope_mcp import (
         _DEFAULT_ACTIVE_SECTORS,
         _make_analyst_envelope,
@@ -759,6 +757,134 @@ async def test_pm_envelope_open_equity_routes_through_dispatcher(
         await async_engine.dispose()
 
 
+async def test_pm_envelope_open_equity_routes_through_injected_broker_dispatch(
+    tmp_path: Any,
+) -> None:
+    """Composition-root-injected ``BrokerDispatch`` is consulted in lieu of the
+    concrete ``dispatch_command_to_broker`` when the engine-stub processes
+    an accepted OPEN command.
+
+    Architectural integration test for ALP-458: stubbing
+    ``dispatch_command_to_broker`` would not catch a regression where the
+    ``broker_dispatch`` kwarg got dropped between
+    ``build_submit_envelope_mcp_server`` and ``_route_through_broker``.
+    This test passes a fake Protocol implementer end-to-end and confirms
+    the fake — not the concrete dispatcher — is invoked.
+    """
+    from alphamind.commands.command_models import OMSCommand
+    from alphamind.commands.protocols import BrokerDispatch
+    from alphamind.decision.portfolio_manager.submit_envelope import (
+        _handle_submit_envelope,
+        build_initial_submit_envelope_state,
+    )
+    from alphamind.execution.broker_adapter import (
+        AccountStateQueries,
+        EquitySubmission,
+        Submitted,
+    )
+    from tests.execution.oms.test_submit_envelope_mcp import (
+        _DEFAULT_ACTIVE_SECTORS,
+        _make_analyst_envelope,
+        _make_bundle,
+        _make_pm_view,
+        _make_validation_state,
+        _recommendation_stub,
+        _retrieval_store,
+        _sector_resolver,
+    )
+
+    captured: list[OMSCommand] = []
+    expected_alpaca_order_id = uuid.uuid4()
+
+    class _FakeBrokerDispatch:
+        async def __call__(
+            self,
+            command: OMSCommand,
+            *,
+            client_order_id: str,
+            **context: Any,
+        ) -> Any:
+            captured.append(command)
+            payload = EquitySubmission(
+                alpaca_order_id=str(expected_alpaca_order_id),
+                client_order_id=client_order_id,
+                status="accepted",
+                order_class="simple",
+            )
+            from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
+
+            return Submitted(
+                payload=BrokerDispatchResult(
+                    alpaca_order_id=str(expected_alpaca_order_id),
+                    client_order_id=client_order_id,
+                    status="accepted",
+                    order_class="simple",
+                    payload_kind="equity",
+                    raw_submission=payload,
+                ),
+                attempt_count=1,
+            )
+
+    fake: BrokerDispatch = _FakeBrokerDispatch()
+    assert isinstance(fake, BrokerDispatch)
+
+    async_engine, factory = _build_db_factory(tmp_path)
+    try:
+        await _seed_substrate_with_cash(factory)
+        invocation_id = "inv-broker-dispatch-injected-1"
+        ctx = InvocationContext(
+            session_factory=factory,
+            record=_make_invocation_record(invocation_id=invocation_id),
+        )
+        handle = await ctx.__aenter__()
+
+        envelope = _make_analyst_envelope()
+        validation_state = _make_validation_state()
+        state = build_initial_submit_envelope_state(
+            invocation_id=validation_state.invocation_id,
+            starting_validation_state=validation_state,
+        )
+        bundle = _make_bundle(recommendations=(_recommendation_stub("REC-1"),))
+
+        # client/queries/execution_config still supplied so the engine-stub
+        # routes through *some* dispatcher; the injected fake replaces the
+        # concrete one without monkey-patching.
+        client = MagicMock()
+        queries = MagicMock(spec=AccountStateQueries)
+
+        await _handle_submit_envelope(
+            envelope.model_dump(mode="json"),
+            state=state,
+            retrieval_store=_retrieval_store(),
+            pre_processor_bundle=bundle,
+            pm_view=_make_pm_view(),
+            active_sectors=_DEFAULT_ACTIVE_SECTORS,
+            halt_mode=False,
+            sector_resolver=_sector_resolver,
+            invocation_handle=handle,
+            client=client,
+            queries=queries,
+            execution_config=_default_execution_config(),
+            broker_dispatch=fake,
+        )
+        await ctx.__aexit__(None, None, None)
+
+        # The injected fake was invoked; the concrete client.submit_order
+        # was NOT (the fake bypasses it entirely).
+        assert len(captured) == 1
+        client.submit_order.assert_not_called()
+
+        # The acknowledgment carries the fake's alpaca_order_id, proving the
+        # full path: invoked fake → result wrap → acknowledgment writeback.
+        assert len(state.submission_log) == 1
+        log_entry = state.submission_log[0]
+        ack = log_entry.submission_results[0].acknowledgment
+        assert ack is not None
+        assert ack.order_id == str(expected_alpaca_order_id)
+    finally:
+        await async_engine.dispose()
+
+
 async def test_pm_envelope_gateway_failure_writes_command_abandoned(
     tmp_path: Any,
 ) -> None:
@@ -768,11 +894,11 @@ async def test_pm_envelope_gateway_failure_writes_command_abandoned(
     persisted."""
     import httpx
 
-    from alphamind.execution.broker_adapter import AccountStateQueries
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
     )
+    from alphamind.execution.broker_adapter import AccountStateQueries
     from tests.execution.oms.test_submit_envelope_mcp import (
         _DEFAULT_ACTIVE_SECTORS,
         _make_analyst_envelope,
@@ -856,11 +982,11 @@ async def test_pm_envelope_close_equity_routes_through_dispatcher(
     """A PM-originated CLOSE on an equity position routes through
     ``submit_equity_close``; the persisted close order carries Alpaca's real
     ``alpaca_order_id``."""
-    from alphamind.execution.broker_adapter import AccountStateQueries
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
     )
+    from alphamind.execution.broker_adapter import AccountStateQueries
     from tests.execution.oms.test_submit_envelope_mcp import (
         _DEFAULT_ACTIVE_SECTORS,
         _close_command,
@@ -959,11 +1085,11 @@ async def test_pm_envelope_permanent_rejection_carries_code_in_gateway_reason(
 
     from alpaca.common.exceptions import APIError
 
-    from alphamind.execution.broker_adapter import AccountStateQueries
-    from alphamind.execution.oms.submit_envelope_mcp import (
+    from alphamind.decision.portfolio_manager.submit_envelope import (
         _handle_submit_envelope,
         build_initial_submit_envelope_state,
     )
+    from alphamind.execution.broker_adapter import AccountStateQueries
     from tests.execution.oms.test_submit_envelope_mcp import (
         _DEFAULT_ACTIVE_SECTORS,
         _make_analyst_envelope,
@@ -1350,7 +1476,7 @@ def _seed_pending_protective_orders(
 
 def _adjust_stop_command(position_id: str) -> Any:
     """Build an ADJUST command targeting only the stop leg."""
-    from alphamind.execution.oms.command_models import AdjustCommand, NewStopLevel
+    from alphamind.commands.command_models import AdjustCommand, NewStopLevel
 
     return AdjustCommand(
         command_type="adjust",
@@ -1366,7 +1492,7 @@ def _adjust_stop_command(position_id: str) -> Any:
 
 def _adjust_target_command(position_id: str) -> Any:
     """Build an ADJUST command targeting only the take-profit leg."""
-    from alphamind.execution.oms.command_models import AdjustCommand, NewTargetLevel
+    from alphamind.commands.command_models import AdjustCommand, NewTargetLevel
 
     return AdjustCommand(
         command_type="adjust",
@@ -1386,7 +1512,7 @@ async def test_adjust_command_context_options_position_routes_us_option_simple(
     """ADJUST against an options position derives ``us_option`` / ``simple``
     from the position's details, not the previously-hardcoded equity values.
     """
-    from alphamind.execution.oms.submit_envelope_mcp import _adjust_command_context
+    from alphamind.decision.portfolio_manager.submit_envelope import _adjust_command_context
 
     async_engine, factory = _build_db_factory(tmp_path)
     try:
@@ -1428,7 +1554,7 @@ async def test_adjust_command_context_strategy_position_routes_mleg(
     hardcoded ``us_equity`` / ``simple`` would have produced a
     field-out-of-surface ValueError or silently mis-routed at the broker.
     """
-    from alphamind.execution.oms.submit_envelope_mcp import _adjust_command_context
+    from alphamind.decision.portfolio_manager.submit_envelope import _adjust_command_context
 
     async_engine, factory = _build_db_factory(tmp_path)
     try:
@@ -1470,7 +1596,7 @@ async def test_adjust_command_context_targets_take_profit_when_target_change(
     selection silently sent the wrong order ID to ``submit_replace`` whenever
     the bracket's PRICE_STOP appeared first in the result set.
     """
-    from alphamind.execution.oms.submit_envelope_mcp import _adjust_command_context
+    from alphamind.decision.portfolio_manager.submit_envelope import _adjust_command_context
 
     async_engine, factory = _build_db_factory(tmp_path)
     try:

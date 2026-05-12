@@ -66,8 +66,15 @@ import alphamind.decision.portfolio_manager.models
 # Side-effect import: register state-persistence tables on ``Base.metadata``
 # so the in-memory engine in scenario (b) has the ``fill_records`` table.
 import alphamind.execution.state_persistence.tables  # noqa: F401
+from alphamind.commands.engine_envelope import (
+    EngineEnvelope as OmsEngineEnvelope,
+)
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.guardrails import BreachResponse
+from alphamind.decision.portfolio_manager.submit_envelope import (
+    Acknowledgment,
+    SubmissionResult,
+)
 from alphamind.execution.continuous_monitor.bracket_stops.closer import (
     CloseSubmissionResult,
 )
@@ -110,13 +117,6 @@ from alphamind.execution.continuous_monitor.underlying_stream.cache import (
 )
 from alphamind.execution.guardrail_enforcement.orchestrator import (
     Phase1EnforcementResult,
-)
-from alphamind.execution.oms.engine_envelope import (
-    EngineEnvelope as OmsEngineEnvelope,
-)
-from alphamind.execution.oms.submit_envelope_mcp import (
-    Acknowledgment,
-    SubmissionResult,
 )
 from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
 from alphamind.execution.state_persistence.write_paths.fill_persistence import (

@@ -27,6 +27,23 @@ from alpaca.trading.requests import (
     StopLimitOrderRequest,
 )
 
+from alphamind.commands.command_models import (
+    AddCommand,
+    BracketOrderParameters,
+    CloseCommand,
+    EntryOrder,
+    EquityInstrument,
+    EventCondition,
+    EventLeg,
+    OpenCommand,
+    OptionInstrument,
+    PositionSize,
+    PriceCondition,
+    PriceLeg,
+    Target,
+    Thesis,
+    ThesisComponent,
+)
 from alphamind.config.models.execution import (
     ExecutionConfig,
     GreeksRefresh,
@@ -46,23 +63,6 @@ from alphamind.execution.broker_adapter import (
     submit_options_open,
 )
 from alphamind.execution.broker_adapter.order_options import PermanentRejectionError
-from alphamind.execution.oms.command_models import (
-    AddCommand,
-    BracketOrderParameters,
-    CloseCommand,
-    EntryOrder,
-    EquityInstrument,
-    EventCondition,
-    EventLeg,
-    OpenCommand,
-    OptionInstrument,
-    PositionSize,
-    PriceCondition,
-    PriceLeg,
-    Target,
-    Thesis,
-    ThesisComponent,
-)
 from alphamind.portfolio_state.records.positions import OptionContractType
 
 # ---------------------------------------------------------------------------
