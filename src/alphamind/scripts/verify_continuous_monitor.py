@@ -95,9 +95,6 @@ from alphamind.execution.continuous_monitor.emergency_trigger.cooldown import (
 from alphamind.execution.continuous_monitor.emergency_trigger.evaluator import (
     EmergencyTriggerEvaluator,
 )
-from alphamind.execution.continuous_monitor.emergency_trigger.evaluator import (
-    TriggerIdGenerator as EmergencyTriggerIdGenerator,
-)
 from alphamind.execution.continuous_monitor.greeks_refresh.iv_provider import IVQuote
 from alphamind.execution.continuous_monitor.greeks_refresh.state import (
     LastRefreshState,
@@ -1556,7 +1553,7 @@ async def run_scenario_k_emergency_request() -> ScenarioResult:
         session=_session(),
         breach_behavior_config=cfg,
         cooldown=cooldown,
-        trigger_ids=EmergencyTriggerIdGenerator(monitor_session_id=_SESSION_ID),
+        trigger_ids=TriggerIdGenerator(session_id=_SESSION_ID),
         margin_call_observer=_NoMarginCallObserver(),
         activity_log_writer=writer,
         breach_response_lookup=MappingProxyType({}),

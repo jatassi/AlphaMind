@@ -29,6 +29,7 @@ is composition + submission.
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -157,7 +158,9 @@ class DeferralEvent:
 # ---------------------------------------------------------------------------
 
 
-BreachDispatchContextProvider = Callable[[], BreachDispatchContext]
+BreachDispatchContextProvider = Callable[
+    [], BreachDispatchContext | Awaitable[BreachDispatchContext]
+]
 SubmitEngineEnvelope = Callable[[OmsEngineEnvelope], Awaitable["SubmissionResult"]]
 DeferralSink = Callable[[DeferralEvent], Awaitable[None]]
 PerRuleKwargsProvider = Callable[[RuleEvaluation, BreachDispatchContext], dict[str, Any]]
@@ -237,7 +240,7 @@ class CascadeDispatcher:
                 f"selector's arguments"
             )
             raise ValueError(msg)
-        context = self._context_provider()
+        context = await _maybe_await(self._context_provider())
         kwargs = self._per_rule_kwargs_providers[rule.rule_id](rule, context)
         selection = selector(**kwargs)
         primary_close = _proposed_close_from_selection(
@@ -294,7 +297,7 @@ class CascadeDispatcher:
         the worst-R/R position and chain any post-liquidation follow-up
         envelopes under a shared ``cascade_id``.
         """
-        context = self._context_provider()
+        context = await _maybe_await(self._context_provider())
         initial_trigger = self._trigger_ids.next()
         cascade_id = generate_cascade_id(
             monitor_session_id=self._monitor_session_id,
@@ -464,6 +467,21 @@ def _breach_details_from_evaluation(
         unit=None,
         regime_at_breach=active_regime,
     )
+
+
+async def _maybe_await(
+    value: BreachDispatchContext | Awaitable[BreachDispatchContext],
+) -> BreachDispatchContext:
+    """Await *value* when awaitable; otherwise return it directly.
+
+    The context-provider Protocol accepts either a sync callable or a
+    coroutine function. Production wiring (per ALP-453) builds the
+    :class:`BreachDispatchContext` from async substrate reads — sync test
+    fixtures return the context directly.
+    """
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 __all__ = [

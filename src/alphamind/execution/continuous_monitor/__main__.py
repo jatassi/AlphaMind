@@ -28,16 +28,22 @@ import logging
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 from dotenv import load_dotenv
 
+from alphamind.config.guardrails_helpers import (
+    load_cumulative_drawdown_progressive_tiers,
+)
 from alphamind.config.loaders import read_yaml_file
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.execution import ExecutionConfig
-from alphamind.config.models.guardrails import BreachResponse, GuardrailsConfig
+from alphamind.config.models.guardrails import BreachResponse, GuardrailsConfig, ProgressiveTier
 from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.broker_adapter import AccountStateQueries, AlpacaClientFactory
+from alphamind.execution.continuous_monitor.emergency_trigger.margin_call_observer import (
+    AccountQueriesProtocol,
+)
 from alphamind.execution.continuous_monitor.bracket_stops import (
     AlpacaBracketCloseSubmitter,
     register_options_bracket_watcher_task,
@@ -64,6 +70,13 @@ from alphamind.execution.continuous_monitor.underlying_stream import (
 from alphamind.execution.continuous_monitor.underlying_stream.reader import (
     SqlOpenPositionsReader,
 )
+from alphamind.execution.state_persistence.config import (
+    StatePersistenceConfig,
+    load_state_persistence_config,
+)
+from alphamind.execution.venue_configuration.calendar_cache import (
+    TradingCalendarCache,
+)
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.risk_guardrails.breach_behavior import (
     BreachBehaviorConfig,
@@ -85,6 +98,7 @@ _VENUE_CONFIG_PATH = _CONFIG_DIR / "venue.yaml"
 _GUARDRAILS_CONFIG_PATH = _CONFIG_DIR / "guardrails.yaml"
 _BREACH_BEHAVIOR_CONFIG_PATH = _CONFIG_DIR / "breach_behavior.yaml"
 _EXECUTION_CONFIG_PATH = _CONFIG_DIR / "execution.yaml"
+_MAIN_CONFIG_PATH = _CONFIG_DIR / "main.yaml"
 
 
 def _build_breach_response_lookup(
@@ -134,6 +148,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     breach_behavior_config = load_breach_behavior_config(_BREACH_BEHAVIOR_CONFIG_PATH)
     breach_response_lookup = _build_breach_response_lookup(guardrails_config)
     execution_config = ExecutionConfig.model_validate(read_yaml_file(_EXECUTION_CONFIG_PATH))
+    state_persistence_config = load_state_persistence_config(read_yaml_file(_MAIN_CONFIG_PATH))
     session = new_session(mode=mode)
     log.info(
         "monitor session start: session_id=%s mode=%s",
@@ -143,6 +158,14 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     engine = make_async_engine()
     db_session_factory = make_async_session_factory(engine)
     open_positions_reader = SqlOpenPositionsReader(db_session_factory)
+    # One ``AccountStateQueries`` + one ``TradingCalendarCache`` are shared
+    # across the breach loop (market-hours predicate, margin-call observer),
+    # the greeks-refresh task (market-hours predicate), and the bracket-stops
+    # watcher's submitter — so the monitor process holds a single live
+    # broker-client reference and a single calendar window in memory.
+    client_factory = AlpacaClientFactory(venue_config, mode)
+    account_state_queries = AccountStateQueries(client_factory.build_trading_client())
+    calendar_cache = TradingCalendarCache(account_state_queries)
     supervisor = MonitorSupervisor(session=session, config=config)
     underlying_cache = register_underlying_stream_task(supervisor, repository=open_positions_reader)
     _register_fill_stream_consumer(
@@ -155,6 +178,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         repository=open_positions_reader,
         cache=underlying_cache,
         session_factory=db_session_factory,
+        market_open=calendar_cache.is_market_open,
     )
     # Constructed once per monitor session so the cascade dispatcher and
     # bracket-stops watcher mint trigger ids from the same monotonic
@@ -162,6 +186,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     # engine-originated ``client_order_id`` and a collision would land two
     # broker submissions with identical IDs.
     trigger_ids = TriggerIdGenerator(session_id=session.session_id)
+    progressive_tiers = load_cumulative_drawdown_progressive_tiers()
     _register_breach_loop(
         supervisor,
         underlying_cache=underlying_cache,
@@ -170,6 +195,11 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         breach_response_lookup=breach_response_lookup,
         db_session_factory=db_session_factory,
         trigger_ids=trigger_ids,
+        progressive_tiers=progressive_tiers,
+        account_state_queries=account_state_queries,
+        calendar_cache=calendar_cache,
+        state_persistence_config=state_persistence_config,
+        config_dir=_CONFIG_DIR,
     )
     register_options_bracket_watcher_task(
         supervisor,
@@ -177,7 +207,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         cache=underlying_cache,
         session_factory=db_session_factory,
         submitter=AlpacaBracketCloseSubmitter(
-            client_factory=AlpacaClientFactory(venue_config, mode),
+            client_factory=client_factory,
             execution_config=execution_config,
         ),
         trigger_ids=trigger_ids,
@@ -229,7 +259,7 @@ def _register_fill_stream_consumer(
     supervisor.register_task(name="fill_stream_consumer", coro_fn=_fill_stream_consumer_task)
 
 
-def _register_breach_loop(
+def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter is one production-substrate seam
     supervisor: MonitorSupervisor,
     *,
     underlying_cache: object,
@@ -238,39 +268,53 @@ def _register_breach_loop(
     breach_response_lookup: Mapping[str, BreachResponse],
     db_session_factory: async_sessionmaker[AsyncSession],
     trigger_ids: TriggerIdGenerator,
+    progressive_tiers: tuple[ProgressiveTier, ...],
+    account_state_queries: AccountQueriesProtocol,
+    calendar_cache: TradingCalendarCache,
+    state_persistence_config: StatePersistenceConfig,
+    config_dir: Path,
 ) -> None:
     """Register the ``breach_loop`` task (story 03b / ALP-437) with the cascade
     dispatcher (story 04a / ALP-438) on ``on_immediate_breach`` and the
     emergency-trigger callback (story 04b / ALP-439) on ``on_emergency_input``.
 
-    Story 03b shipped the loop itself with no-op callbacks; this helper
-    replaces both with real callbacks. ``on_immediate_breach`` is
-    :meth:`CascadeDispatcher.handle_immediate_breach` (one dispatcher
-    instance per session so the :class:`TriggerIdGenerator` stays monotonic
-    across breaches). ``on_emergency_input`` is the callback returned by
-    :func:`make_emergency_callback` — it consults the live cooldown tracker,
-    runs the trigger evaluators, and writes ``EMERGENCY_INVOCATION_REQUESTED``
-    activity-log entries through ``db_session_factory``.
+    Each per-tick dependency is built from :mod:`production_substrate`:
 
-    The production wiring of the loop's non-callback dependencies
-    (``snapshot_provider``, ``regime_provider``, ``library_config_factory``,
-    ``market_hours`` via ``TradingCalendarCache``, ``progressive_tiers``
-    from the cumulative-drawdown rule) and the dispatcher's per-tick
-    ``context_provider`` + ``submit_envelope`` paths remain deferred to
-    follow-up stories that wire the SQL repository, regime resolver,
-    calendar cache, and invocation-handle factory into the monitor process.
-    Until those land, the loop's ``market_hours`` stub reports closed so the
-    loop sleeps indefinitely without exercising either path.
+    * ``snapshot_provider`` — :func:`make_snapshot_provider` (SQL repository
+      + :func:`assemble_snapshot` + :func:`to_library_snapshot`).
+    * ``regime_provider`` — :func:`make_regime_provider` (wraps the latest
+      invocation's persisted parameter set in a synthetic
+      :class:`RegimeAdaptationOutput`).
+    * ``library_config_factory`` — :func:`make_library_config_factory`
+      (composes the resolved config once, overrides per-tick effective
+      limits from the supplied :class:`ActiveRiskParameterSet`).
+    * Dispatcher ``context_provider`` — :func:`make_dispatch_context_provider`
+      (builds :class:`BreachDispatchContext` from snapshot + regime per call).
+    * Dispatcher ``submit_envelope`` — :func:`make_submit_envelope` (wraps
+      :func:`submit_engine_envelope` with a per-emit :class:`InvocationHandle`).
+
+    ``market_hours`` is backed by a :class:`TradingCalendarCache` over the
+    supplied :class:`AccountStateQueries`; ``progressive_tiers`` is the
+    cumulative-drawdown tier sequence loaded once at daemon startup.
+    ``margin_call_observer`` is :class:`AlpacaMarginCallObserver` over the
+    same queries — emergencies fire from live broker state instead of
+    :class:`NoMarginCallObserver`.
     """
     from collections.abc import Iterable
-    from datetime import datetime
 
+    from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
+        make_dispatch_context_provider,
+        make_library_config_factory,
+        make_regime_provider,
+        make_snapshot_provider,
+        make_submit_envelope,
+    )
     from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
-        BreachDispatchContext,
         CascadeDispatcher,
         DeferralEvent,
     )
     from alphamind.execution.continuous_monitor.emergency_trigger import (
+        AlpacaMarginCallObserver,
         make_emergency_callback,
     )
     from alphamind.execution.continuous_monitor.greeks_refresh.wiring import (
@@ -279,59 +323,21 @@ def _register_breach_loop(
     from alphamind.execution.continuous_monitor.underlying_stream.cache import (
         UnderlyingPriceCache,
     )
-    from alphamind.execution.oms.engine_envelope import (
-        EngineEnvelope as OmsEngineEnvelope,
+    from alphamind.execution.state_persistence.repository import (
+        build_sql_portfolio_state_repository,
     )
+    from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
     from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
     from alphamind.risk_guardrails.guardrail_evaluation import (
         FixtureIvProvider,
     )
 
-    # NOTE: When ``_ClosedMarket`` is removed (coupled change with the breach
-    # loop's market-hours wiring in a follow-up story), the
-    # ``HALT_ACTIVATED``/``HALT_LIFTED`` entries emitted by the breach loop's
-    # ``HaltTransitionTracker`` start surfacing and the ``activity_log_sink``
-    # below begins persisting them via ``db_session_factory``. The previous
-    # ``_no_op_sink`` would have silently dropped them once ``_ClosedMarket``
-    # lifted — see ALP-453 for the coupled removal.
-    class _ClosedMarket:
-        def is_market_open(self, at: datetime) -> bool:
-            del at
-            return False
-
+    underlying_cache_typed = cast(UnderlyingPriceCache, underlying_cache)
     _single_entry_emitter = make_activity_log_emitter(db_session_factory)
 
     async def _activity_log_sink(entries: Iterable[ActivityLogEntry]) -> None:
-        """Persist each emitted ``ActivityLogEntry`` via the session factory.
-
-        Reuses the per-emit codec pattern from
-        ``greeks_refresh.wiring.make_activity_log_emitter`` — one entry per
-        transaction so a single bad row cannot poison the rest of the batch.
-        The breach loop emits 0..2 entries per tick (one per halt-flag
-        transition), so the per-row overhead is negligible.
-        """
         for entry in entries:
             await _single_entry_emitter(entry)
-
-    async def _empty_snapshot_provider() -> object:
-        msg = "snapshot_provider not yet wired; deferred follow-up"
-        raise RuntimeError(msg)
-
-    async def _empty_regime_provider() -> object:
-        msg = "regime_provider not yet wired; deferred follow-up"
-        raise RuntimeError(msg)
-
-    def _empty_library_config_factory(_active: object) -> object:
-        msg = "library_config_factory not yet wired; deferred follow-up"
-        raise RuntimeError(msg)
-
-    def _empty_dispatch_context_provider() -> BreachDispatchContext:
-        msg = "cascade dispatch context_provider not yet wired; deferred follow-up"
-        raise RuntimeError(msg)
-
-    async def _empty_submit_envelope(_envelope: OmsEngineEnvelope) -> Any:
-        msg = "submit_envelope path not yet wired; deferred follow-up"
-        raise RuntimeError(msg)
 
     async def _log_deferral(event: DeferralEvent) -> None:
         log.info(
@@ -345,12 +351,57 @@ def _register_breach_loop(
             event.reason,
         )
 
+    # Build the production substrate. Each helper takes the shared dependencies
+    # the daemon owns and returns a closure the breach loop / dispatcher consume.
+    snapshot_provider = make_snapshot_provider(
+        session_factory=db_session_factory,
+        underlying_cache=underlying_cache_typed,
+        config_dir=config_dir,
+        state_persistence_config=state_persistence_config,
+    )
+    regime_provider = make_regime_provider(
+        session_factory=db_session_factory,
+        config_dir=config_dir,
+    )
+    library_config_factory = make_library_config_factory(config_dir=config_dir)
+    dispatch_context_provider = make_dispatch_context_provider(
+        snapshot_provider=snapshot_provider,
+        regime_provider=regime_provider,
+        library_config_factory=library_config_factory,
+        underlying_cache=underlying_cache_typed,
+    )
+    submit_envelope = make_submit_envelope(
+        session_factory=db_session_factory,
+        monitor_session_id=session.session_id,
+        state_persistence_config=state_persistence_config,
+    )
+
+    # Repository for the breach loop's ``get_drawdown_state`` read. The
+    # monitor runs across invocations; the bootstrap-style providers below
+    # are unused by ``get_drawdown_state`` (singleton-table read) but are
+    # required by the factory's signature.
+    async def _bootstrap_active_provider() -> ActiveRiskParameterSet:
+        msg = "active_risk_parameters_provider invoked from the breach loop path"
+        raise RuntimeError(msg)
+
+    async def _bootstrap_prior_provider(_path: str) -> ActiveRiskParameterSet:
+        msg = "prior_active_risk_parameters_provider invoked from the breach loop path"
+        raise RuntimeError(msg)
+
+    breach_loop_repository = build_sql_portfolio_state_repository(
+        session_factory=db_session_factory,
+        invocation_id="monitor-bootstrap",
+        active_risk_parameters_provider=_bootstrap_active_provider,
+        prior_active_risk_parameters_provider=_bootstrap_prior_provider,
+        config=state_persistence_config,
+    )
+
     dispatcher = CascadeDispatcher(
         monitor_session_id=session.session_id,
         breach_config=breach_behavior_config,
         trigger_ids=trigger_ids,
-        context_provider=_empty_dispatch_context_provider,
-        submit_envelope=_empty_submit_envelope,
+        context_provider=dispatch_context_provider,
+        submit_envelope=submit_envelope,
         deferral_sink=_log_deferral,
         per_rule_kwargs_providers={},
     )
@@ -359,20 +410,22 @@ def _register_breach_loop(
         breach_behavior_config=breach_behavior_config,
         breach_response_lookup=breach_response_lookup,
         session_factory=db_session_factory,
+        trigger_ids=trigger_ids,
+        margin_call_observer=AlpacaMarginCallObserver(queries=account_state_queries),
     )
 
     register_breach_loop_task(
         supervisor,
-        repository=cast(Any, None),
-        cache=cast(UnderlyingPriceCache, underlying_cache),
-        snapshot_provider=cast(Any, _empty_snapshot_provider),
-        regime_provider=cast(Any, _empty_regime_provider),
-        progressive_tiers=(),
-        library_config_factory=cast(Any, _empty_library_config_factory),
+        repository=breach_loop_repository,
+        cache=underlying_cache_typed,
+        snapshot_provider=snapshot_provider,
+        regime_provider=regime_provider,
+        progressive_tiers=progressive_tiers,
+        library_config_factory=library_config_factory,
         iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
         risk_free_rate=0.045,
         breach_response_lookup=breach_response_lookup,
-        market_hours=_ClosedMarket(),
+        market_hours=calendar_cache,
         on_immediate_breach=dispatcher.handle_immediate_breach,
         on_emergency_input=on_emergency_input,
         activity_log_sink=_activity_log_sink,

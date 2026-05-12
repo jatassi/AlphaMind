@@ -23,6 +23,9 @@ Public surface:
   ``__main__.py`` daemon uses to construct the production callback.
 """
 
+from alphamind.execution.continuous_monitor.cascade_dispatch.trigger_ids import (
+    TriggerIdGenerator,
+)
 from alphamind.execution.continuous_monitor.emergency_trigger.cooldown import (
     CooldownTracker,
 )
@@ -31,7 +34,9 @@ from alphamind.execution.continuous_monitor.emergency_trigger.evaluator import (
     EmergencyTriggerEvaluator,
     MarginCallObserver,
     NoMarginCallObserver,
-    TriggerIdGenerator,
+)
+from alphamind.execution.continuous_monitor.emergency_trigger.margin_call_observer import (
+    AlpacaMarginCallObserver,
 )
 from alphamind.execution.continuous_monitor.emergency_trigger.wiring import (
     make_emergency_callback,
@@ -41,6 +46,7 @@ from alphamind.execution.continuous_monitor.emergency_trigger.wiring import (
 
 __all__ = [
     "ActivityLogWriter",
+    "AlpacaMarginCallObserver",
     "CooldownTracker",
     "EmergencyTriggerEvaluator",
     "MarginCallObserver",
