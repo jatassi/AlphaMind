@@ -24,6 +24,13 @@ greeks_refresh_underlying_move_threshold_pct: 2.0
 # responsiveness against database / IV-provider load during heavy chains.
 greeks_refresh_inspection_cadence_seconds: 30
 
+# Per-loop inspection cadence for the options bracket-stop watcher (story 04c).
+# The watcher reads spot from the in-memory underlying-price cache + the
+# position's greeks; the cadence trades fire latency against repeated
+# evaluation cost across the open option / strategy positions. Default 1s
+# balances near-tick-fast responsiveness against per-cycle iteration cost.
+bracket_stop_evaluation_cadence_seconds: 1.0
+
 # Live underlying-price stream provider. Single-value Literal today; decision (B)
 # pins Alpaca StockDataStream / IEX after the 2026-05-10 paper-account smoke
 # test. Story 02b's vendor surface lives here.

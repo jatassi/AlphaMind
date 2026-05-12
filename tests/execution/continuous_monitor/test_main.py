@@ -110,9 +110,9 @@ def test_main_registers_wave_2_and_3_tasks(
     monkeypatch: pytest.MonkeyPatch,
     _silent_logger: None,
 ) -> None:
-    """Waves 2 + 3 — the daemon wires ``underlying_stream`` (02b),
-    ``fill_stream_consumer`` (02c), ``greeks_refresh`` (03a), and
-    ``breach_loop`` (03b) onto the supervisor.
+    """Waves 2 + 3 + 4c — the daemon wires ``underlying_stream`` (02b),
+    ``fill_stream_consumer`` (02c), ``greeks_refresh`` (03a),
+    ``breach_loop`` (03b), and ``bracket_stops`` (04c) onto the supervisor.
 
     The patch on ``MonitorSupervisor.run`` captures ``self`` so we can read
     the registered task names without driving the asyncio loop.
@@ -136,5 +136,11 @@ def test_main_registers_wave_2_and_3_tasks(
     supervisor = captured.get("supervisor")
     assert supervisor is not None
     task_names = supervisor.task_names()  # type: ignore[attr-defined]
-    for expected in ("underlying_stream", "fill_stream_consumer", "greeks_refresh", "breach_loop"):
+    for expected in (
+        "underlying_stream",
+        "fill_stream_consumer",
+        "greeks_refresh",
+        "breach_loop",
+        "bracket_stops",
+    ):
         assert expected in task_names, f"{expected} not registered; got {task_names!r}"

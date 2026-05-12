@@ -34,8 +34,13 @@ from dotenv import load_dotenv
 
 from alphamind.config.loaders import read_yaml_file
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
+from alphamind.config.models.execution import ExecutionConfig
 from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.broker_adapter import AccountStateQueries, AlpacaClientFactory
+from alphamind.execution.continuous_monitor.bracket_stops import (
+    AlpacaBracketCloseSubmitter,
+    register_options_bracket_watcher_task,
+)
 from alphamind.execution.continuous_monitor.breach_loop import (
     register_breach_loop_task,
 )
@@ -71,6 +76,7 @@ log = logging.getLogger("alphamind.execution.continuous_monitor")
 _CONFIG_DIR = Path(__file__).parents[4] / "config"
 _CONFIG_PATH = _CONFIG_DIR / "continuous_monitor.yaml"
 _VENUE_CONFIG_PATH = _CONFIG_DIR / "venue.yaml"
+_EXECUTION_CONFIG_PATH = _CONFIG_DIR / "execution.yaml"
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -104,6 +110,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     configure_monitor_logging()
     config = ContinuousMonitorConfig.model_validate(read_yaml_file(_CONFIG_PATH))
     venue_config = VenueConfig.model_validate(read_yaml_file(_VENUE_CONFIG_PATH))
+    execution_config = ExecutionConfig.model_validate(read_yaml_file(_EXECUTION_CONFIG_PATH))
     session = new_session(mode=mode)
     log.info(
         "monitor session start: session_id=%s mode=%s",
@@ -129,6 +136,16 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     _register_breach_loop(
         supervisor,
         underlying_cache=underlying_cache,
+    )
+    register_options_bracket_watcher_task(
+        supervisor,
+        position_repository=open_positions_reader,
+        cache=underlying_cache,
+        session_factory=db_session_factory,
+        submitter=AlpacaBracketCloseSubmitter(
+            client_factory=AlpacaClientFactory(venue_config, mode),
+            execution_config=execution_config,
+        ),
     )
     try:
         await supervisor.run()

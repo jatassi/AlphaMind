@@ -20,6 +20,7 @@ from datetime import datetime
 
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.consumers.strategist import (
+    BetweenInvocationClosure,
     StrategistPositionView,
     StrategistView,
 )
@@ -81,6 +82,7 @@ __all__ = [
 
 _TOOLS_HEADER = "=== AVAILABLE TOOLS ==="
 _PORTFOLIO_HEADER = "=== PORTFOLIO STATE ==="
+_BETWEEN_INVOCATION_CLOSURES_HEADER = "=== ACTIVITY LOG (between-invocation closures) ==="
 _INTRA_LOG_HEADER = "=== ACTIVITY LOG (intra-invocation) ==="
 _PM_LOG_HEADER = "=== ACTIVITY LOG (recent PM decisions) ==="
 _BRIEF_HEADER = "=== SYNTHESIZER BRIEF ==="
@@ -259,9 +261,39 @@ def _render_portfolio_state_section(
             blocks.append(_render_position_record(view, current_price_lookup, prior))
     else:
         blocks.append("Per-position records:\n  None")
+    blocks.append(_render_between_invocation_closures(strategist_view.between_invocation_closures))
     blocks.append(_render_intra_invocation_changelog(strategist_view.intra_invocation_changelog))
     blocks.append(_render_pm_decision_log(strategist_view.recent_pm_decision_log))
     return "\n\n".join(blocks)
+
+
+def _render_between_invocation_closures(
+    closures: tuple[BetweenInvocationClosure, ...],
+) -> str:
+    """Render the strategist's between-invocation closures block.
+
+    Surfaces every closure the continuous monitor recorded between the strategist's
+    last invocation and this one — both story 04c direct-call closures
+    (price-based stops + P/L-target firings) and story 04a engine-envelope cascade
+    closures. Empty case renders ``None`` so the section header is always present.
+    """
+    lines: list[str] = [_BETWEEN_INVOCATION_CLOSURES_HEADER]
+    if not closures:
+        lines.append(_NONE_LINE)
+        return "\n".join(lines)
+    for closure in closures:
+        lines.append(_render_between_invocation_closure_row(closure))
+    return "\n".join(lines)
+
+
+def _render_between_invocation_closure_row(closure: BetweenInvocationClosure) -> str:
+    ts = closure.closed_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    order_part = f"  order={closure.closing_order_id}" if closure.closing_order_id else ""
+    return (
+        f"  [{ts}] {closure.ticker} ({closure.instrument_type.value}, "
+        f"origin={closure.origin}, exit_method={closure.exit_method.value}){order_part}\n"
+        f"      {closure.rationale}"
+    )
 
 
 def _render_aggregate_block(strategist_view: StrategistView) -> str:

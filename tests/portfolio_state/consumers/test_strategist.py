@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from alphamind.portfolio_state.consumers.analyst import AnalystAbandonedOpening
 from alphamind.portfolio_state.consumers.strategist import (
+    BetweenInvocationClosure,
     StrategistAbandonedAction,
     StrategistPositionView,
     project_strategist_view,
@@ -22,6 +23,8 @@ from alphamind.portfolio_state.records.activity_log import (
     EventType,
     PMDecisionDetail,
     PMVerdict,
+    PositionClosedDetail,
+    PositionExitMethod,
     PositionOpenedDetail,
     PositionOpenMechanism,
 )
@@ -54,6 +57,7 @@ from alphamind.portfolio_state.records.orders import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
+    InstrumentType,
     PositionFill,
     PositionRecord,
     PositionStatus,
@@ -822,3 +826,246 @@ class TestProjectStrategistViewDeterminism:
         view1 = project_strategist_view(snapshot)
         view2 = project_strategist_view(snapshot)
         assert view1 == view2
+
+
+# ---------------------------------------------------------------------------
+# Tests: between_invocation_closures projection (story 04c / ALP-440)
+# ---------------------------------------------------------------------------
+
+
+def _make_position_closed_entry(
+    *,
+    entry_id: str,
+    position_id: str,
+    timestamp: datetime,
+    source: EventSource,
+    exit_method: PositionExitMethod,
+    order_id: str | None = None,
+) -> ActivityLogEntry:
+    return ActivityLogEntry(
+        entry_id=entry_id,
+        invocation_id=_INV_ID,
+        timestamp=timestamp,
+        event_type=EventType.POSITION_CLOSED,
+        event_group=EventGroup.POSITION_LIFECYCLE,
+        position_id=position_id,
+        order_id=order_id,
+        thesis_id=None,
+        source=source,
+        detail=PositionClosedDetail(
+            exit_method=exit_method,
+            exit_price=150.0,
+            realized_pnl_usd=-100.0,
+            thesis_resolution_category="invalidated",
+        ),
+    )
+
+
+class TestBetweenInvocationClosuresProjection:
+    def test_bracket_manager_closure_projected(self) -> None:
+        """BRACKET_MANAGER-sourced POSITION_CLOSED projects with origin='bracket_manager'."""
+        entry = _make_position_closed_entry(
+            entry_id="ENTRY-CLOSE-BRK",
+            position_id="POS-001",
+            timestamp=_T0,
+            source=EventSource.BRACKET_MANAGER,
+            exit_method=PositionExitMethod.STOP_TRIGGERED,
+            order_id="ord-close-1",
+        )
+        snapshot = _make_snapshot(intra_invocation_changelog=(entry,))
+        view = project_strategist_view(snapshot)
+        assert len(view.between_invocation_closures) == 1
+        closure = view.between_invocation_closures[0]
+        assert isinstance(closure, BetweenInvocationClosure)
+        assert closure.position_id == "POS-001"
+        assert closure.exit_method is PositionExitMethod.STOP_TRIGGERED
+        assert closure.origin == "bracket_manager"
+        assert closure.closing_order_id == "ord-close-1"
+
+    def test_target_reached_closure_projected(self) -> None:
+        """BRACKET_MANAGER + TARGET_REACHED projects with the matching exit_method."""
+        entry = _make_position_closed_entry(
+            entry_id="ENTRY-CLOSE-TGT",
+            position_id="POS-001",
+            timestamp=_T0,
+            source=EventSource.BRACKET_MANAGER,
+            exit_method=PositionExitMethod.TARGET_REACHED,
+        )
+        snapshot = _make_snapshot(intra_invocation_changelog=(entry,))
+        view = project_strategist_view(snapshot)
+        assert len(view.between_invocation_closures) == 1
+        assert view.between_invocation_closures[0].exit_method is PositionExitMethod.TARGET_REACHED
+
+    def test_margin_monitor_closure_projected(self) -> None:
+        """MARGIN_MONITOR POSITION_CLOSED projects with origin='margin_monitor'."""
+        entry = _make_position_closed_entry(
+            entry_id="ENTRY-CLOSE-MGN",
+            position_id="POS-001",
+            timestamp=_T0,
+            source=EventSource.MARGIN_MONITOR,
+            exit_method=PositionExitMethod.MARGIN_LIQUIDATION,
+        )
+        snapshot = _make_snapshot(intra_invocation_changelog=(entry,))
+        view = project_strategist_view(snapshot)
+        assert len(view.between_invocation_closures) == 1
+        closure = view.between_invocation_closures[0]
+        assert closure.origin == "margin_monitor"
+        assert closure.exit_method is PositionExitMethod.MARGIN_LIQUIDATION
+
+    def test_guardrail_layer_closure_projected(self) -> None:
+        """GUARDRAIL_LAYER-sourced POSITION_CLOSED projects with origin='guardrail_layer'."""
+        entry = _make_position_closed_entry(
+            entry_id="ENTRY-CLOSE-GR",
+            position_id="POS-001",
+            timestamp=_T0,
+            source=EventSource.GUARDRAIL_LAYER,
+            exit_method=PositionExitMethod.PM_DECISION,
+        )
+        snapshot = _make_snapshot(intra_invocation_changelog=(entry,))
+        view = project_strategist_view(snapshot)
+        assert len(view.between_invocation_closures) == 1
+        assert view.between_invocation_closures[0].origin == "guardrail_layer"
+
+    def test_engine_guardrail_provenance_closure_projected(self) -> None:
+        """PM_DECISION with source_provenance='engine_guardrail' surfaces resulting POSITION_CLOSED.
+
+        Cascade closures from 04a flow through the engine-envelope submission path and
+        emit POSITION_CLOSED with COMMAND_EXECUTOR as the row source, BUT carry an
+        engine_guardrail-provenance PM_DECISION envelope referencing them. The projection
+        joins on resulting_command_ids so the closure appears with origin='engine_guardrail'.
+        """
+        pm_entry = ActivityLogEntry(
+            entry_id="ENTRY-PM-EG",
+            invocation_id=_INV_ID,
+            timestamp=_T0,
+            event_type=EventType.PM_DECISION,
+            event_group=EventGroup.PM_DECISION,
+            position_id="POS-001",
+            order_id=None,
+            thesis_id=None,
+            source=EventSource.COMMAND_EXECUTOR,
+            detail=PMDecisionDetail(
+                envelope_id="env-eg-001",
+                source_provenance_json={
+                    "source_provenance": "engine_guardrail",
+                    "source_recommendation_id": None,
+                    "recommendation_type": None,
+                    "position_id": "POS-001",
+                },
+                evaluation_json={},
+                modifications_json=[],
+                resulting_command_ids=("MON.mon-001.1.0",),
+                verdict=PMVerdict.APPROVE,
+            ),
+        )
+        close_entry = _make_position_closed_entry(
+            entry_id="ENTRY-CLOSE-EG",
+            position_id="POS-001",
+            timestamp=_T1,
+            source=EventSource.COMMAND_EXECUTOR,
+            exit_method=PositionExitMethod.PM_DECISION,
+            order_id="MON.mon-001.1.0",
+        )
+        snapshot = _make_snapshot(intra_invocation_changelog=(pm_entry, close_entry))
+        view = project_strategist_view(snapshot)
+        assert len(view.between_invocation_closures) == 1
+        closure = view.between_invocation_closures[0]
+        assert closure.origin == "engine_guardrail"
+        assert closure.position_id == "POS-001"
+
+    def test_mixed_sources_chronological_order(self) -> None:
+        """Mix of bracket_manager and engine_guardrail closures returns in chronological order."""
+        bracket_entry = _make_position_closed_entry(
+            entry_id="ENTRY-CLOSE-1",
+            position_id="POS-001",
+            timestamp=_T2,  # later
+            source=EventSource.BRACKET_MANAGER,
+            exit_method=PositionExitMethod.STOP_TRIGGERED,
+        )
+        pm_entry = ActivityLogEntry(
+            entry_id="ENTRY-PM-EG-2",
+            invocation_id=_INV_ID,
+            timestamp=_T0,
+            event_type=EventType.PM_DECISION,
+            event_group=EventGroup.PM_DECISION,
+            position_id="POS-002",
+            order_id=None,
+            thesis_id=None,
+            source=EventSource.COMMAND_EXECUTOR,
+            detail=PMDecisionDetail(
+                envelope_id="env-eg-002",
+                source_provenance_json={
+                    "source_provenance": "engine_guardrail",
+                    "source_recommendation_id": None,
+                    "recommendation_type": None,
+                    "position_id": "POS-002",
+                },
+                evaluation_json={},
+                modifications_json=[],
+                resulting_command_ids=("MON.mon-001.2.0",),
+                verdict=PMVerdict.APPROVE,
+            ),
+        )
+        eg_close = _make_position_closed_entry(
+            entry_id="ENTRY-CLOSE-EG-2",
+            position_id="POS-002",
+            timestamp=_T1,  # earlier than bracket_entry
+            source=EventSource.COMMAND_EXECUTOR,
+            exit_method=PositionExitMethod.PM_DECISION,
+            order_id="MON.mon-001.2.0",
+        )
+        snapshot = _make_snapshot(
+            intra_invocation_changelog=(bracket_entry, pm_entry, eg_close),
+        )
+        view = project_strategist_view(snapshot)
+        assert len(view.between_invocation_closures) == 2
+        # Chronological order: _T1 (eg_close) before _T2 (bracket_entry).
+        assert view.between_invocation_closures[0].position_id == "POS-002"
+        assert view.between_invocation_closures[0].origin == "engine_guardrail"
+        assert view.between_invocation_closures[1].position_id == "POS-001"
+        assert view.between_invocation_closures[1].origin == "bracket_manager"
+
+    def test_empty_changelog_empty_tuple(self) -> None:
+        view = project_strategist_view(_make_empty_snapshot())
+        assert view.between_invocation_closures == ()
+
+    def test_position_closed_with_unrelated_source_not_projected(self) -> None:
+        """FILL_PROCESSOR POSITION_CLOSED (normal PM-driven close) is NOT projected."""
+        entry = _make_position_closed_entry(
+            entry_id="ENTRY-CLOSE-FP",
+            position_id="POS-001",
+            timestamp=_T0,
+            source=EventSource.FILL_PROCESSOR,
+            exit_method=PositionExitMethod.PM_DECISION,
+        )
+        snapshot = _make_snapshot(intra_invocation_changelog=(entry,))
+        view = project_strategist_view(snapshot)
+        assert view.between_invocation_closures == ()
+
+    def test_closure_includes_ticker_for_equity(self) -> None:
+        """BetweenInvocationClosure.ticker is resolved from the open-positions tuple."""
+        entry = _make_position_closed_entry(
+            entry_id="ENTRY-CLOSE-T",
+            position_id="POS-001",
+            timestamp=_T0,
+            source=EventSource.BRACKET_MANAGER,
+            exit_method=PositionExitMethod.STOP_TRIGGERED,
+        )
+        snapshot = _make_snapshot(intra_invocation_changelog=(entry,))
+        view = project_strategist_view(snapshot)
+        assert view.between_invocation_closures[0].ticker == "AAPL"
+        assert view.between_invocation_closures[0].instrument_type is InstrumentType.EQUITY
+
+    def test_between_invocation_closure_frozen(self) -> None:
+        closure = BetweenInvocationClosure(
+            position_id="POS-001",
+            ticker="AAPL",
+            instrument_type=InstrumentType.EQUITY,
+            closed_at=_T0,
+            closing_order_id="ord-1",
+            exit_method=PositionExitMethod.STOP_TRIGGERED,
+            origin="bracket_manager",
+            rationale="price-based stop fired",
+        )
+        with pytest.raises(ValidationError):
+            closure.position_id = "POS-002"

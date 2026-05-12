@@ -11,6 +11,9 @@ pre-resolved decision (E):
 * ``greeks_refresh_inspection_cadence_seconds`` — how often the refresh
   task wakes to evaluate triggers and consider due positions (independent
   of the per-position scheduled interval above). Added by story 03a.
+* ``bracket_stop_evaluation_cadence_seconds`` — how often the options
+  bracket-stop watcher wakes to evaluate price-based + P/L-based triggers
+  against the underlying-price cache and greeks. Added by story 04c.
 * ``underlying_stream_provider`` — single-value ``Literal`` today; story 02b
   may extend the union if a second provider gets validated.
 * ``subscription_refresh_seconds`` — cadence at which the underlying-price
@@ -42,6 +45,7 @@ class ContinuousMonitorConfig(BaseModel):
     greeks_refresh_interval_minutes: int = Field(ge=1)
     greeks_refresh_underlying_move_threshold_pct: float = Field(gt=0.0)
     greeks_refresh_inspection_cadence_seconds: int = Field(default=30, ge=1)
+    bracket_stop_evaluation_cadence_seconds: float = Field(default=1.0, gt=0.0)
     underlying_stream_provider: Literal["alpaca-iex"]
     subscription_refresh_seconds: int = Field(default=30, ge=1)
     max_reconnect_attempts: int = Field(ge=1)
