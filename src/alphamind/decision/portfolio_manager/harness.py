@@ -54,6 +54,7 @@ from alphamind.execution.oms.submit_envelope_mcp import (
     SubmitEnvelopeState,
     build_submit_envelope_mcp_server,
 )
+from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     PortfolioManagerThesisComponentReader,
     PortfolioManagerView,
@@ -457,7 +458,11 @@ class _DiagState:
         if self.archive_root is None:
             return
         diag_dir = (
-            self.archive_root / "invocations" / self.invocation_id / "decision" / self.agent_name
+            self.archive_root
+            / INVOCATIONS_DIRNAME
+            / self.invocation_id
+            / "decision"
+            / self.agent_name
         )
         diag_dir.mkdir(parents=True, exist_ok=True)
 

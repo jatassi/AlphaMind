@@ -28,8 +28,10 @@ from typing import Any
 from pydantic import BaseModel
 
 from alphamind.config.resolver import ResolvedConfig
-
-_SNAPSHOT_FILENAME = "resolved_config.json"
+from alphamind.execution.state_persistence.invocation_paths import (
+    INVOCATIONS_DIRNAME,
+    RESOLVED_CONFIG_FILENAME,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,8 +148,8 @@ def persist_snapshot(
 ) -> SnapshotResult:
     """Serialize, hash, and atomically write the snapshot for one invocation.
 
-    Writes to ``archive_root / "invocations" / invocation_id /
-    "resolved_config.json"``, creating intermediate directories. The caller
+    Writes to ``archive_root / INVOCATIONS_DIRNAME / invocation_id /
+    RESOLVED_CONFIG_FILENAME``, creating intermediate directories. The caller
     is responsible for resolving any ``%USERPROFILE%`` expansions in
     ``archive_root`` before passing the path in.
     """
@@ -155,9 +157,9 @@ def persist_snapshot(
     digest = compute_snapshot_hash(serialized)
     flags = feature_flags_snapshot(resolved)
 
-    invocation_dir = archive_root / "invocations" / invocation_id
+    invocation_dir = archive_root / INVOCATIONS_DIRNAME / invocation_id
     invocation_dir.mkdir(parents=True, exist_ok=True)
-    snapshot_path = invocation_dir / _SNAPSHOT_FILENAME
+    snapshot_path = invocation_dir / RESOLVED_CONFIG_FILENAME
     _atomic_write(snapshot_path, serialized)
 
     return SnapshotResult(hash=digest, path=snapshot_path, feature_flags_snapshot=flags)

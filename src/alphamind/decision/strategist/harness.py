@@ -42,6 +42,7 @@ from alphamind.decision.strategist.validation import (
     ValidationResult,
     validate_strategist_output,
 )
+from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 from alphamind.risk_guardrails.state_delivery.validation_tool import ValidationToolState
 from alphamind.risk_guardrails.state_delivery.validation_tool_mcp import (
     build_validate_guardrail_mcp_server,
@@ -414,7 +415,11 @@ class _DiagState:
         if self.archive_root is None:
             return
         diag_dir = (
-            self.archive_root / "invocations" / self.invocation_id / "decision" / self.agent_name
+            self.archive_root
+            / INVOCATIONS_DIRNAME
+            / self.invocation_id
+            / "decision"
+            / self.agent_name
         )
         diag_dir.mkdir(parents=True, exist_ok=True)
 

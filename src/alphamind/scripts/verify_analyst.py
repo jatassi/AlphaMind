@@ -46,6 +46,7 @@ from alphamind.decision.analyst.validation import (
     ValidationResult,
     validate_analyst_output,
 )
+from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 from alphamind.portfolio_state.consumers.analyst import (
     AnalystAvailableCapital,
     AnalystView,
@@ -178,7 +179,7 @@ def read_synthesizer_text(
     """
     response_path = (
         archive_root
-        / "invocations"
+        / INVOCATIONS_DIRNAME
         / synthesizer_invocation_id
         / "analysis"
         / "synthesizer"

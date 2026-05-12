@@ -46,6 +46,7 @@ from alphamind.distillation.output import (
     OutputBlock,
 )
 from alphamind.distillation.sector_assembly import SectorOutput
+from alphamind.execution.state_persistence.invocation_paths import INVOCATIONS_DIRNAME
 
 __all__ = [
     "ADAPTIVE_BRIEF_FILENAME",
@@ -99,7 +100,7 @@ def stage_artifacts_dir(archive_root: Path, invocation_id: str) -> Path:
     so the stage-artifact directory sits as a sibling of those existing
     per-agent archives.
     """
-    return archive_root / "invocations" / invocation_id / STAGE_ARTIFACTS_SUBDIR
+    return archive_root / INVOCATIONS_DIRNAME / invocation_id / STAGE_ARTIFACTS_SUBDIR
 
 
 # ---------------------------------------------------------------------------

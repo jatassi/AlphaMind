@@ -21,6 +21,12 @@ import json
 from pathlib import Path
 from typing import Any
 
+from alphamind.execution.state_persistence.invocation_paths import (
+    CALIBRATION_SNAPSHOT_FILENAME,
+    INVOCATIONS_DIRNAME,
+    RESOLVED_CONFIG_FILENAME,
+)
+
 
 def write_pip_freeze_snapshot(
     *,
@@ -59,11 +65,11 @@ def write_invocation_provenance_snapshots(
     deterministic byte-level output (eases diff-on-hash comparisons across
     invocations).
     """
-    target_dir = Path(root) / "invocations" / invocation_id
+    target_dir = Path(root) / INVOCATIONS_DIRNAME / invocation_id
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    config_path = target_dir / "resolved_config.json"
-    calibration_path = target_dir / "data_calibration_state.json"
+    config_path = target_dir / RESOLVED_CONFIG_FILENAME
+    calibration_path = target_dir / CALIBRATION_SNAPSHOT_FILENAME
 
     config_path.write_text(json.dumps(resolved_config, sort_keys=True, indent=2))
     calibration_path.write_text(json.dumps(data_calibration_state, sort_keys=True, indent=2))
