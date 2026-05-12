@@ -1,0 +1,109 @@
+"""Supervisor-side wiring for the breach-evaluation loop (story 03b / ALP-437).
+
+``__main__.py`` imports :func:`register_breach_loop_task` and calls it during
+daemon setup. The wiring constructs the no-op stub callbacks consumed by
+stories 04a / 04b (which replace them with real handlers once those land),
+adapts the loop coroutine's keyword signature to the supervisor's uniform
+``(session, config)`` task contract, and registers it as ``breach_loop``.
+
+The wiring's narrow scope mirrors story 02b's
+:func:`register_underlying_stream_task` — one closure that pre-binds every
+non-uniform dependency.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from datetime import datetime
+
+from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
+from alphamind.config.models.guardrails import BreachResponse, ProgressiveTier
+from alphamind.execution.continuous_monitor.breach_loop.result import (
+    BreachLoopResult,
+    RuleEvaluation,
+)
+from alphamind.execution.continuous_monitor.breach_loop.task import (
+    MarketHoursClock,
+    run_breach_loop,
+)
+from alphamind.execution.continuous_monitor.session import MonitorSession
+from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
+from alphamind.execution.continuous_monitor.underlying_stream.cache import (
+    UnderlyingPriceCache,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
+from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
+from alphamind.portfolio_state.repository import PortfolioStateRepository
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    IvProvider,
+    LibraryConfig,
+)
+from alphamind.risk_guardrails.guardrail_evaluation import (
+    PortfolioStateSnapshot as LibrarySnapshot,
+)
+from alphamind.risk_guardrails.regime_adaptation import RegimeAdaptationOutput
+
+
+async def _no_op_immediate_breach(_result: BreachLoopResult, _evaluation: RuleEvaluation) -> None:
+    """Story-04a callback placeholder — replaced when the cascade dispatcher lands."""
+
+
+async def _no_op_emergency_input(_result: BreachLoopResult) -> None:
+    """Story-04b callback placeholder — replaced when the emergency trigger lands."""
+
+
+async def _no_op_activity_log_sink(_entries: Iterable[ActivityLogEntry]) -> None:
+    """Persistence-side sink placeholder — replaced once activity-log writes wire up."""
+
+
+def register_breach_loop_task(  # noqa: PLR0913
+    supervisor: MonitorSupervisor,
+    *,
+    repository: PortfolioStateRepository,
+    cache: UnderlyingPriceCache,
+    snapshot_provider: Callable[[], Awaitable[LibrarySnapshot]],
+    regime_provider: Callable[[], Awaitable[RegimeAdaptationOutput]],
+    progressive_tiers: tuple[ProgressiveTier, ...],
+    library_config_factory: Callable[[ActiveRiskParameterSet], LibraryConfig],
+    iv_provider: IvProvider,
+    risk_free_rate: float,
+    breach_response_lookup: Mapping[str, BreachResponse],
+    market_hours: MarketHoursClock,
+    on_immediate_breach: (
+        Callable[[BreachLoopResult, RuleEvaluation], Awaitable[None]] | None
+    ) = None,
+    on_emergency_input: Callable[[BreachLoopResult], Awaitable[None]] | None = None,
+    activity_log_sink: (Callable[[Iterable[ActivityLogEntry]], Awaitable[None]] | None) = None,
+    now: Callable[[], datetime] | None = None,
+) -> None:
+    """Register the ``breach_loop`` task on *supervisor*.
+
+    Story 04a / 04b override the two callback defaults once they ship. The
+    activity-log sink defaults to a no-op stub so the breach loop runs even
+    before the activity-log writer is wired up.
+    """
+    resolved_immediate = on_immediate_breach or _no_op_immediate_breach
+    resolved_emergency = on_emergency_input or _no_op_emergency_input
+    resolved_sink = activity_log_sink or _no_op_activity_log_sink
+
+    async def _coro(session: MonitorSession, config: ContinuousMonitorConfig) -> None:
+        kwargs: dict[str, object] = {
+            "repository": repository,
+            "cache": cache,
+            "snapshot_provider": snapshot_provider,
+            "regime_provider": regime_provider,
+            "progressive_tiers": progressive_tiers,
+            "library_config_factory": library_config_factory,
+            "iv_provider": iv_provider,
+            "risk_free_rate": risk_free_rate,
+            "breach_response_lookup": breach_response_lookup,
+            "market_hours": market_hours,
+            "activity_log_sink": resolved_sink,
+            "on_immediate_breach": resolved_immediate,
+            "on_emergency_input": resolved_emergency,
+        }
+        if now is not None:
+            kwargs["now"] = now
+        await run_breach_loop(session, config, **kwargs)  # type: ignore[arg-type]
+
+    supervisor.register_task(name="breach_loop", coro_fn=_coro)

@@ -23,7 +23,7 @@ import logging
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from dotenv import load_dotenv
 
@@ -31,6 +31,9 @@ from alphamind.config.loaders import read_yaml_file
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.broker_adapter import AccountStateQueries, AlpacaClientFactory
+from alphamind.execution.continuous_monitor.breach_loop import (
+    register_breach_loop_task,
+)
 from alphamind.execution.continuous_monitor.logging_setup import (
     configure_monitor_logging,
 )
@@ -103,11 +106,15 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     db_session_factory = make_async_session_factory(engine)
     open_positions_reader = SqlOpenPositionsReader(db_session_factory)
     supervisor = MonitorSupervisor(session=session, config=config)
-    register_underlying_stream_task(supervisor, repository=open_positions_reader)
+    underlying_cache = register_underlying_stream_task(supervisor, repository=open_positions_reader)
     _register_fill_stream_consumer(
         supervisor,
         venue_config=venue_config,
         db_session_factory=db_session_factory,
+    )
+    _register_breach_loop(
+        supervisor,
+        underlying_cache=underlying_cache,
     )
     try:
         await supervisor.run()
@@ -154,6 +161,88 @@ def _register_fill_stream_consumer(
         )
 
     supervisor.register_task(name="fill_stream_consumer", coro_fn=_fill_stream_consumer_task)
+
+
+def _register_breach_loop(
+    supervisor: MonitorSupervisor,
+    *,
+    underlying_cache: object,
+) -> None:
+    """Register the ``breach_loop`` task (story 03b / ALP-437).
+
+    Story 03b ships the loop itself; the production wiring of its non-callback
+    dependencies (snapshot_provider via the assembler, regime_provider via
+    ``resolve_regime_adaptation``, iv_provider from open-positions greeks,
+    market_hours via ``TradingCalendarCache``, breach_response_lookup from
+    ``GuardrailsConfig``, library_config_factory via the resolver adapter)
+    is deferred to follow-up stories that wire the SQL repository, regime
+    resolver, and calendar cache into the monitor process.
+
+    Until those land, this helper registers the task with conservative
+    placeholders that allow the supervisor to start and run cleanly: the
+    breach loop's ``market_hours`` stub reports closed so the loop sleeps
+    indefinitely without touching the repository or the empty cache. Stories
+    04a / 04b plug in real callbacks; the dependency wiring follow-up plugs
+    in real providers.
+    """
+    from collections.abc import Iterable
+    from datetime import datetime
+
+    from alphamind.config.models.guardrails import BreachResponse
+    from alphamind.execution.continuous_monitor.breach_loop.result import (
+        BreachLoopResult,
+        RuleEvaluation,
+    )
+    from alphamind.execution.continuous_monitor.underlying_stream.cache import (
+        UnderlyingPriceCache,
+    )
+    from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
+    from alphamind.risk_guardrails.guardrail_evaluation import (
+        FixtureIvProvider,
+    )
+
+    class _ClosedMarket:
+        def is_market_open(self, at: datetime) -> bool:
+            del at
+            return False
+
+    async def _no_op_immediate(_r: BreachLoopResult, _e: RuleEvaluation) -> None:
+        return None
+
+    async def _no_op_emergency(_r: BreachLoopResult) -> None:
+        return None
+
+    async def _no_op_sink(_entries: Iterable[ActivityLogEntry]) -> None:
+        return None
+
+    async def _empty_snapshot_provider() -> object:
+        msg = "snapshot_provider not yet wired; deferred follow-up"
+        raise RuntimeError(msg)
+
+    async def _empty_regime_provider() -> object:
+        msg = "regime_provider not yet wired; deferred follow-up"
+        raise RuntimeError(msg)
+
+    def _empty_library_config_factory(_active: object) -> object:
+        msg = "library_config_factory not yet wired; deferred follow-up"
+        raise RuntimeError(msg)
+
+    register_breach_loop_task(
+        supervisor,
+        repository=cast(Any, None),
+        cache=cast(UnderlyingPriceCache, underlying_cache),
+        snapshot_provider=cast(Any, _empty_snapshot_provider),
+        regime_provider=cast(Any, _empty_regime_provider),
+        progressive_tiers=(),
+        library_config_factory=cast(Any, _empty_library_config_factory),
+        iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
+        risk_free_rate=0.045,
+        breach_response_lookup=cast(dict[str, BreachResponse], {}),
+        market_hours=_ClosedMarket(),
+        on_immediate_breach=_no_op_immediate,
+        on_emergency_input=_no_op_emergency,
+        activity_log_sink=_no_op_sink,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> None:

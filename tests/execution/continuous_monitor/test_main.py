@@ -141,3 +141,5 @@ def test_main_registers_wave_2_tasks(
     assert "fill_stream_consumer" in task_names, (
         f"fill_stream_consumer not registered; got {task_names!r}"
     )
+    # Wave-3 (03b) — the breach-evaluation loop wires alongside the wave-2 tasks.
+    assert "breach_loop" in task_names, f"breach_loop not registered; got {task_names!r}"

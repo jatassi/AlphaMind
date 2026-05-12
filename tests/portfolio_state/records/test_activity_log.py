@@ -38,6 +38,8 @@ from alphamind.portfolio_state.records.activity_log import (
     EventSource,
     EventType,
     GuardrailRejectionDetail,
+    HaltActivatedDetail,
+    HaltLiftedDetail,
     MarginCallDetail,
     MarginCallResolvedDetail,
     MarginLiquidationDetail,
@@ -122,8 +124,8 @@ class TestEnumMembers:
     def test_event_type_is_str_enum(self) -> None:
         assert issubclass(EventType, StrEnum)
 
-    def test_event_type_has_exactly_40_members(self) -> None:
-        assert len(EventType) == 40
+    def test_event_type_has_exactly_42_members(self) -> None:
+        assert len(EventType) == 42
 
     def test_event_type_position_lifecycle_members(self) -> None:
         for name in ("POSITION_OPENED", "POSITION_CLOSED", "POSITION_ADDED", "POSITION_REDUCED"):
@@ -309,9 +311,9 @@ class TestMappingExhaustiveness:
 class TestAnyDetailTypeAlias:
     """AnyDetailType is exported and covers all detail-payload classes."""
 
-    def test_any_detail_type_has_40_members(self) -> None:
+    def test_any_detail_type_has_42_members(self) -> None:
         members = get_args(AnyDetailType)
-        assert len(members) == 40
+        assert len(members) == 42
 
     def test_any_detail_type_covers_all_detail_classes(self) -> None:
         members = set(get_args(AnyDetailType))
@@ -706,6 +708,106 @@ class TestEmergencyInvocationRequestedDetail:
 
     def test_event_type_value_matches_member_name(self) -> None:
         assert EventType.EMERGENCY_INVOCATION_REQUESTED.value == "EMERGENCY_INVOCATION_REQUESTED"
+
+
+# ---------------------------------------------------------------------------
+# HaltActivatedDetail / HaltLiftedDetail (story 03b — ALP-437)
+# ---------------------------------------------------------------------------
+
+
+class TestHaltActivatedDetail:
+    """``HaltActivatedDetail`` is frozen and rejects naive datetimes."""
+
+    def test_daily_drawdown_round_trip(self) -> None:
+        detail = HaltActivatedDetail(
+            halt_type="daily_drawdown",
+            current_drawdown_pct=5.0,
+            limit_pct=5.0,
+            detected_at=_UTC_TS,
+        )
+        assert detail.halt_type == "daily_drawdown"
+        assert detail.current_drawdown_pct == 5.0
+        assert detail.limit_pct == 5.0
+
+    def test_cumulative_full_halt_round_trip(self) -> None:
+        detail = HaltActivatedDetail(
+            halt_type="cumulative_drawdown_tier3",
+            current_drawdown_pct=12.5,
+            limit_pct=12.0,
+            detected_at=_UTC_TS,
+        )
+        assert detail.halt_type == "cumulative_drawdown_tier3"
+
+    def test_naive_detected_at_raises(self) -> None:
+        naive_ts = _UTC_TS.replace(tzinfo=None)
+        with pytest.raises(ValidationError):
+            HaltActivatedDetail(
+                halt_type="daily_drawdown",
+                current_drawdown_pct=5.0,
+                limit_pct=5.0,
+                detected_at=naive_ts,
+            )
+
+    def test_unknown_halt_type_raises(self) -> None:
+        with pytest.raises(ValidationError):
+            HaltActivatedDetail(
+                halt_type="bogus",  # type: ignore[arg-type]
+                current_drawdown_pct=5.0,
+                limit_pct=5.0,
+                detected_at=_UTC_TS,
+            )
+
+    def test_is_frozen(self) -> None:
+        detail = HaltActivatedDetail(
+            halt_type="daily_drawdown",
+            current_drawdown_pct=5.0,
+            limit_pct=5.0,
+            detected_at=_UTC_TS,
+        )
+        with pytest.raises(ValidationError):
+            detail.__setattr__("current_drawdown_pct", 99.0)
+
+    def test_event_type_is_risk_and_guardrail_group(self) -> None:
+        assert EVENT_TYPE_TO_GROUP[EventType.HALT_ACTIVATED] is EventGroup.RISK_AND_GUARDRAIL
+
+    def test_event_type_maps_to_detail_class(self) -> None:
+        assert EVENT_TYPE_TO_DETAIL_CLASS[EventType.HALT_ACTIVATED] is HaltActivatedDetail
+
+
+class TestHaltLiftedDetail:
+    """``HaltLiftedDetail`` is frozen and rejects naive datetimes."""
+
+    def test_daily_drawdown_round_trip(self) -> None:
+        detail = HaltLiftedDetail(
+            halt_type="daily_drawdown",
+            current_drawdown_pct=2.0,
+            lifted_at=_UTC_TS,
+        )
+        assert detail.halt_type == "daily_drawdown"
+        assert detail.current_drawdown_pct == 2.0
+
+    def test_cumulative_tier3_round_trip(self) -> None:
+        detail = HaltLiftedDetail(
+            halt_type="cumulative_drawdown_tier3",
+            current_drawdown_pct=8.0,
+            lifted_at=_UTC_TS,
+        )
+        assert detail.halt_type == "cumulative_drawdown_tier3"
+
+    def test_naive_lifted_at_raises(self) -> None:
+        naive_ts = _UTC_TS.replace(tzinfo=None)
+        with pytest.raises(ValidationError):
+            HaltLiftedDetail(
+                halt_type="daily_drawdown",
+                current_drawdown_pct=2.0,
+                lifted_at=naive_ts,
+            )
+
+    def test_event_type_is_risk_and_guardrail_group(self) -> None:
+        assert EVENT_TYPE_TO_GROUP[EventType.HALT_LIFTED] is EventGroup.RISK_AND_GUARDRAIL
+
+    def test_event_type_maps_to_detail_class(self) -> None:
+        assert EVENT_TYPE_TO_DETAIL_CLASS[EventType.HALT_LIFTED] is HaltLiftedDetail
 
 
 # ---------------------------------------------------------------------------
