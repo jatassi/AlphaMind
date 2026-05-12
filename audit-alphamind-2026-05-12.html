@@ -1,0 +1,1297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit — AlphaMind</title>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prism-themes@1.9.0/themes/prism-one-dark.min.css">
+
+<style>
+  :root {
+    --bg: #0e0e10;
+    --surface: #18181b;
+    --surface-2: #09090b;
+    --fg: #f4f4f5;
+    --fg-muted: #a1a1aa;
+    --fg-faint: #71717a;
+    --border: #27272a;
+    --border-strong: #3f3f46;
+    --accent: #fb7185;
+
+    --sev-lb-fg: #fda4af;
+    --sev-lb-bg: rgba(159, 18, 57, 0.18);
+    --sev-lb-border: rgba(251, 113, 133, 0.45);
+
+    --sev-hy-fg: #fdba74;
+    --sev-hy-bg: rgba(154, 52, 18, 0.20);
+    --sev-hy-border: rgba(251, 146, 60, 0.45);
+
+    --sev-wk-fg: #93c5fd;
+    --sev-wk-bg: rgba(30, 58, 138, 0.22);
+    --sev-wk-border: rgba(96, 165, 250, 0.45);
+
+    --sev-gd-fg: #86efac;
+    --sev-gd-bg: rgba(20, 83, 45, 0.22);
+    --sev-gd-border: rgba(74, 222, 128, 0.45);
+
+    --diff-add-fg: #86efac;
+    --diff-add-bg: rgba(20, 83, 45, 0.30);
+    --diff-rem-fg: #fca5a5;
+    --diff-rem-bg: rgba(127, 29, 29, 0.30);
+    --diff-ren-fg: #fde047;
+    --diff-ren-bg: rgba(133, 77, 14, 0.30);
+
+    --code-bg: #09090b;
+    --principle-bg: #27272a;
+    --principle-fg: #d4d4d8;
+
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-sans); font-size: 16px; line-height: 1.6; font-feature-settings: "ss01", "cv11"; -webkit-font-smoothing: antialiased; }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr); max-width: 1280px; margin: 0 auto; padding: 0 2rem; }
+  @media (min-width: 1024px) { .layout { grid-template-columns: 240px minmax(0, 1fr); gap: 3rem; } }
+
+  header.report-header { grid-column: 1 / -1; padding: 4rem 0 2rem; border-bottom: 1px solid var(--border); }
+  .eyebrow { text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.72rem; color: var(--fg-faint); font-weight: 600; }
+  h1 { font-size: 2.6rem; font-weight: 700; letter-spacing: -0.02em; margin: 0.5rem 0 1.5rem; line-height: 1.1; }
+  h1 code { font-family: var(--font-mono); font-size: 0.85em; background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 4px; font-weight: 600; }
+  .meta-grid { display: grid; grid-template-columns: max-content 1fr; gap: 0.4rem 1.5rem; margin: 0; font-size: 0.92rem; }
+  .meta-grid dt { color: var(--fg-faint); font-weight: 500; }
+  .meta-grid dd { margin: 0; color: var(--fg); }
+
+  nav.toc { display: none; position: sticky; top: 2rem; align-self: start; padding-top: 4rem; font-size: 0.86rem; }
+  @media (min-width: 1024px) { nav.toc { display: block; } }
+  nav.toc ol { list-style: none; padding: 0; margin: 0; border-left: 1px solid var(--border); }
+  nav.toc li { margin: 0; }
+  nav.toc a { display: block; padding: 0.4rem 0 0.4rem 1rem; color: var(--fg-muted); text-decoration: none; border-left: 2px solid transparent; margin-left: -1px; transition: color 120ms, border-color 120ms; }
+  nav.toc a:hover { color: var(--fg); border-left-color: var(--border-strong); }
+  nav.toc a.current { color: var(--accent); border-left-color: var(--accent); font-weight: 500; }
+
+  main { padding: 3rem 0 6rem; min-width: 0; }
+  section { margin-bottom: 4rem; scroll-margin-top: 2rem; }
+  section h2 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 1.5rem; padding-bottom: 0.6rem; border-bottom: 1px solid var(--border); }
+  section h2 .num { color: var(--fg-faint); font-weight: 500; margin-right: 0.6rem; }
+  section h3 { font-size: 1.1rem; font-weight: 600; margin: 1.5rem 0 0.6rem; }
+  p { margin: 0 0 1rem; max-width: 75ch; }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; }
+  a:hover { border-bottom-color: var(--accent); }
+
+  code { font-family: var(--font-mono); font-size: 0.86em; background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 3px; }
+  pre { font-family: var(--font-mono); font-size: 0.84rem; line-height: 1.55; background: var(--surface); border: 1px solid var(--border); padding: 1rem 1.2rem; border-radius: 6px; overflow-x: auto; margin: 0 0 1rem; }
+  pre code { background: transparent; padding: 0; font-size: 1em; }
+
+  .script-summary { list-style: none; padding: 0; display: grid; gap: 0.8rem; }
+  .script-summary li { display: grid; grid-template-columns: max-content 1fr; gap: 0.4rem 1rem; padding: 0.9rem 1.1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+  .script-summary .name { font-family: var(--font-mono); font-size: 0.85rem; color: var(--accent); font-weight: 600; }
+  .script-summary .summary { font-size: 0.94rem; color: var(--fg); }
+
+  .visual { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.6rem 1.8rem; }
+  .visual h2 { border-bottom: 1px solid var(--border); padding-bottom: 0.6rem; }
+  .visual .caption { font-size: 0.88rem; color: var(--fg-muted); margin-bottom: 1.2rem; max-width: 75ch; }
+
+  .before-after { display: grid; grid-template-columns: 1fr; gap: 1.5rem; margin-top: 1rem; }
+  @media (min-width: 768px) { .before-after { grid-template-columns: 1fr 1fr; } }
+  .before-after figure { margin: 0; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 1.2rem; overflow: hidden; }
+  .before-after figcaption { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-faint); margin-bottom: 0.8rem; font-weight: 600; }
+  .before-after figure.before { border-top: 3px solid var(--diff-rem-fg); }
+  .before-after figure.after { border-top: 3px solid var(--diff-add-fg); }
+
+  .mermaid { background: var(--surface); text-align: center; overflow-x: auto; }
+  .mermaid svg { max-width: 100%; height: auto; }
+
+  .tree { font-family: var(--font-mono); font-size: 0.83rem; line-height: 1.55; margin: 0; padding: 0; background: transparent; border: none; white-space: pre; }
+  .tree .add  { background: var(--diff-add-bg); color: var(--diff-add-fg); display: inline-block; padding: 0 0.3em; border-radius: 2px; }
+  .tree .rem  { background: var(--diff-rem-bg); color: var(--diff-rem-fg); display: inline-block; padding: 0 0.3em; border-radius: 2px; text-decoration: line-through; }
+  .tree .ren  { background: var(--diff-ren-bg); color: var(--diff-ren-fg); display: inline-block; padding: 0 0.3em; border-radius: 2px; }
+  .tree .new  { background: var(--diff-add-bg); color: var(--diff-add-fg); display: inline-block; padding: 0 0.3em; border-radius: 2px; font-weight: 600; }
+  .tree .note { color: var(--fg-faint); font-style: italic; }
+
+  .findings { display: grid; gap: 1.2rem; }
+  .finding { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--border-strong); border-radius: 6px; padding: 1.4rem 1.6rem; }
+  .finding.load-bearing  { border-left-color: var(--sev-lb-fg); }
+  .finding.high-yield    { border-left-color: var(--sev-hy-fg); }
+  .finding.worth-knowing { border-left-color: var(--sev-wk-fg); }
+  .finding.good          { border-left-color: var(--sev-gd-fg); }
+
+  .finding-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.8rem; }
+  .finding-head h3 { margin: 0; flex: 1 1 100%; font-size: 1.05rem; line-height: 1.4; }
+  @media (min-width: 640px) { .finding-head h3 { flex: 1 1 auto; order: 99; padding-left: 0.5rem; } }
+
+  .badge { display: inline-block; font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; padding: 0.18rem 0.55rem; border-radius: 3px; border: 1px solid; line-height: 1.3; }
+  .badge.load-bearing  { background: var(--sev-lb-bg); color: var(--sev-lb-fg); border-color: var(--sev-lb-border); }
+  .badge.high-yield    { background: var(--sev-hy-bg); color: var(--sev-hy-fg); border-color: var(--sev-hy-border); }
+  .badge.worth-knowing { background: var(--sev-wk-bg); color: var(--sev-wk-fg); border-color: var(--sev-wk-border); }
+  .badge.good          { background: var(--sev-gd-bg); color: var(--sev-gd-fg); border-color: var(--sev-gd-border); }
+  .badge.principle { background: var(--principle-bg); color: var(--principle-fg); border-color: var(--border-strong); font-family: var(--font-mono); text-transform: none; letter-spacing: 0; }
+
+  .finding dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.5rem 1.2rem; margin: 0; font-size: 0.94rem; }
+  .finding dt { color: var(--fg-faint); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; padding-top: 0.2rem; }
+  .finding dd { margin: 0; color: var(--fg); }
+  .finding dd code { font-size: 0.85em; }
+  .finding .embed { margin-top: 1rem; padding-top: 1rem; border-top: 1px dashed var(--border); }
+
+  .antipatterns { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; font-size: 0.92rem; }
+  .antipatterns th, .antipatterns td { text-align: left; padding: 0.7rem 1rem; border-bottom: 1px solid var(--border); }
+  .antipatterns th { background: var(--surface-2); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-faint); font-weight: 600; }
+  .antipatterns tr:last-child td { border-bottom: none; }
+  .antipatterns .id { font-family: var(--font-mono); color: var(--accent); font-weight: 600; }
+  .antipatterns .count { text-align: right; font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; font-weight: 600; }
+  .antipatterns .examples { color: var(--fg-muted); font-size: 0.86rem; }
+  .antipatterns .examples code { font-size: 0.92em; }
+
+  .punch-list { list-style: none; padding: 0; counter-reset: punch; display: grid; gap: 0.8rem; }
+  .punch-list li { counter-increment: punch; display: grid; grid-template-columns: 2.5rem 1fr max-content; gap: 1rem; align-items: baseline; padding: 1rem 1.2rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+  .punch-list li::before { content: counter(punch); font-family: var(--font-mono); font-size: 1.1rem; color: var(--fg-faint); font-weight: 700; text-align: right; }
+  .punch-list .desc { color: var(--fg); }
+  .punch-list .dims { display: flex; gap: 0.4rem; align-items: center; white-space: nowrap; }
+
+  .badge.tier { font-family: var(--font-mono); text-transform: none; letter-spacing: 0; font-size: 0.7rem; }
+  .badge.tier .dim { opacity: 0.6; margin-right: 0.35em; font-size: 0.85em; }
+  .badge.t1 { background: rgba(115, 115, 115, 0.18); color: #d4d4d8; border-color: rgba(115, 115, 115, 0.40); }
+  .badge.t2 { background: rgba(96, 165, 250, 0.16); color: #93c5fd; border-color: rgba(96, 165, 250, 0.40); }
+  .badge.t3 { background: rgba(251, 191, 36, 0.16); color: #fcd34d; border-color: rgba(251, 191, 36, 0.45); }
+  .badge.t4 { background: rgba(251, 146, 60, 0.20); color: #fdba74; border-color: rgba(251, 146, 60, 0.50); }
+  .badge.t5 { background: rgba(251, 113, 133, 0.20); color: #fda4af; border-color: rgba(251, 113, 133, 0.55); }
+
+  .tier-legend { display: grid; grid-template-columns: 1fr; gap: 1rem; margin: 0 0 1.5rem; padding: 1rem 1.2rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; font-size: 0.84rem; }
+  @media (min-width: 768px) { .tier-legend { grid-template-columns: 1fr 1fr; gap: 1.5rem; } }
+  .tier-legend h4 { margin: 0 0 0.6rem; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-faint); font-weight: 600; }
+  .tier-legend ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.3rem; }
+  .tier-legend li { display: grid; grid-template-columns: 6.5rem 1fr; gap: 0.8rem; align-items: baseline; color: var(--fg-muted); }
+  .tier-legend .label { font-family: var(--font-mono); font-size: 0.8rem; padding: 0.1rem 0.45rem; border-radius: 3px; border: 1px solid; text-align: center; line-height: 1.4; }
+
+  .questions, .good-list { list-style: none; padding: 0; display: grid; gap: 0.8rem; }
+  .questions li, .good-list li { padding: 0.9rem 1.1rem; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; border-left: 3px solid var(--sev-wk-fg); }
+  .good-list li { border-left-color: var(--sev-gd-fg); }
+
+  footer.report-footer { padding: 2rem 0 4rem; border-top: 1px solid var(--border); color: var(--fg-faint); font-size: 0.84rem; }
+
+  @media print { nav.toc { display: none; } .visual, .finding, .punch-list li, .script-summary li { break-inside: avoid; } section { break-after: auto; } }
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+<header class="report-header">
+  <div class="eyebrow">Python Architecture Audit</div>
+  <h1>Audit — <code>src/alphamind/</code></h1>
+  <dl class="meta-grid">
+    <dt>Date</dt>          <dd>2026-05-12</dd>
+    <dt>Scope</dt>         <dd>Full-repo deep audit. 15 top-level packages, 539 modules, 133,056 LOC across <code>src/</code>; 211,710 LOC across <code>tests/</code> (1.6:1 test-to-code ratio). Audit delegated to 8 Opus subagents per subdivision, synthesized cross-package.</dd>
+    <dt>Constraints</dt>   <dd>SQLAlchemy + SQLite (fixed), Claude Agent SDK (fixed). Audit did not re-litigate these.</dd>
+    <dt>Auditor</dt>       <dd>python-architecture skill</dd>
+  </dl>
+</header>
+
+<nav class="toc" aria-label="Table of contents">
+  <ol>
+    <li><a href="#calibration">1 · Calibration</a></li>
+    <li><a href="#scripts">2 · Scripts run</a></li>
+    <li><a href="#architecture">3 · Architecture overview</a></li>
+    <li><a href="#layout">4 · Package layout</a></li>
+    <li><a href="#load-bearing">5 · Load-bearing findings</a></li>
+    <li><a href="#high-yield">6 · High-yield findings</a></li>
+    <li><a href="#worth-knowing">7 · Worth knowing</a></li>
+    <li><a href="#data-flow">8 · Data flow</a></li>
+    <li><a href="#good">9 · What looked good</a></li>
+    <li><a href="#punch-list">10 · Punch list</a></li>
+    <li><a href="#open-questions">11 · Open questions</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- ===== 1. CALIBRATION ===== -->
+<section id="calibration">
+  <h2><span class="num">1</span>Calibration</h2>
+  <p>AlphaMind is an autonomous LLM-powered swing-trading system: a <strong>scheduled batch pipeline</strong> (data collection → distillation → analysis → decision → execution) plus a <strong>continuous-monitor sidecar</strong>, two processes sharing a SQLite database. By <a href="https://github.com/anthropics/python-architecture/blob/main/references/app-shapes.md"><code>app-shapes.md</code></a>'s taxonomy it is a hybrid of <strong>K3 (data pipeline)</strong>, <strong>K4 (long-running daemon)</strong>, and <strong>K5 (agentic / LLM)</strong> — nine LLM agents per invocation, LLM-API latency dominates wall-clock.</p>
+
+  <p>The toolchain reads as deliberate and modern: Python 3.13, <code>mypy --strict</code> with <code>warn_unused_ignores</code>, ruff with an unusually broad rule set (<code>DTZ</code>, <code>ASYNC</code>, <code>TRY</code>, <code>PD</code>, <code>NPY</code>, <code>FURB</code>, <code>LOG</code>, <code>PTH</code>, <code>SIM</code>, plus all the <code>PLR</code> complexity gates). Boundary hygiene is on the radar. <code>pyproject.toml</code> declares its dependencies cleanly with a feature/dev split. The test suite is parallelized via <code>pytest-xdist</code>. Static-analysis posture is among the strongest you'll see in a Python codebase.</p>
+
+  <p>The codebase claims a layered architecture matching the design tracker: <em>Foundation → Data → Distillation → Analysis → Decision → Execution + Risk guardrails</em>. The implementation realises this <em>shape</em> correctly — packages are organised by feature, not by Django-style "models / views / controllers" tiering. But the import graph tells a different story than the docs: four cycles, two of them spanning four+ subdivisions, with explicit workarounds (lazy <code>__getattr__</code>, <code># noqa: E402</code>, <code>TYPE_CHECKING</code>, function-local imports, re-export shims) keeping them runnable. Per <strong>P2 ("the import graph IS the architecture")</strong>, those workarounds <em>are</em> the architecture today. There is no <code>import-linter</code> configuration; layer rules are aspirational.</p>
+
+  <p>The audit's findings cluster on five themes: (1) cycles through shared types, (2) primitive obsession (zero <code>Decimal</code> in a money-handling system, bare <code>str</code> for IDs), (3) Pydantic as the default internal type instead of the boundary type, (4) functional-core leak in distillation (<code>Session</code> threaded into compute), (5) god modules at the OMS write boundary. All five are addressable; together they explain the workarounds, the test-fixture weight, and the friction reported in recent commits.</p>
+</section>
+
+<!-- ===== 2. SCRIPTS RUN ===== -->
+<section id="scripts">
+  <h2><span class="num">2</span>Scripts run</h2>
+  <ul class="script-summary">
+    <li>
+      <span class="name">package_overview</span>
+      <span class="summary">539 modules, 0 god modules by the &gt;800 LOC heuristic (5 modules sit just below at 1000-1700 LOC), 312 modules without <code>__all__</code> (acceptable for app code; flagged for the public-boundary modules <code>persistence/models.py</code> and <code>portfolio_state/events/activity_log.py</code>).</span>
+    </li>
+    <li>
+      <span class="name">analyze_imports</span>
+      <span class="summary">2,223 edges, <strong>4 cycles</strong>: a 10-module cycle through <code>portfolio_state</code> ↔ <code>risk_guardrails</code> ↔ <code>distillation</code> ↔ <code>persistence</code>; a 12-module cycle through <code>decision</code> ↔ <code>execution</code>; two small internal cycles in <code>config</code> and <code>distillation</code>. <strong>No <code>import-linter</code> configuration found.</strong></span>
+    </li>
+    <li>
+      <span class="name">antipattern_scan</span>
+      <span class="summary">750 findings, dominated by <strong>L9 Pydantic-outside-boundary (363)</strong>, <strong>L12 float-for-money (115)</strong>, L19 async-without-await (113), L25 print-in-non-CLI (66 — almost all in <code>scripts/verify_*.py</code> verification harnesses), L4 bare-Exception (61), L8 mutable-dataclass (27), L16 create_task-without-TaskGroup (5).</span>
+    </li>
+  </ul>
+</section>
+
+<!-- ===== 3. ARCHITECTURE OVERVIEW ===== -->
+<section id="architecture" class="visual">
+  <h2><span class="num">3</span>Architecture overview</h2>
+  <p class="caption">Current and proposed package-level dependency graphs. Cycles are marked dashed-red on the current side; the proposed shape introduces two leaf packages (<code>_kernel/</code> for shared vocabulary, <code>commands/</code> for the OMS wire-format types and protocols) so both cycles dissolve.</p>
+  <div class="before-after">
+    <figure class="before">
+      <figcaption>Current — four cycles, no enforcement</figcaption>
+      <div class="mermaid">
+flowchart TB
+    classDef violation fill:#3f1a23,stroke:#fb7185,stroke-width:2px,color:#fda4af;
+    classDef boundary fill:#0f1c3a,stroke:#93c5fd,stroke-width:1.5px,color:#93c5fd;
+    classDef ok fill:#27272a,stroke:#a1a1aa,color:#f4f4f5;
+
+    config[config]:::boundary
+    data_sources[data_sources]:::boundary
+    persistence[persistence]:::boundary
+
+    distillation[distillation]:::violation
+    portfolio_state[portfolio_state]:::violation
+    risk_guardrails[risk_guardrails]:::violation
+    analysis[analysis]:::ok
+    decision[decision]:::violation
+    execution[execution]:::violation
+
+    config --> distillation
+    data_sources --> persistence
+    persistence --> distillation
+    distillation --> analysis
+    portfolio_state --> analysis
+    analysis --> decision
+    risk_guardrails --> decision
+    decision --> execution
+    execution --> persistence
+
+    portfolio_state -. cycle .-> risk_guardrails
+    risk_guardrails -. cycle .-> portfolio_state
+    risk_guardrails -. cycle .-> distillation
+    distillation -. cycle .-> persistence
+    persistence -. cycle .-> distillation
+    decision -. cycle .-> execution
+    execution -. cycle .-> decision
+      </div>
+    </figure>
+    <figure class="after">
+      <figcaption>Proposed — kernel extraction breaks both system-spanning cycles</figcaption>
+      <div class="mermaid">
+flowchart TB
+    classDef target fill:#0f2818,stroke:#86efac,stroke-width:1.5px,color:#86efac;
+    classDef kernel fill:#0f1c3a,stroke:#93c5fd,stroke-width:1.5px,color:#93c5fd;
+    classDef ok fill:#27272a,stroke:#a1a1aa,color:#f4f4f5;
+
+    kernel[_kernel<br/>enums · IDs · Money]:::kernel
+    commands[commands<br/>OMS types · BrokerDispatch]:::kernel
+
+    config[config]:::ok
+    data_sources[data_sources]:::ok
+    state[state<br/>was: execution.state_persistence]:::target
+
+    distillation[distillation]:::target
+    portfolio_state[portfolio_state]:::target
+    risk_guardrails[risk_guardrails]:::target
+    analysis[analysis]:::ok
+    decision[decision]:::target
+    execution[execution]:::target
+
+    kernel --> distillation
+    kernel --> portfolio_state
+    kernel --> risk_guardrails
+    kernel --> persistence
+
+    commands --> decision
+    commands --> execution
+
+    config --> distillation
+    data_sources --> state
+    persistence --> state
+    state --> distillation
+    distillation --> portfolio_state
+    portfolio_state --> risk_guardrails
+    distillation --> analysis
+    portfolio_state --> analysis
+    analysis --> decision
+    risk_guardrails --> decision
+    decision --> execution
+    execution --> state
+
+    persistence[persistence]:::ok
+      </div>
+    </figure>
+  </div>
+</section>
+
+<!-- ===== 4. PACKAGE LAYOUT ===== -->
+<section id="layout" class="visual">
+  <h2><span class="num">4</span>Package layout</h2>
+  <p class="caption">Current top-level layout vs proposed shape. Removed (struck-through) entries are misplaced packages or anticipatory stubs; renamed entries (yellow) move; new entries (green) are added. Inline notes explain non-obvious moves.</p>
+  <div class="before-after">
+    <figure class="before">
+      <figcaption>Current</figcaption>
+<pre class="tree">
+src/alphamind/
+├── analysis/                <span class="note"># 53 files / 12.7K LOC</span>
+├── collector/               <span class="note"># 5 files / 0.7K LOC (continuous-monitor entry)</span>
+├── <span class="rem">command_center/</span>         <span class="note"># 2 empty stubs — feature pending</span>
+├── config/                  <span class="note"># 30 files / 3.7K LOC</span>
+│   └── models/__init__.py   <span class="note"># 277 LOC, 119 re-exports; vehicle for Pydantic leak</span>
+├── data_sources/            <span class="note"># 52 files / 7.2K LOC</span>
+│   ├── _common.py           <span class="note"># 619 LOC god module — 8 unrelated concerns</span>
+│   ├── <span class="rem">alpaca/</span>               <span class="note"># empty placeholder</span>
+│   └── news/clustering.py   <span class="note"># pure domain code, wrong package</span>
+├── decision/                <span class="note"># 29 files / 10.6K LOC</span>
+│   └── portfolio_manager/   <span class="note"># cycle: imports execution.oms.*</span>
+├── distillation/            <span class="note"># 54 files / 19.4K LOC</span>
+│   ├── q1_price_volume.py   <span class="note"># 197 LOC re-export shim — 0 consumers</span>
+│   ├── q3_options.py        <span class="note"># 99 LOC re-export shim — 1 redundant consumer</span>
+│   └── q7_cross_asset.py    <span class="note"># 96 LOC re-export shim — 0 consumers</span>
+├── execution/               <span class="note"># 144 files / 27.7K LOC — largest</span>
+│   ├── <span class="ren">state_persistence/</span>    <span class="note"># 41 files / 4.7K LOC — 125 imports from OUTSIDE execution</span>
+│   ├── oms/__init__.py      <span class="note"># 247 LOC w/ __getattr__ lazy-loader (cycle workaround)</span>
+│   ├── oms/submit_envelope_mcp.py  <span class="note"># 1599 LOC god module — 5 inline imports of phase2</span>
+│   ├── state_persistence/write_paths/phase2.py  <span class="note"># 1684 LOC god module</span>
+│   ├── <span class="rem">counterfactual_replay_engine/</span>  <span class="note"># 0-byte stub</span>
+│   ├── <span class="rem">orders_and_brackets/</span>          <span class="note"># 0-byte stub</span>
+│   └── <span class="rem">paper_evaluation_harness/</span>     <span class="note"># 0-byte stub</span>
+├── <span class="rem">feedback_loop/</span>           <span class="note"># 5 empty stubs — feature pending</span>
+├── persistence/             <span class="note"># 26 files / 3.9K LOC</span>
+│   ├── __init__.py          <span class="note"># 0 bytes</span>
+│   └── models.py            <span class="note"># 1040 LOC, no __all__, imported by 93 modules</span>
+├── pipeline/                <span class="note"># 4 files / 0.8K LOC (composition)</span>
+├── portfolio_state/         <span class="note"># 39 files / 7.6K LOC</span>
+│   ├── records/capital.py   <span class="note"># 50 LOC re-export shim ("ALP-344 — identity preserved")</span>
+│   ├── records/activity_log.py     <span class="note"># 132 LOC re-export shim</span>
+│   └── events/activity_log.py      <span class="note"># 1033 LOC — 45 Pydantic + 16 float-for-money</span>
+├── risk_guardrails/         <span class="note"># 57 files / 12.5K LOC</span>
+│   └── rules_and_limits/profile_switch.py  <span class="note"># 152 LOC, does FS I/O — misplaced</span>
+├── scheduler/               <span class="note"># 13 files / 2.9K LOC</span>
+│   └── orchestrator.py      <span class="note"># 1085 LOC — layer-spanning helpers</span>
+└── scripts/                 <span class="note"># 25 files / 23.3K LOC (verification scripts)</span>
+</pre>
+    </figure>
+    <figure class="after">
+      <figcaption>Proposed</figcaption>
+<pre class="tree">
+src/alphamind/
+├── <span class="new">_kernel/</span>                 <span class="note"># NEW: leaf module with zero outbound deps</span>
+│   ├── <span class="new">calibration.py</span>       <span class="note"># CALIBRATION_STATE_VALUES, CalibrationState</span>
+│   ├── <span class="new">regime.py</span>            <span class="note"># RegimeLabel, RegimeTransitionState, RiskZone, DrawdownTier</span>
+│   ├── <span class="new">ids.py</span>               <span class="note"># NewType IDs (OrderId, PositionId, EnvelopeId, Symbol, ...)</span>
+│   ├── <span class="new">money.py</span>             <span class="note"># Money, Price primitives (Decimal-backed)</span>
+│   └── <span class="new">invocations.py</span>       <span class="note"># INVOCATIONS_DIRNAME etc — was execution/state_persistence/invocation_paths.py</span>
+├── <span class="new">commands/</span>                <span class="note"># NEW: LLM↔engine wire-format types</span>
+│   ├── <span class="ren">command_models.py</span>    <span class="note"># moved from execution.oms.command_models</span>
+│   ├── <span class="ren">engine_envelope.py</span>   <span class="note"># moved from execution.oms.engine_envelope</span>
+│   └── <span class="new">protocols.py</span>         <span class="note"># BrokerDispatch, ValidationCallable, SubmitEnvelope Protocols</span>
+├── analysis/
+│   ├── <span class="new">_harness_core.py</span>     <span class="note"># NEW: extracted from 4 duplicated harnesses (~2K LOC saved)</span>
+│   └── <span class="new">__init__.py</span>          <span class="note"># curated re-exports for decision-layer consumers</span>
+├── collector/
+├── config/
+├── <span class="ren">data_sources/</span>            <span class="note"># news/clustering.py → analysis/ or distillation/</span>
+│   └── <span class="new">_common/</span>             <span class="note"># NEW: split god-module into retry/rate_limit/run_tracking/...</span>
+├── decision/
+│   └── portfolio_manager/
+│       └── <span class="ren">submit_envelope.py</span> <span class="note"># renamed from execution.oms.submit_envelope_mcp; moved here</span>
+├── distillation/
+│   ├── <span class="rem">q1_price_volume.py</span>
+│   ├── <span class="rem">q3_options.py</span>
+│   ├── <span class="rem">q7_cross_asset.py</span>
+│   └── q1/
+│       ├── <span class="new">loaders.py</span>        <span class="note"># extracted from assemble.py — DB-bound shell</span>
+│       └── <span class="new">compute.py</span>        <span class="note"># extracted from assemble.py — pure core</span>
+├── execution/
+│   ├── oms/                 <span class="note"># trim __init__.py — no more __getattr__ lazy-loader</span>
+│   └── state_persistence/write_paths/phase2/  <span class="note"># split by command kind</span>
+│       ├── <span class="new">open.py</span>
+│       ├── <span class="new">close.py</span>
+│       ├── <span class="new">adjust.py</span>
+│       ├── <span class="new">cancel.py</span>
+│       └── <span class="new">add.py</span>
+├── persistence/
+│   └── __all__              <span class="note"># NEW in models.py: declare public surface</span>
+├── pipeline/
+├── portfolio_state/
+│   ├── <span class="ren">state/</span>               <span class="note"># renamed from records/ for clarity</span>
+│   ├── <span class="rem">records/capital.py</span>     <span class="note"># delete shim; consumers import from _kernel</span>
+│   ├── <span class="rem">records/activity_log.py</span> <span class="note"># delete shim; consumers import from events/</span>
+│   └── events/
+│       ├── <span class="ren">position_lifecycle.py</span>  <span class="note"># split from 1033-LOC activity_log.py</span>
+│       ├── <span class="new">order_lifecycle.py</span>
+│       ├── <span class="new">bracket.py</span>
+│       └── <span class="new">cash_margin.py</span>
+├── risk_guardrails/
+│   └── rules_and_limits/
+│       └── <span class="rem">profile_switch.py</span>     <span class="note"># move to config/control_handlers/</span>
+├── scheduler/
+│   └── orchestrator.py      <span class="note"># shrunk to ~600 LOC — helpers lifted to feature packages</span>
+├── <span class="new">state/</span>                   <span class="note"># NEW: was execution/state_persistence/ — top-level cross-cutting</span>
+├── <span class="new">control_handlers/</span>        <span class="note"># NEW under config/: profile_switch.py and other admin write-paths</span>
+└── <span class="new">.importlinter</span>            <span class="note"># NEW: layer contracts enforced in CI</span>
+</pre>
+    </figure>
+  </div>
+</section>
+
+<!-- ===== 5. LOAD-BEARING FINDINGS ===== -->
+<section id="load-bearing">
+  <h2><span class="num">5</span>Findings — load-bearing</h2>
+  <p>Ten findings violating P1–P9 or surfacing structural pathology, ordered by impact. Each finding is anchored to the principle it rests on; the fix is concrete and downstream-aware.</p>
+  <div class="findings">
+
+    <!-- L1 -->
+    <article class="finding load-bearing">
+      <div class="finding-head">
+        <span class="badge load-bearing">load-bearing</span>
+        <span class="badge principle">P2</span>
+        <span class="badge principle">A2</span>
+        <h3>L1 — No <code>import-linter</code> configuration; layer rules are aspirational</h3>
+      </div>
+      <dl>
+        <dt>Where</dt>
+        <dd>No <code>[importlinter]</code> section in <code>pyproject.toml</code>; no <code>.importlinter</code> file. Confirmed by <code>analyze_imports.py</code> (<code>import_linter_config.found = false</code>).</dd>
+        <dt>Why it matters</dt>
+        <dd><strong>P2: the import graph IS the architecture.</strong> The codebase has 539 modules across 15 declared layers; the layer names are encoded in package paths (<code>config/</code> is boundary, <code>persistence/</code> is adapter, <code>pipeline/</code> is shell). But none of those rules are checked. The four cycles below slipped through code review precisely because nothing fails when a layer rule is broken. The workarounds in place (<code>__getattr__</code> lazy-loaders, <code># noqa: E402</code> chains, <code>TYPE_CHECKING</code> imports) all exist <em>because</em> there was no friction at the moment the violation landed.</dd>
+        <dt>Fix</dt>
+        <dd>Add <code>import-linter</code> to dev dependencies. Start with two layered contracts (kernel-and-commands at the bottom, no imports across the four "vocabulary" layers) and the two cycle-prevention <code>forbidden</code> contracts (<code>decision.* ↛ execution.*</code>, <code>portfolio_state.* ↛ risk_guardrails.*</code>). Add to the existing pre-commit / CI checks alongside ruff and mypy. This is the gating finding: every cycle-fix below stays fixed only if this is in place.</dd>
+      </dl>
+    </article>
+
+    <!-- L2 -->
+    <article class="finding load-bearing">
+      <div class="finding-head">
+        <span class="badge load-bearing">load-bearing</span>
+        <span class="badge principle">P2</span>
+        <span class="badge principle">P4</span>
+        <span class="badge principle">A2</span>
+        <h3>L2 — 10-module cycle: <code>portfolio_state</code> ↔ <code>risk_guardrails</code> ↔ <code>distillation</code> ↔ <code>persistence</code></h3>
+      </div>
+      <dl>
+        <dt>Where</dt>
+        <dd>
+          <code>portfolio_state.aggregates.drawdown</code> →
+          <code>portfolio_state.aggregates.risk_parameters</code> →
+          <code>risk_guardrails.breach_behavior.types</code> →
+          <code>portfolio_state.records.capital</code> →
+          <code>distillation.baselines</code> →
+          <code>distillation.regime</code> →
+          <code>risk_guardrails.regime_adaptation.types</code> →
+          <code>persistence.models</code> →
+          <code>distillation.calibration</code> →
+          <code>distillation.output</code> → (back to drawdown).
+        </dd>
+        <dt>Why it matters</dt>
+        <dd><strong>P2 + P4 inversion.</strong> Three concrete root causes (the audit subagents converged on this independently):
+          <ol>
+            <li><strong>Four shared enums live in <code>risk_guardrails</code> but are needed by every layer:</strong> <code>RegimeLabel</code>, <code>RegimeTransitionState</code>, <code>RiskZone</code>, <code>DrawdownTier</code>. <code>portfolio_state.aggregates.{drawdown,risk_parameters}</code> import them upward.</li>
+            <li><strong><code>persistence/models.py:25</code></strong> imports <code>CALIBRATION_STATE_VALUES</code> (three string literals) from <code>distillation.calibration.py:47-51</code> — <code>persistence</code> (a boundary layer) reaching <em>up</em> into <code>distillation</code> for vocabulary.</li>
+            <li><strong><code>portfolio_state/records/capital.py</code> is a 50-line re-export shim</strong> whose docstring admits ALP-344/ALP-347 status: "Identity is preserved across all import paths." It's the cycle's main wire — it lets <code>risk_guardrails</code> import "from <code>portfolio_state</code>" symbols that <em>live in</em> <code>risk_guardrails</code>.</li>
+          </ol>
+          The workarounds in place — <code># noqa: E402</code> chain at <code>regime_adaptation/types.py:62-66</code>, <code>TYPE_CHECKING</code> imports, function-local lazy imports in <code>distillation/calibration.py:216,303</code> — make the cycle <em>runnable</em>, not <em>fixed</em>. Every consumer's tests drag in the entire cycle to construct one <code>DrawdownState</code>.</dd>
+        <dt>Fix</dt>
+        <dd>
+          Extract a leaf module <code>src/alphamind/_kernel/</code> with zero first-party deps:
+          <ul>
+            <li><code>_kernel/regime.py</code> — <code>RegimeLabel</code>, <code>RegimeTransitionState</code>, <code>RiskZone</code>, <code>DrawdownTier</code></li>
+            <li><code>_kernel/calibration.py</code> — <code>CalibrationState</code>, <code>CALIBRATION_STATE_VALUES</code>, <code>EXTENDED_HOURS_BOOTSTRAP_RATE</code></li>
+          </ul>
+          Then: every subdivision imports from <code>_kernel</code>; delete <code>portfolio_state/records/capital.py</code> (or repurpose as one-line shim → <code>_kernel</code>); remove the <code># noqa: E402</code> chain; remove the lazy imports in <code>distillation/calibration.py</code>. Add the corresponding <code>import-linter</code> contract from L1.
+        </dd>
+      </dl>
+    </article>
+
+    <!-- L3 -->
+    <article class="finding load-bearing">
+      <div class="finding-head">
+        <span class="badge load-bearing">load-bearing</span>
+        <span class="badge principle">P2</span>
+        <span class="badge principle">P4</span>
+        <h3>L3 — 12-module cycle: <code>decision.portfolio_manager</code> ↔ <code>execution</code> (acknowledged in code as "transitional")</h3>
+      </div>
+      <dl>
+        <dt>Where</dt>
+        <dd>
+          <strong>Decision → Execution (5 edges):</strong> <code>decision/portfolio_manager/models.py:34</code> (<code>OMSCommand</code> family), <code>validation.py:49</code>, <code>harness.py:52,57</code>, <code>runner.py:48</code>.<br>
+          <strong>Execution → Decision (3 edges):</strong> <code>execution/oms/submit_envelope_mcp.py:49-53</code>, <code>oms/command_ids.py:23</code> (TYPE_CHECKING), <code>state_persistence/write_paths/phase2.py:22-23</code>.
+        </dd>
+        <dt>Why it matters</dt>
+        <dd><strong>P4 — the envelope is owned in the wrong place.</strong> Decision <em>produces</em> command envelopes; execution <em>consumes</em> them. The natural direction is decision → execution. But <code>command_models.py</code> lives in execution, <code>PMEnvelope</code> wraps <code>OMSCommand</code> as a discriminated union, so decision must depend on execution to define its own output. The submit_envelope MCP wrapper in execution then validates <code>PMEnvelope</code>, forcing the reverse edge. Cycle closes.<br><br>
+          <strong>The code knows.</strong> <code>oms/__init__.py:28-32</code> docstring: <em>"submit_envelope_mcp symbols are loaded lazily via <code>__getattr__</code> so that <code>alphamind.decision.portfolio_manager.models</code>'s import of canonical OMS command types does not create a circular import."</em> <code>oms/__init__.py:143-173</code> is a 30-line custom <code>__getattr__</code> implementation. <code>submit_envelope_mcp.py:1</code> docstring: <em>"transitional ... until the real OMS submission engine lands in ALP-120."</em> The workaround has shipped to main, but no follow-up is filed and no import-linter rule prevents the next code-path from extending it.</dd>
+        <dt>Fix</dt>
+        <dd>
+          Two motions, can land as one PR (no behavior change, ~30-40 files touched):
+          <ol>
+            <li><strong>Move OMS wire types to a kernel.</strong> Promote <code>oms/command_models.py</code> and <code>oms/engine_envelope.py</code> to a new top-level <code>src/alphamind/commands/</code> package. Both decision and execution depend <em>down</em> on <code>commands.*</code>.</li>
+            <li><strong>Invert <code>submit_envelope_mcp</code> via a Protocol.</strong> Move the engine-stub next to its caller — <code>decision/portfolio_manager/submit_envelope.py</code>. Define <code>BrokerDispatch(Protocol)</code> in <code>commands/protocols.py</code>; execution implements it; PM resolves via DI at the composition root.</li>
+          </ol>
+          The <code>__getattr__</code> lazy-loader disappears; <code>oms/__init__.py</code> shrinks to a normal re-export.
+        </dd>
+      </dl>
+    </article>
+
+    <!-- L4 -->
+    <article class="finding load-bearing">
+      <div class="finding-head">
+        <span class="badge load-bearing">load-bearing</span>
+        <span class="badge principle">P3</span>
+        <span class="badge principle">D2</span>
+        <h3>L4 — Primitive obsession: zero <code>Decimal</code>, zero <code>NewType</code> IDs in a money-handling system</h3>
+      </div>
+      <dl>
+        <dt>Where</dt>
+        <dd><strong>Zero <code>Decimal</code> uses anywhere in <code>src/alphamind/</code>.</strong> 115 L12 findings of <code>: float</code> for monetary fields. <strong>Zero <code>NewType</code> aliases for IDs.</strong> Hot spots:
+          <ul>
+            <li><code>portfolio_state/events/activity_log.py</code> (16 money fields including <code>fill_price</code>, <code>exit_price</code>, <code>realized_pnl_usd</code>, <code>fees</code>, <code>amount_usd</code>, <code>margin_required_usd</code>, <code>loss_usd</code>)</li>
+            <li><code>execution/state_persistence/write_paths/phase2.py:1313-1359</code> — <code>cash_row.reserved_capital_usd = cash_row.reserved_capital_usd + amount_usd</code> is the buying-power source of truth, with float drift (<code>:1349</code>'s <code>max(... - ..., 0.0)</code> patch is the tell)</li>
+            <li><code>decision/{analyst,strategist,portfolio_manager}/models.py</code> — 17 <code>float</code> annotations for prices/dollars flowing analyst → strategist → PM → execution; the full LLM-emitted command envelope never sees <code>Decimal</code></li>
+            <li>IDs: <code>OrderId</code>, <code>PositionId</code>, <code>BracketId</code>, <code>CommandId</code>, <code>AlpacaOrderId</code>, <code>ClientOrderId</code>, <code>InvocationId</code>, <code>EnvelopeId</code>, <code>ThesisId</code> — all bare <code>str</code> with regex validation at the Pydantic boundary and bare <code>str</code> internally</li>
+          </ul>
+        </dd>
+        <dt>Why it matters</dt>
+        <dd><strong>P3 + D2.</strong> This is a system that places real money trades. Float arithmetic accumulates binary-rounding error: <code>0.1 + 0.2 == 0.30000000000000004</code>; seven adds of <code>0.1</code> return <code>0.7000000000000001</code>. The activity log records every fill, debit, credit, margin call, dividend — equality across event types and persistence round-trips will diverge over time. Buying-power math compounds the drift on the source of truth. Pricing precision questions may be deferred intentionally (Alpaca accepts floats, broker round-trips truncate), but the <em>absence of any commentary about that decision</em> is itself a finding — no <code>Decimal</code> in 133K LOC of trading code is a one-way door that's been quietly walked through.<br><br>
+          For IDs: the type checker cannot catch <code>submit_equity_close(symbol=position_id, ...)</code>. Two ticker strings (underlying vs OCC vs broker <code>symbol</code>) collapse to <code>str</code>. Regex validation runs at the Pydantic boundary; internal call sites trust bare <code>str</code> and re-validate or pray.</dd>
+        <dt>Fix</dt>
+        <dd>
+          In <code>_kernel/money.py</code> and <code>_kernel/ids.py</code>:
+          <pre><code class="language-python">from decimal import Decimal
+from typing import NewType
+
+Money = NewType("Money", Decimal)
+Price = NewType("Price", Decimal)
+
+OrderId = NewType("OrderId", str)
+PositionId = NewType("PositionId", str)
+BracketId = NewType("BracketId", str)
+CommandId = NewType("CommandId", str)
+EnvelopeId = NewType("EnvelopeId", str)
+Symbol = NewType("Symbol", str)
+OccSymbol = NewType("OccSymbol", str)
+InvocationId = NewType("InvocationId", str)
+ThesisId = NewType("ThesisId", str)</code></pre>
+          Migrate <code>_usd</code> floats to <code>Money</code> at the boundary types first (<code>TradeAccountSnapshot.cash</code>, <code>FillRecord.fill_price</code>, command-model <code>dollar_value</code>/<code>trigger_price</code>). The Alpaca SDK returns strings for monetary fields — parse once at the boundary, internal code is correct. Plan as a coordinated migration with the activity-log codec layer; this is the largest single change in the audit.
+        </dd>
+      </dl>
+    </article>
+
+    <!-- L5 -->
+    <article class="finding load-bearing">
+      <div class="finding-head">
+        <span class="badge load-bearing">load-bearing</span>
+        <span class="badge principle">P5</span>
+        <span class="badge principle">D1</span>
+        <h3>L5 — Pydantic for internal types: 180+ violations across every subdivision</h3>
+      </div>
+      <dl>
+        <dt>Where</dt>
+        <dd>The L9 scanner reported 363 findings system-wide; per-subdivision triage shows ~180 are real P5 violations (the rest are warranted boundary usage). Hot files:
+          <ul>
+            <li><code>portfolio_state/events/activity_log.py</code> — 45 <code>BaseModel</code> internal-event detail classes (1033 LOC total)</li>
+            <li><code>portfolio_state/{records,aggregates,consumers}/*</code> — 71 more (orders/positions/theses/aggregates)</li>
+            <li><code>analysis/{domain_researchers,qualitative_research,adaptive_research,synthesizer}/{runner,harness,validation}.py</code> — 31 <code>HarnessSuccess</code>, runner results, validation results</li>
+            <li><code>decision/{analyst,strategist,portfolio_manager}/{validation,runner,harness}.py</code> — 15 (Validation*, *Result, HarnessSuccess)</li>
+            <li><code>execution/{oms,continuous_monitor,state_persistence}</code> — ~15 in Group C internal (Monitor session, command-id components, invocation records)</li>
+            <li><code>risk_guardrails/state_delivery/portfolio_manager.py</code> — 5 (renderer parameter bags)</li>
+            <li><code>scheduler/session.py:19-26</code> — <code>PipelineSession</code></li>
+          </ul>
+        </dd>
+        <dt>Why it matters</dt>
+        <dd><strong>P5: Pydantic at trust boundaries; frozen dataclasses internally.</strong> Internal carriers pay full Pydantic validation cost on every construction (per-field iteration, validator dispatch, error context), lose <code>__slots__</code>, and signal "this could carry untrusted data" to readers who then add redundant defensive checks. Boundary usage is correct in many places — LLM tool I/O, vendor JSON ingest, config YAML, persistence codec inputs — but the discipline doesn't propagate inward. The <code>activity_log.py</code> case is the densest: 38 nearly-identical 6-field detail classes that exist only to record state to SQLite, with validators (<code>_validate_timestamp_tz_aware</code>, <code>_validate_event_group</code>) that are post-construction invariants — exactly what <code>frozen dataclass + __post_init__</code> expresses with zero Pydantic machinery.</dd>
+        <dt>Fix</dt>
+        <dd>Convert internal types to <code>@dataclass(frozen=True, slots=True)</code> with <code>__post_init__</code> invariants. Keep Pydantic only on: LLM tool I/O, brief schemas, vendor-JSON parsers, config models that get hot-reloaded, and on-disk manifest contracts (e.g. <code>replay_harness/fixtures.py:46 SliceManifest</code>). Order the migration leaf-first: convert one record (e.g. <code>UnsettledProceedsEntry</code>), let <code>mypy --strict</code> verify the 30+ call sites still type-check, then proceed upward.</dd>
+      </dl>
+    </article>
+
+    <!-- L6 -->
+    <article class="finding load-bearing">
+      <div class="finding-head">
+        <span class="badge load-bearing">load-bearing</span>
+        <span class="badge principle">P1</span>
+        <span class="badge principle">A1</span>
+        <h3>L6 — Functional-core violation in <code>distillation/</code>: <code>Session</code> threaded into compute path</h3>
+      </div>
+      <dl>
+        <dt>Where</dt>
+        <dd>99 <code>session.*</code> calls across 22 of 54 distillation files. <code>distillation/q1/assemble.py:1103,1156,1176,1247</code>; <code>distillation/q6_macro.py:393,440,539,596,817</code>; <code>distillation/q3/assemble.py:188+</code>; <code>distillation/q7/_helpers.py</code>; <code>distillation/qualitative_derived.py:165,208,250,450,480,676,700,741</code>. Counter-examples that prove the seam works: <code>distillation/normalization.py</code> (341 LOC pure, 10 exports, zero DB) and <code>distillation/q1/indicators.py</code> (636 LOC pure).</dd>
+        <dt>Why it matters</dt>
+        <dd><strong>P1: functional core, imperative shell.</strong> Distillation's docstrings claim "deterministic numerical computation," but the call shape interleaves DB reads with arithmetic. <code>_assemble_blocks_for_audience</code> at <code>q1/assemble.py:1176</code> issues an N+1 <code>_load_daily_bars</code> per ticker; <code>_build_indicator_group_blocks</code> at line 1247 calls <code>_compute_gap_per_ticker(session, ...)</code> which re-enters the DB inside what callers reasonably read as a "compute" pass.<br><br>
+          <strong>The cost has surfaced.</strong> <code>distillation/orchestrator.py:706-769</code> is forced to <em>serialize</em> all six categories with a code comment: "running them concurrently via <code>asyncio.to_thread</code> on a shared Session triggers <code>Session is already flushing</code>." The shared mutable session is forcing sequential execution that the orchestrator's own design intended to be parallel. Tests also pay: <code>tests/distillation/external/test_orchestrator.py:76</code> spins up <code>sqlite:///:memory:</code> for unit tests that should only need lists of bars; <code>test_q3_assemble_blocks.py:67-225</code> runs <code>_seed_universe → session.add → session.flush</code> per case.</dd>
+        <dt>Fix</dt>
+        <dd>Split each <code>assemble_q*_blocks(session, ...)</code> into:
+          <ul>
+            <li><code>load_q*_inputs(session, ...) -&gt; FrozenInputs</code> — thin shell, all reads in one pass</li>
+            <li><code>compute_q*_blocks(inputs: FrozenInputs, config) -&gt; list[OutputBlock]</code> — pure core</li>
+          </ul>
+          Phase 2 of the orchestrator becomes: load shells sequentially under one session → drain to frozen dataclasses → <code>asyncio.gather(*[asyncio.to_thread(compute_*)...])</code> with no shared mutable state. Reuse the existing <code>_IndicatorGroupContext</code> (<code>q1/assemble.py:1229</code>) — it's already the right shape for the input bundle. Pilot on <code>q1/gap.py</code> and <code>q1/anomalies.py</code> (smallest blast radius), then propagate.
+        </dd>
+      </dl>
+    </article>
+
+    <!-- L7 -->
+    <article class="finding load-bearing">
+      <div class="finding-head">
+        <span class="badge load-bearing">load-bearing</span>
+        <span class="badge principle">P5</span>
+        <span class="badge principle">D2</span>
+        <h3>L7 — Pydantic config types leak system-wide into domain code</h3>
+      </div>
+      <dl>
+        <dt>Where</dt>
+        <dd><code>config/models/*.py</code> declares 61 Pydantic <code>BaseModel</code> config classes. They're imported directly by 65+ files across <code>distillation/</code>, <code>analysis/</code>, <code>decision/</code>, <code>risk_guardrails/</code>, <code>execution/</code>. Example: <code>distillation/q1/assemble.py:42,1035,1106,1179</code> takes <code>config: DistillationConfig</code> (Pydantic) as a parameter; <code>pipeline/_shared.py:54</code> does <code>cfg.model_copy(update=...)</code> on Pydantic config models.</dd>
+        <dt>Why it matters</dt>
+        <dd><strong>P5.</strong> The pattern <em>exists in design</em>: <code>config/resolver.py:83</code> defines <code>ResolvedConfig</code> as a <code>@dataclass(frozen=True, slots=True)</code>. The intent is parse-once-at-boundary. But the per-domain Pydantic models pass through <code>ResolvedConfig</code> directly (<code>config/resolver.py:99-120</code>), so business code calls <code>.model_copy()</code> and depends on Pydantic-specific validation semantics. The <code>config/models/__init__.py</code> 277-line file re-exports 119 symbols — it is the de facto boundary registry and the <em>vehicle</em> for the leak.</dd>
+        <dt>Fix</dt>
+        <dd>Per top-level Pydantic config the analysis/decision/distillation layers import, define a frozen-dataclass mirror in the consuming package and convert via a single <code>to_domain()</code> function. Start with <code>DistillationConfig</code> (235 LOC, 10 leaks) — highest yield since it's duck-typed across the distillation Q-modules. Once each domain config has a converted-once internal type, the 119-symbol re-export registry in <code>config/models/__init__.py</code> shrinks to just the resolver/snapshot symbols.</dd>
+      </dl>
+    </article>
+
+    <!-- L8 -->
+    <article class="finding load-bearing">
+      <div class="finding-head">
+        <span class="badge load-bearing">load-bearing</span>
+        <span class="badge principle">P9</span>
+        <span class="badge principle">A5</span>
+        <h3>L8 — Five god modules concentrate complexity at integration seams</h3>
+      </div>
+      <dl>
+        <dt>Where</dt>
+        <dd>
+          <ol>
+            <li><strong><code>execution/state_persistence/write_paths/phase2.py</code></strong> — 1,684 LOC, 25 cross-package imports. Phase 2 of the OMS write path (capital reservation/release, order writeback, bracket dissolution, fill persistence, activity-log emission) in a single file. Imports decision.portfolio_manager.* (lines 22-23), forcing half the L3 cycle.</li>
+            <li><strong><code>execution/oms/submit_envelope_mcp.py</code></strong> — 1,599 raw / 468 code LOC. Hosts boundary Pydantic types, state cell, per-command pipeline, broker dispatch routing, persistence path, MCP wiring — <strong>five subsystems</strong>. Five inline imports of phase2 (<code>:596,:626,:647,:662</code>) are cycle workarounds.</li>
+            <li><strong><code>portfolio_state/events/activity_log.py</code></strong> — 1,033 LOC, 56 public symbols, 0 <code>__all__</code>. 38 nearly-identical detail classes plus two hand-maintained dispatch dicts (<code>EVENT_TYPE_TO_DETAIL_CLASS</code>, <code>EVENT_TYPE_TO_GROUP</code>) kept in sync via a runtime <code>_validate_detail_class</code> validator.</li>
+            <li><strong><code>scheduler/orchestrator.py</code></strong> — 1,085 LOC, 32 helper functions, imports from 30+ first-party modules. Layer-spanning private helpers (<code>_build_active_risk_parameters</code>, <code>_build_synthetic_regime_output</code>, etc.) — inline comments mark them "pre-review triage simplification" / "deferred follow-up."</li>
+            <li><strong>Four LLM agent harnesses 90% structurally identical:</strong> <code>analysis/domain_researchers/harness.py</code> (877), <code>qualitative_research/harness.py</code> (850), <code>adaptive_research/harness.py</code> (978), <code>synthesizer/harness.py</code> (541). Each explicitly documents "Structurally mirrors ..." — total ~3,250 LOC, an estimated 2,000+ reducible.</li>
+          </ol>
+        </dd>
+        <dt>Why it matters</dt>
+        <dd><strong>P9 (inverted) + A5.</strong> These aren't deep modules; they're seams where multiple subsystems are sewn together. SDK-behavior fixes in the harnesses must be applied four times (the <code>aclose()</code> race comment at <code>analysis/domain_researchers/harness.py:442-445</code> is the example). The <code>activity_log</code>'s two dispatch dicts are a code smell — runtime registry validation papering over a structure that should be derived from a single source of truth.</dd>
+        <dt>Fix</dt>
+        <dd>
+          <ul>
+            <li><strong>phase2.py</strong> — split by OMS command kind: <code>phase2/{open,close,adjust,cancel,add,_shared}.py</code>. Each becomes 200-400 LOC. Compounds with L3 (kernel move): once <code>PMEnvelope</code> validation moves to the kernel, the decision.* imports vanish entirely.</li>
+            <li><strong>submit_envelope_mcp.py</strong> — decompose into <code>oms/submit_envelope_mcp/{types,process,dispatch,persist,server}.py</code>. The five inline phase2 imports disappear once persistence is its own module.</li>
+            <li><strong>activity_log.py</strong> — split into per-event-group files (<code>events/{position_lifecycle,order_lifecycle,bracket,thesis,cash_margin,...}.py</code>) re-exported by <code>events/__init__.py</code>. Auto-generate dispatch dicts from a single <code>_REGISTRY: list[tuple[EventType, type, EventGroup]]</code>.</li>
+            <li><strong>orchestrator.py</strong> — lift the layer-spanning helpers into the feature packages they belong to: <code>_build_active_risk_parameters</code> + <code>_build_synthetic_regime_output</code> + <code>_load_prior_active_risk_parameters</code> → <code>risk_guardrails/regime_adaptation/</code>; <code>_active_sectors_from_resolved</code> + <code>_build_sector_resolver</code> + <code>_ticker_scope_from_assets</code> → new <code>config/assets_views.py</code>. Orchestrator drops to ~600 LOC.</li>
+            <li><strong>LLM harnesses</strong> — extract <code>analysis/_harness_core.py</code> with the SDK driver loop, prompt cache, exception hierarchy, <code>_DiagState</code> writer. Variants become a small Protocol: <code>parse_response(payload, response_text) -&gt; T | RetryRequest</code>, <code>build_options(agent_config, ...) -&gt; ClaudeAgentOptions</code>.</li>
+          </ul>
+        </dd>
+      </dl>
+    </article>
+
+    <!-- L9 -->
+    <article class="finding load-bearing">
+      <div class="finding-head">
+        <span class="badge load-bearing">load-bearing</span>
+        <span class="badge principle">P4</span>
+        <span class="badge principle">P2</span>
+        <span class="badge principle">C2</span>
+        <h3>L9 — SQLAlchemy ORM models are imported as system-wide vocabulary</h3>
+      </div>
+      <dl>
+        <dt>Where</dt>
+        <dd><code>persistence/models.py</code> — 1040 LOC, 31 declarative classes, no <code>__all__</code> — imported by <strong>93 first-party modules</strong>. <code>persistence/__init__.py</code> is 0 bytes. <code>pipeline/analysis.py:32,110</code> passes <code>Session</code> directly to <code>run_analysis_pipeline</code>. Many data_sources modules construct ORM rows inline: <code>polygon/equity.py</code>, <code>finnhub/calendar.py</code>, etc.</dd>
+        <dt>Why it matters</dt>
+        <dd><strong>P2 + P4.</strong> The ORM declarative classes (a boundary type) are the system's domain vocabulary. There is exactly one Protocol-style repository in the codebase — <code>portfolio_state/repository.py</code> (<code>PortfolioStateRepository</code> Protocol + <code>StubPortfolioStateRepository</code>) — and it works well. Nothing else has equivalent seams. The cost surfaces in tests (<strong>P8</strong>: every read-path is mock-the-session or hit-real-DB, not sociable testing against a Protocol fake) and in coupling (an ORM column rename touches 93 modules).</dd>
+        <dt>Fix</dt>
+        <dd>Per subsystem with non-trivial domain rules, introduce a Protocol-shaped repository in the <em>consuming</em> package (template: <code>portfolio_state.PortfolioStateRepository</code>) and an SQL implementation that closes over the session. Don't touch analysis tools that are pure read-throughs of one table — they're fine as functions; the win is concentrated on multi-table aggregating reads. Add <code>__all__</code> to <code>persistence/models.py</code>; populate <code>persistence/__init__.py</code> with the published surface. Add an <code>import-linter</code> contract banning direct ORM imports outside <code>persistence/</code> and the SQL-implementation modules. This is a multi-quarter migration done one consumer at a time.</dd>
+      </dl>
+    </article>
+
+    <!-- L10 -->
+    <article class="finding load-bearing">
+      <div class="finding-head">
+        <span class="badge load-bearing">load-bearing</span>
+        <span class="badge principle">P7</span>
+        <span class="badge principle">G2</span>
+        <h3>L10 — Async surface over synchronous core: structured concurrency violations</h3>
+      </div>
+      <dl>
+        <dt>Where</dt>
+        <dd>
+          Three related sub-findings:
+          <ul>
+            <li><strong>Repository Protocol async over sync SQLite.</strong> <code>portfolio_state/repository.py:133-190</code> declares 19 async methods; the Stub at <code>:232-305</code> defines 19 <code>async def</code> with no <code>await</code> anywhere. Same pattern in <code>consumers/synthesizer.py:73-81</code> Protocol + <code>:193-210</code> <code>SnapshotBackedSynthesizerReader</code>; <code>pricing.py:43-113</code>. The 14-concurrent <code>asyncio.gather</code> in <code>assembler.py:449-468</code> is decorative — SQLite's single-writer pool serializes them.</li>
+            <li><strong><code>asyncio.gather</code> instead of <code>TaskGroup</code> for parallel agent execution.</strong> <code>analysis/domain_researchers/orchestrator.py:115</code> (3 sector researchers fan-out), <code>pipeline/analysis.py:148</code> (orchestrator || qualitative). <code>asyncio.gather(return_exceptions=False)</code> propagates the first exception but cancellation of siblings is best-effort.</li>
+            <li><strong><code>asyncio.create_task</code> without TaskGroup parent.</strong> Five sites: <code>scheduler/supervisor.py:101</code>, <code>execution/continuous_monitor/supervisor.py:108</code>, <code>execution/broker_adapter/fill_stream.py:324</code>, <code>execution/continuous_monitor/underlying_stream/task.py:243,244</code>. <code>scheduler/supervisor.py</code> is a hand-rolled ~190-LOC supervisor pre-dating <code>TaskGroup</code> adoption.</li>
+          </ul>
+        </dd>
+        <dt>Why it matters</dt>
+        <dd><strong>P7.</strong> Glyph: "async is not for you." Async earns its keep when there are concurrent I/O operations. SQLite is the persistence engine — synchronous, serialized. The async colour spreads through every consumer (every test must <code>pytest.mark.anyio</code>, every site spins an event loop) for no benefit. Separately, structured concurrency (<code>TaskGroup</code>) is mandatory once async (Nathaniel J. Smith): fire-and-forget <code>create_task</code> is a guaranteed silent bug. Python 3.13 has <code>TaskGroup</code>; the hand-rolled supervisor is ~150 lines of cancellation logic <code>TaskGroup</code> provides for free.</dd>
+        <dt>Fix</dt>
+        <dd>
+          <ul>
+            <li><strong>portfolio_state repository:</strong> strip <code>async</code> from the Protocol + Stub + snapshot reader + pricing provider. <code>assemble_snapshot</code> becomes sync. 14-concurrent gather collapses to 14 sequential reads (already what happens). Right answer if SQLite stays.</li>
+            <li><strong>analysis parallel execution:</strong> replace the two <code>asyncio.gather(...)</code> with <code>async with asyncio.TaskGroup() as tg:</code> blocks; collect from <code>tg.create_task(...)</code> handles. Fail-closed semantic preserved; multi-failure raises <code>ExceptionGroup</code>.</li>
+            <li><strong>scheduler/continuous_monitor supervisors:</strong> replace hand-rolled supervisor with <code>TaskGroup</code>-based ~80-LOC supervisor. The <code>except BaseException:</code> at <code>supervisor.py:127</code> and the <code>_RegisteredTask</code> mutable-dataclass disappear.</li>
+          </ul>
+        </dd>
+      </dl>
+    </article>
+
+  </div>
+</section>
+
+<!-- ===== 6. HIGH-YIELD FINDINGS ===== -->
+<section id="high-yield">
+  <h2><span class="num">6</span>Findings — high-yield</h2>
+  <p>Local antipatterns easy to fix with immediate payoff. Grouped by ID; counts are from <code>antipattern_scan.py</code> with subagent triage notes.</p>
+  <table class="antipatterns">
+    <thead>
+      <tr>
+        <th style="width: 5rem">ID</th>
+        <th>Antipattern</th>
+        <th class="count">Count</th>
+        <th>Examples &amp; fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="id">L9</span></td>
+        <td>Pydantic <code>BaseModel</code> for internal types</td>
+        <td class="count">363</td>
+        <td class="examples">Triage: ~180 are real P5 violations (covered by load-bearing L5); ~180 are warranted boundary types (LLM tool I/O, vendor JSON, on-disk manifests, config models, persistence codecs). Hot files for real violations: <code>portfolio_state/events/activity_log.py</code> (45), <code>portfolio_state/records/orders.py</code> (12), <code>analysis/*/runner.py</code> (~31), <code>decision/*/validation.py</code> (~15). Convert leaf-first; <code>mypy --strict</code> catches consumers.</td>
+      </tr>
+      <tr>
+        <td><span class="id">L12</span></td>
+        <td><code>float</code> for monetary fields</td>
+        <td class="count">115</td>
+        <td class="examples">Covered by load-bearing L4. Hot: <code>portfolio_state/events/activity_log.py</code> (16), <code>decision/strategist/input_bundle.py</code> (7), <code>portfolio_state/snapshot.py</code> (5), <code>portfolio_state/computations/positions.py</code> (5). 7 in distillation are ratios/multiples (false positives — suppress at module level). The 21 in execution and 17 in decision are the critical money-handling paths.</td>
+      </tr>
+      <tr>
+        <td><span class="id">L19</span></td>
+        <td><code>async def</code> with no <code>await</code></td>
+        <td class="count">113</td>
+        <td class="examples">Triage: ~70 are Protocol/ABC method stubs or SDK <code>@tool</code> decorators (correct — SDK contract requires async); ~43 are real. Real hot spots: <code>portfolio_state/repository.py</code> (18 — fake-async stub layer); <code>scripts/verify_*.py</code> (31 — these are verification harnesses; fine); <code>execution/state_persistence/invocation_context/activity_log.py:89</code>, <code>execution/continuous_monitor/__main__.py:387</code>. The portfolio_state cluster is load-bearing L10; the rest are surgical drops of <code>async</code>.</td>
+      </tr>
+      <tr>
+        <td><span class="id">L25</span></td>
+        <td><code>print()</code> in non-CLI module</td>
+        <td class="count">66</td>
+        <td class="examples">63 of 66 are in <code>scripts/verify_*.py</code> verification harnesses where <code>print</code> is the legitimate output channel (these are CLI scripts the scanner doesn't recognize). 3 real findings in <code>distillation/replay_harness/cli.py:137,221,321</code> — switch to <code>logging.getLogger("alphamind")</code> for consistency with the rest of the codebase.</td>
+      </tr>
+      <tr>
+        <td><span class="id">L4</span></td>
+        <td>Bare <code>except Exception</code> / <code>except BaseException</code></td>
+        <td class="count">61</td>
+        <td class="examples">Hot: <code>data_sources/</code> (12 across polygon/fred/marketaux/finra/sec_edgar/iborrowdesk/kalshi/polymarket — per-ticker error swallowing without <code>exc_info</code>), <code>execution/continuous_monitor/*</code> (13 supervisor-level catch-and-log — mostly defensible), foundation (8 — some warranted outermost-supervisor, some unwarranted like <code>persistence/session.py:64</code> swallowing config bugs). Narrow each to the actual exception class; add <code>raise ... from exc</code> where re-raising.</td>
+      </tr>
+      <tr>
+        <td><span class="id">L8</span></td>
+        <td>Mutable <code>@dataclass</code> without justification</td>
+        <td class="count">27</td>
+        <td class="examples">Mix of legitimate (<code>_DiagState</code> accumulators in harnesses, <code>RunState</code> in data_sources <code>_common.py:450</code>, <code>_ValidationStateCell</code> in <code>state_delivery/validation_tool_mcp.py:83</code>) and improvable (<code>SubmissionLogEntry</code>, <code>FailedSubmissionEntry</code>, <code>SubmitEnvelopeState</code> in <code>execution/oms/submit_envelope_mcp.py:231-255</code> can be <code>frozen=True, slots=True</code> with <code>dataclasses.replace()</code>). Triage and fix the improvable cases; document the legitimate ones.</td>
+      </tr>
+      <tr>
+        <td><span class="id">L16</span></td>
+        <td><code>asyncio.create_task</code> without <code>TaskGroup</code> parent</td>
+        <td class="count">5</td>
+        <td class="examples">All real, all in supervisor code: <code>scheduler/supervisor.py:101</code>, <code>execution/continuous_monitor/supervisor.py:108</code>, <code>execution/broker_adapter/fill_stream.py:324</code>, <code>execution/continuous_monitor/underlying_stream/task.py:243,244</code>. Covered by load-bearing L10; replace with <code>asyncio.TaskGroup</code> (Python 3.13 native).</td>
+      </tr>
+      <tr>
+        <td><span class="id">—</span></td>
+        <td>Unwarranted lint suppressions</td>
+        <td class="count">few</td>
+        <td class="examples">Most <code># type: ignore</code> and <code># noqa</code> in the codebase are warranted (SDK contracts, vendor-SDK <code>Any</code>, spec-driven plugin interface in <code>risk_guardrails/.../rules/*</code>). Unwarranted: <code>scheduler/orchestrator.py:1037</code> <code># type: ignore[arg-type]</code> (sync-vs-async Session mismatch; root cause cross-subdivision); <code>marketaux/news.py:178</code> <code># type: ignore[assignment]</code> (sentinel — replace with stdlib idiom); <code>analysis/tools/earnings_commentary.py:288</code> <code># type: ignore[arg-type]</code> (masks <code>str | None</code> narrowing). The 4 <code># noqa: PLR0913</code> on composition entry points are spec-driven but could be eliminated by grouping params into frozen-dataclass bundles.</td>
+      </tr>
+      <tr>
+        <td><span class="id">—</span></td>
+        <td>Cross-package duplicated infrastructure</td>
+        <td class="count">3+</td>
+        <td class="examples"><code>_atomic_write</code> duplicated across <code>config/snapshot.py:129</code>, <code>distillation/calibration_snapshot.py:152</code>, and referenced by <code>risk_guardrails/rules_and_limits/profile_switch.py:123</code> — promote to <code>alphamind/_kernel/atomic_io.py</code>. Mode-translation helpers in 3+ sites (<code>pipeline/decision.py:138-146</code>, <code>scheduler/orchestrator.py:427</code>, <code>scheduler/invocation.py:52</code>) — consolidate via <code>Mode</code> enum methods. <code>track_run</code> + <code>_DefaultRepo</code> in <code>data_sources/_common.py</code> may duplicate the invocation-archive pattern in <code>collector/</code> — verify.</td>
+      </tr>
+      <tr>
+        <td><span class="id">—</span></td>
+        <td>Misplaced modules / cross-cutting infrastructure</td>
+        <td class="count">5</td>
+        <td class="examples"><code>execution/state_persistence/</code> (41 files, 125 inbound from outside execution — promote to top-level <code>alphamind/state/</code>). <code>execution/state_persistence/invocation_paths.py</code> (33 LOC, 8 harness consumers — surgical fix, move to <code>alphamind/_kernel/invocations.py</code>). <code>risk_guardrails/rules_and_limits/profile_switch.py</code> (152 LOC, FS I/O — move to <code>config/control_handlers/</code>). <code>data_sources/news/clustering.py</code> (pure domain code — move to <code>analysis/news_clustering/</code> or <code>distillation/</code>). Three distillation re-export shims (<code>q1_price_volume.py</code>, <code>q3_options.py</code>, <code>q7_cross_asset.py</code>) with 0-1 consumers — delete.</td>
+      </tr>
+      <tr>
+        <td><span class="id">—</span></td>
+        <td>Test substrate: mock-heavy where Protocol-fake would be sociable</td>
+        <td class="count">261</td>
+        <td class="examples"><code>tests/data_sources/</code> uses 261 <code>MagicMock</code>/<code>Mock</code> constructions vs 1 <code>class Fake*</code>. Textbook P8 "mock what you don't own" failure: tests couple to vendor SDK call shape, so a Polygon-SDK kwarg rename silently passes tests but breaks production. Define a <code>Protocol</code> per vendor wrapping the SDK; write one in-memory fake per Protocol; reuse across tests. The single <code>FakeRepo</code> in <code>treasury/test_auctions.py</code> shows the right pattern exists but hasn't propagated.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ===== 7. WORTH KNOWING ===== -->
+<section id="worth-knowing">
+  <h2><span class="num">7</span>Worth knowing</h2>
+  <div class="findings">
+
+    <article class="finding worth-knowing">
+      <div class="finding-head">
+        <span class="badge worth-knowing">forward-looking</span>
+        <span class="badge principle">A4</span>
+        <h3>W1 — Empty namespace stubs anticipate features that haven't landed</h3>
+      </div>
+      <dl>
+        <dt>Observation</dt>
+        <dd>Eight package paths exist as 0-byte stubs awaiting feature work: <code>command_center/</code> (2 dirs), <code>feedback_loop/</code> (5 dirs), <code>execution/counterfactual_replay_engine/</code>, <code>execution/orders_and_brackets/</code>, <code>execution/paper_evaluation_harness/</code>, <code>data_sources/alpaca/</code>, <code>analysis/domain_researchers/{tech_semis,financials,energy}/__init__.py</code>. All correspond to features marked "requirements pending" in <code>docs/project-tracker.md</code>.</dd>
+        <dt>When it bites</dt>
+        <dd><strong>A4 (cohesion over hierarchy):</strong> resist pre-creating empty <code>domain/</code> / <code>application/</code> / <code>infrastructure/</code> directories until they have content. Empty paths confuse navigation (an LLM agent reading the tree sees a package, opens it, finds nothing), interfere with grep, and invite drift. Either delete them (and add a roadmap note in <code>docs/project-tracker.md</code>) or stub each <code>__init__.py</code> with a <code>__getattr__</code> raising <code>NotImplementedError("scheduled for ALP-XXX")</code> so the path is intentional, not accidental.</dd>
+      </dl>
+    </article>
+
+    <article class="finding worth-knowing">
+      <div class="finding-head">
+        <span class="badge worth-knowing">forward-looking</span>
+        <span class="badge principle">P9</span>
+        <h3>W2 — Three distillation re-export shims with zero (or one redundant) consumers</h3>
+      </div>
+      <dl>
+        <dt>Observation</dt>
+        <dd><code>distillation/q1_price_volume.py</code> (197 LOC, re-exports 70+ names from <code>q1/</code>) and <code>distillation/q7_cross_asset.py</code> (96 LOC) have <strong>no consumers</strong>. <code>distillation/q3_options.py</code> (99 LOC) has one redundant consumer at <code>orchestrator.py:78</code>. ~390 LOC of dead ceremony. The docstrings claim "import shim the orchestrator will reach for"; the orchestrator does not reach for two of them.</dd>
+        <dt>When it bites</dt>
+        <dd>Each shim is a maintenance surface that has to be kept in sync with the underlying package. They look like indirection layers, so when adding a new q1 indicator the next contributor will reach for <code>q1_price_volume.py</code> first. Delete them; change <code>orchestrator.py:78</code> to import from <code>q3/</code> directly.</dd>
+      </dl>
+    </article>
+
+    <article class="finding worth-knowing">
+      <div class="finding-head">
+        <span class="badge worth-knowing">forward-looking</span>
+        <span class="badge principle">P9</span>
+        <h3>W3 — <code>data_sources/_common.py</code> is a god module with 22 of 47 modules importing it</h3>
+      </div>
+      <dl>
+        <dt>Observation</dt>
+        <dd>619 LOC bundling config loading, retry policy, headline-tag taxonomy, rate limiter, run-tracking context manager, DB helpers, universe lookup. The most-imported module in the data layer. The headline-tag taxonomy (<code>HeadlineType</code>, <code>normalize_vendor_tags</code>, <code>decode_topic_tags</code>) is news-domain code that doesn't belong in a "common" module.</dd>
+        <dt>When it bites</dt>
+        <dd>A single change in any of the eight bundled concerns touches the import graph of 22 modules. Split into focused modules: <code>_common/retry.py</code>, <code>_common/rate_limit.py</code>, <code>_common/run_tracking.py</code>, <code>_common/resume.py</code>, <code>_common/universe.py</code>. Move <code>HeadlineType</code> + tag mapping to <code>data_sources/news/types.py</code>. This is independent of the data-sources subdivision's other findings and would clarify the import surface immediately.</dd>
+      </dl>
+    </article>
+
+    <article class="finding worth-knowing">
+      <div class="finding-head">
+        <span class="badge worth-knowing">forward-looking</span>
+        <span class="badge principle">A2</span>
+        <h3>W4 — <code>persistence/__init__.py</code> empty; <code>persistence/models.py</code> has no <code>__all__</code></h3>
+      </div>
+      <dl>
+        <dt>Observation</dt>
+        <dd><code>persistence/__init__.py</code> is 0 bytes; <code>persistence/models.py</code> has 31 declarative classes and no <code>__all__</code>. <code>config/models/__init__.py</code> by contrast carries 277 lines and 119 re-exports — the same package taking two opposite approaches to public-surface declaration.</dd>
+        <dt>When it bites</dt>
+        <dd>The persistence layer's public surface is the implicit "everything in models.py" — and that surface is imported by 93 modules across the codebase. Any rename in <code>models.py</code> is a system-wide event. Tied to L9: populate <code>persistence/__init__.py</code> with the read protocols once they exist; the ORM declarations stay adapter-internal.</dd>
+      </dl>
+    </article>
+
+    <article class="finding worth-knowing">
+      <div class="finding-head">
+        <span class="badge worth-knowing">forward-looking</span>
+        <span class="badge principle">P3</span>
+        <h3>W5 — Three Mode-translation helpers in parallel sites</h3>
+      </div>
+      <dl>
+        <dt>Observation</dt>
+        <dd><code>pipeline/decision.py:138-146</code> carries <code>_ANALYST_MODE_FOR_PIPELINE</code> + <code>_STRATEGIST_MODE_FOR_PIPELINE</code> mapping dicts. <code>scheduler/orchestrator.py:427</code> carries <code>_mode_to_decision_literal</code>. <code>scheduler/invocation.py:52</code> carries <code>_mode_to_active_mode_literal</code>. Likely more sites in decision and risk_guardrails. Documented <code>defensive_posture</code> mode is unreachable from these tables.</dd>
+        <dt>When it bites</dt>
+        <dd>Adding a new mode requires touching every translator and getting consistent. One canonical <code>Mode</code> enum with <code>.to_decision_literal()</code> / <code>.to_active_mode_literal()</code> / <code>.to_analyst_pipeline_mode()</code> methods would compress these to one file and let the type checker enforce coverage.</dd>
+      </dl>
+    </article>
+
+    <article class="finding worth-knowing">
+      <div class="finding-head">
+        <span class="badge worth-knowing">forward-looking</span>
+        <span class="badge principle">K5.4</span>
+        <h3>W6 — <code>datetime.now(UTC)</code> inside LLM tool implementations</h3>
+      </div>
+      <dl>
+        <dt>Observation</dt>
+        <dd>The 8 tool callables under <code>analysis/tools/*</code> each construct <code>now</code> directly via <code>datetime.now(UTC)</code>. The DTZ ruff rule catches naive datetimes but not injected clocks.</dd>
+        <dt>When it bites</dt>
+        <dd>K5.4 ("determinism in the shell") wants the clock injected. Today, replay tests must monkey-patch <code>datetime.now</code> (order-dependent under xdist, fragile). Inject a <code>Clock</code> Protocol or a <code>now: datetime</code> parameter into each tool factory; the harness already has <code>now_utc</code> plumbing.</dd>
+      </dl>
+    </article>
+
+    <article class="finding worth-knowing">
+      <div class="finding-head">
+        <span class="badge worth-knowing">memory</span>
+        <h3>W7 — Memory <code>feedback_prompt_output_format_compat.md</code> is stale on <code>pm.md</code></h3>
+      </div>
+      <dl>
+        <dt>Observation</dt>
+        <dd>The memory entry flags "pm.md still carries it" referring to the "begin with <code>{</code>" prefill / <code>output_format=json_schema</code> incompatibility. Current state: <code>prompts/decision/pm.md:121</code> uses positive framing ("Do not emit envelopes in the structured output; envelopes flow through <code>submit_envelope</code> calls"). No prefill directives; no <code>&lt;thinking&gt;</code> tags. <strong>The pattern was already resolved.</strong></dd>
+        <dt>When it bites</dt>
+        <dd>Memory hygiene only — not a code finding. Update the memory entry to remove the residual "pm.md still carries it" line; mark the issue resolved.</dd>
+      </dl>
+    </article>
+
+  </div>
+</section>
+
+<!-- ===== 8. DATA FLOW ===== -->
+<section id="data-flow" class="visual">
+  <h2><span class="num">8</span>Data flow</h2>
+  <p class="caption">Per-invocation pipeline lifecycle. Boundary-crossing nodes are blue; pure-core nodes are green; the rose <code>distillation/</code> node marks the P1 leak from finding L6. The continuous-monitor process runs in parallel as a long-lived sidecar; both processes share the SQLite database.</p>
+  <div class="mermaid">
+flowchart LR
+    classDef boundary fill:#0f1c3a,stroke:#93c5fd,stroke-width:1.5px,color:#93c5fd;
+    classDef core fill:#0f2818,stroke:#86efac,stroke-width:1.5px,color:#86efac;
+    classDef leak fill:#3f1a23,stroke:#fb7185,stroke-width:2px,color:#fda4af;
+    classDef daemon fill:#27272a,stroke:#a1a1aa,color:#f4f4f5;
+
+    subgraph PipelineProcess["Pipeline process (episodic, 8-10× / day)"]
+        direction LR
+        A[Scheduler<br/>APScheduler + NYSE calendar]:::boundary
+        B[Data sources<br/>13 vendor adapters]:::boundary
+        C[Distillation<br/>numerical compute]:::leak
+        D[Analysis<br/>5 LLM agents in parallel]:::core
+        E[Decision<br/>analyst + strategist + PM]:::core
+        F[Execution<br/>OMS state machine]:::boundary
+
+        A --> B --> C --> D --> E --> F
+    end
+
+    subgraph SharedDB["Shared SQLite (WAL mode)"]
+        direction TB
+        DB1[(portfolio state<br/>positions · orders · cash · activity log)]:::boundary
+        DB2[(distillation state<br/>baselines · regimes · composites)]:::boundary
+        DB3[(brief store · invocation archive)]:::boundary
+        DB4[(fill buffer)]:::boundary
+    end
+
+    subgraph Monitor["Continuous monitor process (always-on)"]
+        direction LR
+        M1[Alpaca websockets<br/>trade_updates + IEX]:::boundary
+        M2[Trigger evaluation<br/>bracket-stops · greeks-refresh<br/>guardrail-breach detection]:::core
+        M3[Cascade dispatcher<br/>emergency invocation]:::boundary
+    end
+
+    M1 --> M2 --> M3
+    F --> DB1
+    F --> DB4
+    M3 --> DB4
+    M3 --> DB1
+    C --> DB2
+    D --> DB3
+    E --> DB3
+  </div>
+</section>
+
+<!-- ===== 9. WHAT LOOKED GOOD ===== -->
+<section id="good">
+  <h2><span class="num">9</span>What looked good</h2>
+  <p>The audit found enough structural problems to fill ten load-bearing findings, but the codebase also gets several things <em>right</em> in ways that are not common at this scale. These are worth preserving through any refactor.</p>
+  <ul class="good-list">
+    <li><strong>Static-analysis posture from day one.</strong> <code>mypy --strict</code> with <code>warn_unused_ignores</code>; ruff with <code>DTZ</code>, <code>ASYNC</code>, <code>TRY</code>, <code>PD</code>, <code>NPY</code>, <code>FURB</code>, <code>LOG</code>, <code>PTH</code>, <code>SIM</code>, and the <code>PLR</code> complexity gates. Per-file ignores are itemized and justified in <code>pyproject.toml</code>. This is the strongest static-analysis posture you typically see in a Python codebase.</li>
+    <li><strong>Test-to-code ratio 1.6:1</strong> (211,710 LOC tests vs 133,056 LOC src). Tests organized by feature mirroring <code>src/</code>. The discipline is real, even though the substrate is mock-heavy in data_sources (see L9 / W3 fixes).</li>
+    <li><strong><code>distillation/computations/</code> + <code>distillation/normalization.py</code> are exemplary P1.</strong> <code>normalization.py</code> is 341 LOC pure, 10 exports, zero DB. <code>q1/indicators.py</code> is 636 LOC pure. <code>q3/pair_trade.py</code> is import-free pure math. These prove the project can write functional-core code; the contamination in L6 is structural to the assemble/baseline triple, not universal.</li>
+    <li><strong><code>risk_guardrails/guardrail_evaluation/rules/</code> is reference functional-core code.</strong> Pure rule evaluators taking frozen-dataclass inputs and returning <code>float</code>; no I/O, no clocks, no randomness. <code>RuleSpec</code> is a well-typed frozen dataclass with explicit <code>Callable[..., float]</code> — uniform plugin interface done right. The <code>ARG001</code> suppression in <code>pyproject.toml</code> is the correct tradeoff for this pattern.</li>
+    <li><strong><code>execution/oms/command_models.py</code> applies P3 cleanly at the boundary.</strong> <code>Direction</code>, <code>EntryOrderType</code>, <code>TargetType</code>, <code>LegType</code>, <code>Comparator</code>, <code>CloseRationaleType</code>, <code>StrategyType</code>, <code>ContractType</code> are all <code>Literal</code>; instrument variants use <code>Annotated[..., Discriminator("asset_type")]</code>; per-leg invariants via <code>model_validator(mode="after")</code>. Pydantic-at-the-boundary doing the parse-once work P3 asks for. The 27 L9 flags on this file are scanner false-positives.</li>
+    <li><strong>Explicit state machines as <code>StrEnum</code>.</strong> <code>OrderStatus</code>, <code>BracketStatus</code>, <code>BracketLegStatus</code>, <code>OrderClass</code>, <code>OrderRole</code>, <code>OrderType</code>, <code>OrderDirection</code>, <code>OrderDuration</code> at <code>portfolio_state/records/orders.py:14-103</code>, persisted as <code>Text</code> with SQL <code>CHECK</code> constraints at <code>tables/orders.py:104-113</code>. The OMS state space is bounded and visible — only the primitives flowing through it aren't typed (L4).</li>
+    <li><strong><code>portfolio_state/repository.py</code> is the Protocol-shaped repository template the rest of the system needs.</strong> Clean Protocol, in-memory Stub for testing. L9 says "use this everywhere"; today it's the one good example.</li>
+    <li><strong>Decision agents follow <code>feedback_llm_agents_uniformly_critical.md</code> consistently.</strong> One corrective retry on parse/validation failure across analyst, strategist, PM; <code>ContextOverflowFailure</code> raises immediately. No peer-recovery, no fallback chain. Every runner docstring explicitly cites the fail-closed principle and the code path matches the contract.</li>
+    <li><strong>Determinism honored in distillation.</strong> No <code>random.*</code> or <code>np.random.*</code> usage anywhere; deterministic JSON serializer at <code>calibration_snapshot.py:142-149</code> (<code>sort_keys=True, indent=2</code>). The layer is reproducibility-clean.</li>
+    <li><strong><code>broker_adapter/retry.py</code> is well-shaped.</strong> Typed <code>Submitted</code> / <code>GatewaySubmissionFailed</code> result ADT, deadline-based budget, <code>CancelledError</code> correctly re-raised, timeouts come from <code>ExecutionConfig.submission_retry_window_seconds</code>. P7 timeout discipline honored in the OMS path.</li>
+    <li><strong>Per-component depth in execution is principled, not sprawling.</strong> 144 files for 15K code lines is 1 concept per file: <code>broker_adapter/order_{equity,options,mleg,modify}.py</code> parallels asset class; <code>corporate_actions/handlers/</code> one file per CA type; <code>state_persistence/tables/</code> pairs SQLAlchemy mapping with codec at ~115 LOC each; <code>continuous_monitor/{bracket_stops,breach_loop,cascade_dispatch,emergency_trigger,fill_stream_consumer,greeks_refresh,underlying_stream}/</code> uniform <code>task.py + wiring.py + state.py + triggers.py</code> shape.</li>
+    <li><strong>Story-numbered docstrings preserve design context.</strong> Every module docstring references its Linear sub-issue ("story 04", "ALP-344"). Useful for the team's traceability without polluting the code itself.</li>
+  </ul>
+</section>
+
+<!-- ===== 10. PUNCH LIST ===== -->
+<section id="punch-list">
+  <h2><span class="num">10</span>Punch list</h2>
+  <p>Ordered by impact-vs-cost, balancing load-bearing-ness against ease of fix. Each item carries a <strong>complexity</strong> badge (qualitative — structural property of the change) and a <strong>blast radius</strong> badge (quantitative — files touched). No time estimates: agents systematically misestimate durations and complexity+blast describes the work without that hazard.</p>
+
+  <div class="tier-legend" aria-label="Tier legend">
+    <div>
+      <h4>Complexity</h4>
+      <ul>
+        <li><span class="label badge t1">Trivial</span><span>No design knowledge; mechanical change verifiable by syntax.</span></li>
+        <li><span class="label badge t2">Low</span><span>Requires understanding one module's contract.</span></li>
+        <li><span class="label badge t3">Medium</span><span>Requires understanding one subsystem's design.</span></li>
+        <li><span class="label badge t4">High</span><span>Requires understanding two or more subsystems' interactions.</span></li>
+        <li><span class="label badge t5">Extreme</span><span>Requires re-deriving the architecture.</span></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Blast radius (files touched)</h4>
+      <ul>
+        <li><span class="label badge t1">Surgical</span><span>1 file.</span></li>
+        <li><span class="label badge t2">Local</span><span>2–5 files.</span></li>
+        <li><span class="label badge t3">Module</span><span>6–20 files.</span></li>
+        <li><span class="label badge t4">Subsystem</span><span>21–100 files.</span></li>
+        <li><span class="label badge t5">System-wide</span><span>More than 100 files.</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <ol class="punch-list">
+    <li>
+      <span class="desc"><strong>Add <code>import-linter</code> contracts</strong> covering the kernel layer rule, the two cycle-prevention <code>forbidden</code> rules (<code>decision.* ↛ execution.*</code>, <code>portfolio_state.* ↛ risk_guardrails.*</code>), and the persistence rule. Land this <em>first</em>: every cycle fix below stays fixed only if CI enforces it. (Finding L1.)</span>
+      <span class="dims">
+        <span class="badge tier t2"><span class="dim">cx</span>Low</span>
+        <span class="badge tier t1"><span class="dim">br</span>Surgical</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Move <code>execution/state_persistence/invocation_paths.py</code> to <code>alphamind/_kernel/invocations.py</code></strong> (or <code>alphamind/shared/invocations.py</code>). 33-line constants file imported by 8 LLM-agent harnesses outside execution — the most visible layer violation in the codebase, and the cheapest fix.</span>
+      <span class="dims">
+        <span class="badge tier t1"><span class="dim">cx</span>Trivial</span>
+        <span class="badge tier t3"><span class="dim">br</span>Module</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Delete dead re-export shims:</strong> <code>distillation/q1_price_volume.py</code> (0 consumers), <code>distillation/q7_cross_asset.py</code> (0 consumers), <code>distillation/q3_options.py</code> (1 redundant consumer); update <code>orchestrator.py:78</code> to import from <code>q3/</code> directly. ~390 LOC of ceremony removed.</span>
+      <span class="dims">
+        <span class="badge tier t1"><span class="dim">cx</span>Trivial</span>
+        <span class="badge tier t2"><span class="dim">br</span>Local</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Delete or stub the empty namespace packages:</strong> <code>command_center/</code>, <code>feedback_loop/</code>, <code>execution/{counterfactual_replay_engine,orders_and_brackets,paper_evaluation_harness}/</code>, <code>data_sources/alpaca/</code>, <code>analysis/domain_researchers/{tech_semis,financials,energy}/__init__.py</code>. Either delete with a roadmap note in <code>docs/project-tracker.md</code> or stub with <code>__getattr__</code> raising <code>NotImplementedError("scheduled for ALP-XXX")</code>. (W1.)</span>
+      <span class="dims">
+        <span class="badge tier t1"><span class="dim">cx</span>Trivial</span>
+        <span class="badge tier t2"><span class="dim">br</span>Local</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Extract <code>_kernel/</code> leaf module</strong> with <code>regime.py</code> (the four shared enums) and <code>calibration.py</code> (<code>CALIBRATION_STATE_VALUES</code> et al.). Delete <code>portfolio_state/records/capital.py</code> shim; remove the <code># noqa: E402</code> chain in <code>regime_adaptation/types.py</code>; remove function-local lazy imports in <code>distillation/calibration.py</code>. Add the corresponding import-linter contract. Dissolves the 10-module cycle. (Finding L2.)</span>
+      <span class="dims">
+        <span class="badge tier t4"><span class="dim">cx</span>High</span>
+        <span class="badge tier t4"><span class="dim">br</span>Subsystem</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Extract <code>commands/</code> kernel and break decision↔execution cycle.</strong> Hoist <code>oms/command_models.py</code> + <code>oms/engine_envelope.py</code> to <code>alphamind/commands/</code>. Move <code>submit_envelope_mcp.py</code> to <code>decision/portfolio_manager/submit_envelope.py</code> next to its caller. Define <code>BrokerDispatch(Protocol)</code> in <code>commands/protocols.py</code>; execution implements; PM resolves at composition root. Delete the <code>__getattr__</code> lazy-loader in <code>execution/oms/__init__.py:143-173</code>. Add import-linter rule. (Finding L3.)</span>
+      <span class="dims">
+        <span class="badge tier t4"><span class="dim">cx</span>High</span>
+        <span class="badge tier t4"><span class="dim">br</span>Subsystem</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Introduce <code>_kernel/money.py</code> and <code>_kernel/ids.py</code></strong> with <code>Money = NewType("Money", Decimal)</code>, <code>Price</code>, and the ID family (<code>OrderId</code>, <code>PositionId</code>, <code>EnvelopeId</code>, <code>Symbol</code>, ...). Migrate the boundary types first (<code>TradeAccountSnapshot.cash</code>, <code>FillRecord.fill_price</code>, command-model price fields, activity-log money fields). Coordinate with the activity-log codec layer. Parse Alpaca's string-returned monetary fields once at the boundary. (Finding L4 — single largest impact in the codebase.)</span>
+      <span class="dims">
+        <span class="badge tier t4"><span class="dim">cx</span>High</span>
+        <span class="badge tier t5"><span class="dim">br</span>System-wide</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Split <code>portfolio_state/events/activity_log.py</code></strong> into per-event-group files (<code>events/{position_lifecycle,order_lifecycle,bracket,thesis,cash_margin,risk_guardrail,pm_decision,corporate_action,reconciliation,configuration}.py</code>) re-exported by <code>events/__init__.py</code>. Auto-generate the two dispatch dicts from a single <code>_REGISTRY: list[tuple[EventType, type, EventGroup]]</code>. Convert each detail-payload class from Pydantic to <code>@dataclass(frozen=True, slots=True)</code> with <code>__post_init__</code> invariants. Pair with the codec layer migration. (Finding L8 + L5 + L4 hot file.)</span>
+      <span class="dims">
+        <span class="badge tier t3"><span class="dim">cx</span>Medium</span>
+        <span class="badge tier t4"><span class="dim">br</span>Subsystem</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Split distillation compute/load boundary.</strong> For each <code>q*/assemble.py</code>: create <code>q*/loaders.py</code> (DB shell) and <code>q*/compute.py</code> (pure core). Orchestrator Phase 2 becomes load-sequential → drain-to-frozen → <code>asyncio.gather(*[asyncio.to_thread(compute_*)])</code>. Pilot on <code>q1/gap.py</code> + <code>q1/anomalies.py</code>; once validated, propagate. The orchestrator's "serializing due to <code>Session is already flushing</code>" comment at <code>orchestrator.py:706-769</code> disappears. (Finding L6.)</span>
+      <span class="dims">
+        <span class="badge tier t4"><span class="dim">cx</span>High</span>
+        <span class="badge tier t4"><span class="dim">br</span>Subsystem</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Decompose <code>execution/oms/submit_envelope_mcp.py</code></strong> (1,599 LOC) into <code>oms/submit_envelope_mcp/{types,process,dispatch,persist,server}.py</code>. The 5 inline imports of phase2 disappear once <code>persist.py</code> can import phase2 normally. (Finding L8.)</span>
+      <span class="dims">
+        <span class="badge tier t3"><span class="dim">cx</span>Medium</span>
+        <span class="badge tier t3"><span class="dim">br</span>Module</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Decompose <code>execution/state_persistence/write_paths/phase2.py</code></strong> (1,684 LOC) by OMS command kind: <code>phase2/{open,close,adjust,cancel,add,_shared}.py</code>. Each becomes 200-400 LOC; compounds with the <code>commands/</code> kernel move to eliminate the decision.* imports. (Finding L8.)</span>
+      <span class="dims">
+        <span class="badge tier t3"><span class="dim">cx</span>Medium</span>
+        <span class="badge tier t3"><span class="dim">br</span>Module</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Extract <code>analysis/_harness_core.py</code></strong> from the four duplicated harnesses (<code>domain_researchers/</code>, <code>qualitative_research/</code>, <code>adaptive_research/</code>, <code>synthesizer/</code>). Shared: SDK driver loop, prompt cache, exception hierarchy, <code>_DiagState</code> writer, stall-retry <code>_invoke</code>. Variants become a small Protocol (parse_response + build_options). Estimated ~2,000 LOC reduction. (Finding L8.)</span>
+      <span class="dims">
+        <span class="badge tier t3"><span class="dim">cx</span>Medium</span>
+        <span class="badge tier t3"><span class="dim">br</span>Module</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Strip async over sync core in portfolio_state.</strong> Remove <code>async</code> from <code>repository.py</code>'s Protocol + Stub (19 methods), <code>consumers/synthesizer.py</code>'s reader, <code>pricing.py</code>'s Protocol. <code>assemble_snapshot</code> becomes sync. The 14-concurrent <code>asyncio.gather</code> collapses to 14 sequential reads (what's happening anyway over SQLite). Tests drop <code>pytest.mark.anyio</code>. (Finding L10 part 1.)</span>
+      <span class="dims">
+        <span class="badge tier t3"><span class="dim">cx</span>Medium</span>
+        <span class="badge tier t4"><span class="dim">br</span>Subsystem</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Replace <code>asyncio.gather</code> with <code>TaskGroup</code></strong> in <code>analysis/domain_researchers/orchestrator.py:115</code> and <code>pipeline/analysis.py:148</code>. Replace hand-rolled supervisor in <code>scheduler/supervisor.py</code> and <code>execution/continuous_monitor/supervisor.py</code> with <code>TaskGroup</code>-based supervisors (~80 LOC each, removes <code>except BaseException</code> and mutable <code>_RegisteredTask</code>). (Finding L10 parts 2-3.)</span>
+      <span class="dims">
+        <span class="badge tier t2"><span class="dim">cx</span>Low</span>
+        <span class="badge tier t3"><span class="dim">br</span>Module</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Move <code>execution/state_persistence/</code> to top-level <code>alphamind/state/</code></strong> (or fold relevant pieces into <code>alphamind/persistence/</code>; keep OMS-specific <code>write_paths/</code> in execution). 41 files; 125 inbound import-path rewrites. Eliminates the most jarring layer-naming violation. (Finding L9 hot fix.)</span>
+      <span class="dims">
+        <span class="badge tier t3"><span class="dim">cx</span>Medium</span>
+        <span class="badge tier t5"><span class="dim">br</span>System-wide</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Introduce Protocol-shaped repositories per consuming subsystem.</strong> Template: <code>portfolio_state.PortfolioStateRepository</code>. Start with distillation's loaders (paired with finding L6's compute/load split); then analysis tools' multi-table reads. Add <code>__all__</code> to <code>persistence/models.py</code>; populate <code>persistence/__init__.py</code>. Multi-quarter migration; one consumer at a time. (Finding L9.)</span>
+      <span class="dims">
+        <span class="badge tier t4"><span class="dim">cx</span>High</span>
+        <span class="badge tier t5"><span class="dim">br</span>System-wide</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Convert remaining ~165 internal Pydantic types to frozen dataclasses.</strong> Leaf-first order: <code>Validation*</code> / <code>*Result</code> / <code>HarnessSuccess</code> in analysis + decision (~46 sites, all mechanical); <code>PipelineSession</code>; <code>MonitorSession</code>; <code>PMCommandIdComponents</code> / <code>EngineCommandIdComponents</code>; <code>state_delivery/portfolio_manager.py</code> renderer inputs (5 classes); portfolio_state records/aggregates (71 sites, coordinate with downstream consumers). (Finding L5.)</span>
+      <span class="dims">
+        <span class="badge tier t3"><span class="dim">cx</span>Medium</span>
+        <span class="badge tier t5"><span class="dim">br</span>System-wide</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Introduce frozen-dataclass mirrors for the top Pydantic config types.</strong> Start with <code>DistillationConfig</code> (235 LOC, 10 leaks). Per-domain <code>to_domain()</code> converter; <code>ResolvedConfig</code> in <code>config/resolver.py</code> exposes the domain types not the Pydantic models. Shrinks <code>config/models/__init__.py</code> from 119 to ~20 re-exports. (Finding L7.)</span>
+      <span class="dims">
+        <span class="badge tier t3"><span class="dim">cx</span>Medium</span>
+        <span class="badge tier t4"><span class="dim">br</span>Subsystem</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Lift scheduler/orchestrator.py layer-spanning helpers</strong> into the feature packages they belong to. <code>_build_active_risk_parameters</code> + <code>_build_synthetic_regime_output</code> + <code>_load_prior_active_risk_parameters</code> → <code>risk_guardrails/regime_adaptation/</code>; sector-resolver helpers → new <code>config/assets_views.py</code>. Orchestrator drops to ~600 LOC. (Finding L8.)</span>
+      <span class="dims">
+        <span class="badge tier t3"><span class="dim">cx</span>Medium</span>
+        <span class="badge tier t3"><span class="dim">br</span>Module</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Move <code>risk_guardrails/rules_and_limits/profile_switch.py</code></strong> (152 LOC, does FS I/O) to <code>config/control_handlers/</code> or a new <code>operational_tooling/</code> package. Restores risk_guardrails's "pure rule evaluators only" contract.</span>
+      <span class="dims">
+        <span class="badge tier t1"><span class="dim">cx</span>Trivial</span>
+        <span class="badge tier t1"><span class="dim">br</span>Surgical</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Move <code>data_sources/news/clustering.py</code></strong> (pure domain code) to <code>analysis/news_clustering/</code> or <code>distillation/news_clustering/</code>. Restores data_sources's "boundary adapters only" contract.</span>
+      <span class="dims">
+        <span class="badge tier t1"><span class="dim">cx</span>Trivial</span>
+        <span class="badge tier t2"><span class="dim">br</span>Local</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Split <code>data_sources/_common.py</code></strong> (619 LOC god module) into <code>_common/{retry,rate_limit,run_tracking,resume,universe,config}.py</code>. Move <code>HeadlineType</code> + tag-normalization to <code>data_sources/news/types.py</code>. Hoist <code>_atomic_write</code> to <code>alphamind/_kernel/atomic_io.py</code>. (W3 + cross-package duplication.)</span>
+      <span class="dims">
+        <span class="badge tier t2"><span class="dim">cx</span>Low</span>
+        <span class="badge tier t3"><span class="dim">br</span>Module</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Introduce vendor Protocols + in-memory fakes in <code>tests/data_sources/</code>.</strong> Replace 261 <code>MagicMock</code> usages with one fake per Protocol. Template: <code>treasury/test_auctions.py</code>'s existing <code>FakeRepo</code>. Cuts test brittleness against SDK upgrades. (High-yield "Test substrate".)</span>
+      <span class="dims">
+        <span class="badge tier t3"><span class="dim">cx</span>Medium</span>
+        <span class="badge tier t4"><span class="dim">br</span>Subsystem</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Narrow bare <code>except Exception</code> handlers.</strong> 61 sites; ~25 are warranted outermost-supervisor patterns (document inline). The remaining ~36 across <code>data_sources/</code> per-ticker loops, <code>persistence/session.py:64</code>, <code>scheduler/emergency.py:180</code>, and <code>execution/broker_adapter/order_options.py:386</code> swallow real errors — narrow to the actual exception class with <code>exc_info=exc</code> logging and <code>raise ... from exc</code> on re-raise.</span>
+      <span class="dims">
+        <span class="badge tier t2"><span class="dim">cx</span>Low</span>
+        <span class="badge tier t3"><span class="dim">br</span>Module</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Consolidate the three Mode-translation helpers.</strong> One canonical <code>Mode</code> enum with <code>.to_decision_literal()</code>, <code>.to_active_mode_literal()</code>, <code>.to_analyst_pipeline_mode()</code> methods. Removes the parallel dicts at <code>pipeline/decision.py:138-146</code>, <code>scheduler/orchestrator.py:427</code>, <code>scheduler/invocation.py:52</code>. (W5.)</span>
+      <span class="dims">
+        <span class="badge tier t2"><span class="dim">cx</span>Low</span>
+        <span class="badge tier t2"><span class="dim">br</span>Local</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Inject Clock into <code>analysis/tools/*</code></strong> tool factories so the 8 <code>datetime.now(UTC)</code> sites no longer require monkey-patching for replay tests. Harness already has <code>now_utc</code> plumbing. (W6, K5.4.)</span>
+      <span class="dims">
+        <span class="badge tier t2"><span class="dim">cx</span>Low</span>
+        <span class="badge tier t2"><span class="dim">br</span>Local</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Fix the ~7 real async-without-await sites</strong> (not Protocol stubs or SDK <code>@tool</code> decorators): <code>execution/state_persistence/invocation_context/activity_log.py:89</code>, <code>execution/continuous_monitor/__main__.py:387</code>, <code>continuous_monitor/repository_provider.py:33</code>, <code>scheduler/orchestrator.py:705,708</code>. Drop <code>async</code> or add the actual <code>await</code>.</span>
+      <span class="dims">
+        <span class="badge tier t1"><span class="dim">cx</span>Trivial</span>
+        <span class="badge tier t2"><span class="dim">br</span>Local</span>
+      </span>
+    </li>
+    <li>
+      <span class="desc"><strong>Update memory <code>feedback_prompt_output_format_compat.md</code></strong> to mark <code>pm.md</code> resolved. (W7 — memory hygiene only, no code change.)</span>
+      <span class="dims">
+        <span class="badge tier t1"><span class="dim">cx</span>Trivial</span>
+        <span class="badge tier t1"><span class="dim">br</span>Surgical</span>
+      </span>
+    </li>
+  </ol>
+</section>
+
+<!-- ===== 11. OPEN QUESTIONS ===== -->
+<section id="open-questions">
+  <h2><span class="num">11</span>Open questions</h2>
+  <ul class="questions">
+    <li><strong>Is float for prices intentional, or has the deferral leaked?</strong> The audit found zero <code>Decimal</code> in 133K LOC and no marker comment explaining why. Broker round-trips probably truncate to 4 places anyway, and on whole-share equity at 60-80 tickers the per-trade cents drift is small — but the buying-power accumulator at <code>phase2.py:1313-1359</code> grows over time. If float is deliberate (e.g., "broker accepts strings, drift is bounded by daily reconciliation"), L4's fix becomes narrower: <code>Money</code> only in the activity log and the cash ledger; not in command envelopes. Worth a five-line decision doc.</li>
+    <li><strong>Should the four shared enums (<code>RegimeLabel</code>, <code>RegimeTransitionState</code>, <code>RiskZone</code>, <code>DrawdownTier</code>) live in <code>_kernel/regime.py</code> or in <code>config/models/guardrails.py</code>?</strong> The audit recommends a new top-level <code>_kernel/</code>, but if <code>config/models/guardrails.py</code> is already a leaf in the import graph, folding the enums there has zero new files and the same cycle-breaking effect. Check the actual import graph of <code>guardrails.py</code> before committing to a new package.</li>
+    <li><strong>Is <code>portfolio_state/repository.py</code>'s async surface a deliberate forward-compat hook for a future Postgres migration?</strong> If yes, L10's recommendation flips: keep the async colour and add <code># justified-async</code> markers on each Stub method. If no (SQLite is the foreseeable future), strip it. The <code>references/data-and-state.md</code> doc says "If the system ever needs multiple machines or higher write concurrency, PostgreSQL is the natural migration — connection-string change plus minor dialect adjustments, not a rewrite," which sounds like the latter: a future migration, not an immediate one. Confirm.</li>
+    <li><strong>Should <code>portfolio_state.consumers/</code> live next to the portfolio_state package, or next to its consumers in <code>decision/</code> and <code>risk_guardrails/</code>?</strong> Today, <code>portfolio_state/consumers/portfolio_manager.py</code> is imported by 7 modules outside portfolio_state (decision PM runners, risk_guardrails state_delivery, scripts). The package boundary suggests consumers are portfolio_state-internal; the import pattern suggests they are consumer-internal. Per Cosmic Python's "where Protocols live" convention (with the consumer, not with the producer), moving them next to callers is the principled answer — but that's a system-wide rename. Worth a conversation, not an immediate fix.</li>
+  </ul>
+</section>
+
+</main>
+
+<footer class="report-footer">
+  Generated by the python-architecture skill. Findings cite principles P1–P9 (SKILL.md §2) and theses in <code>references/</code>.
+  Diagrams render via Mermaid; code blocks via Prism. Both load from CDN — when offline, the diagram source remains readable.
+</footer>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'base',
+    themeVariables: {
+      fontFamily: "'Inter', system-ui, sans-serif",
+      fontSize: '14px',
+      background: '#18181b',
+      primaryColor: '#27272a',
+      primaryTextColor: '#f4f4f5',
+      primaryBorderColor: '#a1a1aa',
+      lineColor: '#a1a1aa',
+      secondaryColor: '#18181b',
+      tertiaryColor: '#0e0e10',
+      mainBkg: '#27272a',
+      nodeBorder: '#a1a1aa',
+      clusterBkg: '#18181b',
+      clusterBorder: '#3f3f46',
+      titleColor: '#f4f4f5',
+      edgeLabelBackground: '#18181b',
+      attributeBackgroundColorOdd: '#18181b',
+      attributeBackgroundColorEven: '#27272a',
+      textColor: '#f4f4f5'
+    },
+    flowchart: { curve: 'basis', padding: 16 },
+    er: { useMaxWidth: true }
+  });
+
+  const sections = Array.from(document.querySelectorAll('main section[id]'));
+  const links = new Map(Array.from(document.querySelectorAll('nav.toc a')).map(a => [a.getAttribute('href').slice(1), a]));
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      const link = links.get(entry.target.id);
+      if (!link) return;
+      if (entry.isIntersecting) {
+        links.forEach(l => l.classList.remove('current'));
+        link.classList.add('current');
+      }
+    });
+  }, { rootMargin: '-20% 0px -70% 0px' });
+  sections.forEach(s => observer.observe(s));
+</script>
+
+</body>
+</html>
