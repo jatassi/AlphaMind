@@ -113,27 +113,32 @@ async def _pipeline_inputs_from_fixture(
     )
     from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig
 
-    fixture = fixture.model_copy(
-        update={
-            "active_risk_parameters": ActiveRiskParameterSet(
-                regime_label=RegimeLabel.NORMAL,
-                transition_state=RegimeTransitionState.STABLE,
-                transition_invocations_remaining=0,
-                parameter_change_flag=False,
-                entries=(
-                    ActiveRiskParameterEntry(
-                        rule_id="position_max_size_pct",
-                        rule_label="Per-position max size",
-                        value=10.0,
-                        unit="% of portfolio",
-                        regime_multiplier_applied=1.0,
-                        base_value=10.0,
-                    ),
-                ),
-                active_overlays=(),
+    active_risk_parameters = ActiveRiskParameterSet(
+        regime_label=RegimeLabel.NORMAL,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        parameter_change_flag=False,
+        entries=(
+            ActiveRiskParameterEntry(
+                rule_id="position_max_size_pct",
+                rule_label="Per-position max size",
+                value=10.0,
+                unit="% of portfolio",
+                regime_multiplier_applied=1.0,
+                base_value=10.0,
             ),
-        }
+            ActiveRiskParameterEntry(
+                rule_id="gross_exposure_pct",
+                rule_label="Gross exposure",
+                value=200.0,
+                unit="% of portfolio",
+                regime_multiplier_applied=1.0,
+                base_value=200.0,
+            ),
+        ),
+        active_overlays=(),
     )
+    fixture = fixture.model_copy(update={"active_risk_parameters": active_risk_parameters})
 
     from alphamind.portfolio_state.consumers.synthesizer import adapt_ticker_sector_resolver
 
@@ -171,6 +176,9 @@ async def _pipeline_inputs_from_fixture(
 
     return {
         "assembled_snapshot": assembled,
+        "repository": repository,
+        "regime_output": _build_regime_output(active_risk_parameters),
+        "progressive_tiers": _progressive_tiers_fixture(),
         "synthesizer_text": "Synthesizer brief.",
         "retrieval_store": RetrievalStore(entries={}, freshness_by_source={}),
         "mode": "normal",
@@ -189,6 +197,57 @@ async def _pipeline_inputs_from_fixture(
         "invocation_id": _INVOCATION_ID,
         "timestamp": now,
     }
+
+
+def _progressive_tiers_fixture() -> tuple[Any, ...]:
+    """Three-tier ladder mirroring ``config/guardrails.yaml``."""
+    from alphamind.config.models.guardrails import ProgressiveTier
+
+    return (
+        ProgressiveTier.model_validate(
+            {"trigger_pct": 8.0, "max_position_size_pct": 3.0, "max_gross_pct": 80.0}
+        ),
+        ProgressiveTier.model_validate(
+            {"trigger_pct": 10.0, "max_position_size_pct": 2.0, "max_gross_pct": 60.0}
+        ),
+        ProgressiveTier.model_validate({"trigger_pct": 12.0, "full_halt": True}),
+    )
+
+
+def _build_regime_output(parameters: Any) -> Any:
+    """Build a fixture ``RegimeAdaptationOutput`` carrying *parameters*."""
+    from alphamind.config.models.regimes import Regime
+    from alphamind.portfolio_state.records.capital import RegimeTransitionState
+    from alphamind.risk_guardrails.regime_adaptation import (
+        RegimeAdaptationOutput,
+        RegimeAdaptationState,
+    )
+
+    state = RegimeAdaptationState(
+        as_of=_AS_OF.isoformat().replace("+00:00", "Z"),
+        invocation_id=_INVOCATION_ID,
+        active_regime=Regime.normal,
+        prior_regime=None,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        transition_started_invocation_id=None,
+        transition_origin_regime=None,
+        active_overlays=(),
+        distillation_regime_label="normal",
+        distillation_vix_level=18.0,
+        regime_skip_emergency=False,
+    )
+    return RegimeAdaptationOutput(
+        runtime_dimensions_active_regime=Regime.normal,
+        runtime_dimensions_active_overlays=(),
+        overlay_activation_decisions=(),
+        effective_limits={},
+        active_risk_parameter_set=parameters,
+        regime_transition_breaches=(),
+        regime_skip_emergency=False,
+        new_persisted_state=state,
+        audit_log_entries=(),
+    )
 
 
 async def _make_minimal_inputs() -> dict[str, Any]:

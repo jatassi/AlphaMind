@@ -792,13 +792,18 @@ class TestRunInvocationSnapshotWiring:
         archive_root: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """run_decision_pipeline gets a pre-built AssembledSnapshot, not a repository.
+        """run_decision_pipeline gets a pre-built AssembledSnapshot plus the
+        Phase 1 enforcement-composition inputs.
 
-        Slice 2 of ALP-449: the decision pipeline no longer assembles its
-        own snapshot; the orchestrator builds the snapshot once and threads
-        the same value through both the synthesizer reader and the decision
-        pipeline. The legacy ``repository`` / ``price_provider`` /
-        ``portfolio_state_config`` / ``now`` kwargs drop from the signature.
+        Slice 2 of ALP-449: the decision pipeline does not call
+        ``assemble_snapshot`` itself; the orchestrator builds the snapshot
+        once and threads the same value through both the synthesizer reader
+        and the decision pipeline. Story ALP-433 adds three new kwargs the
+        pipeline reads to compose Phase 1 enforcement on every invocation:
+        ``repository`` (for ``DrawdownState`` reads), ``regime_output``,
+        and ``progressive_tiers``. ``price_provider`` and
+        ``portfolio_state_config`` stay out of the signature — the
+        scheduler still owns assembly.
         """
         from alphamind.portfolio_state.freshness import AssembledSnapshot
         from alphamind.scheduler.orchestrator import run_invocation
@@ -821,10 +826,13 @@ class TestRunInvocationSnapshotWiring:
 
         decision_kwargs = captured["decision"]
         assert isinstance(decision_kwargs["assembled_snapshot"], AssembledSnapshot)
-        # The legacy snapshot-assembly kwargs no longer appear on the
-        # signature — surfacing them indicates the runner is still doing
-        # its own assemble_snapshot call.
-        assert "repository" not in decision_kwargs
+        # Story ALP-433: the pipeline reads ``DrawdownState`` via the
+        # threaded repository and composes Phase 1 enforcement from the
+        # regime output + progressive tiers.
+        assert "repository" in decision_kwargs
+        assert "regime_output" in decision_kwargs
+        assert "progressive_tiers" in decision_kwargs
+        # Assembly stays scheduler-owned — these kwargs remain absent.
         assert "price_provider" not in decision_kwargs
         assert "portfolio_state_config" not in decision_kwargs
 
