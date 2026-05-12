@@ -48,6 +48,8 @@ log = logging.getLogger(__name__)
 
 
 ActivityLogEmitter = Callable[[ActivityLogEntry], Awaitable[None]]
+# Async-native: invoked from the watcher's loop; see bracket_stops.task.
+type InvocationIdProvider = Callable[[], Awaitable[str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +111,7 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
     trigger_reason: PositionExitMethod,
     submitter: BracketCloseSubmitter,
     activity_log: ActivityLogEmitter,
-    invocation_id_provider: Callable[[], str],
+    invocation_id_provider: InvocationIdProvider,
     monitor_session_id: str,
     trigger_id: int,
     now: datetime,
@@ -157,7 +159,7 @@ async def submit_options_bracket_close(  # noqa: PLR0913 — orchestrator fan-ou
             position=position,
             order_ids=result.order_ids,
             trigger_reason=trigger_reason,
-            invocation_id=invocation_id_provider(),
+            invocation_id=await invocation_id_provider(),
             now=now,
             estimated_exit_price=estimated_exit_price,
             realized_pnl_usd=realized_pnl_usd,

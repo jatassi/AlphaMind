@@ -225,6 +225,23 @@ _NOW = datetime(2026, 5, 11, 14, 30, 0, tzinfo=UTC)
 _SESSION_ID = "monsession-verify"
 
 
+async def _verify_invocation_id() -> str:
+    """Async-callable returning a deterministic verify-mode invocation_id.
+
+    The monitor's :class:`InvocationIdProvider` shape is async-native
+    (continuous_monitor.greeks_refresh.task.InvocationIdProvider); the verify
+    script supplies a constant value via this async-callable for every
+    scenario that drives :func:`_run_refresh_cycle` or
+    :class:`EmergencyTriggerEvaluator`.
+    """
+    return "inv-verify"
+
+
+async def _verify_emergency_invocation_id() -> str:
+    """Async-callable returning the verify-mode emergency invocation_id."""
+    return "inv-verify-emergency"
+
+
 def _config() -> ContinuousMonitorConfig:
     """Production-shape config record for the per-scenario kernel drives."""
     return ContinuousMonitorConfig(
@@ -536,7 +553,7 @@ async def run_scenario_c_greeks_scheduled_refresh() -> ScenarioResult:
         activity_log=activity_log.emit,
         risk_free_rate=0.045,
         now=_NOW,
-        invocation_id_provider=lambda: "inv-verify",
+        invocation_id_provider=_verify_invocation_id,
         market_open=True,
     )
 
@@ -613,7 +630,7 @@ async def run_scenario_d_greeks_move_triggered_refresh() -> ScenarioResult:
         activity_log=activity_log.emit,
         risk_free_rate=0.045,
         now=_NOW,
-        invocation_id_provider=lambda: "inv-verify",
+        invocation_id_provider=_verify_invocation_id,
         market_open=True,
     )
 
@@ -677,7 +694,7 @@ async def run_scenario_e_greeks_refresh_failure() -> ScenarioResult:
             activity_log=activity_log.emit,
             risk_free_rate=0.045,
             now=_NOW,
-            invocation_id_provider=lambda: "inv-verify",
+            invocation_id_provider=_verify_invocation_id,
             market_open=True,
         )
     finally:
@@ -1316,7 +1333,7 @@ async def run_scenario_i_bracket_stop_fires() -> ScenarioResult:
         cache=cache,
         submitter=submitter,
         activity_log=activity_log.emit,
-        invocation_id_provider=lambda: "inv-verify",
+        invocation_id_provider=_verify_invocation_id,
         monitor_session_id=_SESSION_ID,
         now=_NOW,
         risk_free_rate=0.045,
@@ -1542,7 +1559,7 @@ async def run_scenario_k_emergency_request() -> ScenarioResult:
         margin_call_observer=_NoMarginCallObserver(),
         activity_log_writer=writer,
         breach_response_lookup=MappingProxyType({}),
-        invocation_id_provider=lambda: "inv-verify-emergency",
+        invocation_id_provider=_verify_emergency_invocation_id,
     )
     t0 = _NOW
     # Seed prior regime: NORMAL.

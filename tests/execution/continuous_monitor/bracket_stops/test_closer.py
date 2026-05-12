@@ -43,6 +43,15 @@ from alphamind.portfolio_state.records.positions import (
 _NOW = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
 
 
+def _const_str(value: str):  # type: ignore[no-untyped-def]
+    """Async-callable returning *value* — async-native provider seam for tests."""
+
+    async def _inner() -> str:
+        return value
+
+    return _inner
+
+
 def _options_position(*, position_id: str = "pos-1") -> PositionRecord:
     return PositionRecord(
         position_id=position_id,
@@ -245,7 +254,7 @@ class TestSingleLegClose:
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
             activity_log=log.emit,
-            invocation_id_provider=lambda: "inv-001",
+            invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-20260511T143000Z-aabbccdd",
             trigger_id=1,
             now=_NOW,
@@ -266,7 +275,7 @@ class TestSingleLegClose:
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
             activity_log=log.emit,
-            invocation_id_provider=lambda: "inv-001",
+            invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-20260511T143000Z-aabbccdd",
             trigger_id=1,
             now=_NOW,
@@ -296,7 +305,7 @@ class TestSingleLegClose:
             trigger_reason=PositionExitMethod.TARGET_REACHED,
             submitter=submitter,
             activity_log=log.emit,
-            invocation_id_provider=lambda: "inv-001",
+            invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-20260511T143000Z-aabbccdd",
             trigger_id=2,
             now=_NOW,
@@ -317,7 +326,7 @@ class TestSingleLegClose:
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
             activity_log=log.emit,
-            invocation_id_provider=lambda: "inv-001",
+            invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-20260511T143000Z-aabbccdd",
             trigger_id=42,
             now=_NOW,
@@ -344,7 +353,7 @@ class TestStrategyClose:
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
             activity_log=log.emit,
-            invocation_id_provider=lambda: "inv-001",
+            invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-20260511T143000Z-aabbccdd",
             trigger_id=3,
             now=_NOW,
@@ -373,7 +382,7 @@ class TestStrategyClose:
             trigger_reason=PositionExitMethod.STOP_TRIGGERED,
             submitter=submitter,
             activity_log=log.emit,
-            invocation_id_provider=lambda: "inv-001",
+            invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-S",
             trigger_id=5,
             now=_NOW,
@@ -429,7 +438,7 @@ class TestUnsupportedInstrument:
                 trigger_reason=PositionExitMethod.STOP_TRIGGERED,
                 submitter=submitter,
                 activity_log=log.emit,
-                invocation_id_provider=lambda: "inv-001",
+                invocation_id_provider=_const_str("inv-001"),
                 monitor_session_id="mon-S",
                 trigger_id=1,
                 now=_NOW,

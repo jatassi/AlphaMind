@@ -69,21 +69,24 @@ def make_emergency_invocation_writer(
 
 def make_invocation_id_provider(
     session_factory: async_sessionmaker[AsyncSession],
-) -> Callable[[], str]:
-    """Return a callable that resolves the latest invocation_id to anchor entries.
+) -> Callable[[], Awaitable[str]]:
+    """Return an async callable that resolves the latest invocation_id.
 
     The monitor runs across invocations; the ``activity_log.invocation_id``
     FK requires the row to reference a real invocation. Mirrors
     ``greeks_refresh.wiring.make_invocation_id_provider`` — the same
     convention, the same fallback sentinel.
-    """
-    import asyncio
 
+    Async because the evaluator's ``_emit`` runs inside the supervisor's
+    loop; a sync provider bridging through ``asyncio.run`` would
+    deadlock-fall-through to the bootstrap sentinel on every call and fail
+    the activity_log FK at COMMIT.
+    """
     from sqlalchemy import select
 
     from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 
-    async def _read() -> str:
+    async def _provider() -> str:
         async with session_factory() as sess:
             stmt = (
                 select(InvocationRow.invocation_id).order_by(InvocationRow.start_at.desc()).limit(1)
@@ -93,12 +96,6 @@ def make_invocation_id_provider(
             if value is None:
                 return "monitor-bootstrap"
             return str(value)
-
-    def _provider() -> str:
-        try:
-            return asyncio.run(_read())
-        except RuntimeError:
-            return "monitor-bootstrap"
 
     return _provider
 
@@ -111,7 +108,7 @@ def make_emergency_callback(
     session_factory: async_sessionmaker[AsyncSession],
     margin_call_observer: MarginCallObserver | None = None,
     trigger_ids: TriggerIdGenerator | None = None,
-    invocation_id_provider: Callable[[], str] | None = None,
+    invocation_id_provider: Callable[[], Awaitable[str]] | None = None,
 ) -> Callable[[BreachLoopResult], Awaitable[None]]:
     """Build the ``on_emergency_input`` callback for the breach loop.
 

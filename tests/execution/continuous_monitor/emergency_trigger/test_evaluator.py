@@ -11,7 +11,7 @@ activity-log entry on fire.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from types import MappingProxyType
@@ -194,13 +194,17 @@ class _RecordingWriter:
         self.entries.append(entry)
 
 
+async def _default_invocation_id_provider() -> str:
+    return "inv-test-001"
+
+
 def _make_evaluator(
     *,
     breach_behavior_config: BreachBehaviorConfig | None = None,
     margin_observer: MarginCallObserver | None = None,
     writer: _RecordingWriter | None = None,
     trigger_ids: TriggerIdGenerator | None = None,
-    invocation_id_provider: Callable[[], str] | None = None,
+    invocation_id_provider: Callable[[], Awaitable[str]] | None = None,
 ) -> tuple[EmergencyTriggerEvaluator, _RecordingWriter]:
     cfg = breach_behavior_config or _breach_behavior_config()
     cooldown = CooldownTracker(cooldown_minutes=cfg.emergency_invocation_cooldown_minutes)
@@ -222,7 +226,7 @@ def _make_evaluator(
         margin_call_observer=observer,
         activity_log_writer=log,
         breach_response_lookup=rule_lookup,
-        invocation_id_provider=invocation_id_provider or (lambda: "inv-test-001"),
+        invocation_id_provider=invocation_id_provider or _default_invocation_id_provider,
     )
     return evaluator, log
 

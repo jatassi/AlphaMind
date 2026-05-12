@@ -65,8 +65,10 @@ log = logging.getLogger(__name__)
 
 
 NowProvider = Callable[[], datetime]
-RiskFreeRateProvider = Callable[[], float]
-InvocationIdProvider = Callable[[], str]
+# Async-native: invoked from the supervisor's running loop, so the wiring
+# layer can hit the DB directly without bridging through ``asyncio.run``.
+RiskFreeRateProvider = Callable[[], Awaitable[float]]
+InvocationIdProvider = Callable[[], Awaitable[str]]
 SleepCallable = Callable[[float], Awaitable[None]]
 
 
@@ -378,7 +380,7 @@ async def run_options_bracket_watcher(  # noqa: PLR0913 — orchestrator surface
                 invocation_id_provider=invocation_id_provider,
                 monitor_session_id=session.session_id,
                 now=now(),
-                risk_free_rate=risk_free_rate_provider(),
+                risk_free_rate=await risk_free_rate_provider(),
                 fired_legs=fired_legs,
             )
         except asyncio.CancelledError:

@@ -87,9 +87,12 @@ log = logging.getLogger(__name__)
 IVFetcher = Callable[[Iterable[str]], Awaitable[dict[str, IVQuote]]]
 ActivityLogEmitter = Callable[[ActivityLogEntry], Awaitable[None]]
 NowProvider = Callable[[], datetime]
-RiskFreeRateProvider = Callable[[], float]
+# Async-native: the providers run inside the supervisor's loop, so the
+# wiring layer can hit the DB without bridging through ``asyncio.run`` (which
+# fell through to a hard-coded fallback when invoked from the running loop).
+RiskFreeRateProvider = Callable[[], Awaitable[float]]
 MarketOpenPredicate = Callable[[datetime], bool]
-InvocationIdProvider = Callable[[], str]
+InvocationIdProvider = Callable[[], Awaitable[str]]
 SleepCallable = Callable[[float], Awaitable[None]]
 
 
@@ -392,7 +395,7 @@ async def _run_refresh_cycle(  # noqa: PLR0913 — kernel exposes every collabor
         fetch_failure_reason=fetch_failure_reason,
         risk_free_rate=risk_free_rate,
         now=now,
-        invocation_id=invocation_id_provider(),
+        invocation_id=await invocation_id_provider(),
     )
 
     for position, spot, underlying_ticker in due:
@@ -618,7 +621,7 @@ async def run_greeks_refresh(  # noqa: PLR0913 — orchestrator surface dictated
                 iv_fetch=iv_fetch,
                 writer=writer,
                 activity_log=activity_log,
-                risk_free_rate=risk_free_rate_provider(),
+                risk_free_rate=await risk_free_rate_provider(),
                 now=current_now,
                 invocation_id_provider=invocation_id_provider,
                 market_open=market_open(current_now),

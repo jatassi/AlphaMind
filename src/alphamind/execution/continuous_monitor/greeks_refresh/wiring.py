@@ -198,24 +198,29 @@ def make_iv_fetcher(
 
 def make_risk_free_rate_provider(
     session_factory: async_sessionmaker[AsyncSession],
+    *,
+    cache_ttl_seconds: float = 300.0,
 ) -> RiskFreeRateProvider:
-    """Return a callable that reads the latest DTB3 observation per cycle.
+    """Return an async callable that reads the latest DTB3 observation per cycle.
 
     The Phase 1 path reads the same series with the same fallback; the
     monitor mirrors the convention so paper-mode and live-mode greeks
     refresh use the same rate the validation greeks were computed with.
 
-    The provider is synchronous because the kernel's call shape is sync;
-    the actual SQL read is awaited inside a lightweight ``asyncio.run``
-    on every cycle. For production the provider should be wrapped in a
-    cache to amortize the read; story 03a ships the simple form and a
-    cache is a future optimization.
+    The provider is **async** because every call site runs inside the
+    supervisor's event loop — synchronous ``asyncio.run`` bridging would
+    deadlock-fall-through to a hard-coded fallback on every call. A small
+    in-memory TTL cache amortizes the SQL read across multiple cycles per
+    inspection cadence; ``DTB3`` rates change once per business day, so a
+    5-minute cache (default) trades zero observable staleness for the
+    avoided DB hit budget.
     """
-    import asyncio
-
     from alphamind.persistence.models import MacroObservations
 
-    async def _read() -> float:
+    cached: dict[str, float | None] = {"value": None}
+    last_read_at: list[float] = [0.0]
+
+    async def _read_db() -> float:
         async with session_factory() as sess:
             stmt = (
                 select(MacroObservations.value)
@@ -232,20 +237,17 @@ def make_risk_free_rate_provider(
                 return _DEFAULT_RISK_FREE_RATE
             return float(value) / 100.0
 
-    def _provider() -> float:
-        try:
-            return asyncio.run(_read())
-        except RuntimeError:
-            # If called from inside a running loop (the production path),
-            # the caller should await the coroutine instead. The kernel
-            # treats this provider as a cheap sync call, so the default
-            # fallback keeps a missing DTB3 row from blocking the loop.
-            log.warning(
-                "risk_free_rate_provider invoked from a running loop; "
-                "returning %s as conservative fallback",
-                _DEFAULT_RISK_FREE_RATE,
-            )
-            return _DEFAULT_RISK_FREE_RATE
+    async def _provider() -> float:
+        import time
+
+        now = time.monotonic()
+        cached_value = cached["value"]
+        if cached_value is not None and (now - last_read_at[0]) < cache_ttl_seconds:
+            return cached_value
+        value = await _read_db()
+        cached["value"] = value
+        last_read_at[0] = now
+        return value
 
     return _provider
 
@@ -253,8 +255,7 @@ def make_risk_free_rate_provider(
 def make_invocation_id_provider(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> InvocationIdProvider:
-    """Return a callable that resolves the latest invocation_id to anchor
-    activity-log entries.
+    """Return an async callable that resolves the latest invocation_id.
 
     The monitor writes activity-log entries while running across
     invocations; the ``activity_log.invocation_id`` FK to ``invocations``
@@ -263,14 +264,18 @@ def make_invocation_id_provider(
     ``risk_guardrails.breach_behavior.emergency_triggers``) is to use the
     most-recently-started invocation_id at emission time.
 
-    On a fresh DB with no invocations yet, the provider returns a fallback
-    string ``"monitor-bootstrap"``; activity-log entries written with this
-    sentinel will fail the FK check and surface during the e2e verification
-    in story 05 — that's the correct failure mode (no invocation has run yet).
+    The provider is **async** because every call site runs inside the
+    supervisor's event loop — synchronous ``asyncio.run`` bridging would
+    deadlock-fall-through to a hard-coded sentinel on every call, which
+    would in turn fail the ``activity_log.invocation_id`` FK at COMMIT
+    time. On a fresh DB with no invocations yet, the provider returns
+    the fallback string ``"monitor-bootstrap"``; activity-log entries
+    written with this sentinel will fail the FK check and surface during
+    the e2e verification — that's the correct failure mode (no invocation
+    has run yet).
     """
-    import asyncio
 
-    async def _read() -> str:
+    async def _provider() -> str:
         async with session_factory() as sess:
             stmt = (
                 select(InvocationRow.invocation_id).order_by(InvocationRow.start_at.desc()).limit(1)
@@ -280,12 +285,6 @@ def make_invocation_id_provider(
             if value is None:
                 return "monitor-bootstrap"
             return str(value)
-
-    def _provider() -> str:
-        try:
-            return asyncio.run(_read())
-        except RuntimeError:
-            return "monitor-bootstrap"
 
     return _provider
 

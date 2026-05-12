@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import secrets
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Literal, Protocol
 
@@ -237,7 +237,7 @@ class EmergencyTriggerEvaluator:
         margin_call_observer: MarginCallObserver,
         activity_log_writer: ActivityLogWriter,
         breach_response_lookup: Mapping[str, BreachResponse],
-        invocation_id_provider: Callable[[], str],
+        invocation_id_provider: Callable[[], Awaitable[str]],
     ) -> None:
         self._session = session
         self._cfg = breach_behavior_config
@@ -349,7 +349,7 @@ class EmergencyTriggerEvaluator:
                 session_id=self._session.session_id,
                 trigger_id=trigger_id,
             ),
-            invocation_id=self._invocation_id_provider(),
+            invocation_id=await self._invocation_id_provider(),
             timestamp=as_of,
             event_type=EventType.EMERGENCY_INVOCATION_REQUESTED,
             event_group=EventGroup.RISK_AND_GUARDRAIL,

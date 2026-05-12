@@ -52,6 +52,24 @@ from alphamind.portfolio_state.records.positions import (
 _NOW = datetime(2026, 5, 11, 14, 30, tzinfo=UTC)
 
 
+def _const_str(value: str):  # type: ignore[no-untyped-def]
+    """Async-callable returning *value* — async-native provider seam for tests."""
+
+    async def _inner() -> str:
+        return value
+
+    return _inner
+
+
+def _const_float(value: float):  # type: ignore[no-untyped-def]
+    """Async-callable returning *value* — async-native provider seam for tests."""
+
+    async def _inner() -> float:
+        return value
+
+    return _inner
+
+
 def _config(*, cadence: float = 1.0) -> ContinuousMonitorConfig:
     return ContinuousMonitorConfig(
         breach_evaluation_cadence_seconds=60,
@@ -261,7 +279,7 @@ class TestPriceStopFiring:
             cache=cache,
             submitter=submitter,
             activity_log=log.emit,
-            invocation_id_provider=lambda: "inv-001",
+            invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-S",
             now=_NOW,
             risk_free_rate=0.045,
@@ -285,7 +303,7 @@ class TestPriceStopFiring:
             cache=cache,
             submitter=submitter,
             activity_log=log.emit,
-            invocation_id_provider=lambda: "inv-001",
+            invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-S",
             now=_NOW,
             risk_free_rate=0.045,
@@ -317,7 +335,7 @@ class TestAlreadyFiredTracking:
                 cache=cache,
                 submitter=submitter,
                 activity_log=log.emit,
-                invocation_id_provider=lambda: "inv-001",
+                invocation_id_provider=_const_str("inv-001"),
                 monitor_session_id="mon-S",
                 now=_NOW,
                 risk_free_rate=0.045,
@@ -352,7 +370,7 @@ class TestPLTargetFiring:
             cache=cache,
             submitter=submitter,
             activity_log=log.emit,
-            invocation_id_provider=lambda: "inv-001",
+            invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-S",
             now=_NOW,
             risk_free_rate=0.045,
@@ -422,7 +440,7 @@ class TestEquityPositionsSkipped:
             cache=cache,
             submitter=submitter,
             activity_log=log.emit,
-            invocation_id_provider=lambda: "inv-001",
+            invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-S",
             now=_NOW,
             risk_free_rate=0.045,
@@ -482,7 +500,7 @@ class TestLegStatusFiltering:
             cache=cache,
             submitter=submitter,
             activity_log=log.emit,
-            invocation_id_provider=lambda: "inv-001",
+            invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-S",
             now=_NOW,
             risk_free_rate=0.045,
@@ -513,7 +531,7 @@ class TestCacheMiss:
             cache=cache,
             submitter=submitter,
             activity_log=log.emit,
-            invocation_id_provider=lambda: "inv-001",
+            invocation_id_provider=_const_str("inv-001"),
             monitor_session_id="mon-S",
             now=_NOW,
             risk_free_rate=0.045,
@@ -613,8 +631,8 @@ class TestRunForeverLoop:
                 cache=cache,
                 submitter=submitter,
                 activity_log=log.emit,
-                invocation_id_provider=lambda: "inv-001",
-                risk_free_rate_provider=lambda: 0.045,
+                invocation_id_provider=_const_str("inv-001"),
+                risk_free_rate_provider=_const_float(0.045),
                 now=lambda: _NOW,
                 sleep=_record_sleep,
             )

@@ -55,6 +55,24 @@ from alphamind.portfolio_state.records.positions import (
 # ---------------------------------------------------------------------------
 
 
+def _const_str(value: str):  # type: ignore[no-untyped-def]
+    """Async-callable returning *value* — async-native provider seam for tests."""
+
+    async def _inner() -> str:
+        return value
+
+    return _inner
+
+
+def _const_float(value: float):  # type: ignore[no-untyped-def]
+    """Async-callable returning *value* — async-native provider seam for tests."""
+
+    async def _inner() -> float:
+        return value
+
+    return _inner
+
+
 def _config(
     *,
     interval_minutes: int = 15,
@@ -338,7 +356,7 @@ class TestScheduledTrigger:
             activity_log=activity_log.emit,
             risk_free_rate=0.045,
             now=now,
-            invocation_id_provider=lambda: "inv-test-001",
+            invocation_id_provider=_const_str("inv-test-001"),
             market_open=True,
         )
 
@@ -385,7 +403,7 @@ class TestScheduledTrigger:
             activity_log=activity_log.emit,
             risk_free_rate=0.045,
             now=now,
-            invocation_id_provider=lambda: "inv-test-002",
+            invocation_id_provider=_const_str("inv-test-002"),
             market_open=True,
         )
 
@@ -429,7 +447,7 @@ class TestMoveTrigger:
             activity_log=activity_log.emit,
             risk_free_rate=0.045,
             now=now,
-            invocation_id_provider=lambda: "inv-test-003",
+            invocation_id_provider=_const_str("inv-test-003"),
             market_open=True,
         )
 
@@ -467,7 +485,7 @@ class TestMoveTrigger:
             activity_log=activity_log.emit,
             risk_free_rate=0.045,
             now=now,
-            invocation_id_provider=lambda: "inv-test-004",
+            invocation_id_provider=_const_str("inv-test-004"),
             market_open=True,
         )
 
@@ -506,7 +524,7 @@ class TestIVFetchFailure:
             activity_log=activity_log.emit,
             risk_free_rate=0.045,
             now=now,
-            invocation_id_provider=lambda: "inv-test-005",
+            invocation_id_provider=_const_str("inv-test-005"),
             market_open=True,
         )
 
@@ -563,7 +581,7 @@ class TestIVFetchFailure:
             activity_log=activity_log.emit,
             risk_free_rate=0.045,
             now=now,
-            invocation_id_provider=lambda: "inv-test-006",
+            invocation_id_provider=_const_str("inv-test-006"),
             market_open=True,
         )
 
@@ -606,7 +624,7 @@ class TestOffHours:
             activity_log=activity_log.emit,
             risk_free_rate=0.045,
             now=now,
-            invocation_id_provider=lambda: "inv-test-007",
+            invocation_id_provider=_const_str("inv-test-007"),
             market_open=False,
         )
 
@@ -652,7 +670,7 @@ class TestStrategyRefresh:
             activity_log=activity_log.emit,
             risk_free_rate=0.045,
             now=now,
-            invocation_id_provider=lambda: "inv-test-008",
+            invocation_id_provider=_const_str("inv-test-008"),
             market_open=True,
         )
 
@@ -699,10 +717,10 @@ class TestRunForeverEntryPoint:
                 iv_fetch=_no_op_fetch,
                 writer=writer,
                 activity_log=activity_log.emit,
-                risk_free_rate_provider=lambda: 0.045,
+                risk_free_rate_provider=_const_float(0.045),
                 now=lambda: datetime(2026, 5, 11, 14, 30, tzinfo=UTC),
                 market_open=lambda _: True,
-                invocation_id_provider=lambda: "inv-runforever-001",
+                invocation_id_provider=_const_str("inv-runforever-001"),
                 sleep=asyncio.sleep,
             )
         )
@@ -747,10 +765,10 @@ class TestRunForeverEntryPoint:
                 iv_fetch=iv_provider.fetch,
                 writer=writer,
                 activity_log=activity_log.emit,
-                risk_free_rate_provider=lambda: 0.045,
+                risk_free_rate_provider=_const_float(0.045),
                 now=_now,
                 market_open=lambda _: True,
-                invocation_id_provider=lambda: "inv-loop-001",
+                invocation_id_provider=_const_str("inv-loop-001"),
                 sleep=_instrumented_sleep,
             )
         )
