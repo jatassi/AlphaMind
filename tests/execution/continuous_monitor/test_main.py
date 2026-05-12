@@ -103,3 +103,32 @@ def test_main_rejects_unknown_subcommand(
     monkeypatch.delenv("USERPROFILE", raising=False)
     with pytest.raises(SystemExit):
         monitor_main(["bogus"])
+
+
+def test_main_registers_fill_stream_consumer_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _silent_logger: None,
+) -> None:
+    """``main`` constructs the supervisor and registers ``fill_stream_consumer``."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("USERPROFILE", raising=False)
+
+    captured: dict[str, object] = {}
+
+    async def _no_op_run(self: object) -> None:
+        # The supervisor is the bound ``self`` — capture it so we can
+        # inspect ``task_names()`` after main() returns.
+        captured["supervisor"] = self
+
+    with mock.patch(
+        "alphamind.execution.continuous_monitor.__main__.MonitorSupervisor.run",
+        _no_op_run,
+    ):
+        monitor_main(["run", "--mode", "paper"])
+
+    supervisor = captured.get("supervisor")
+    assert supervisor is not None
+    # ``task_names`` is the public introspection surface the supervisor
+    # ships; story 02c registers exactly one new task name here.
+    assert "fill_stream_consumer" in supervisor.task_names()  # type: ignore[attr-defined]
