@@ -18,7 +18,7 @@ on success, and the next script reads its predecessor's outputs via
 
 ## TL;DR for the agent
 
-You're going to run 16 verification scripts in 11 phases plus a final
+You're going to run 17 verification scripts in 12 phases plus a final
 HTML-report render. Three rules:
 
 1. **Stop on first FAIL.** Each phase depends on prior phases' state
@@ -99,6 +99,7 @@ they read time-dependent DB state.
 | 1d | Execution: broker adapter | broker_adapter | No (live broker) | <2 min |
 | 1e | Execution: corporate actions | corporate_actions | No | <2s |
 | 1f | Execution: Reg T margin attribution | regt_margin_attribution | No | <2s |
+| 1g | Execution: continuous monitor | continuous_monitor | No | <30s |
 | 2 | Distillation | distillation, regime_transition, calibration_mix | Yes (1 of 3) | ~30–60s |
 | 3 | Analysis: domain researchers | domain_researchers, domain_researcher_failure_modes | Yes (1 of 2) | ~30–60s |
 | 4 | Analysis: qualitative + adaptive | qualitative_researcher, adaptive_researcher | Yes | ~45–90s |
@@ -385,6 +386,70 @@ Failure-mode triage. The FAIL output names the failing assertion in the
 runbook's triage-table vocabulary (`algebra mismatch`,
 `trailing-30d aggregate mismatch`, `non-finite attribution field`, etc.);
 match the message to its row in the triage table.
+
+## Phase 1g — Continuous monitor
+
+Pure in-process integration check against the continuous monitor work tree
+(ALP-123). The script exercises the five monitor responsibilities described
+in `docs/design/05-execution-layer/architecture.md` § 4 — Alpaca fill-stream
+consumption, guardrail breach detection + protective response, emergency
+invocation triggering, options-greeks refresh orchestration, options
+bracket-stop firing — against in-memory fixtures (synthetic portfolios,
+fake broker / websocket / IV-fetch surfaces). No SDK calls, no live broker
+contact, no live websocket calls. Sub-30s runtime; safe in CI.
+
+```bash
+uv run python scripts/verify_continuous_monitor.py
+```
+
+Exercises 11 documented scenarios labeled (a) through (k):
+
+- (a) `UnderlyingPriceCache` accepts a quote.
+- (b) `append_fill_record` persists a fake equity fill.
+- (c) Greeks refresh fires on the scheduled cadence trigger.
+- (d) Greeks refresh fires on the underlying-move trigger.
+- (e) Greeks refresh failure preserves prior values + emits
+  `GREEKS_REFRESH_FAILED`.
+- (f) Halt onset emits `HALT_ACTIVATED`.
+- (g) Immediate-action breach (`per_position_max_loss`) dispatches one
+  engine envelope with `engine_guardrail` provenance.
+- (h) Deferred-rule breach (`sector_concentration`) is NOT dispatched.
+- (i) Options bracket-stop fires through the direct broker-adapter close
+  path; one `POSITION_CLOSED` entry with `source=BRACKET_MANAGER` lands.
+- (j) The strategist's `between_invocation_closures` projection contains
+  both the cascade closure (from g) and the bracket-stop closure (from
+  i), ordered chronologically.
+- (k) Emergency request — regime jump fires once; second jump inside
+  cooldown is suppressed. Scenario is `[SKIP]`-ed when ALP-439 has not
+  landed (the `EMERGENCY_INVOCATION_REQUESTED` vocabulary is missing).
+
+Stage-artifact handoff:
+
+- **Inputs (consumes):** `fill_records` writes ← broker_adapter (ALP-121);
+  `options_chains` reads ← collector (ALP-30); `activity_log` writes ←
+  state_persistence (ALP-119); `submit_engine_envelope` ← OMS (ALP-375);
+  `compose_phase_1_enforcement` ← guardrail_enforcement (ALP-125).
+- **Outputs (produces):** `POSITION_CLOSED` events with
+  `engine_guardrail` provenance (cascade closures from 04a),
+  `POSITION_CLOSED` events with `BRACKET_MANAGER` source and
+  `STOP_TRIGGERED` / `TARGET_REACHED` exit method (bracket-stop fires
+  from 04c), `GREEKS_REFRESH_FAILED` events, `HALT_ACTIVATED` /
+  `HALT_LIFTED` events, `EMERGENCY_INVOCATION_REQUESTED` events
+  (consumed by the pipeline scheduler — ALP-431 — when that work tree
+  lands).
+
+Exit code: `0` on every scenario PASS (or SKIP for k); non-zero on any
+FAIL, with the failing scenario(s) named in the `RESULT: FAIL` summary
+line.
+
+**On failure:** read `scripts/RUNBOOK_continuous_monitor.md` § Failure-mode
+triage. The FAIL output names the scenario letter and a one-line
+diagnostic; match the scenario label to the per-scenario row in the
+triage table. The most common regressions are (a) a cascade-dispatcher
+selector returning no candidate (scenario g), (b) the bracket watcher
+not firing because `evaluate_price_based_trigger`'s direction-comparator
+regressed (scenario i), or (c) the `HaltTransitionTracker` failing to
+yield the activation entry on the inactive→active edge (scenario f).
 
 ## Phase 2 — Distillation layer
 
@@ -960,10 +1025,11 @@ factored into helpers under
 invocation is exercised by the verify script itself, not by the unit
 tests.
 
-Runbook: `scripts/RUNBOOK_pipeline_scheduler.md`. The
-**downstream consumer** of Phase 9d is the continuous-monitor phase
-(future, owned by ALP-441) which depends on the scheduler being green
-before it can be exercised end-to-end.
+Runbook: `scripts/RUNBOOK_pipeline_scheduler.md`. The **downstream
+consumer** of Phase 9d is the continuous-monitor phase (Phase 1g) which
+shares the `EMERGENCY_INVOCATION_REQUESTED` activity-log vocabulary with
+the scheduler's emergency-receiver task; the monitor writes those entries
+and the scheduler reads + dispatches against them.
 
 **On failure:** read the runbook's failure-mode triage section. The
 verify script prints one PASS/FAIL line per check; the FAIL line names
@@ -992,6 +1058,7 @@ End-to-end verification: <PASS|FAIL|WARN-only>
 - Phase 9 (portfolio manager): normal=PASS, halt=PASS, emergency=PASS, synchronous_rejection=PASS
 - Phase 9c (decision-pipeline composition): normal=PASS
 - Phase 9d (pipeline scheduler): 9/9 checks PASS
+- Phase 1g (continuous monitor): 11/11 scenarios PASS
 Total LLM cost: ~Xk Sonnet input + Yk Sonnet output, ~Zk Opus input + Wk Opus output
 Archives under .archive/verify-pipeline-YYYYMMDD/
 Fixtures at tests/fixtures/decision/{analyst,strategist,proposal_pre_processor,pm}/*.json
