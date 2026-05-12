@@ -265,7 +265,7 @@ async def test_register_breach_loop_threads_trigger_ids_to_emergency_callback(
     shared = TriggerIdGenerator(session_id=session.session_id)
     captured: dict[str, Any] = {}
 
-    real_fn = "alphamind.execution.continuous_monitor.emergency_trigger.make_emergency_callback"
+    real_fn = "alphamind.execution.continuous_monitor.__main__.make_emergency_callback"
 
     def _capture(**kwargs: Any) -> Any:
         captured["kwargs"] = kwargs
@@ -408,7 +408,7 @@ async def test_register_breach_loop_wires_alpaca_margin_call_observer(
     supervisor = MonitorSupervisor(session=session, config=_config())
     captured: dict[str, Any] = {}
 
-    real_fn = "alphamind.execution.continuous_monitor.emergency_trigger.make_emergency_callback"
+    real_fn = "alphamind.execution.continuous_monitor.__main__.make_emergency_callback"
 
     def _capture(**kwargs: Any) -> Any:
         captured["kwargs"] = kwargs

@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 # Mirrors the breaker comment in tests/execution/oms/test_submit_engine_envelope.py.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
 from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
+    load_breach_loop_resolved_config,
     make_invocation_id_provider_sync,
     make_library_config_factory,
     make_regime_provider,
@@ -47,6 +48,7 @@ from alphamind.execution.state_persistence.invocation_context import (
 from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
+from alphamind.portfolio_state import load_portfolio_state_config
 from alphamind.portfolio_state.records.capital import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
@@ -102,13 +104,13 @@ class TestMakeLibraryConfigFactory:
 
     def test_effective_limits_track_active_parameter_set(self, config_dir: Path) -> None:
         """Per-call, ``effective_limits`` reflect the supplied set's entries."""
-        factory = make_library_config_factory(config_dir=config_dir)
+        factory = make_library_config_factory(resolved=load_breach_loop_resolved_config(config_dir))
         cfg = factory(_active_parameter_set(daily_drawdown_pct=2.5))
         assert cfg.effective_limits["daily_drawdown_pct"] == pytest.approx(2.5)
 
     def test_two_calls_with_different_sets_yield_different_limits(self, config_dir: Path) -> None:
         """The factory is pure; two calls with distinct sets produce distinct configs."""
-        factory = make_library_config_factory(config_dir=config_dir)
+        factory = make_library_config_factory(resolved=load_breach_loop_resolved_config(config_dir))
         a = factory(_active_parameter_set(daily_drawdown_pct=1.0))
         b = factory(_active_parameter_set(daily_drawdown_pct=3.0))
         assert a.effective_limits["daily_drawdown_pct"] == pytest.approx(1.0)
@@ -116,14 +118,14 @@ class TestMakeLibraryConfigFactory:
 
     def test_escalation_zones_seeded_from_guardrails_yaml(self, config_dir: Path) -> None:
         """``escalation_zones`` come from ``config/guardrails.yaml`` (not empty)."""
-        factory = make_library_config_factory(config_dir=config_dir)
+        factory = make_library_config_factory(resolved=load_breach_loop_resolved_config(config_dir))
         cfg = factory(_active_parameter_set())
         # Every rule that appears in effective_limits has an escalation_zones entry.
         assert set(cfg.effective_limits.keys()).issubset(set(cfg.escalation_zones.keys()))
 
     def test_feature_flags_carved_from_resolved_config(self, config_dir: Path) -> None:
         """Feature flags propagate from the shipped configs."""
-        factory = make_library_config_factory(config_dir=config_dir)
+        factory = make_library_config_factory(resolved=load_breach_loop_resolved_config(config_dir))
         cfg = factory(_active_parameter_set())
         # The flag is sourced from the resolved config; carving must produce a real view.
         assert isinstance(cfg.feature_flags.options_enabled, bool)
@@ -249,7 +251,10 @@ class TestRegimeProvider:
         config_dir: Path,
     ) -> None:
         """No invocations in the DB → bootstrap-regime synthetic output."""
-        provider = make_regime_provider(session_factory=db_session_factory, config_dir=config_dir)
+        provider = make_regime_provider(
+            session_factory=db_session_factory,
+            resolved=load_breach_loop_resolved_config(config_dir),
+        )
         output = await provider()
         # The synthetic output is shaped like the orchestrator's pre-review shim.
         assert output.active_risk_parameter_set is not None
@@ -272,7 +277,10 @@ class TestRegimeProvider:
             active_regime="elevated",
         )
 
-        provider = make_regime_provider(session_factory=db_session_factory, config_dir=config_dir)
+        provider = make_regime_provider(
+            session_factory=db_session_factory,
+            resolved=load_breach_loop_resolved_config(config_dir),
+        )
         output = await provider()
         assert output.runtime_dimensions_active_regime.value == "elevated"
         # The parameter set's entries reflect the snapshot file's rule_values.
@@ -287,12 +295,20 @@ class TestSnapshotProvider:
         self,
         db_session_factory: async_sessionmaker[AsyncSession],
         config_dir: Path,
+        tmp_path: Path,
     ) -> None:
         """``make_snapshot_provider`` constructs a callable closure without raising."""
         provider = make_snapshot_provider(
             session_factory=db_session_factory,
             underlying_cache=UnderlyingPriceCache(),
-            config_dir=config_dir,
+            resolved=load_breach_loop_resolved_config(config_dir),
+            portfolio_state_config=load_portfolio_state_config(config_dir / "portfolio_state.yaml"),
+            state_persistence_config=StatePersistenceConfig(
+                pm_decision_log_sliding_window_invocations=10,
+                snapshot_read_timeout_seconds=5.0,
+                pip_freeze_snapshot_root=str(tmp_path / "pip"),
+                invocation_provenance_root=str(tmp_path / "prov"),
+            ),
         )
         assert callable(provider)
 

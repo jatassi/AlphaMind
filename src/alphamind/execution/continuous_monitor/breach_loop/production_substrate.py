@@ -3,7 +3,7 @@
 The breach loop's run-forever entry point consumes a fan of injected
 factories: ``snapshot_provider``, ``regime_provider``,
 ``library_config_factory``, the dispatcher's per-tick ``context_provider``,
-and ``submit_envelope``. The work-tree work-tree (ALP-123) shipped no-op
+and ``submit_envelope``. The parent work tree (ALP-123) shipped no-op
 stubs so the supervisor could register the task; this module replaces
 each stub with substrate backed by the existing SQL + config + OMS
 plumbing.
@@ -19,6 +19,7 @@ pin the closure contracts.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -29,6 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from alphamind.config.loaders import read_yaml_file
+from alphamind.config.models.guardrails import ProgressiveTier
 from alphamind.config.models.main import MainConfig
 from alphamind.config.models.modes import Mode
 from alphamind.config.models.regimes import Regime
@@ -45,7 +47,6 @@ from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
 from alphamind.execution.oms.engine_envelope import EngineEnvelope as OmsEngineEnvelope
 from alphamind.execution.state_persistence.config import (
     StatePersistenceConfig,
-    load_state_persistence_config,
 )
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationHandle,
@@ -54,15 +55,7 @@ from alphamind.execution.state_persistence.repository import (
     build_sql_portfolio_state_repository,
 )
 from alphamind.execution.state_persistence.tables.invocations import InvocationRow
-from alphamind.portfolio_state import load_portfolio_state_config
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    RegimeTransitionState,
-)
-from alphamind.portfolio_state.records.capital import (
-    RegimeLabel as PortfolioRegimeLabel,
-)
+from alphamind.portfolio_state import PortfolioStateConfig
 from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.consumers.synthesizer import adapt_ticker_sector_resolver
 from alphamind.portfolio_state.library_snapshot import to_library_snapshot
@@ -71,12 +64,15 @@ from alphamind.portfolio_state.pricing import (
     PriceSource,
     StubCurrentPriceProvider,
 )
+from alphamind.portfolio_state.records.capital import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+    RegimeLabel,
+    RegimeTransitionState,
+)
 from alphamind.risk_guardrails.breach_behavior import (
     PositionLiquidity,
     PositionRiskReward,
-)
-from alphamind.risk_guardrails.breach_behavior import (
-    RegimeLabel as BreachRegimeLabel,
 )
 from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
@@ -108,7 +104,11 @@ __all__ = [
 ]
 
 
+log = logging.getLogger(__name__)
+
 LibraryConfigFactory = Callable[[ActiveRiskParameterSet], LibraryConfig]
+
+_BOOTSTRAP_SENTINEL = "monitor-bootstrap"
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +192,7 @@ def load_breach_loop_resolved_config(config_dir: Path) -> ResolvedConfig:
 # ---------------------------------------------------------------------------
 
 
-def make_library_config_factory(*, config_dir: Path) -> LibraryConfigFactory:
+def make_library_config_factory(*, resolved: ResolvedConfig) -> LibraryConfigFactory:
     """Return an :class:`ActiveRiskParameterSet`-keyed :class:`LibraryConfig` factory.
 
     Strategy: build a base :class:`LibraryConfig` once via
@@ -207,7 +207,6 @@ def make_library_config_factory(*, config_dir: Path) -> LibraryConfigFactory:
     classification math against the limits the scheduler committed to,
     even when the monitor's resolved config drifts.
     """
-    resolved = load_breach_loop_resolved_config(config_dir)
     base = from_resolved_config(resolved)
 
     def _factory(active: ActiveRiskParameterSet) -> LibraryConfig:
@@ -233,15 +232,32 @@ def make_library_config_factory(*, config_dir: Path) -> LibraryConfigFactory:
 # ---------------------------------------------------------------------------
 
 
-async def _read_latest_invocation_id(
+async def _read_latest_invocation_row(
     session_factory: async_sessionmaker[AsyncSession],
-) -> str:
-    """Resolve the most-recently-started invocation_id; fall back to the bootstrap sentinel."""
+) -> tuple[str, str, str] | None:
+    """Read ``(invocation_id, resolved_config_snapshot_path, active_regime)``
+    for the most-recently-started invocation, or ``None`` on a fresh DB.
+
+    Combining the three columns in one SELECT lets snapshot and regime
+    providers share a single row read per tick instead of issuing two
+    near-identical ``ORDER BY start_at DESC LIMIT 1`` queries.
+    """
     async with session_factory() as sess:
-        stmt = select(InvocationRow.invocation_id).order_by(InvocationRow.start_at.desc()).limit(1)
+        stmt = (
+            select(
+                InvocationRow.invocation_id,
+                InvocationRow.resolved_config_snapshot_path,
+                InvocationRow.active_regime,
+            )
+            .order_by(InvocationRow.start_at.desc())
+            .limit(1)
+        )
         result = await sess.execute(stmt)
-        value = result.scalar_one_or_none()
-    return "monitor-bootstrap" if value is None else str(value)
+        row = result.one_or_none()
+    if row is None:
+        return None
+    invocation_id, snapshot_path, active_regime = row
+    return str(invocation_id), str(snapshot_path), str(active_regime)
 
 
 def make_invocation_id_provider_sync(
@@ -253,7 +269,8 @@ def make_invocation_id_provider_sync(
     """
 
     async def _provider() -> str:
-        return await _read_latest_invocation_id(session_factory)
+        row = await _read_latest_invocation_row(session_factory)
+        return _BOOTSTRAP_SENTINEL if row is None else row[0]
 
     return _provider
 
@@ -264,11 +281,11 @@ def make_invocation_id_provider_sync(
 # ---------------------------------------------------------------------------
 
 
-_REGIME_TO_LABEL: dict[Regime, PortfolioRegimeLabel] = {
-    Regime.low_vol: PortfolioRegimeLabel.LOW_VOL,
-    Regime.normal: PortfolioRegimeLabel.NORMAL,
-    Regime.elevated: PortfolioRegimeLabel.ELEVATED,
-    Regime.crisis: PortfolioRegimeLabel.CRISIS,
+_REGIME_TO_LABEL: dict[Regime, RegimeLabel] = {
+    Regime.low_vol: RegimeLabel.LOW_VOL,
+    Regime.normal: RegimeLabel.NORMAL,
+    Regime.elevated: RegimeLabel.ELEVATED,
+    Regime.crisis: RegimeLabel.CRISIS,
 }
 
 
@@ -303,40 +320,59 @@ def _build_active_risk_parameters(
     )
 
 
-async def _load_active_risk_parameters_from_invocation(
-    session_factory: async_sessionmaker[AsyncSession],
+async def _load_active_risk_parameters_from_row(
+    row: tuple[str, str, str] | None,
     *,
     fallback: ActiveRiskParameterSet,
 ) -> ActiveRiskParameterSet:
-    """Read the latest invocation row, load its resolved-config snapshot, build a set.
+    """Build the active parameter set from the latest invocation row.
 
-    On fresh DB / missing snapshot / read error, return ``fallback`` so the
-    breach loop can tick during bootstrap rather than crashing.
+    ``row`` is the tuple :func:`_read_latest_invocation_row` returns. On
+    fresh DB / missing snapshot / read error / unknown regime, log a warning
+    and return ``fallback`` so the breach loop can tick during bootstrap
+    rather than crashing.
     """
     import asyncio
     import json
 
-    async with session_factory() as sess:
-        stmt = (
-            select(InvocationRow.resolved_config_snapshot_path, InvocationRow.active_regime)
-            .order_by(InvocationRow.start_at.desc())
-            .limit(1)
-        )
-        row = (await sess.execute(stmt)).one_or_none()
     if row is None:
+        # Fresh-DB case — no invocations yet. Common during bootstrap.
         return fallback
-    snapshot_path, active_regime_str = row
+    _, snapshot_path, active_regime_str = row
     try:
         contents = await asyncio.to_thread(Path(snapshot_path).read_text)
         payload = json.loads(contents)
-    except (FileNotFoundError, OSError, ValueError):
+    except FileNotFoundError:
+        log.warning(
+            "active_risk_parameters fallback: snapshot file missing path=%s; "
+            "using bootstrap parameters",
+            snapshot_path,
+        )
+        return fallback
+    except (OSError, ValueError):
+        log.warning(
+            "active_risk_parameters fallback: failed to read or parse snapshot path=%s; "
+            "using bootstrap parameters",
+            snapshot_path,
+            exc_info=True,
+        )
         return fallback
     rule_values = payload.get("rule_values")
     if not isinstance(rule_values, dict):
+        log.warning(
+            "active_risk_parameters fallback: snapshot %s has no 'rule_values' dict; "
+            "using bootstrap parameters",
+            snapshot_path,
+        )
         return fallback
     try:
         regime = Regime(active_regime_str)
     except ValueError:
+        log.warning(
+            "active_risk_parameters fallback: invocation active_regime=%r is not a known "
+            "Regime value; using bootstrap parameters",
+            active_regime_str,
+        )
         return fallback
     return _build_active_risk_parameters(
         rule_values={k: float(v) for k, v in rule_values.items()},
@@ -356,8 +392,9 @@ def make_snapshot_provider(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     underlying_cache: UnderlyingPriceCache,
-    config_dir: Path,
-    state_persistence_config: StatePersistenceConfig | None = None,
+    resolved: ResolvedConfig,
+    portfolio_state_config: PortfolioStateConfig,
+    state_persistence_config: StatePersistenceConfig,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> SnapshotProvider:
     """Build the breach-loop's per-tick :class:`LibrarySnapshot` provider.
@@ -368,12 +405,12 @@ def make_snapshot_provider(
     monitor's :class:`UnderlyingPriceCache`, and translates the result via
     :func:`to_library_snapshot`. The pricing provider is built per call
     from the live cache so the snapshot reads the freshest spots.
+
+    Daemon-owned configs (``resolved``, ``portfolio_state_config``,
+    ``state_persistence_config``) are loaded once at startup and shared
+    across snapshot / regime / library_config builders so the helpers do
+    not re-read the YAML matrix per construction.
     """
-    resolved = load_breach_loop_resolved_config(config_dir)
-    portfolio_state_config = load_portfolio_state_config(config_dir / "portfolio_state.yaml")
-    persistence_config = state_persistence_config or load_state_persistence_config(
-        read_yaml_file(config_dir / "main.yaml")
-    )
     bootstrap_parameters = _build_active_risk_parameters(
         rule_values=resolved.rule_values,
         regime=Regime(resolved.regime_label),
@@ -382,10 +419,9 @@ def make_snapshot_provider(
     position_sector_resolver = adapt_ticker_sector_resolver(ticker_sector_resolver)
 
     async def _provider() -> LibrarySnapshot:
-        invocation_id = await _read_latest_invocation_id(session_factory)
-        active = await _load_active_risk_parameters_from_invocation(
-            session_factory, fallback=bootstrap_parameters
-        )
+        row = await _read_latest_invocation_row(session_factory)
+        invocation_id = _BOOTSTRAP_SENTINEL if row is None else row[0]
+        active = await _load_active_risk_parameters_from_row(row, fallback=bootstrap_parameters)
 
         async def _active_provider() -> ActiveRiskParameterSet:
             return active
@@ -398,7 +434,7 @@ def make_snapshot_provider(
             invocation_id=invocation_id,
             active_risk_parameters_provider=_active_provider,
             prior_active_risk_parameters_provider=_prior_provider,
-            config=persistence_config,
+            config=state_persistence_config,
         )
         price_provider = _build_price_provider(underlying_cache, as_of=now())
         assembled = await assemble_snapshot(
@@ -461,7 +497,7 @@ RegimeProvider = Callable[[], Awaitable[RegimeAdaptationOutput]]
 def make_regime_provider(
     *,
     session_factory: async_sessionmaker[AsyncSession],
-    config_dir: Path,
+    resolved: ResolvedConfig,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> RegimeProvider:
     """Build the per-tick :class:`RegimeAdaptationOutput` provider.
@@ -475,20 +511,17 @@ def make_regime_provider(
     shape. When the regime-adaptation orchestrator is threaded through the
     monitor (deferred follow-up), this synthetic shim retires.
     """
-    resolved = load_breach_loop_resolved_config(config_dir)
     bootstrap_parameters = _build_active_risk_parameters(
         rule_values=resolved.rule_values,
         regime=Regime(resolved.regime_label),
     )
+    fallback_regime = Regime(resolved.regime_label)
 
     async def _provider() -> RegimeAdaptationOutput:
-        invocation_id = await _read_latest_invocation_id(session_factory)
-        active = await _load_active_risk_parameters_from_invocation(
-            session_factory, fallback=bootstrap_parameters
-        )
-        regime_for_state = _resolve_regime_from_label(
-            active.regime_label, Regime(resolved.regime_label)
-        )
+        row = await _read_latest_invocation_row(session_factory)
+        invocation_id = _BOOTSTRAP_SENTINEL if row is None else row[0]
+        active = await _load_active_risk_parameters_from_row(row, fallback=bootstrap_parameters)
+        regime_for_state = _resolve_regime_from_label(active.regime_label, fallback_regime)
         state = RegimeAdaptationState(
             as_of=now().isoformat().replace("+00:00", "Z"),
             invocation_id=invocation_id,
@@ -518,16 +551,16 @@ def make_regime_provider(
     return _provider
 
 
-_LABEL_TO_REGIME: dict[PortfolioRegimeLabel, Regime] = {
-    PortfolioRegimeLabel.LOW_VOL: Regime.low_vol,
-    PortfolioRegimeLabel.NORMAL: Regime.normal,
-    PortfolioRegimeLabel.ELEVATED: Regime.elevated,
-    PortfolioRegimeLabel.CRISIS: Regime.crisis,
+_LABEL_TO_REGIME: dict[RegimeLabel, Regime] = {
+    RegimeLabel.LOW_VOL: Regime.low_vol,
+    RegimeLabel.NORMAL: Regime.normal,
+    RegimeLabel.ELEVATED: Regime.elevated,
+    RegimeLabel.CRISIS: Regime.crisis,
 }
 
 
 def _resolve_regime_from_label(
-    label: PortfolioRegimeLabel,
+    label: RegimeLabel,
     fallback: Regime,
 ) -> Regime:
     """Map a :class:`RegimeLabel` back to the config :class:`Regime` enum."""
@@ -548,6 +581,7 @@ def make_dispatch_context_provider(
     regime_provider: RegimeProvider,
     library_config_factory: LibraryConfigFactory,
     underlying_cache: UnderlyingPriceCache,
+    progressive_tiers: tuple[ProgressiveTier, ...] = (),
     open_positions_reader: Callable[[], Awaitable[tuple[Any, ...]]] | None = None,
     risk_free_rate: float = _DEFAULT_RISK_FREE_RATE,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -570,8 +604,16 @@ def make_dispatch_context_provider(
     ``open_positions_reader`` is an optional reader returning
     ``tuple[PositionView, ...]`` for the per-tick context. When omitted,
     the context's ``open_positions`` is empty and the dispatcher relies on
-    its per-rule kwargs providers to surface the breaching position.
+    its per-rule kwargs providers to surface the breaching position. The
+    daemon's wiring currently leaves this empty because the per-rule kwargs
+    providers are out of scope for ALP-453 — the dispatcher will not fire
+    without that map populated.
+
+    ``progressive_tiers`` flows into :class:`BreachDispatchContext` so the
+    cascade orchestrator's follow-up loop has the cumulative-drawdown tier
+    sequence (driven by ``GuardrailsConfig.rules`` at daemon startup).
     """
+    _iv_provider = _EMPTY_IV_PROVIDER
 
     async def _provider() -> BreachDispatchContext:
         library_snapshot = await snapshot_provider()
@@ -580,7 +622,7 @@ def make_dispatch_context_provider(
         market_inputs = MarketInputs(
             underlying_prices={t: q.price for t, q in underlying_cache.get_all().items()},
             risk_free_rate=risk_free_rate,
-            iv_provider=FixtureIvProvider(surface={}, realized_vol={}),
+            iv_provider=_iv_provider,
             as_of=now(),
         )
         open_positions: tuple[Any, ...] = ()
@@ -603,24 +645,18 @@ def make_dispatch_context_provider(
             market_inputs=market_inputs,
             evaluate_proposals=cast(Any, evaluate_proposals),
             portfolio_value_usd=library_snapshot.portfolio_value_usd,
-            active_regime=_portfolio_to_breach_label(
-                regime_output.active_risk_parameter_set.regime_label
-            ),
+            # ``portfolio_state.records.capital.RegimeLabel`` and
+            # ``breach_behavior.RegimeLabel`` are the same enum object (both
+            # re-export ``regime_adaptation.types.RegimeLabel``) — no conversion
+            # needed at the type or value level.
+            active_regime=regime_output.active_risk_parameter_set.regime_label,
+            progressive_tiers=progressive_tiers,
         )
 
     return _provider
 
 
-_BREACH_LABEL_MAP: dict[PortfolioRegimeLabel, BreachRegimeLabel] = {
-    PortfolioRegimeLabel.LOW_VOL: BreachRegimeLabel.LOW_VOL,
-    PortfolioRegimeLabel.NORMAL: BreachRegimeLabel.NORMAL,
-    PortfolioRegimeLabel.ELEVATED: BreachRegimeLabel.ELEVATED,
-    PortfolioRegimeLabel.CRISIS: BreachRegimeLabel.CRISIS,
-}
-
-
-def _portfolio_to_breach_label(label: PortfolioRegimeLabel) -> BreachRegimeLabel:
-    return _BREACH_LABEL_MAP[label]
+_EMPTY_IV_PROVIDER = FixtureIvProvider(surface={}, realized_vol={})
 
 
 # ---------------------------------------------------------------------------

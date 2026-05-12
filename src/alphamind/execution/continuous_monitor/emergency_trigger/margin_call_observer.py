@@ -19,6 +19,7 @@ the next tick re-probes).
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Protocol
@@ -59,7 +60,10 @@ class AlpacaMarginCallObserver:
         self._now = now
 
     async def __call__(self) -> MarginCallEvent | None:
-        snapshot = self._queries.get_account()
+        # ``AccountStateQueries.get_account`` wraps a blocking HTTPX call;
+        # offloading to a thread keeps the supervisor's event loop responsive
+        # to the underlying-stream / fill-stream / greeks-refresh tasks.
+        snapshot = await asyncio.to_thread(self._queries.get_account)
         deficit = snapshot.maintenance_margin - snapshot.equity
         if deficit <= 0.0:
             return None

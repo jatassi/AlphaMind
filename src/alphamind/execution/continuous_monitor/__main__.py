@@ -26,7 +26,7 @@ import argparse
 import asyncio
 import logging
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -41,9 +41,6 @@ from alphamind.config.models.execution import ExecutionConfig
 from alphamind.config.models.guardrails import BreachResponse, GuardrailsConfig, ProgressiveTier
 from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.broker_adapter import AccountStateQueries, AlpacaClientFactory
-from alphamind.execution.continuous_monitor.emergency_trigger.margin_call_observer import (
-    AccountQueriesProtocol,
-)
 from alphamind.execution.continuous_monitor.bracket_stops import (
     AlpacaBracketCloseSubmitter,
     register_options_bracket_watcher_task,
@@ -51,9 +48,31 @@ from alphamind.execution.continuous_monitor.bracket_stops import (
 from alphamind.execution.continuous_monitor.breach_loop import (
     register_breach_loop_task,
 )
+from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
+    load_breach_loop_resolved_config,
+    make_dispatch_context_provider,
+    make_library_config_factory,
+    make_regime_provider,
+    make_snapshot_provider,
+    make_submit_envelope,
+)
 from alphamind.execution.continuous_monitor.cascade_dispatch import TriggerIdGenerator
+from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
+    CascadeDispatcher,
+    DeferralEvent,
+)
+from alphamind.execution.continuous_monitor.emergency_trigger import (
+    AlpacaMarginCallObserver,
+    make_emergency_callback,
+)
+from alphamind.execution.continuous_monitor.emergency_trigger.margin_call_observer import (
+    AccountQueriesProtocol,
+)
 from alphamind.execution.continuous_monitor.greeks_refresh import (
     register_greeks_refresh_task,
+)
+from alphamind.execution.continuous_monitor.greeks_refresh.wiring import (
+    make_activity_log_emitter,
 )
 from alphamind.execution.continuous_monitor.logging_setup import (
     configure_monitor_logging,
@@ -67,6 +86,9 @@ from alphamind.execution.continuous_monitor.supervisor import MonitorSupervisor
 from alphamind.execution.continuous_monitor.underlying_stream import (
     register_underlying_stream_task,
 )
+from alphamind.execution.continuous_monitor.underlying_stream.cache import (
+    UnderlyingPriceCache,
+)
 from alphamind.execution.continuous_monitor.underlying_stream.reader import (
     SqlOpenPositionsReader,
 )
@@ -74,14 +96,21 @@ from alphamind.execution.state_persistence.config import (
     StatePersistenceConfig,
     load_state_persistence_config,
 )
+from alphamind.execution.state_persistence.repository import (
+    build_sql_portfolio_state_repository,
+)
 from alphamind.execution.venue_configuration.calendar_cache import (
     TradingCalendarCache,
 )
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
+from alphamind.portfolio_state import load_portfolio_state_config
+from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
+from alphamind.portfolio_state.records.capital import ActiveRiskParameterSet
 from alphamind.risk_guardrails.breach_behavior import (
     BreachBehaviorConfig,
     load_breach_behavior_config,
 )
+from alphamind.risk_guardrails.guardrail_evaluation import FixtureIvProvider
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -300,38 +329,6 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     same queries — emergencies fire from live broker state instead of
     :class:`NoMarginCallObserver`.
     """
-    from collections.abc import Iterable
-
-    from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
-        make_dispatch_context_provider,
-        make_library_config_factory,
-        make_regime_provider,
-        make_snapshot_provider,
-        make_submit_envelope,
-    )
-    from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
-        CascadeDispatcher,
-        DeferralEvent,
-    )
-    from alphamind.execution.continuous_monitor.emergency_trigger import (
-        AlpacaMarginCallObserver,
-        make_emergency_callback,
-    )
-    from alphamind.execution.continuous_monitor.greeks_refresh.wiring import (
-        make_activity_log_emitter,
-    )
-    from alphamind.execution.continuous_monitor.underlying_stream.cache import (
-        UnderlyingPriceCache,
-    )
-    from alphamind.execution.state_persistence.repository import (
-        build_sql_portfolio_state_repository,
-    )
-    from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
-    from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
-    from alphamind.risk_guardrails.guardrail_evaluation import (
-        FixtureIvProvider,
-    )
-
     underlying_cache_typed = cast(UnderlyingPriceCache, underlying_cache)
     _single_entry_emitter = make_activity_log_emitter(db_session_factory)
 
@@ -353,22 +350,29 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
 
     # Build the production substrate. Each helper takes the shared dependencies
     # the daemon owns and returns a closure the breach loop / dispatcher consume.
+    # Resolved config + portfolio_state config load once at startup and feed
+    # all three builders, avoiding the ~87 YAML reads three independent loads
+    # would cost.
+    resolved_config = load_breach_loop_resolved_config(config_dir)
+    portfolio_state_config = load_portfolio_state_config(config_dir / "portfolio_state.yaml")
     snapshot_provider = make_snapshot_provider(
         session_factory=db_session_factory,
         underlying_cache=underlying_cache_typed,
-        config_dir=config_dir,
+        resolved=resolved_config,
+        portfolio_state_config=portfolio_state_config,
         state_persistence_config=state_persistence_config,
     )
     regime_provider = make_regime_provider(
         session_factory=db_session_factory,
-        config_dir=config_dir,
+        resolved=resolved_config,
     )
-    library_config_factory = make_library_config_factory(config_dir=config_dir)
+    library_config_factory = make_library_config_factory(resolved=resolved_config)
     dispatch_context_provider = make_dispatch_context_provider(
         snapshot_provider=snapshot_provider,
         regime_provider=regime_provider,
         library_config_factory=library_config_factory,
         underlying_cache=underlying_cache_typed,
+        progressive_tiers=progressive_tiers,
     )
     submit_envelope = make_submit_envelope(
         session_factory=db_session_factory,
