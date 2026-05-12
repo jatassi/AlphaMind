@@ -29,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.regime import RiskZone
 from alphamind.execution.regt_margin_attribution.aggregates import RegTExcessAggregates
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.repository.activity_log_queries import (
@@ -75,14 +76,12 @@ from alphamind.execution.state_persistence.tables.thesis_components import (
 from alphamind.execution.state_persistence.write_paths.records import (
     FillProcessingStatus,
 )
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.records.activity_log import ActivityLogEntry
-from alphamind.portfolio_state.records.capital import (
-    CashLedger,
-    DrawdownState,
-    RiskBudgetConsumption,
-)
+from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
     BracketRecord,
     OrderRecord,
@@ -103,7 +102,6 @@ from alphamind.portfolio_state.repository import (
     PriorInvocationContext,
     RepositoryConsistencyError,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 _PENDING_ORDER_STATUSES = (OrderStatus.PENDING.value, OrderStatus.PARTIALLY_FILLED.value)
 

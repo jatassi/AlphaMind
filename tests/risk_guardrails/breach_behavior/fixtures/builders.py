@@ -16,16 +16,20 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownState,
+from alphamind._kernel.regime import (
     DrawdownTier,
     RegimeLabel,
     RegimeTransitionState,
+    RiskZone,
+)
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
     RiskBudgetConsumption,
     RiskBudgetEntry,
-    RiskZone,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,

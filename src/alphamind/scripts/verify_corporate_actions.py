@@ -36,6 +36,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.regime import RiskZone
 from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
@@ -137,7 +138,6 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     MarketInputs,
     RealizedVolEntry,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 __all__ = [
     "ActionRowResult",

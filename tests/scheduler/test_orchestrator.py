@@ -682,8 +682,9 @@ class TestRunInvocationModeAndStaleness:
 
 def _singleton_records() -> tuple[Any, Any]:
     """Return ``(cash_ledger, drawdown_state)`` records for the snapshot singletons."""
-    from alphamind.portfolio_state.records.capital import CashLedger, DrawdownState
-    from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+    from alphamind._kernel.regime import RiskZone
+    from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+    from alphamind.portfolio_state.records.cash import CashLedger
 
     cash = CashLedger.model_validate(
         {
@@ -948,8 +949,8 @@ class TestLoadPriorActiveRiskParameters:
 
     def test_reads_rule_values_and_regime_from_snapshot(self, tmp_path: Path) -> None:
         """Given a snapshot with known rule_values + regime_label, return that set."""
+        from alphamind._kernel.regime import RegimeLabel
         from alphamind.config.models.regimes import Regime
-        from alphamind.portfolio_state.records.capital import RegimeLabel
         from alphamind.scheduler.orchestrator import _load_prior_active_risk_parameters
 
         snapshot_path = tmp_path / "prior_resolved.json"
@@ -1021,7 +1022,7 @@ class TestPriorProviderRehydratesFromPriorInvocation:
 
         # The prior provider must return the snapshot-derived set, NOT a copy
         # of the current set.
-        from alphamind.portfolio_state.records.capital import RegimeLabel
+        from alphamind._kernel.regime import RegimeLabel
 
         assert prior_set.regime_label is RegimeLabel.CRISIS
         rule_map = {entry.rule_id: entry.value for entry in prior_set.entries}

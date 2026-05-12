@@ -23,11 +23,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.config.models.overlays import Overlay
 from alphamind.config.models.regimes import Regime
 from alphamind.risk_guardrails.regime_adaptation.types import (
     RegimeAdaptationState,
-    RegimeTransitionState,
     overlays_to_strings,
 )
 

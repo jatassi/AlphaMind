@@ -25,7 +25,7 @@ from alphamind.config.models.agents import AgentName, BaseAgentConfig
 
 if TYPE_CHECKING:
     from alphamind.config.models.guardrails import ProgressiveTier
-    from alphamind.portfolio_state.records.capital import DrawdownState
+    from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
     from alphamind.portfolio_state.repository import PortfolioStateRepository
     from alphamind.risk_guardrails.regime_adaptation.types import RegimeAdaptationOutput
 

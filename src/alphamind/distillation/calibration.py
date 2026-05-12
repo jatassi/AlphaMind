@@ -22,8 +22,10 @@ Three states exist:
 
 The framework is upstream of the persistence schema. The string values of
 :class:`CalibrationState` equal the ``calibration_state`` CHECK-constraint
-strings on the distillation tables; ``persistence.models`` imports from
-here so the schema and the framework cannot drift.
+strings on the distillation tables; both this module and
+``persistence.models`` import the vocabulary from
+:mod:`alphamind._kernel.calibration` so the schema and the framework
+cannot drift.
 """
 
 from __future__ import annotations
@@ -31,31 +33,40 @@ from __future__ import annotations
 import statistics
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.calibration import CALIBRATION_STATE_VALUES, CalibrationState
+from alphamind.persistence.models import (
+    DistillationEventHistory,
+    DistillationTickerBaseline,
+    SectorClassification,
+)
+
 if TYPE_CHECKING:
     from alphamind.config.models.distillation import LeadLag, PredictionMarket
 
+__all__ = [
+    "CALIBRATION_STATE_VALUES",
+    "EXTENDED_HOURS_BOOTSTRAP_RATE",
+    "CalibratedValue",
+    "CalibrationState",
+    "decide_calibration_state",
+    "default_lead_lag_pair_estimate",
+    "prediction_market_delta_default",
+    "sector_pooled_atr_baseline",
+    "sector_pooled_gap_fill_rate",
+    "sector_pooled_volume_baseline",
+    "tag_with_fallback",
+    "universe_pooled_extended_hours_confirmation_rate",
+    "universe_pooled_sentiment_distribution",
+]
+
 # ---------------------------------------------------------------------------
-# Three-state tag
+# Module-level constants
 # ---------------------------------------------------------------------------
-
-CALIBRATION_STATE_VALUES: tuple[str, str, str] = (
-    "calibrated",
-    "bootstrap",
-    "unavailable",
-)
-"""The schema CHECK-constraint accepts exactly these three strings.
-
-Centralized here so the schema in :mod:`alphamind.persistence.models`
-imports the tuple instead of re-stating the literals — the framework is the
-single source of truth for the state vocabulary.
-"""
-
 
 EXTENDED_HOURS_BOOTSTRAP_RATE: float = 0.5
 """Cold-start prior for the extended-hours confirmation rate.
@@ -65,19 +76,6 @@ default 50% (no information)" for the universe-pooled extended-hours
 confirmation rate. Encoded as a named constant rather than a literal so
 the prior is discoverable and self-documenting.
 """
-
-
-class CalibrationState(StrEnum):
-    """Per-output calibration tag.
-
-    Each member's value matches the ``calibration_state`` CHECK constraint
-    on every distillation table (``DistillationTickerBaseline``, ``...PairLag``,
-    ``...ContractHistory``, ``...CompositeState``).
-    """
-
-    CALIBRATED = "calibrated"
-    BOOTSTRAP = "bootstrap"
-    UNAVAILABLE = "unavailable"
 
 
 # ---------------------------------------------------------------------------
@@ -191,11 +189,6 @@ def tag_with_fallback(
 # prior is always available (lead-lag default bound, prediction-market
 # delta) return the prior unconditionally.
 
-# Late-import to avoid a runtime cycle between distillation and persistence.
-# ``models`` imports :data:`CALIBRATION_STATE_VALUES` from this module at
-# import time; the fallback queries below need the ORM tables and import
-# them lazily inside each function.
-
 
 def _pool_calibrated_baselines(
     session: Session,
@@ -213,11 +206,6 @@ def _pool_calibrated_baselines(
     restricted to tickers whose ``alphamind_sector`` matches. Returns
     ``None`` when the pool is empty.
     """
-    from alphamind.persistence.models import (
-        DistillationTickerBaseline,
-        SectorClassification,
-    )
-
     stmt = select(DistillationTickerBaseline.mean, DistillationTickerBaseline.stdev).where(
         DistillationTickerBaseline.baseline_kind == baseline_kind,
         DistillationTickerBaseline.as_of == as_of,
@@ -300,11 +288,6 @@ def _event_outcome_rate(
     universe; otherwise it is restricted to tickers in that sector. Returns
     ``None`` when no events of ``event_kind`` exist in scope.
     """
-    from alphamind.persistence.models import (
-        DistillationEventHistory,
-        SectorClassification,
-    )
-
     total_stmt = select(func.count()).where(
         DistillationEventHistory.event_kind == event_kind,
         DistillationEventHistory.event_ts <= as_of,

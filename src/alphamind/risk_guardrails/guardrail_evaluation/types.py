@@ -20,27 +20,19 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from enum import Enum, StrEnum
+from enum import Enum
 from typing import Protocol
+
+# ``RiskZone`` is re-exported from :mod:`alphamind._kernel.regime` (ALP-457
+# moved its canonical home). External consumers may still import it from
+# this module for backward compatibility; new code should import from
+# ``alphamind._kernel.regime``. The redundant ``as`` form marks the name
+# as an explicit re-export for mypy.
+from alphamind._kernel.regime import RiskZone as RiskZone
 
 # ---------------------------------------------------------------------------
 # Classification enums
 # ---------------------------------------------------------------------------
-
-
-class RiskZone(StrEnum):
-    """Proximity zone for a risk rule limit.
-
-    Produced by the guardrail-evaluation library's per-rule projection and
-    consumed by breach-behavior, state-delivery, and capital-state aggregates.
-    Re-exported from ``portfolio_state.records.capital`` for backward
-    compatibility.
-    """
-
-    NORMAL = "NORMAL"
-    WARNING = "WARNING"
-    CRITICAL = "CRITICAL"
-    BLOCKED = "BLOCKED"
 
 
 class Status(Enum):

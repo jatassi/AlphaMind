@@ -29,6 +29,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 # alphamind.execution.oms (engine-stub MCP) and alphamind.decision.portfolio_manager.
 # Mirrors the breaker comment in tests/execution/oms/test_submit_engine_envelope.py.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+)
 from alphamind.execution.continuous_monitor.breach_loop.production_substrate import (
     load_breach_loop_resolved_config,
     make_invocation_id_provider_sync,
@@ -49,11 +53,9 @@ from alphamind.execution.state_persistence.tables.invocations import InvocationR
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.portfolio_state import load_portfolio_state_config
-from alphamind.portfolio_state.records.capital import (
+from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
 )
 
 

@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.decision.portfolio_manager.input_bundle import (
     assemble_input_bundle_halt,
     assemble_input_bundle_normal,
@@ -23,6 +28,15 @@ from alphamind.decision.proposal_pre_processor.models import (
     StrategistSection,
 )
 from alphamind.decision.strategist.models import PortfolioLevelObservations
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
 from alphamind.portfolio_state.records.activity_log import (
@@ -34,16 +48,6 @@ from alphamind.portfolio_state.records.activity_log import (
     EventType,
     PMDecisionDetail,
     PMVerdict,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownState,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
 )
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,

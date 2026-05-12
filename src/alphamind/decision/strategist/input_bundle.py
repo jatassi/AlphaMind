@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.computations.exposure import SectorResolver
 from alphamind.portfolio_state.consumers.strategist import (
     BetweenInvocationClosure,
@@ -32,7 +33,6 @@ from alphamind.portfolio_state.records.activity_log import (
     HaltLiftedDetail,
     PMDecisionDetail,
 )
-from alphamind.portfolio_state.records.capital import DrawdownState
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegType,

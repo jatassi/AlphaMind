@@ -11,11 +11,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from alphamind._kernel.regime import RegimeLabel, RegimeTransitionState
 from alphamind.portfolio_state.aggregates.risk_budget import _assert_unique_rule_ids
-from alphamind.risk_guardrails.regime_adaptation.types import (
-    RegimeLabel,
-    RegimeTransitionState,
-)
 
 __all__ = [
     "ActiveRiskParameterEntry",

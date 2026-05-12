@@ -21,6 +21,7 @@ import pytest
 # ``submit_envelope_mcp``-derived symbols (mirror of the discipline in
 # ``tests/execution/oms/test_submit_engine_envelope.py``).
 import alphamind.decision.portfolio_manager.models  # noqa: F401
+from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.config.models.guardrails import BreachResponse
 from alphamind.execution.continuous_monitor.breach_loop.result import (
     BreachLoopResult,
@@ -64,7 +65,6 @@ from alphamind.risk_guardrails.breach_behavior import (
     RegimeLabel,
     RiskZone,
 )
-from alphamind.risk_guardrails.regime_adaptation.types import RegimeTransitionState
 
 _NOW = datetime(2026, 5, 11, 14, 30, 0, tzinfo=UTC)
 _SESSION_ID = "monsession-a"

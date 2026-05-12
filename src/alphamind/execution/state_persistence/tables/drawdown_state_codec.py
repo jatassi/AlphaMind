@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
+from alphamind._kernel.regime import RiskZone
 from alphamind.execution.state_persistence.tables._singleton_codec import (
     datetime_to_iso_z,
 )
@@ -22,7 +23,6 @@ from alphamind.execution.state_persistence.tables.drawdown_state import (
 )
 from alphamind.portfolio_state.aggregates import DrawdownState
 from alphamind.risk_guardrails.breach_behavior.types import DrawdownTier
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 
 def drawdown_state_record_to_row(

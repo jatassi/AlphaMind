@@ -21,12 +21,12 @@ from pydantic import BaseModel, ConfigDict
 from alphamind.execution.guardrail_enforcement.composition import (
     compose_active_risk_parameters,
 )
-from alphamind.portfolio_state.records.capital import ActiveRiskParameterSet
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.risk_guardrails.breach_behavior.types import DrawdownTier
 
 if TYPE_CHECKING:
     from alphamind.config.models.guardrails import ProgressiveTier
-    from alphamind.portfolio_state.records.capital import DrawdownState
+    from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
     from alphamind.risk_guardrails.regime_adaptation.types import RegimeAdaptationOutput
 
 

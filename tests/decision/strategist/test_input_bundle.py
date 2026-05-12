@@ -6,9 +6,23 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.decision.strategist.input_bundle import (
     assemble_input_bundle_defensive_posture,
     assemble_input_bundle_normal,
+)
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
 )
 from alphamind.portfolio_state.consumers.analyst import AnalystAbandonedOpening
 from alphamind.portfolio_state.consumers.strategist import (
@@ -31,16 +45,6 @@ from alphamind.portfolio_state.records.activity_log import (
     PMDecisionDetail,
     PMVerdict,
     PositionExitMethod,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownState,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
 )
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,

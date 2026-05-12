@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from alphamind.config.models.guardrails import ProgressiveTier
-from alphamind.portfolio_state.records.capital import (
+from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )

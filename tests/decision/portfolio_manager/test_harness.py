@@ -20,6 +20,10 @@ from unittest.mock import patch
 
 import pytest
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+)
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AllowedModel, BaseAgentConfig
 from alphamind.decision.portfolio_manager.harness import (
@@ -72,15 +76,11 @@ from alphamind.execution.oms.submit_envelope_mcp import (
     SubmitEnvelopeState,
     build_initial_submit_envelope_state,
 )
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     PortfolioManagerThesisComponentReader,
     PortfolioManagerView,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
 )
 from alphamind.portfolio_state.records.theses import ThesisComponent
 from alphamind.risk_guardrails.guardrail_evaluation import (

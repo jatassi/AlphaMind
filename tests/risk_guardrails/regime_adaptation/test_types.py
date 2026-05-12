@@ -14,14 +14,16 @@ from types import MappingProxyType
 
 import pytest
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+)
 from alphamind.config.models.overlays import EventType, Overlay
 from alphamind.config.models.regimes import Regime
 from alphamind.distillation.calibration import CalibrationState
-from alphamind.portfolio_state.records.capital import (
+from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
 )
 from alphamind.risk_guardrails.regime_adaptation import (
     LOOSENING_INVOCATIONS,

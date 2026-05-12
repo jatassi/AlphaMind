@@ -18,6 +18,11 @@ from typing import Any
 import pytest
 import yaml
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AgentName, AllowedModel, BaseAgentConfig
@@ -28,18 +33,17 @@ from alphamind.decision.analyst.runner import (
     load_analyst_agent_config,
     run_analyst,
 )
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.consumers.analyst import (
     AnalystAvailableCapital,
     AnalystView,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
 )
 from alphamind.risk_guardrails.breach_behavior import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (

@@ -13,6 +13,7 @@ import dataclasses
 
 import pytest
 
+from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.config.models.regimes import Regime
 from alphamind.risk_guardrails.regime_adaptation import (
     LOOSENING_INVOCATIONS,
@@ -24,7 +25,6 @@ from alphamind.risk_guardrails.regime_adaptation.transition_machine import (
     compute_next_transition,
     regime_ladder_index,
 )
-from alphamind.risk_guardrails.regime_adaptation.types import RegimeTransitionState
 
 # ---------------------------------------------------------------------------
 # Shared builders

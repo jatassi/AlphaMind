@@ -9,12 +9,12 @@ from typing import Any
 
 import pytest
 
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
+from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
-    RiskBudgetConsumption,
 )
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.risk_guardrails.guardrail_evaluation import (
     ContractType,
     EscalationZones,

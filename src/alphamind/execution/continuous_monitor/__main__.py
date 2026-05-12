@@ -104,8 +104,8 @@ from alphamind.execution.venue_configuration.calendar_cache import (
 )
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
 from alphamind.portfolio_state import load_portfolio_state_config
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
-from alphamind.portfolio_state.records.capital import ActiveRiskParameterSet
 from alphamind.risk_guardrails.breach_behavior import (
     BreachBehaviorConfig,
     load_breach_behavior_config,

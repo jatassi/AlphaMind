@@ -7,20 +7,24 @@ from itertools import pairwise
 
 import pytest
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.consumers.analyst import (
     AnalystAbandonedOpening,
     AnalystAvailableCapital,
     AnalystHeldPosition,
     AnalystView,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
 )
 from alphamind.portfolio_state.records.positions import Direction, InstrumentType
 from alphamind.risk_guardrails.state_delivery import render_analyst_header

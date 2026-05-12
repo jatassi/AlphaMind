@@ -33,6 +33,7 @@ from types import MappingProxyType
 from typing import Any, Literal
 
 from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
+from alphamind._kernel.regime import RiskZone
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AgentName
 from alphamind.decision.portfolio_manager.harness import HarnessFailure, SDKFailure
@@ -42,16 +43,15 @@ from alphamind.decision.portfolio_manager.runner import (
     run_portfolio_manager,
 )
 from alphamind.decision.proposal_pre_processor.models import ProposalPreProcessorBundle
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     PortfolioManagerThesisComponentReader,
     PortfolioManagerView,
 )
 from alphamind.portfolio_state.consumers.strategist import StrategistView
-from alphamind.portfolio_state.records.capital import (
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
-)
 from alphamind.portfolio_state.records.theses import ThesisComponent
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.views.thesis_health import ThesisHealthSnapshot

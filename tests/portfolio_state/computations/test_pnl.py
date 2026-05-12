@@ -11,7 +11,7 @@ from alphamind.portfolio_state.computations.pnl import (
     compute_portfolio_pnl,
     compute_total_portfolio_value_usd,
 )
-from alphamind.portfolio_state.records.capital import CashLedger
+from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,

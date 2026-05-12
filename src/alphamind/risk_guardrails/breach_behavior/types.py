@@ -22,6 +22,16 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+# Re-exported from :mod:`alphamind._kernel.regime` (ALP-457 moved their
+# canonical home). External consumers may still import these via
+# ``alphamind.risk_guardrails.breach_behavior`` for backward compatibility;
+# new code should import from ``alphamind._kernel.regime``.
+from alphamind._kernel.regime import (
+    DrawdownTier,
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.config.models.guardrails import (
     BreachResponse,
     EnforcementTier,
@@ -33,23 +43,10 @@ from alphamind.portfolio_state.records.positions import (
     InstrumentType,
     PositionRecord,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
-from alphamind.risk_guardrails.regime_adaptation.types import (
-    RegimeLabel,
-    RegimeTransitionState,
-)
 
 # ---------------------------------------------------------------------------
 # Enums introduced by this package
 # ---------------------------------------------------------------------------
-
-
-class DrawdownTier(StrEnum):
-    """Cumulative drawdown progressive response tier."""
-
-    CONSTRAINED = "CONSTRAINED"
-    HEAVILY_CONSTRAINED = "HEAVILY_CONSTRAINED"
-    FULL_HALT = "FULL_HALT"
 
 
 class EmergencyTrigger(StrEnum):

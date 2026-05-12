@@ -19,10 +19,10 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.regime import RiskZone
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.portfolio_state.aggregates import DrawdownState
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 
 @pytest.fixture()

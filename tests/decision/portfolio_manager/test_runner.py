@@ -19,6 +19,11 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AllowedModel, BaseAgentConfig
 from alphamind.decision.portfolio_manager.harness import (
@@ -45,19 +50,18 @@ from alphamind.decision.proposal_pre_processor.models import (
     ProposalPreProcessorBundle,
     StrategistSection,
 )
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     PortfolioManagerThesisComponentReader,
     PortfolioManagerView,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownState,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
 )
 from alphamind.portfolio_state.records.theses import ThesisComponent
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate

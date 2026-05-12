@@ -20,6 +20,11 @@ from typing import Any
 import pytest
 import yaml
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AgentName, AllowedModel, BaseAgentConfig
@@ -31,17 +36,16 @@ from alphamind.decision.strategist.runner import (
     run_strategist,
 )
 from alphamind.decision.strategist.validation import ValidationResult
-from alphamind.portfolio_state.consumers.strategist import StrategistView
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownState,
-    RegimeLabel,
-    RegimeTransitionState,
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
     RiskBudgetConsumption,
     RiskBudgetEntry,
-    RiskZone,
 )
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
+from alphamind.portfolio_state.consumers.strategist import StrategistView
 from alphamind.portfolio_state.snapshot import (
     DirectionalExposure,
     PortfolioPnL,

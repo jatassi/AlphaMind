@@ -13,7 +13,7 @@ from typing import Annotated, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+from alphamind._kernel.regime import RiskZone
 
 __all__ = [
     "RiskBudgetConsumption",

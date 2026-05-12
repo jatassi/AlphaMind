@@ -7,6 +7,18 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+from alphamind._kernel.regime import (
+    DrawdownTier as UpstreamDrawdownTier,
+)
+from alphamind._kernel.regime import (
+    RegimeLabel as UpstreamRegimeLabel,
+)
+from alphamind._kernel.regime import (
+    RegimeTransitionState as UpstreamRegimeTransitionState,
+)
+from alphamind._kernel.regime import (
+    RiskZone as UpstreamRiskZone,
+)
 from alphamind.config.models.guardrails import (
     BreachResponse as UpstreamBreachResponse,
 )
@@ -18,18 +30,6 @@ from alphamind.config.models.guardrails import (
 )
 from alphamind.config.models.guardrails import (
     ProgressiveTier as UpstreamProgressiveTier,
-)
-from alphamind.portfolio_state.records.capital import (
-    DrawdownTier as UpstreamDrawdownTier,
-)
-from alphamind.portfolio_state.records.capital import (
-    RegimeLabel as UpstreamRegimeLabel,
-)
-from alphamind.portfolio_state.records.capital import (
-    RegimeTransitionState as UpstreamRegimeTransitionState,
-)
-from alphamind.portfolio_state.records.capital import (
-    RiskZone as UpstreamRiskZone,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction as UpstreamDirection,

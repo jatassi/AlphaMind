@@ -35,6 +35,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.regime import RiskZone
 from alphamind.config.guardrails_helpers import (
     load_cumulative_drawdown_progressive_tiers,
 )
@@ -142,7 +143,6 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
     MarketInputs,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 __all__ = [
     "PhaseResult",
@@ -1211,13 +1211,13 @@ def _phase_e_validate_sql_row(
 
 
 def _phase_f_active_risk_parameters() -> Any:
+    from alphamind._kernel.regime import (
+        RegimeLabel,
+        RegimeTransitionState,
+    )
     from alphamind.portfolio_state.aggregates.risk_parameters import (
         ActiveRiskParameterEntry,
         ActiveRiskParameterSet,
-    )
-    from alphamind.portfolio_state.records.capital import (
-        RegimeLabel,
-        RegimeTransitionState,
     )
 
     entry = ActiveRiskParameterEntry.model_validate(
@@ -1252,11 +1252,10 @@ def _phase_f_phase_1_enforcement_result() -> Any:
     unchanged. The resulting bundle is the canonical input to
     :func:`make_active_risk_parameters_provider`.
     """
+    from alphamind._kernel.regime import RegimeTransitionState, RiskZone
     from alphamind.config.models.regimes import Regime
     from alphamind.execution.guardrail_enforcement import compose_phase_1_enforcement
     from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-    from alphamind.portfolio_state.records.capital import RegimeTransitionState
-    from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
     from alphamind.risk_guardrails.regime_adaptation import (
         RegimeAdaptationOutput,
         RegimeAdaptationState,

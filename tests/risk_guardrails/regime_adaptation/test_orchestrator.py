@@ -25,6 +25,11 @@ import yaml
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.config.loaders import (
     load_modes,
     load_overlays,
@@ -55,14 +60,11 @@ from alphamind.distillation.calibration import CalibrationState
 from alphamind.distillation.regime import RegimeLabel as DistillationRegimeLabel
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
+from alphamind.portfolio_state.aggregates.risk_budget import (
     RiskBudgetConsumption,
     RiskBudgetEntry,
-    RiskZone,
 )
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,

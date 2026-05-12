@@ -13,12 +13,12 @@ Reading: the story file at
 
 from __future__ import annotations
 
+from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.config.models.regimes import Regime
 from alphamind.risk_guardrails.regime_adaptation.types import (
     LOOSENING_INVOCATIONS,
     NextTransitionDecision,
     RegimeAdaptationState,
-    RegimeTransitionState,
 )
 
 _REGIME_VOLATILITY_LADDER: tuple[Regime, ...] = (

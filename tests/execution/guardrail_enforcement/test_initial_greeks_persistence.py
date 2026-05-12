@@ -51,6 +51,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 # ``submit_envelope_mcp``. Mirrors the pattern in
 # ``tests/execution/oms/test_submit_envelope_mcp.py``.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+)
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.decision.portfolio_manager.models import (
     CriterionAssessment,
@@ -106,13 +110,9 @@ from alphamind.persistence.session import (
     make_async_session_factory,
     make_engine,
 )
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-)
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.positions import OptionsPositionDetails
 from alphamind.risk_guardrails.guardrail_evaluation import (

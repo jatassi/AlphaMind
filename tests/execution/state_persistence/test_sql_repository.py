@@ -16,6 +16,11 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.execution.regt_margin_attribution import RegTExcessAggregates
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.activity_log import (
@@ -62,6 +67,7 @@ from alphamind.persistence.session import (
     make_async_session_factory,
     make_engine,
 )
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
@@ -76,13 +82,7 @@ from alphamind.portfolio_state.records.activity_log import (
     PositionOpenedDetail,
     PositionOpenMechanism,
 )
-from alphamind.portfolio_state.records.capital import (
-    CashLedger,
-    DrawdownState,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskZone,
-)
+from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegEnforcement,

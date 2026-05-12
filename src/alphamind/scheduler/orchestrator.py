@@ -50,6 +50,11 @@ from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.config.guardrails_helpers import (
     load_cumulative_drawdown_progressive_tiers,
 )
@@ -96,6 +101,10 @@ from alphamind.pipeline.analysis import run_analysis_pipeline
 from alphamind.pipeline.decision import run_decision_pipeline
 from alphamind.portfolio_state import load_portfolio_state_config
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.consumers.synthesizer import (
     SnapshotBackedSynthesizerReader,
@@ -108,12 +117,6 @@ from alphamind.portfolio_state.pricing import (
     PriceSource,
     StubCurrentPriceProvider,
 )
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
-)
 from alphamind.risk_guardrails.breach_behavior.halt_state import compute_halt_state
 from alphamind.risk_guardrails.breach_behavior.types import HaltState
 from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -121,7 +124,6 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     LibraryConfig,
     MarketInputs,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 from alphamind.risk_guardrails.regime_adaptation.event_calendar import (
     load_event_calendar,
 )

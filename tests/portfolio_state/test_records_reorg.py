@@ -5,9 +5,9 @@ These tests pin three invariants:
 1. New subpackages ``events`` and ``aggregates`` exist alongside ``records`` under
    ``alphamind.portfolio_state``, and each declares a curated ``__all__`` public API.
 2. Symbols that moved (``ActivityLogEntry``, ``ThesisQualityAggregate``, the
-   capital.py split families) live at their new canonical home AND remain
-   importable from their former path — and both imports return the *same* class
-   object (re-export via Python's import machinery, not duplication).
+   former capital.py members) live at their new canonical home. The capital.py
+   re-export shim was deleted in ALP-457; consumers now import each member
+   directly from its canonical module.
 3. No new circular imports are introduced by the reorg.
 """
 
@@ -138,22 +138,21 @@ def test_trailing_window_canonical_home_is_aggregates() -> None:
 # ---------------------------------------------------------------------------
 # capital.py split: cash families -> records/cash.py
 # ---------------------------------------------------------------------------
+#
+# ALP-347 split capital.py; ALP-457 deleted the re-export shim entirely.
+# Identity-check fixtures below pin each former member at its canonical home.
 
 
 def test_cash_ledger_canonical_home_is_records_cash() -> None:
-    from alphamind.portfolio_state.records.capital import CashLedger as FromCapital
-    from alphamind.portfolio_state.records.cash import CashLedger as FromCash
+    from alphamind.portfolio_state.records.cash import CashLedger
 
-    assert FromCapital is FromCash
+    assert isinstance(CashLedger, type)
 
 
 def test_unsettled_proceeds_entry_canonical_home_is_records_cash() -> None:
-    from alphamind.portfolio_state.records.capital import (
-        UnsettledProceedsEntry as FromCapital,
-    )
-    from alphamind.portfolio_state.records.cash import UnsettledProceedsEntry as FromCash
+    from alphamind.portfolio_state.records.cash import UnsettledProceedsEntry
 
-    assert FromCapital is FromCash
+    assert isinstance(UnsettledProceedsEntry, type)
 
 
 # ---------------------------------------------------------------------------
@@ -162,10 +161,9 @@ def test_unsettled_proceeds_entry_canonical_home_is_records_cash() -> None:
 
 
 def test_drawdown_state_canonical_home_is_aggregates_drawdown() -> None:
-    from alphamind.portfolio_state.aggregates.drawdown import DrawdownState as FromAggregates
-    from alphamind.portfolio_state.records.capital import DrawdownState as FromCapital
+    from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 
-    assert FromAggregates is FromCapital
+    assert isinstance(DrawdownState, type)
 
 
 # ---------------------------------------------------------------------------
@@ -174,21 +172,15 @@ def test_drawdown_state_canonical_home_is_aggregates_drawdown() -> None:
 
 
 def test_risk_budget_entry_canonical_home_is_aggregates_risk_budget() -> None:
-    from alphamind.portfolio_state.aggregates.risk_budget import (
-        RiskBudgetEntry as FromAggregates,
-    )
-    from alphamind.portfolio_state.records.capital import RiskBudgetEntry as FromCapital
+    from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetEntry
 
-    assert FromAggregates is FromCapital
+    assert isinstance(RiskBudgetEntry, type)
 
 
 def test_risk_budget_consumption_canonical_home_is_aggregates_risk_budget() -> None:
-    from alphamind.portfolio_state.aggregates.risk_budget import (
-        RiskBudgetConsumption as FromAggregates,
-    )
-    from alphamind.portfolio_state.records.capital import RiskBudgetConsumption as FromCapital
+    from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 
-    assert FromAggregates is FromCapital
+    assert isinstance(RiskBudgetConsumption, type)
 
 
 def test_assert_unique_rule_ids_canonical_home_is_aggregates_risk_budget() -> None:
@@ -204,23 +196,15 @@ def test_assert_unique_rule_ids_canonical_home_is_aggregates_risk_budget() -> No
 
 
 def test_active_risk_parameter_entry_canonical_home_is_aggregates_risk_parameters() -> None:
-    from alphamind.portfolio_state.aggregates.risk_parameters import (
-        ActiveRiskParameterEntry as FromAggregates,
-    )
-    from alphamind.portfolio_state.records.capital import (
-        ActiveRiskParameterEntry as FromCapital,
-    )
+    from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterEntry
 
-    assert FromAggregates is FromCapital
+    assert isinstance(ActiveRiskParameterEntry, type)
 
 
 def test_active_risk_parameter_set_canonical_home_is_aggregates_risk_parameters() -> None:
-    from alphamind.portfolio_state.aggregates.risk_parameters import (
-        ActiveRiskParameterSet as FromAggregates,
-    )
-    from alphamind.portfolio_state.records.capital import ActiveRiskParameterSet as FromCapital
+    from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 
-    assert FromAggregates is FromCapital
+    assert isinstance(ActiveRiskParameterSet, type)
 
 
 # ---------------------------------------------------------------------------
@@ -277,27 +261,6 @@ def test_aggregates_init_exposes_tier3_types() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Capital.py shim still re-exports the four risk-guardrail enums
-# ---------------------------------------------------------------------------
-
-
-def test_capital_shim_still_reexports_regime_label() -> None:
-    """ALP-344's invariant must still hold post-reorg: capital.py re-exports
-    the four risk-guardrail enums for backward compat."""
-    from alphamind.portfolio_state.records.capital import RegimeLabel as FromCapital
-    from alphamind.risk_guardrails.regime_adaptation.types import RegimeLabel as FromCanonical
-
-    assert FromCapital is FromCanonical
-
-
-def test_capital_shim_still_reexports_risk_zone() -> None:
-    from alphamind.portfolio_state.records.capital import RiskZone as FromCapital
-    from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone as FromCanonical
-
-    assert FromCapital is FromCanonical
-
-
-# ---------------------------------------------------------------------------
 # Circular-import guard
 # ---------------------------------------------------------------------------
 
@@ -315,7 +278,6 @@ def test_no_circular_imports_among_new_modules() -> None:
     importlib.import_module("alphamind.portfolio_state.aggregates.drawdown")
     importlib.import_module("alphamind.portfolio_state.aggregates.risk_budget")
     importlib.import_module("alphamind.portfolio_state.aggregates.risk_parameters")
-    # Old paths must still resolve.
+    # Activity log + thesis quality were also previously re-exported from records/.
     importlib.import_module("alphamind.portfolio_state.records.activity_log")
     importlib.import_module("alphamind.portfolio_state.records.thesis_quality")
-    importlib.import_module("alphamind.portfolio_state.records.capital")

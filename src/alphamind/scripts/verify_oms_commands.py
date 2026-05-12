@@ -669,15 +669,15 @@ def _phase_3_active_risk_parameters() -> Any:
     The result preserves the prior inline construction's values while routing
     through the canonical Phase-1 entry point.
     """
+    from alphamind._kernel.regime import (
+        RegimeLabel,
+        RegimeTransitionState,
+        RiskZone,
+    )
     from alphamind.config.models.regimes import Regime
     from alphamind.execution.guardrail_enforcement import compose_phase_1_enforcement
     from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-    from alphamind.portfolio_state.records.capital import (
-        ActiveRiskParameterSet,
-        RegimeLabel,
-        RegimeTransitionState,
-    )
-    from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+    from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
     from alphamind.risk_guardrails.regime_adaptation import (
         RegimeAdaptationOutput,
         RegimeAdaptationState,
@@ -739,9 +739,7 @@ def _phase_3_validation_state() -> Any:
     """Build the cumulative ValidationToolState the engine-stub re-runs guardrail
     checks against. Sized so the OPEN command's $5,000 stays well under all
     per-rule headroom on a $100k portfolio."""
-    from alphamind.portfolio_state.records.capital import (
-        RiskBudgetConsumption,
-    )
+    from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
     from alphamind.risk_guardrails.guardrail_evaluation import (
         ContractType,
         EscalationZones,

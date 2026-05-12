@@ -8,21 +8,21 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     SnapshotBackedThesisComponentReader,
 )
 from alphamind.portfolio_state.consumers.portfolio_manager_thesis_mcp import (
     build_get_thesis_components_mcp_server,
 )
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    CashLedger,
-    DrawdownState,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskZone,
-)
+from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,

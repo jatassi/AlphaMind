@@ -24,6 +24,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.regime import RiskZone
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationContext,
     InvocationHandle,
@@ -115,7 +116,6 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 _NOW = datetime(2026, 5, 9, 13, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-cash-div-2026-05-09T13:00:00Z"

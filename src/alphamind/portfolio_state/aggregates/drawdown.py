@@ -11,8 +11,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from alphamind.risk_guardrails.breach_behavior.types import DrawdownTier
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+from alphamind._kernel.regime import DrawdownTier, RiskZone
 
 __all__ = ["DrawdownState"]
 

@@ -1133,10 +1133,10 @@ def wave3_boundary_fix(verbose: bool = False) -> tuple[int, int, list[dict[str, 
     )
 
     def _check_identity() -> None:
-        from alphamind.portfolio_state.records.capital import RegimeLabel as A
+        from alphamind._kernel.regime import RegimeLabel as A
         from alphamind.risk_guardrails.regime_adaptation.types import RegimeLabel as B
 
-        assert A is B, "RegimeLabel identity check failed: capital.py exports different object"
+        assert A is B, "RegimeLabel identity check failed: _kernel and risk_guardrails diverge"
 
     results.append(_run_case("02-regime_label_identity_across_import_paths", _check_identity))
 

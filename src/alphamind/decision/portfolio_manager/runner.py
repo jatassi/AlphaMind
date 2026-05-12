@@ -49,13 +49,11 @@ from alphamind.execution.oms.submit_envelope_mcp import (
     SubmissionLogEntry,
     build_initial_submit_envelope_state,
 )
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.consumers.portfolio_manager import (
     PortfolioManagerThesisComponentReader,
     PortfolioManagerView,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RiskBudgetConsumption,
 )
 from alphamind.portfolio_state.records.orders import OrderRecord
 from alphamind.portfolio_state.records.positions import (

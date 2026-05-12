@@ -7,6 +7,21 @@ from itertools import pairwise
 
 import pytest
 
+from alphamind._kernel.regime import (
+    DrawdownTier,
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import (
+    RiskBudgetConsumption,
+    RiskBudgetEntry,
+)
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
 from alphamind.portfolio_state.consumers.strategist import StrategistPositionView
 from alphamind.portfolio_state.records.activity_log import (
@@ -17,17 +32,6 @@ from alphamind.portfolio_state.records.activity_log import (
     PositionClosedDetail,
     PositionExitMethod,
     PositionReducedDetail,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownState,
-    DrawdownTier,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-    RiskBudgetEntry,
-    RiskZone,
 )
 from alphamind.portfolio_state.records.positions import (
     Direction,

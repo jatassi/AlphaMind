@@ -10,7 +10,8 @@ if TYPE_CHECKING:
     # canonical homes under ``risk_guardrails/``; eager import here would
     # cycle when capital is loaded by way of the regime-adaptation package.
     # Both records appear only in annotations, so the deferred form is sound.
-    from alphamind.portfolio_state.records.capital import ActiveRiskParameterSet, CashLedger
+    from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
+from alphamind.portfolio_state.records.cash import CashLedger
 
 
 def compute_cash_pct_of_portfolio(

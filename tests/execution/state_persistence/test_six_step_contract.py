@@ -39,6 +39,11 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.decision.portfolio_manager.models import (
     CriterionAssessment,
     OpenCommand,
@@ -116,11 +121,7 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
 )
-from alphamind.portfolio_state.records.capital import (
-    CashLedger,
-    RegimeLabel,
-    RegimeTransitionState,
-)
+from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
     BracketLegEnforcement,
@@ -157,7 +158,6 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
     MarketInputs,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-2026-05-08T12:00:00Z-six-step"

@@ -11,16 +11,14 @@ from __future__ import annotations
 import pydantic
 import pytest
 
+from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.config.models.regimes import Regime
 from alphamind.execution.guardrail_enforcement import (
     Phase1EnforcementResult,
     compose_active_risk_parameters,
     compose_phase_1_enforcement,
 )
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RegimeTransitionState,
-)
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.risk_guardrails.breach_behavior import DrawdownTier
 from alphamind.risk_guardrails.regime_adaptation import (
     RegimeAdaptationOutput,

@@ -413,13 +413,13 @@ def test_wave3_boundary_fix_returns_2_0() -> None:
 
 
 def test_wave3_regime_label_import_from_risk_guardrails() -> None:
-    from alphamind.risk_guardrails.regime_adaptation.types import RegimeLabel
+    from alphamind._kernel.regime import RegimeLabel
 
     assert RegimeLabel is not None
 
 
 def test_wave3_regime_label_identity() -> None:
-    from alphamind.portfolio_state.records.capital import RegimeLabel as A
+    from alphamind._kernel.regime import RegimeLabel as A
     from alphamind.risk_guardrails.regime_adaptation.types import RegimeLabel as B
 
     assert A is B

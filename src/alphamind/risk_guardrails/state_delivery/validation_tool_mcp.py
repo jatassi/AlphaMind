@@ -23,10 +23,8 @@ from typing import Any
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from pydantic import ValidationError
 
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RiskBudgetConsumption,
-)
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.risk_guardrails.guardrail_evaluation import (
     FeatureFlagsView,
     LibraryConfig,

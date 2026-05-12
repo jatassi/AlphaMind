@@ -21,11 +21,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import ValidationError
 
+from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.config.models.guardrails import ProgressiveTier
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RegimeTransitionState,
-)
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.views.positions import PositionView
 from alphamind.risk_guardrails.breach_behavior import (
     BreachBehaviorConfig,

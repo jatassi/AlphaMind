@@ -18,16 +18,18 @@ from typing import Any
 
 import pytest
 
-from alphamind.config.models.guardrails import ProgressiveTier
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    DrawdownState,
+from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
+    RiskZone,
+)
+from alphamind.config.models.guardrails import ProgressiveTier
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
 )
 from alphamind.risk_guardrails.breach_behavior.types import DrawdownTier
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 # ---------------------------------------------------------------------------
 # Fixture progressive tiers — mirror config/guardrails.yaml

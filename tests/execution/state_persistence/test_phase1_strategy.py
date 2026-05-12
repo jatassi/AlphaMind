@@ -28,6 +28,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.regime import RiskZone
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.context import (
@@ -129,7 +130,6 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     MarketInputs,
     RealizedVolEntry,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-2026-05-08T12:00:00Z-strat"

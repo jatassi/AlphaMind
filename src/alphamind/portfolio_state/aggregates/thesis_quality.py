@@ -9,7 +9,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from alphamind.risk_guardrails.regime_adaptation.types import RegimeLabel
+from alphamind._kernel.regime import RegimeLabel
 
 __all__ = [
     "AlphaBetaDecomposition",

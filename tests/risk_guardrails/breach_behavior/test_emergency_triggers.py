@@ -8,10 +8,10 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from alphamind.portfolio_state.records.capital import (
+from alphamind._kernel.regime import RiskZone
+from alphamind.portfolio_state.aggregates.risk_budget import (
     RiskBudgetConsumption,
     RiskBudgetEntry,
-    RiskZone,
 )
 from alphamind.risk_guardrails.breach_behavior import (
     BreachBehaviorConfig,

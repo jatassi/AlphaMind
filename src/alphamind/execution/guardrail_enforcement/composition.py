@@ -22,10 +22,8 @@ from alphamind.risk_guardrails.breach_behavior import (
 
 if TYPE_CHECKING:
     from alphamind.config.models.guardrails import ProgressiveTier
-    from alphamind.portfolio_state.records.capital import (
-        ActiveRiskParameterSet,
-        DrawdownState,
-    )
+    from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+    from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
     from alphamind.risk_guardrails.breach_behavior.types import DrawdownTier
 
 

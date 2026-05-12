@@ -23,10 +23,8 @@ if TYPE_CHECKING:
     # risk-guardrail enums from this package. Eager import would cycle.
     # Annotation-only usage is sound under ``from __future__ import
     # annotations``.
-    from alphamind.portfolio_state.records.capital import (
-        ActiveRiskParameterSet,
-        DrawdownState,
-    )
+    from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 
 _DAILY_DRAWDOWN_RULE_ID = "daily_drawdown_pct"
 

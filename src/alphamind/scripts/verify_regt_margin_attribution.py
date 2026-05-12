@@ -57,6 +57,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.regime import RiskZone
 from alphamind.execution.regt_margin_attribution import (
     load_regt_margin_attribution_config,
 )
@@ -159,10 +160,7 @@ from alphamind.risk_guardrails.guardrail_evaluation.iv_sourcing import (
     IvQuote,
     IvSurfaceEntry,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import (
-    ContractType,
-    RiskZone,
-)
+from alphamind.risk_guardrails.guardrail_evaluation.types import ContractType
 
 __all__ = [
     "EXIT_FAIL",
@@ -1127,6 +1125,10 @@ async def _run_assembler_for_aggregates(
     repository and copies the three fields onto ``CashLedger`` — the same
     delivery surface the command-center consumes.
     """
+    from alphamind._kernel.regime import (
+        RegimeLabel,
+        RegimeTransitionState,
+    )
     from alphamind.config.guardrails_helpers import (
         load_cumulative_drawdown_progressive_tiers,
     )
@@ -1141,10 +1143,6 @@ async def _run_assembler_for_aggregates(
     from alphamind.portfolio_state.aggregates.risk_parameters import (
         ActiveRiskParameterEntry,
         ActiveRiskParameterSet,
-    )
-    from alphamind.portfolio_state.records.capital import (
-        RegimeLabel,
-        RegimeTransitionState,
     )
     from alphamind.risk_guardrails.regime_adaptation import (
         RegimeAdaptationOutput,

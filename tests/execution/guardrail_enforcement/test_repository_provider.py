@@ -14,7 +14,7 @@ from alphamind.execution.guardrail_enforcement import (
     Phase1EnforcementResult,
     make_active_risk_parameters_provider,
 )
-from alphamind.portfolio_state.records.capital import ActiveRiskParameterSet
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from tests.execution.guardrail_enforcement._helpers import baseline_normal_parameters
 
 

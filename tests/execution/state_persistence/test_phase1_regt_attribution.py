@@ -22,6 +22,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.regime import RiskZone
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationContext,
@@ -85,7 +86,6 @@ from alphamind.risk_guardrails.guardrail_evaluation import (
     FixtureIvProvider,
     MarketInputs,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 # ---------------------------------------------------------------------------
 # Constants

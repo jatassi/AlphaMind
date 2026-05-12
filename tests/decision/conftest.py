@@ -14,15 +14,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.config.models.regimes import Regime
 from alphamind.execution.guardrail_enforcement import compose_phase_1_enforcement
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
-)
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.risk_guardrails.regime_adaptation import (
     RegimeAdaptationOutput,
     RegimeAdaptationState,
@@ -30,7 +30,7 @@ from alphamind.risk_guardrails.regime_adaptation import (
 from tests.execution.guardrail_enforcement._helpers import TIERS
 
 if TYPE_CHECKING:
-    from alphamind.portfolio_state.records.capital import ActiveRiskParameterEntry
+    from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterEntry
 
 
 _GUARDRAIL_LABEL_TO_REGIME: dict[RegimeLabel, Regime] = {

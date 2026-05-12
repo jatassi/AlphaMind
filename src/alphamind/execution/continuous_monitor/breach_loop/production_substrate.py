@@ -29,6 +29,10 @@ from typing import TYPE_CHECKING, Any, cast
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+)
 from alphamind.config.loaders import read_yaml_file
 from alphamind.config.models.guardrails import ProgressiveTier
 from alphamind.config.models.main import MainConfig
@@ -56,6 +60,10 @@ from alphamind.execution.state_persistence.repository import (
 )
 from alphamind.execution.state_persistence.tables.invocations import InvocationRow
 from alphamind.portfolio_state import PortfolioStateConfig
+from alphamind.portfolio_state.aggregates.risk_parameters import (
+    ActiveRiskParameterEntry,
+    ActiveRiskParameterSet,
+)
 from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.consumers.synthesizer import adapt_ticker_sector_resolver
 from alphamind.portfolio_state.library_snapshot import to_library_snapshot
@@ -63,12 +71,6 @@ from alphamind.portfolio_state.pricing import (
     PriceQuote,
     PriceSource,
     StubCurrentPriceProvider,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterEntry,
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
 )
 from alphamind.risk_guardrails.breach_behavior import (
     PositionLiquidity,

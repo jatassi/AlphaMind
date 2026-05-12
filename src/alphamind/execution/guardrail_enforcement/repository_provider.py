@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from alphamind.execution.guardrail_enforcement.orchestrator import Phase1EnforcementResult
-from alphamind.portfolio_state.records.capital import ActiveRiskParameterSet
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 
 
 def make_active_risk_parameters_provider(

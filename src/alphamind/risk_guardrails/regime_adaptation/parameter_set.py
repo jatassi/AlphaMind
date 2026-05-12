@@ -21,6 +21,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from alphamind._kernel.regime import RegimeLabel
 from alphamind.config.models.overlays import Overlay
 from alphamind.config.models.regimes import Regime
 from alphamind.portfolio_state.computations.risk_budget import (
@@ -28,7 +29,6 @@ from alphamind.portfolio_state.computations.risk_budget import (
 )
 from alphamind.risk_guardrails.regime_adaptation.types import (
     NextTransitionDecision,
-    RegimeLabel,
     RuleMetadata,
     overlays_to_strings,
 )
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     # import would cycle through capital → regime_adaptation package init →
     # this module. The runtime constructions inside ``assemble_active_risk_parameter_set``
     # and ``_build_entry`` import lazily.
-    from alphamind.portfolio_state.records.capital import (
+    from alphamind.portfolio_state.aggregates.risk_parameters import (
         ActiveRiskParameterEntry,
         ActiveRiskParameterSet,
     )
@@ -120,7 +120,7 @@ def assemble_active_risk_parameter_set(
         raise ValueError(msg)
 
     # Lazy import — see TYPE_CHECKING block at top of module for the cycle rationale.
-    from alphamind.portfolio_state.records.capital import ActiveRiskParameterSet
+    from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 
     tentative = ActiveRiskParameterSet(
         regime_label=_GUARDRAIL_REGIME_TO_PORTFOLIO_STATE_LABEL[next_transition.active_regime],
@@ -159,7 +159,7 @@ def _build_entry(
 ) -> ActiveRiskParameterEntry:
     """Compose the per-rule ``ActiveRiskParameterEntry``."""
     # Lazy import — see TYPE_CHECKING block at top of module for the cycle rationale.
-    from alphamind.portfolio_state.records.capital import ActiveRiskParameterEntry
+    from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterEntry
 
     combined_multiplier = interpolated_multiplier * overlay_multiplier
     return ActiveRiskParameterEntry(

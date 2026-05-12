@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from alphamind.portfolio_state.records.capital import CashLedger
+from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.repository import PortfolioPnLInputs
 from alphamind.portfolio_state.snapshot import PortfolioPnL
 from alphamind.portfolio_state.views.positions import PositionView

@@ -11,10 +11,10 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from alphamind.portfolio_state.records.capital import (
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_parameters import (
     ActiveRiskParameterEntry,
     ActiveRiskParameterSet,
-    DrawdownState,
 )
 from alphamind.risk_guardrails.breach_behavior import (
     DrawdownTier,

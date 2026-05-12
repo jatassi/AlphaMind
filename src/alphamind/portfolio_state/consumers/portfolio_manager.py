@@ -6,6 +6,9 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
+from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.consumers.analyst import (
     AnalystAbandonedOpening,
     _project_abandoned_openings,
@@ -17,11 +20,6 @@ from alphamind.portfolio_state.consumers.strategist import (
     _project_position_views,
 )
 from alphamind.portfolio_state.records.activity_log import ActivityLogEntry
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    DrawdownState,
-    RiskBudgetConsumption,
-)
 from alphamind.portfolio_state.records.theses import RecentThesisResolution, ThesisComponent
 from alphamind.portfolio_state.records.thesis_quality import ThesisQualityAggregate
 from alphamind.portfolio_state.snapshot import (

@@ -24,65 +24,26 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-# ---------------------------------------------------------------------------
-# Volatility-regime enums (canonical homes — re-exported from
-# ``portfolio_state.records.capital`` for backward compatibility).
-#
-# These two enums are defined *before* every other import in this module so
-# that downstream re-exporters (``portfolio_state.records.capital`` and
-# ``alphamind.persistence.models``, both transitively pulled in by the
-# config / distillation imports below) can resolve them without hitting a
-# partial-load ``ImportError``.
-# ---------------------------------------------------------------------------
-
-
-class RegimeLabel(StrEnum):
-    """Volatility regime classification."""
-
-    LOW_VOL = "LOW_VOL"
-    NORMAL = "NORMAL"
-    ELEVATED = "ELEVATED"
-    CRISIS = "CRISIS"
-
-
-class RegimeTransitionState(StrEnum):
-    """Whether the system is stable or transitioning between volatility regimes."""
-
-    STABLE = "STABLE"
-    TIGHTENING = "TIGHTENING"
-    LOOSENING = "LOOSENING"
-
-
-# The imports below sit *after* the enum definitions to break the import
-# cycle: ``alphamind.persistence.models`` and
-# ``alphamind.portfolio_state.records.capital`` both need
-# ``RegimeLabel``/``RegimeTransitionState`` from this module, and several
-# config modules transitively load through them. The trailing E402
-# suppressions on each import are therefore deliberate.
-from alphamind.config.models.overlays import EventType, Overlay  # noqa: E402
-from alphamind.config.models.regimes import Regime  # noqa: E402
-from alphamind.config.resolver import LoadedConfig  # noqa: E402
-from alphamind.distillation.calibration import CalibrationState  # noqa: E402
-from alphamind.portfolio_state.views.positions import PositionView  # noqa: E402
+# ``RegimeLabel`` and ``RegimeTransitionState`` are re-exported from
+# :mod:`alphamind._kernel.regime` (ALP-457 moved their canonical home).
+# External consumers may still import them from this module for backward
+# compatibility; new code should import from ``alphamind._kernel.regime``.
+# The redundant ``as`` form marks the names as explicit re-exports for mypy.
+from alphamind._kernel.regime import RegimeLabel as RegimeLabel
+from alphamind._kernel.regime import RegimeTransitionState as RegimeTransitionState
+from alphamind.config.models.overlays import EventType, Overlay
+from alphamind.config.models.regimes import Regime
+from alphamind.config.resolver import LoadedConfig
+from alphamind.distillation.calibration import CalibrationState
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
+from alphamind.portfolio_state.views.positions import PositionView
 
 if TYPE_CHECKING:
     # ``DistillationRegimeLabel`` (from ``distillation.regime``) is used only
     # as an annotation; importing it at runtime would pull in the
-    # distillation baselines module, which transitively loads
-    # ``persistence.models`` — a back-reference into this module via
-    # ``RegimeTransitionState``.
+    # distillation baselines module unnecessarily.
     from alphamind.distillation.regime import RegimeLabel as DistillationRegimeLabel
-
-    # ``ActiveRiskParameterSet`` and ``RiskBudgetConsumption`` consume the
-    # enums defined above, so importing them eagerly would cycle through
-    # ``portfolio_state.records.capital``. They appear only as field-type
-    # annotations on frozen dataclasses, so ``from __future__ import
-    # annotations`` defers evaluation to string form — runtime imports are
-    # not required.
-    from alphamind.portfolio_state.records.capital import (
-        ActiveRiskParameterSet,
-        RiskBudgetConsumption,
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.regime import RiskZone
 from alphamind.execution.broker_adapter.queries import PositionSnapshot
 from alphamind.execution.corporate_actions.types import (
     AlpacaPositionLookup,
@@ -116,7 +117,6 @@ from alphamind.portfolio_state.records.theses import (
     ThesisRecord,
     ThesisRecordStatus,
 )
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 
 _NOW = datetime(2026, 5, 8, 12, 0, 0, tzinfo=UTC)
 _INV_ID = "inv-spin-2026-05-08T12:00:00Z"

@@ -97,13 +97,15 @@ async def _pipeline_inputs_from_fixture(
     """
     from types import MappingProxyType
 
-    from alphamind.portfolio_state.assembler import assemble_snapshot
-    from alphamind.portfolio_state.records.capital import (
-        ActiveRiskParameterEntry,
-        ActiveRiskParameterSet,
+    from alphamind._kernel.regime import (
         RegimeLabel,
         RegimeTransitionState,
     )
+    from alphamind.portfolio_state.aggregates.risk_parameters import (
+        ActiveRiskParameterEntry,
+        ActiveRiskParameterSet,
+    )
+    from alphamind.portfolio_state.assembler import assemble_snapshot
     from alphamind.portfolio_state.repository import StubPortfolioStateRepository
     from alphamind.risk_guardrails.guardrail_evaluation import (
         FeatureFlagsView,
@@ -216,8 +218,8 @@ def _progressive_tiers_fixture() -> tuple[Any, ...]:
 
 def _build_regime_output(parameters: Any) -> Any:
     """Build a fixture ``RegimeAdaptationOutput`` carrying *parameters*."""
+    from alphamind._kernel.regime import RegimeTransitionState
     from alphamind.config.models.regimes import Regime
-    from alphamind.portfolio_state.records.capital import RegimeTransitionState
     from alphamind.risk_guardrails.regime_adaptation import (
         RegimeAdaptationOutput,
         RegimeAdaptationState,

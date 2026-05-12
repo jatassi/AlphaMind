@@ -17,6 +17,10 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+)
 from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.decision.portfolio_manager.models import (
@@ -61,13 +65,9 @@ from alphamind.execution.oms.command_models import (
 from alphamind.execution.oms.command_models import (
     ThesisComponent as OMSThesisComponent,
 )
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.consumers.portfolio_manager import PortfolioManagerView
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RegimeLabel,
-    RegimeTransitionState,
-    RiskBudgetConsumption,
-)
 from alphamind.risk_guardrails.guardrail_evaluation import (
     ContractType,
     EscalationZones,

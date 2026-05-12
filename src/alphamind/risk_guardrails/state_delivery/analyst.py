@@ -5,14 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 
+from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
+from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.consumers.analyst import (
     AnalystAbandonedOpening,
     AnalystHeldPosition,
     AnalystView,
-)
-from alphamind.portfolio_state.records.capital import (
-    ActiveRiskParameterSet,
-    RiskBudgetConsumption,
 )
 from alphamind.portfolio_state.records.positions import Direction, InstrumentType
 from alphamind.risk_guardrails.state_delivery.config import StateDeliveryConfig

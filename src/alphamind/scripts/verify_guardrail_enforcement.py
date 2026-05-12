@@ -44,6 +44,11 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.regime import (
+    RegimeLabel,
+    RegimeTransitionState,
+    RiskZone,
+)
 from alphamind.config.guardrails_helpers import (
     load_cumulative_drawdown_progressive_tiers,
 )
@@ -84,15 +89,10 @@ from alphamind.portfolio_state.aggregates.risk_parameters import (
 )
 from alphamind.portfolio_state.assembler import assemble_snapshot
 from alphamind.portfolio_state.pricing import StubCurrentPriceProvider
-from alphamind.portfolio_state.records.capital import (
-    RegimeLabel,
-    RegimeTransitionState,
-)
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.positions import PositionRecord
 from alphamind.portfolio_state.repository import RepositoryConsistencyError
 from alphamind.risk_guardrails.breach_behavior.types import DrawdownTier
-from alphamind.risk_guardrails.guardrail_evaluation.types import RiskZone
 from alphamind.risk_guardrails.regime_adaptation import (
     RegimeAdaptationOutput,
     RegimeAdaptationState,

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     # which re-exports ``DrawdownTier`` from this package. Importing them at
     # runtime would cycle through capital → breach_behavior package init → this
     # module. They appear only in annotations, so deferring is sound.
-    from alphamind.portfolio_state.records.capital import (
+    from alphamind.portfolio_state.aggregates.risk_parameters import (
         ActiveRiskParameterEntry,
         ActiveRiskParameterSet,
     )
