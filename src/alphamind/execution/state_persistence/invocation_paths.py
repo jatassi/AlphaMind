@@ -1,9 +1,9 @@
 """Shared filename + directory constants for the per-invocation archive layout.
 
-Every writer and reader of files under ``<archive_root>/invocations/<id>/``
-imports its directory and filename strings from this module so the on-disk
-contract lives in one location. Renaming a path component is a single-line
-change here.
+Pins the ``invocations`` subdirectory and the two top-level per-invocation
+snapshot filenames (``resolved_config.json``, ``data_calibration_state.json``)
+that the orchestrator writes into ``<archive_root>/invocations/<id>/``.
+Renaming one of these components is a single-line change here.
 """
 
 from __future__ import annotations
