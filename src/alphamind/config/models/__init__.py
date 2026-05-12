@@ -17,6 +17,7 @@ from alphamind.config.models.assets import (
     DiscoveryVendor,
 )
 from alphamind.config.models.collector_schedule import CollectorEntry, CollectorScheduleConfig
+from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.data_sources import (
     BackoffStrategy,
     CategoryConfig,
@@ -186,6 +187,7 @@ __all__ = [
     "CollectorEntry",
     "CollectorScheduleConfig",
     "CommandType",
+    "ContinuousMonitorConfig",
     "CredibilityTier",
     "CriticalityTier",
     "CrossReferenceError",

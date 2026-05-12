@@ -75,6 +75,9 @@ class EventType(StrEnum):
     RISK_LIMIT_APPROACHED = "RISK_LIMIT_APPROACHED"
     RISK_PARAMETER_CHANGED = "RISK_PARAMETER_CHANGED"
     EMERGENCY_INVOCATION_REQUESTED = "EMERGENCY_INVOCATION_REQUESTED"
+    HALT_ACTIVATED = "HALT_ACTIVATED"
+    HALT_LIFTED = "HALT_LIFTED"
+    GREEKS_REFRESH_FAILED = "GREEKS_REFRESH_FAILED"
 
     # PM decision events
     PM_DECISION = "PM_DECISION"
@@ -552,6 +555,84 @@ class RiskParameterChangedDetail(BaseModel):
     regime_label: str
 
 
+_HALT_TYPE_LITERAL = Literal["daily_drawdown", "cumulative_drawdown_tier3"]
+
+
+class HaltActivatedDetail(BaseModel):
+    """Detail payload for ``HALT_ACTIVATED`` events.
+
+    Emitted by the continuous monitor's breach-evaluation loop (story 03b /
+    ALP-437) on the inactive→active halt transition. ``halt_type`` discriminates
+    daily-drawdown halts (drawdown reaches 100% of daily limit) from cumulative
+    tier-3 halts (cumulative drawdown reaches the ``FULL_HALT`` tier threshold).
+    ``current_drawdown_pct`` is the observed drawdown at the transition;
+    ``limit_pct`` is the limit value the drawdown crossed. ``detected_at`` is
+    tz-aware UTC — the tick timestamp the loop used for evaluation.
+    """
+
+    model_config = {"frozen": True}
+
+    halt_type: _HALT_TYPE_LITERAL
+    current_drawdown_pct: float
+    limit_pct: float
+    detected_at: datetime
+
+    @model_validator(mode="after")
+    def _validate_detected_at_tz_aware(self) -> HaltActivatedDetail:
+        if self.detected_at.tzinfo is None:
+            msg = "detected_at must be tz-aware UTC"
+            raise ValueError(msg)
+        return self
+
+
+class HaltLiftedDetail(BaseModel):
+    """Detail payload for ``HALT_LIFTED`` events.
+
+    Symmetric with :class:`HaltActivatedDetail` — emitted on the active→inactive
+    halt transition. ``current_drawdown_pct`` is the drawdown reading at the
+    lift; ``lifted_at`` is the tick timestamp.
+    """
+
+    model_config = {"frozen": True}
+
+    halt_type: _HALT_TYPE_LITERAL
+    current_drawdown_pct: float
+    lifted_at: datetime
+
+    @model_validator(mode="after")
+    def _validate_lifted_at_tz_aware(self) -> HaltLiftedDetail:
+        if self.lifted_at.tzinfo is None:
+            msg = "lifted_at must be tz-aware UTC"
+            raise ValueError(msg)
+        return self
+
+
+class GreeksRefreshFailedDetail(BaseModel):
+    """Detail payload for ``GREEKS_REFRESH_FAILED`` events.
+
+    Emitted by the continuous monitor's greeks-refresh task (story 03a) when
+    the IV-fetch retry budget is exhausted for an open option / strategy
+    position. The position's prior greeks are preserved untouched; the
+    ``OptionGreeks.refresh_failed`` flag flips to ``True`` so downstream
+    consumers (breach evaluation, bracket-stop firing) widen their derivation
+    uncertainty buffer per
+    ``docs/design/05-execution-layer/architecture.md`` § 4d.
+
+    ``failure_reason`` is a short identifier suitable for log queries
+    (``"iv_fetch_timeout"``, ``"iv_fetch_404"``, ``"iv_fetch_db_error"``,
+    ``"iv_fetch_no_row"``). ``prior_as_of`` is the ``as_of_timestamp`` of
+    the now-preserved greeks; ``None`` when the position has never been
+    successfully refreshed (the first cycle after open observed the failure).
+    """
+
+    model_config = {"frozen": True}
+
+    underlying_ticker: str
+    occ_symbol: str
+    failure_reason: str
+    prior_as_of: datetime | None
+
+
 class EmergencyInvocationRequestedDetail(BaseModel):
     """Detail payload for ``EMERGENCY_INVOCATION_REQUESTED`` events.
 
@@ -792,6 +873,9 @@ AnyDetailType = (
     | RiskLimitApproachedDetail
     | RiskParameterChangedDetail
     | EmergencyInvocationRequestedDetail
+    | HaltActivatedDetail
+    | HaltLiftedDetail
+    | GreeksRefreshFailedDetail
     | PMDecisionDetail
     | CommandAbandonedDetail
     | EnvelopeParseFailedDetail
@@ -839,6 +923,9 @@ EVENT_TYPE_TO_DETAIL_CLASS: dict[EventType, type] = {
     EventType.RISK_LIMIT_APPROACHED: RiskLimitApproachedDetail,
     EventType.RISK_PARAMETER_CHANGED: RiskParameterChangedDetail,
     EventType.EMERGENCY_INVOCATION_REQUESTED: EmergencyInvocationRequestedDetail,
+    EventType.HALT_ACTIVATED: HaltActivatedDetail,
+    EventType.HALT_LIFTED: HaltLiftedDetail,
+    EventType.GREEKS_REFRESH_FAILED: GreeksRefreshFailedDetail,
     EventType.PM_DECISION: PMDecisionDetail,
     EventType.COMMAND_ABANDONED: CommandAbandonedDetail,
     EventType.ENVELOPE_PARSE_FAILED: EnvelopeParseFailedDetail,
@@ -882,6 +969,9 @@ EVENT_TYPE_TO_GROUP: dict[EventType, EventGroup] = {
     EventType.RISK_LIMIT_APPROACHED: EventGroup.RISK_AND_GUARDRAIL,
     EventType.RISK_PARAMETER_CHANGED: EventGroup.RISK_AND_GUARDRAIL,
     EventType.EMERGENCY_INVOCATION_REQUESTED: EventGroup.RISK_AND_GUARDRAIL,
+    EventType.HALT_ACTIVATED: EventGroup.RISK_AND_GUARDRAIL,
+    EventType.HALT_LIFTED: EventGroup.RISK_AND_GUARDRAIL,
+    EventType.GREEKS_REFRESH_FAILED: EventGroup.RISK_AND_GUARDRAIL,
     EventType.PM_DECISION: EventGroup.PM_DECISION,
     EventType.COMMAND_ABANDONED: EventGroup.PM_DECISION,
     EventType.ENVELOPE_PARSE_FAILED: EventGroup.PM_DECISION,

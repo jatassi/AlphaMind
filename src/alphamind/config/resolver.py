@@ -25,6 +25,7 @@ from typing import Any
 
 from alphamind.config.models.agents import AgentName, AgentsConfig
 from alphamind.config.models.assets import AssetsConfig
+from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.config.models.digest import DigestConfig
 from alphamind.config.models.execution import ExecutionConfig
 from alphamind.config.models.guardrails import GuardrailsConfig
@@ -125,6 +126,7 @@ class ResolvedConfig:
     digest: DigestConfig
     assets: AssetsConfig
     agents: AgentsConfig
+    continuous_monitor: ContinuousMonitorConfig
 
     def __hash__(self) -> int:
         # Pydantic frozen models with list/dict fields are not hashable, and
@@ -169,6 +171,7 @@ class ResolvedConfig:
                 self.digest.model_dump_json(),
                 self.assets.model_dump_json(),
                 self.agents.model_dump_json(),
+                self.continuous_monitor.model_dump_json(),
             )
         )
 
@@ -285,6 +288,7 @@ class LoadedConfig:
     digest: DigestConfig
     assets: AssetsConfig
     agents: AgentsConfig
+    continuous_monitor: ContinuousMonitorConfig
     profiles: Mapping[Profile, ProfileConfig]
     regimes: Mapping[Regime, RegimeConfig]
     modes: Mapping[Mode, ModeConfig]
@@ -364,4 +368,5 @@ def compose_config(inputs: LoadedConfig, runtime: RuntimeDimensions) -> Resolved
         digest=inputs.digest,
         assets=inputs.assets,
         agents=inputs.agents,
+        continuous_monitor=inputs.continuous_monitor,
     )

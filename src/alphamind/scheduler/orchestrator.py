@@ -50,8 +50,12 @@ from typing import Any, Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind.config.guardrails_helpers import (
+    load_cumulative_drawdown_progressive_tiers,
+)
 from alphamind.config.load import PipelineConfig
 from alphamind.config.loaders import load_overlays, read_yaml_file
+from alphamind.config.models.guardrails import ProgressiveTier
 from alphamind.config.models.main import MainConfig
 from alphamind.config.models.modes import Mode
 from alphamind.config.models.overlays import Overlay, PreEventOverlay, StressOverlay
@@ -130,6 +134,8 @@ from alphamind.risk_guardrails.regime_adaptation.stress_activator import (
 )
 from alphamind.risk_guardrails.regime_adaptation.types import (
     OverlayActivationDecision,
+    RegimeAdaptationOutput,
+    RegimeAdaptationState,
 )
 from alphamind.risk_guardrails.state_delivery.config import (
     StateDeliveryConfig,
@@ -507,6 +513,10 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     state_delivery_config: StateDeliveryConfig,
     sector_resolver: Callable[[str], str],
     assembled_snapshot: AssembledSnapshot,
+    repository: Any,
+    active_risk_parameters: ActiveRiskParameterSet,
+    runtime_active_regime: Regime,
+    progressive_tiers: tuple[ProgressiveTier, ...],
 ) -> dict[str, Any]:
     """Assemble the kwargs ``run_decision_pipeline`` requires.
 
@@ -515,6 +525,14 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
     :class:`AssembledSnapshot` (the same one the synthesizer reader
     projected from), and the Phase 1 market inputs (so the library
     projector reads consistent prices).
+
+    Threads the repository plus the synthetic
+    :class:`RegimeAdaptationOutput` + progressive-tier sequence the
+    pipeline runner needs to compose Phase 1 enforcement (story
+    ALP-433). The synthetic output wraps the current invocation's
+    folded ``active_risk_parameters`` until the regime-adaptation
+    orchestrator is threaded through the scheduler (deferred follow-up
+    per the inline comment on :func:`_build_active_risk_parameters`).
     """
     resolved = pipeline_config.resolved
 
@@ -535,6 +553,14 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
 
     return {
         "assembled_snapshot": assembled_snapshot,
+        "repository": repository,
+        "regime_output": _build_synthetic_regime_output(
+            active_risk_parameters=active_risk_parameters,
+            runtime_active_regime=runtime_active_regime,
+            invocation_id=invocation_id,
+            now=now,
+        ),
+        "progressive_tiers": progressive_tiers,
         "synthesizer_text": analysis_result.synthesizer_result.synthesis_text,
         "retrieval_store": analysis_result.synthesizer_result.retrieval_store,
         "mode": mode_literal,
@@ -554,6 +580,53 @@ def _build_decision_kwargs(  # noqa: PLR0913 — composition surface threads eac
         "timestamp": now,
         "archive_root": archive_root,
     }
+
+
+def _build_synthetic_regime_output(
+    *,
+    active_risk_parameters: ActiveRiskParameterSet,
+    runtime_active_regime: Regime,
+    invocation_id: str,
+    now: datetime,
+) -> RegimeAdaptationOutput:
+    """Wrap the scheduler's folded ``ActiveRiskParameterSet`` in a synthetic
+    :class:`RegimeAdaptationOutput`.
+
+    Pre-review triage shim — the scheduler does not yet invoke
+    :func:`resolve_regime_adaptation` (its rule_values already carry the
+    profile * regime * overlay fold ``compose_config`` produces). Story
+    ALP-433 still needs a :class:`RegimeAdaptationOutput` to thread into
+    the pipeline's Phase 1 enforcement composition; this helper wraps the
+    parameter set in an otherwise-empty bundle. When the regime-adaptation
+    orchestrator is wired into the scheduler (deferred follow-up), this
+    helper retires and ``resolve_regime_adaptation``'s real output flows
+    through.
+    """
+    state = RegimeAdaptationState(
+        as_of=now.isoformat().replace("+00:00", "Z"),
+        invocation_id=invocation_id,
+        active_regime=runtime_active_regime,
+        prior_regime=None,
+        transition_state=RegimeTransitionState.STABLE,
+        transition_invocations_remaining=0,
+        transition_started_invocation_id=None,
+        transition_origin_regime=None,
+        active_overlays=(),
+        distillation_regime_label=runtime_active_regime.value,
+        distillation_vix_level=0.0,
+        regime_skip_emergency=False,
+    )
+    return RegimeAdaptationOutput(
+        runtime_dimensions_active_regime=runtime_active_regime,
+        runtime_dimensions_active_overlays=(),
+        overlay_activation_decisions=(),
+        effective_limits={},
+        active_risk_parameter_set=active_risk_parameters,
+        regime_transition_breaches=(),
+        regime_skip_emergency=False,
+        new_persisted_state=state,
+        audit_log_entries=(),
+    )
 
 
 def _active_sectors_from_resolved(resolved: Any) -> set[str]:
@@ -817,7 +890,7 @@ async def run_invocation(
     # Step 4 — Between-phase snapshot read. Fresh sessions via the
     # repository factory now correctly see the committed Phase 1 state.
     sector_resolver = _build_sector_resolver(pipeline_config.resolved)
-    assembled = await _assemble_phase1_snapshot(
+    assembled, snapshot_repository = await _assemble_phase1_snapshot(
         session_factory=session_factory,
         invocation_id=invocation_id,
         state_persistence_config=state_persistence_config,
@@ -858,6 +931,10 @@ async def run_invocation(
         state_delivery_config=state_delivery_config,
         sector_resolver=sector_resolver,
         assembled_snapshot=assembled,
+        repository=snapshot_repository,
+        active_risk_parameters=active_risk_parameters,
+        runtime_active_regime=runtime.active_regime,
+        progressive_tiers=load_cumulative_drawdown_progressive_tiers(),
     )
     decision_result = await run_decision_pipeline(**decision_kwargs)
 
@@ -897,7 +974,7 @@ async def _assemble_phase1_snapshot(
     active_risk_parameters: ActiveRiskParameterSet,
     phase1_market_inputs: MarketInputs,
     sector_resolver: Callable[[str], str],
-) -> AssembledSnapshot:
+) -> tuple[AssembledSnapshot, Any]:
     """Build the post-Phase-1 portfolio snapshot once per invocation.
 
     Opens fresh sessions through the repository factory; relies on Phase 1
@@ -905,6 +982,11 @@ async def _assemble_phase1_snapshot(
     ``phase1_completed_at IS NULL → RepositoryConsistencyError`` guard
     sees a satisfied row. The same ``AssembledSnapshot`` feeds the
     synthesizer reader and the decision pipeline.
+
+    Returns the ``(AssembledSnapshot, repository)`` pair so the decision
+    pipeline's Phase 1 enforcement composition (story ALP-433) can read
+    ``DrawdownState`` from the same repository — one canonical view per
+    invocation.
     """
     portfolio_state_config = load_portfolio_state_config(_PORTFOLIO_STATE_CONFIG_PATH)
     active_provider, prior_provider = _make_repository_providers(active_risk_parameters)
@@ -922,13 +1004,14 @@ async def _assemble_phase1_snapshot(
     # guarantees the snapshot reflects post-Phase-1 reality even when the
     # orchestrator's logical ``now`` predates Phase 1's actual completion
     # (the common case under test fixtures with a frozen ``now``).
-    return await assemble_snapshot(
+    assembled = await assemble_snapshot(
         repository=repository,
         price_provider=price_provider,
         sector_resolver=adapt_ticker_sector_resolver(sector_resolver),
         config=portfolio_state_config,
         now=datetime.now(UTC),
     )
+    return assembled, repository
 
 
 async def _run_analysis(

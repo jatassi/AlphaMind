@@ -64,10 +64,14 @@ from alphamind.portfolio_state.events import (
     CorporateActionType,
     DistillationConfigChange,
     DistillationConfigChangeDetail,
+    EmergencyInvocationRequestedDetail,
     EventGroup,
     EventSource,
     EventType,
+    GreeksRefreshFailedDetail,
     GuardrailRejectionDetail,
+    HaltActivatedDetail,
+    HaltLiftedDetail,
     OrderFilledDetail,
     PMDecisionDetail,
     PMVerdict,
@@ -603,6 +607,94 @@ class TestActivityLogCodecRoundTrip:
         for original in entries:
             roundtripped = rehydrated_by_id[original.entry_id]
             assert roundtripped == original
+
+    async def test_round_trip_continuous_monitor_event_types(
+        self,
+        async_engine_and_factory: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    ) -> None:
+        """ALP-123 continuous-monitor event types round-trip losslessly.
+
+        Covers the four new ``RISK_AND_GUARDRAIL`` event types added in
+        ALP-123: ``HALT_ACTIVATED``, ``HALT_LIFTED``, ``GREEKS_REFRESH_FAILED``,
+        and ``EMERGENCY_INVOCATION_REQUESTED``. The schema CHECK constraint
+        admits these via the migration ``b2c4f7a3d9e8``; this test guards both
+        the migration acceptance and the per-detail-class JSON codec.
+        """
+        _, factory = async_engine_and_factory
+        record = _make_invocation_record()
+
+        entries = [
+            _entry(
+                entry_id="entry-halt-activated",
+                invocation_id=record.invocation_id,
+                timestamp=_T0,
+                event_type=EventType.HALT_ACTIVATED,
+                event_group=EventGroup.RISK_AND_GUARDRAIL,
+                detail=HaltActivatedDetail(
+                    halt_type="daily_drawdown",
+                    current_drawdown_pct=4.5,
+                    limit_pct=4.0,
+                    detected_at=_T0,
+                ),
+                source=EventSource.GUARDRAIL_LAYER,
+            ),
+            _entry(
+                entry_id="entry-halt-lifted",
+                invocation_id=record.invocation_id,
+                timestamp=_T0,
+                event_type=EventType.HALT_LIFTED,
+                event_group=EventGroup.RISK_AND_GUARDRAIL,
+                detail=HaltLiftedDetail(
+                    halt_type="cumulative_drawdown_tier3",
+                    current_drawdown_pct=8.5,
+                    lifted_at=_T0,
+                ),
+                source=EventSource.GUARDRAIL_LAYER,
+            ),
+            _entry(
+                entry_id="entry-greeks-failed",
+                invocation_id=record.invocation_id,
+                timestamp=_T0,
+                event_type=EventType.GREEKS_REFRESH_FAILED,
+                event_group=EventGroup.RISK_AND_GUARDRAIL,
+                detail=GreeksRefreshFailedDetail(
+                    underlying_ticker="AAPL",
+                    occ_symbol="O:AAPL260619C00150000",
+                    failure_reason="iv_fetch_no_row",
+                    prior_as_of=_T0,
+                ),
+                position_id="pos-1",
+                source=EventSource.GUARDRAIL_LAYER,
+            ),
+            _entry(
+                entry_id="entry-emergency",
+                invocation_id=record.invocation_id,
+                timestamp=_T0,
+                event_type=EventType.EMERGENCY_INVOCATION_REQUESTED,
+                event_group=EventGroup.RISK_AND_GUARDRAIL,
+                detail=EmergencyInvocationRequestedDetail(
+                    trigger_type="regime_jump",
+                    trigger_reason="NORMAL → CRISIS",
+                    cooldown_remaining_seconds=0,
+                ),
+                source=EventSource.GUARDRAIL_LAYER,
+            ),
+        ]
+
+        async with InvocationContext(session_factory=factory, record=record) as handle:
+            for entry in entries:
+                await append_activity_log_entry(handle, entry)
+
+        async with factory() as sess:
+            rehydrated = await read_intra_invocation_changelog(sess, record.invocation_id)
+
+        rehydrated_by_id = {e.entry_id: e for e in rehydrated}
+        for original in entries:
+            roundtripped = rehydrated_by_id[original.entry_id]
+            assert roundtripped == original, (
+                f"round-trip mismatch for {original.event_type.value}: "
+                f"got {roundtripped!r}, expected {original!r}"
+            )
 
 
 # ---------------------------------------------------------------------------
