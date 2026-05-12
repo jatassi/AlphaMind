@@ -34,9 +34,14 @@ from dotenv import load_dotenv
 
 from alphamind.config.loaders import read_yaml_file
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
+from alphamind.config.models.execution import ExecutionConfig
 from alphamind.config.models.guardrails import BreachResponse, GuardrailsConfig
 from alphamind.config.models.venue import VenueConfig
 from alphamind.execution.broker_adapter import AccountStateQueries, AlpacaClientFactory
+from alphamind.execution.continuous_monitor.bracket_stops import (
+    AlpacaBracketCloseSubmitter,
+    register_options_bracket_watcher_task,
+)
 from alphamind.execution.continuous_monitor.breach_loop import (
     register_breach_loop_task,
 )
@@ -78,6 +83,7 @@ _CONFIG_PATH = _CONFIG_DIR / "continuous_monitor.yaml"
 _VENUE_CONFIG_PATH = _CONFIG_DIR / "venue.yaml"
 _GUARDRAILS_CONFIG_PATH = _CONFIG_DIR / "guardrails.yaml"
 _BREACH_BEHAVIOR_CONFIG_PATH = _CONFIG_DIR / "breach_behavior.yaml"
+_EXECUTION_CONFIG_PATH = _CONFIG_DIR / "execution.yaml"
 
 
 def _build_breach_response_lookup(
@@ -126,6 +132,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     guardrails_config = GuardrailsConfig.model_validate(read_yaml_file(_GUARDRAILS_CONFIG_PATH))
     breach_behavior_config = load_breach_behavior_config(_BREACH_BEHAVIOR_CONFIG_PATH)
     breach_response_lookup = _build_breach_response_lookup(guardrails_config)
+    execution_config = ExecutionConfig.model_validate(read_yaml_file(_EXECUTION_CONFIG_PATH))
     session = new_session(mode=mode)
     log.info(
         "monitor session start: session_id=%s mode=%s",
@@ -155,6 +162,16 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
         breach_behavior_config=breach_behavior_config,
         breach_response_lookup=breach_response_lookup,
         db_session_factory=db_session_factory,
+    )
+    register_options_bracket_watcher_task(
+        supervisor,
+        position_repository=open_positions_reader,
+        cache=underlying_cache,
+        session_factory=db_session_factory,
+        submitter=AlpacaBracketCloseSubmitter(
+            client_factory=AlpacaClientFactory(venue_config, mode),
+            execution_config=execution_config,
+        ),
     )
     try:
         await supervisor.run()

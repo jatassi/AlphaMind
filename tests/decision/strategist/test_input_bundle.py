@@ -12,6 +12,7 @@ from alphamind.decision.strategist.input_bundle import (
 )
 from alphamind.portfolio_state.consumers.analyst import AnalystAbandonedOpening
 from alphamind.portfolio_state.consumers.strategist import (
+    BetweenInvocationClosure,
     StrategistAbandonedAction,
     StrategistPositionView,
     StrategistView,
@@ -25,6 +26,7 @@ from alphamind.portfolio_state.records.activity_log import (
     EventType,
     PMDecisionDetail,
     PMVerdict,
+    PositionExitMethod,
 )
 from alphamind.portfolio_state.records.capital import (
     ActiveRiskParameterEntry,
@@ -58,6 +60,7 @@ from alphamind.portfolio_state.records.orders import (
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
+    InstrumentType,
     PositionFill,
     PositionRecord,
     PositionStatus,
@@ -591,6 +594,7 @@ def _make_strategist_view(
     recent_pm_decision_log: tuple[ActivityLogEntry, ...] = (),
     abandoned_openings: tuple[AnalystAbandonedOpening, ...] = (),
     abandoned_actions: tuple[StrategistAbandonedAction, ...] = (),
+    between_invocation_closures: tuple[BetweenInvocationClosure, ...] = (),
 ) -> StrategistView:
     if positions is None:
         positions = (_make_position_view(),)
@@ -607,6 +611,7 @@ def _make_strategist_view(
         recent_pm_decision_log=recent_pm_decision_log,
         abandoned_openings=abandoned_openings,
         abandoned_actions=abandoned_actions,
+        between_invocation_closures=between_invocation_closures,
     )
 
 
@@ -1059,3 +1064,64 @@ def test_portfolio_state_section_renders_aggregate_block() -> None:
     # Directional rollup numbers
     assert "42" in aggregate_section
     assert "78" in aggregate_section
+
+
+# ---------------------------------------------------------------------------
+# Between-invocation closures section (story 04c / ALP-440)
+# ---------------------------------------------------------------------------
+
+
+def _make_closure(
+    *,
+    position_id: str = "POS-CL-001",
+    ticker: str = "NVDA",
+    origin: str = "bracket_manager",
+    exit_method: PositionExitMethod = PositionExitMethod.STOP_TRIGGERED,
+    rationale: str = "price-based stop fired: NVDA $848 < $865",
+) -> BetweenInvocationClosure:
+    return BetweenInvocationClosure(
+        position_id=position_id,
+        ticker=ticker,
+        instrument_type=InstrumentType.OPTIONS,
+        closed_at=_TIMESTAMP,
+        closing_order_id="MON.mon-001.1.0",
+        exit_method=exit_method,
+        origin=origin,  # type: ignore[arg-type]
+        rationale=rationale,
+    )
+
+
+def test_between_invocation_closures_section_present() -> None:
+    closure = _make_closure()
+    view = _make_strategist_view(between_invocation_closures=(closure,))
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(strategist_view=view),  # type: ignore[arg-type]
+        sector_label_display=_SECTOR_LABELS,
+    )
+    assert "=== ACTIVITY LOG (between-invocation closures) ===" in out
+    assert "NVDA" in out
+    assert "STOP_TRIGGERED" in out
+    assert "price-based stop fired" in out
+
+
+def test_between_invocation_closures_section_empty_renders_none() -> None:
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(),  # type: ignore[arg-type]
+        sector_label_display=_SECTOR_LABELS,
+    )
+    header_idx = out.index("=== ACTIVITY LOG (between-invocation closures) ===")
+    intra_idx = out.index("=== ACTIVITY LOG (intra-invocation) ===")
+    block = out[header_idx:intra_idx]
+    assert "None" in block
+
+
+def test_between_invocation_closures_section_before_intra_log() -> None:
+    """The between-invocation block sits between portfolio-state and intra-log."""
+    out = assemble_input_bundle_normal(
+        **_normal_kwargs(),  # type: ignore[arg-type]
+        sector_label_display=_SECTOR_LABELS,
+    )
+    portfolio_idx = out.index("=== PORTFOLIO STATE ===")
+    closures_idx = out.index("=== ACTIVITY LOG (between-invocation closures) ===")
+    intra_idx = out.index("=== ACTIVITY LOG (intra-invocation) ===")
+    assert portfolio_idx < closures_idx < intra_idx
