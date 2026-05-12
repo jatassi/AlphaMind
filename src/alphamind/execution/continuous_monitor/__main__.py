@@ -255,9 +255,6 @@ def _register_breach_loop(
     from collections.abc import Iterable
     from datetime import datetime
 
-    from alphamind.execution.continuous_monitor.breach_loop.result import (
-        BreachLoopResult,
-    )
     from alphamind.execution.continuous_monitor.cascade_dispatch import (
         TriggerIdGenerator,
     )
