@@ -58,6 +58,10 @@ from alphamind.execution.continuous_monitor.underlying_stream.reader import (
     SqlOpenPositionsReader,
 )
 from alphamind.persistence.session import make_async_engine, make_async_session_factory
+from alphamind.risk_guardrails.breach_behavior import (
+    BreachBehaviorConfig,
+    load_breach_behavior_config,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -71,6 +75,7 @@ log = logging.getLogger("alphamind.execution.continuous_monitor")
 _CONFIG_DIR = Path(__file__).parents[4] / "config"
 _CONFIG_PATH = _CONFIG_DIR / "continuous_monitor.yaml"
 _VENUE_CONFIG_PATH = _CONFIG_DIR / "venue.yaml"
+_BREACH_BEHAVIOR_CONFIG_PATH = _CONFIG_DIR / "breach_behavior.yaml"
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -104,6 +109,7 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     configure_monitor_logging()
     config = ContinuousMonitorConfig.model_validate(read_yaml_file(_CONFIG_PATH))
     venue_config = VenueConfig.model_validate(read_yaml_file(_VENUE_CONFIG_PATH))
+    breach_config = load_breach_behavior_config(_BREACH_BEHAVIOR_CONFIG_PATH)
     session = new_session(mode=mode)
     log.info(
         "monitor session start: session_id=%s mode=%s",
@@ -128,6 +134,8 @@ async def _run_daemon(*, mode: MonitorMode) -> None:
     )
     _register_breach_loop(
         supervisor,
+        session=session,
+        breach_config=breach_config,
         underlying_cache=underlying_cache,
     )
     try:
@@ -180,24 +188,29 @@ def _register_fill_stream_consumer(
 def _register_breach_loop(
     supervisor: MonitorSupervisor,
     *,
+    session: MonitorSession,
+    breach_config: BreachBehaviorConfig,
     underlying_cache: object,
 ) -> None:
-    """Register the ``breach_loop`` task (story 03b / ALP-437).
+    """Register the ``breach_loop`` task (story 03b / ALP-437) wired to the
+    cascade dispatcher (story 04a / ALP-438) for immediate-breach handling.
 
-    Story 03b ships the loop itself; the production wiring of its non-callback
-    dependencies (snapshot_provider via the assembler, regime_provider via
-    ``resolve_regime_adaptation``, iv_provider from open-positions greeks,
-    market_hours via ``TradingCalendarCache``, breach_response_lookup from
-    ``GuardrailsConfig``, library_config_factory via the resolver adapter)
-    is deferred to follow-up stories that wire the SQL repository, regime
-    resolver, and calendar cache into the monitor process.
+    Story 03b shipped the loop itself with a no-op ``on_immediate_breach``
+    stub; story 04a replaces that stub with
+    :meth:`CascadeDispatcher.handle_immediate_breach`. The same dispatcher
+    instance is reused across cycles so the per-session
+    :class:`TriggerIdGenerator` stays monotonic across breaches.
 
-    Until those land, this helper registers the task with conservative
-    placeholders that allow the supervisor to start and run cleanly: the
-    breach loop's ``market_hours`` stub reports closed so the loop sleeps
-    indefinitely without touching the repository or the empty cache. Stories
-    04a / 04b plug in real callbacks; the dependency wiring follow-up plugs
-    in real providers.
+    The production wiring of the loop's non-callback dependencies
+    (``snapshot_provider``, ``regime_provider``, ``library_config_factory``,
+    ``market_hours`` via ``TradingCalendarCache``, ``breach_response_lookup``
+    from ``GuardrailsConfig``, ``progressive_tiers`` from the cumulative
+    drawdown rule) and the dispatcher's per-tick context provider + envelope
+    submit path remain deferred to follow-up stories that wire the SQL
+    repository, regime resolver, calendar cache, and invocation-handle factory
+    into the monitor process. Until those land, the loop's ``market_hours``
+    stub reports closed so the loop sleeps indefinitely without exercising
+    either path.
     """
     from collections.abc import Iterable
     from datetime import datetime
@@ -205,10 +218,20 @@ def _register_breach_loop(
     from alphamind.config.models.guardrails import BreachResponse
     from alphamind.execution.continuous_monitor.breach_loop.result import (
         BreachLoopResult,
-        RuleEvaluation,
+    )
+    from alphamind.execution.continuous_monitor.cascade_dispatch import (
+        TriggerIdGenerator,
+    )
+    from alphamind.execution.continuous_monitor.cascade_dispatch.dispatcher import (
+        BreachDispatchContext,
+        CascadeDispatcher,
+        DeferralEvent,
     )
     from alphamind.execution.continuous_monitor.underlying_stream.cache import (
         UnderlyingPriceCache,
+    )
+    from alphamind.execution.oms.engine_envelope import (
+        EngineEnvelope as OmsEngineEnvelope,
     )
     from alphamind.portfolio_state.events.activity_log import ActivityLogEntry
     from alphamind.risk_guardrails.guardrail_evaluation import (
@@ -219,9 +242,6 @@ def _register_breach_loop(
         def is_market_open(self, at: datetime) -> bool:
             del at
             return False
-
-    async def _no_op_immediate(_r: BreachLoopResult, _e: RuleEvaluation) -> None:
-        return None
 
     async def _no_op_emergency(_r: BreachLoopResult) -> None:
         return None
@@ -241,6 +261,37 @@ def _register_breach_loop(
         msg = "library_config_factory not yet wired; deferred follow-up"
         raise RuntimeError(msg)
 
+    def _empty_dispatch_context_provider() -> BreachDispatchContext:
+        msg = "cascade dispatch context_provider not yet wired; deferred follow-up"
+        raise RuntimeError(msg)
+
+    async def _empty_submit_envelope(_envelope: OmsEngineEnvelope) -> Any:
+        msg = "submit_envelope path not yet wired; deferred follow-up"
+        raise RuntimeError(msg)
+
+    async def _log_deferral(event: DeferralEvent) -> None:
+        log.info(
+            "engine envelope deferred to PM: rule=%s position=%s session=%s "
+            "trigger=%d cascade=%s reason=%s",
+            event.rule_breached,
+            event.candidate_position_id,
+            event.monitor_session_id,
+            event.trigger_id,
+            event.cascade_id,
+            event.reason,
+        )
+
+    trigger_ids = TriggerIdGenerator(session_id=session.session_id)
+    dispatcher = CascadeDispatcher(
+        monitor_session_id=session.session_id,
+        breach_config=breach_config,
+        trigger_ids=trigger_ids,
+        context_provider=_empty_dispatch_context_provider,
+        submit_envelope=_empty_submit_envelope,
+        deferral_sink=_log_deferral,
+        per_rule_kwargs_providers={},
+    )
+
     register_breach_loop_task(
         supervisor,
         repository=cast(Any, None),
@@ -253,7 +304,7 @@ def _register_breach_loop(
         risk_free_rate=0.045,
         breach_response_lookup=cast(dict[str, BreachResponse], {}),
         market_hours=_ClosedMarket(),
-        on_immediate_breach=_no_op_immediate,
+        on_immediate_breach=dispatcher.handle_immediate_breach,
         on_emergency_input=_no_op_emergency,
         activity_log_sink=_no_op_sink,
     )
