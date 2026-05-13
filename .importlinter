@@ -205,12 +205,15 @@ layers =
     alphamind.distillation
     alphamind.persistence.models
 
-# Architectural exception: ``submit_envelope.py`` is the PM MCP composition
+# Architectural exception: ``submit_envelope/`` is the PM MCP composition
 # root (python-architecture skill §C4). Composition roots legitimately
 # wire concrete implementations across layers; this is the wiring layer.
 # The contract still enforces purity on every other ``decision/*`` module.
-# See ALP-482 for the audit of whether this file should hoist to a
-# top-level ``composition_roots/`` package post-ALP-464 (06b).
+# ALP-464 (06b) decomposed the single-file ``submit_envelope.py`` into a
+# five-submodule package; the per-submodule exceptions below replace the
+# pre-decomposition single ``submit_envelope -> execution.*`` ignores.
+# See ALP-482 for the audit of whether this package should hoist to a
+# top-level ``composition_roots/`` package post-decomposition.
 [importlinter:contract:decision-not-execution]
 name = decision/ has no upward imports of execution/
 type = forbidden
@@ -219,17 +222,20 @@ source_modules =
 forbidden_modules =
     alphamind.execution
 ignore_imports =
-    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.broker_adapter
-    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.broker_adapter.errors
-    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.broker_adapter.order_modify
-    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.broker_adapter.order_options
-    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.oms.broker_dispatch
-    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.oms.command_ids
-    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.state_persistence.config
-    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.state_persistence.tables.orders
-    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.state_persistence.tables.positions
-    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.state_persistence.tables.positions_codec
-    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.state_persistence.write_paths.phase2
+    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter
+    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter.errors
+    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter.order_modify
+    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.broker_adapter.order_options
+    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.oms.broker_dispatch
+    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.state_persistence.tables.orders
+    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.state_persistence.tables.positions
+    alphamind.decision.portfolio_manager.submit_envelope.dispatch -> alphamind.execution.state_persistence.tables.positions_codec
+    alphamind.decision.portfolio_manager.submit_envelope.persist -> alphamind.execution.oms.broker_dispatch
+    alphamind.decision.portfolio_manager.submit_envelope.persist -> alphamind.execution.state_persistence.config
+    alphamind.decision.portfolio_manager.submit_envelope.persist -> alphamind.execution.state_persistence.write_paths.phase2
+    alphamind.decision.portfolio_manager.submit_envelope.process -> alphamind.execution.oms.command_ids
+    alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.broker_adapter
+    alphamind.decision.portfolio_manager.submit_envelope.server -> alphamind.execution.oms.broker_dispatch
 
 # Architectural exception: ``library_snapshot.py`` is a Pydantic->dataclass
 # translator at the portfolio_state / risk_guardrails boundary

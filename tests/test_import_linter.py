@@ -389,13 +389,15 @@ def test_distillation_not_persistence_models_is_layered() -> None:
 
 def test_decision_not_execution_contract_with_composition_root_exception() -> None:
     """``alphamind.decision`` must not import ``alphamind.execution`` — except
-    from the PM MCP composition root ``submit_envelope.py``.
+    from the PM MCP composition root ``submit_envelope/`` package.
 
-    The 11 ignored edges are the composition root's wiring imports. They
-    are NOT punch-list debt (python-architecture skill §C4: composition
-    roots legitimately wire concrete implementations across layers). The
-    ``ignore_imports`` block retires when ALP-482 hoists the file to a
-    top-level ``composition_roots/`` package.
+    The ignored edges are the composition root's wiring imports. They are
+    NOT punch-list debt (python-architecture skill §C4: composition roots
+    legitimately wire concrete implementations across layers). ALP-464 (06b)
+    decomposed the single-file ``submit_envelope.py`` into a five-submodule
+    package; the per-submodule edges below replace the pre-decomposition
+    single ``submit_envelope -> execution.*`` edges. The block retires when
+    ALP-482 hoists the package to a top-level ``composition_roots/``.
     """
     parser = _parse_importlinter_config()
     section = _contract_section(parser, "decision-not-execution")
@@ -407,24 +409,27 @@ def test_decision_not_execution_contract_with_composition_root_exception() -> No
     assert forbidden == ["alphamind.execution"], forbidden
 
     ignored = _split_module_list(section["ignore_imports"])
-    # The 11 edges discovered by ``grimp.find_shortest_chains`` (after the
-    # ALP-457/458 decoupling stories landed) on 2026-05-12. Every entry
-    # must originate from ``submit_envelope.py``.
-    source = "alphamind.decision.portfolio_manager.submit_envelope"
-    targets = [
-        "alphamind.execution.broker_adapter",
-        "alphamind.execution.broker_adapter.errors",
-        "alphamind.execution.broker_adapter.order_modify",
-        "alphamind.execution.broker_adapter.order_options",
-        "alphamind.execution.oms.broker_dispatch",
-        "alphamind.execution.oms.command_ids",
-        "alphamind.execution.state_persistence.config",
-        "alphamind.execution.state_persistence.tables.orders",
-        "alphamind.execution.state_persistence.tables.positions",
-        "alphamind.execution.state_persistence.tables.positions_codec",
-        "alphamind.execution.state_persistence.write_paths.phase2",
-    ]
-    expected_edges = {f"{source} -> {target}" for target in targets}
+    # Per-submodule edges after ALP-464 decomposition. Each entry pairs the
+    # decomposed submodule with the concrete ``execution.*`` import it owns;
+    # the union covers the same wiring surface as the pre-decomposition single
+    # ``submit_envelope -> execution.*`` block.
+    pkg = "alphamind.decision.portfolio_manager.submit_envelope"
+    expected_edges = {
+        f"{pkg}.dispatch -> alphamind.execution.broker_adapter",
+        f"{pkg}.dispatch -> alphamind.execution.broker_adapter.errors",
+        f"{pkg}.dispatch -> alphamind.execution.broker_adapter.order_modify",
+        f"{pkg}.dispatch -> alphamind.execution.broker_adapter.order_options",
+        f"{pkg}.dispatch -> alphamind.execution.oms.broker_dispatch",
+        f"{pkg}.dispatch -> alphamind.execution.state_persistence.tables.orders",
+        f"{pkg}.dispatch -> alphamind.execution.state_persistence.tables.positions",
+        f"{pkg}.dispatch -> alphamind.execution.state_persistence.tables.positions_codec",
+        f"{pkg}.persist -> alphamind.execution.oms.broker_dispatch",
+        f"{pkg}.persist -> alphamind.execution.state_persistence.config",
+        f"{pkg}.persist -> alphamind.execution.state_persistence.write_paths.phase2",
+        f"{pkg}.process -> alphamind.execution.oms.command_ids",
+        f"{pkg}.server -> alphamind.execution.broker_adapter",
+        f"{pkg}.server -> alphamind.execution.oms.broker_dispatch",
+    }
     assert set(ignored) == expected_edges, (
         "decision-not-execution ignore_imports does not match grimp-discovered edges.\n"
         f"  missing: {expected_edges - set(ignored)}\n"
