@@ -17,6 +17,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.execution.continuous_monitor.greeks_refresh import SqlGreeksWriter
 from alphamind.execution.state_persistence.tables.positions import PositionRow
 from alphamind.execution.state_persistence.tables.positions_codec import (
@@ -60,14 +64,14 @@ def _options_position(
     as_of: datetime | None = None,
 ) -> PositionRecord:
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=datetime(2026, 5, 1, 14, 30, tzinfo=UTC),
         details=OptionsPositionDetails(
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             strike_price=200.0,
             expiration_date=date(2026, 6, 19),
             contract_type=OptionContractType.CALL,
@@ -102,7 +106,7 @@ def _options_position(
 
 def _strategy_position(*, position_id: str = "strat-1") -> PositionRecord:
     leg_one_options = OptionsPositionDetails(
-        underlying_ticker="SPY",
+        underlying_ticker=Symbol("SPY"),
         strike_price=500.0,
         expiration_date=date(2026, 6, 19),
         contract_type=OptionContractType.CALL,
@@ -112,7 +116,7 @@ def _strategy_position(*, position_id: str = "strat-1") -> PositionRecord:
         greeks=OptionGreeks(delta=0.5, gamma=0.01, theta=-0.02, vega=0.15),
     )
     leg_two_options = OptionsPositionDetails(
-        underlying_ticker="SPY",
+        underlying_ticker=Symbol("SPY"),
         strike_price=510.0,
         expiration_date=date(2026, 6, 19),
         contract_type=OptionContractType.CALL,
@@ -122,7 +126,7 @@ def _strategy_position(*, position_id: str = "strat-1") -> PositionRecord:
         greeks=OptionGreeks(delta=0.3, gamma=0.01, theta=-0.015, vega=0.12),
     )
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,

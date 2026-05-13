@@ -13,6 +13,10 @@ from unittest.mock import patch
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.execution.regt_margin_attribution import (
     ClassGroup,
     IvShockMultipliers,
@@ -110,7 +114,7 @@ def _equity_position(
 ) -> PositionRecord:
     is_short = direction == Direction.SHORT
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=100.0,
         borrow_rate_pct=0.05 if is_short else None,
@@ -118,7 +122,7 @@ def _equity_position(
         margin_held_usd=500.0 if is_short else None,
     )
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -143,7 +147,7 @@ def _option_position(
     direction: Direction = Direction.LONG,
 ) -> PositionRecord:
     details = OptionsPositionDetails(
-        underlying_ticker=underlying_ticker,
+        underlying_ticker=Symbol(underlying_ticker),
         strike_price=strike,
         expiration_date=_EXPIRATION,
         contract_type=contract_type,
@@ -153,7 +157,7 @@ def _option_position(
         greeks=_greeks(),
     )
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -176,7 +180,7 @@ def _bull_call_spread_position(
     short_strike: float,
 ) -> PositionRecord:
     long_leg_details = OptionsPositionDetails(
-        underlying_ticker=underlying_ticker,
+        underlying_ticker=Symbol(underlying_ticker),
         strike_price=long_strike,
         expiration_date=_EXPIRATION,
         contract_type=OptionContractType.CALL,
@@ -186,7 +190,7 @@ def _bull_call_spread_position(
         greeks=_greeks(),
     )
     short_leg_details = OptionsPositionDetails(
-        underlying_ticker=underlying_ticker,
+        underlying_ticker=Symbol(underlying_ticker),
         strike_price=short_strike,
         expiration_date=_EXPIRATION,
         contract_type=OptionContractType.CALL,
@@ -215,7 +219,7 @@ def _bull_call_spread_position(
         strategy_greeks=_greeks(),
     )
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,

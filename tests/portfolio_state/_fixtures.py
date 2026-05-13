@@ -11,6 +11,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 
+from alphamind._kernel.ids import (
+    OrderId,
+    Symbol,
+)
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -240,7 +244,7 @@ def _make_equity_position(
 ) -> PositionRecord:
     is_short = direction == Direction.SHORT
     equity = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=cost_per_share,
         borrow_rate_pct=0.5 if is_short else None,
@@ -282,16 +286,20 @@ def _make_bracket(bracket_id: str, position_id: str) -> BracketRecord:
     stop_leg = BracketLeg(
         leg_id=f"{bracket_id}-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"ord-stop-{bracket_id}",
-        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=400.0, direction="LTE"),
+        order_id=OrderId(f"ord-stop-{bracket_id}"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=400.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     target_leg = BracketLeg(
         leg_id=f"{bracket_id}-target",
         leg_type=BracketLegType.TAKE_PROFIT,
-        order_id=f"ord-target-{bracket_id}",
-        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=600.0, direction="GTE"),
+        order_id=OrderId(f"ord-target-{bracket_id}"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=600.0, direction="GTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
@@ -316,7 +324,7 @@ def _make_pending_equity_order(
     limit_price: float,
     submission_timestamp: datetime = _ENTRY_AT,
 ) -> OrderRecord:
-    spec = EquityInstrumentSpec(ticker=ticker)
+    spec = EquityInstrumentSpec(ticker=Symbol(ticker))
     return OrderRecord.model_validate(
         {
             "order_id": order_id,
@@ -504,7 +512,7 @@ def _make_options_position(
 ) -> PositionRecord:
     premium = 10.0
     options = OptionsPositionDetails(
-        underlying_ticker=underlying_ticker,
+        underlying_ticker=Symbol(underlying_ticker),
         strike_price=500.0,
         expiration_date=date(2026, 1, 16),
         contract_type=contract_type,

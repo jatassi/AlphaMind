@@ -30,6 +30,13 @@ from alpaca.trading.requests import (
     OptionLegRequest,
 )
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    ClientOrderId,
+    OccSymbol,
+    OrderId,
+    PositionId,
+)
 from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
@@ -207,7 +214,7 @@ def _strategy_open_command(underlying: str = "SPY") -> OpenCommand:
 def _add_command(position_id: str = "POS-AAPL-001") -> AddCommand:
     return AddCommand(
         command_type="add",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         additional_quantity=5.0,
         additional_dollar_value=750.0,
         entry_order=EntryOrder(type="market"),
@@ -224,7 +231,7 @@ def _add_command(position_id: str = "POS-AAPL-001") -> AddCommand:
 def _close_command(position_id: str = "POS-AAPL-001") -> CloseCommand:
     return CloseCommand(
         command_type="close",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         quantity="all",
         order_type="market",
         close_rationale_type="target_reached",
@@ -234,7 +241,7 @@ def _close_command(position_id: str = "POS-AAPL-001") -> CloseCommand:
 def _adjust_command(position_id: str = "POS-AAPL-001") -> AdjustCommand:
     return AdjustCommand(
         command_type="adjust",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         adjustment_rationale="Tighten stop after run-up",
         new_stop_level=NewStopLevel(trigger_price=170.0, order_type="stop", limit_price=None),
     )
@@ -243,7 +250,7 @@ def _adjust_command(position_id: str = "POS-AAPL-001") -> AdjustCommand:
 def _cancel_command(order_id: str = "alp-original-123") -> CancelCommand:
     return CancelCommand(
         command_type="cancel",
-        order_id=order_id,
+        order_id=OrderId(order_id),
         cancel_reason="stale",
     )
 
@@ -272,14 +279,14 @@ def test_broker_dispatch_result_is_frozen_dataclass() -> None:
     carries the real Alpaca order id, the client_order_id, status, order_class,
     payload_kind, and the underlying typed submission."""
     inner = EquitySubmission(
-        alpaca_order_id="alp-x",
-        client_order_id=_CLIENT_ORDER_ID,
+        alpaca_order_id=AlpacaOrderId("alp-x"),
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
         status="accepted",
         order_class="bracket",
     )
     result = BrokerDispatchResult(
-        alpaca_order_id="alp-x",
-        client_order_id=_CLIENT_ORDER_ID,
+        alpaca_order_id=AlpacaOrderId("alp-x"),
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
         status="accepted",
         order_class="bracket",
         payload_kind="equity",
@@ -295,7 +302,7 @@ def test_broker_dispatch_result_is_frozen_dataclass() -> None:
 
     # frozen
     with pytest.raises(Exception, match=r"cannot assign|frozen"):
-        result.alpaca_order_id = "alp-y"  # type: ignore[misc]
+        result.alpaca_order_id = AlpacaOrderId("alp-y")  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +324,7 @@ async def test_dispatch_open_equity_routes_to_submit_equity_open() -> None:
         client=client,
         queries=queries,
         execution=_execution_config(),
-        client_order_id=_CLIENT_ORDER_ID,
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
     )
 
     assert isinstance(outcome, Submitted)
@@ -355,7 +362,7 @@ async def test_dispatch_open_options_routes_to_submit_options_open() -> None:
         client=client,
         queries=queries,
         execution=_execution_config(),
-        client_order_id=_CLIENT_ORDER_ID,
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
     )
 
     assert isinstance(outcome, Submitted)
@@ -388,7 +395,7 @@ async def test_dispatch_open_strategy_routes_to_submit_mleg_open() -> None:
         client=client,
         queries=queries,
         execution=_execution_config(),
-        client_order_id=_CLIENT_ORDER_ID,
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
     )
 
     assert isinstance(outcome, Submitted)
@@ -418,7 +425,7 @@ async def test_dispatch_add_equity_routes_to_submit_equity_add() -> None:
         client=client,
         queries=queries,
         execution=_execution_config(),
-        client_order_id=_CLIENT_ORDER_ID,
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
         position_symbol="AAPL",
         position_side="long",
         position_asset_type="equity",
@@ -451,7 +458,7 @@ async def test_dispatch_close_equity_routes_to_submit_equity_close() -> None:
         client=client,
         queries=queries,
         execution=_execution_config(),
-        client_order_id=_CLIENT_ORDER_ID,
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
         position_symbol="AAPL",
         position_qty=10.0,
         position_side="long",
@@ -486,7 +493,7 @@ async def test_dispatch_close_options_routes_to_submit_options_close() -> None:
         client=client,
         queries=queries,
         execution=_execution_config(),
-        client_order_id=_CLIENT_ORDER_ID,
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
         position_qty=2.0,
         position_asset_type="option",
         occ_symbol="NVDA  260619C00900000",
@@ -516,13 +523,13 @@ async def test_dispatch_close_strategy_routes_to_submit_mleg_close() -> None:
 
     open_legs = (
         MLEGLegAck(
-            occ_symbol="SPY   260619C00400000",
+            occ_symbol=OccSymbol("SPY   260619C00400000"),
             side="buy",
             ratio_qty=1,
             position_intent="buy_to_open",
         ),
         MLEGLegAck(
-            occ_symbol="SPY   260619C00410000",
+            occ_symbol=OccSymbol("SPY   260619C00410000"),
             side="sell",
             ratio_qty=1,
             position_intent="sell_to_open",
@@ -534,7 +541,7 @@ async def test_dispatch_close_strategy_routes_to_submit_mleg_close() -> None:
         client=client,
         queries=queries,
         execution=_execution_config(),
-        client_order_id=_CLIENT_ORDER_ID,
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
         position_asset_type="strategy",
         open_legs=open_legs,
         strategy_type="vertical_spread",
@@ -572,7 +579,7 @@ async def test_dispatch_add_options_routes_to_submit_options_add() -> None:
         client=client,
         queries=queries,
         execution=_execution_config(),
-        client_order_id=_CLIENT_ORDER_ID,
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
         position_asset_type="option",
         position_option_instrument=instrument,
         position_side="long",
@@ -595,13 +602,13 @@ async def test_dispatch_add_strategy_routes_to_submit_mleg_add() -> None:
 
     open_legs = (
         MLEGLegAck(
-            occ_symbol="SPY   260619C00400000",
+            occ_symbol=OccSymbol("SPY   260619C00400000"),
             side="buy",
             ratio_qty=1,
             position_intent="buy_to_open",
         ),
         MLEGLegAck(
-            occ_symbol="SPY   260619C00410000",
+            occ_symbol=OccSymbol("SPY   260619C00410000"),
             side="sell",
             ratio_qty=1,
             position_intent="sell_to_open",
@@ -613,7 +620,7 @@ async def test_dispatch_add_strategy_routes_to_submit_mleg_add() -> None:
         client=client,
         queries=queries,
         execution=_execution_config(),
-        client_order_id=_CLIENT_ORDER_ID,
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
         position_asset_type="strategy",
         open_legs=open_legs,
         strategy_type="vertical_spread",
@@ -647,8 +654,8 @@ async def test_dispatch_adjust_routes_to_submit_replace() -> None:
         client=client,
         queries=queries,
         execution=_execution_config(),
-        client_order_id=_CLIENT_ORDER_ID,
-        target_alpaca_order_id="alp-original-123",
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+        target_alpaca_order_id=AlpacaOrderId("alp-original-123"),
         target_asset_class="us_equity",
         target_order_class="simple",
     )
@@ -679,8 +686,8 @@ async def test_dispatch_cancel_routes_to_submit_cancel() -> None:
         client=client,
         queries=queries,
         execution=_execution_config(),
-        client_order_id=_CLIENT_ORDER_ID,
-        target_alpaca_order_id="alp-original-123",
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
+        target_alpaca_order_id=AlpacaOrderId("alp-original-123"),
     )
     assert isinstance(outcome, Submitted)
     result = outcome.payload
@@ -706,7 +713,7 @@ async def test_dispatch_engine_guardrail_close_routes_to_submit_equity_close() -
 
     engine_close = CloseCommand(
         command_type="close",
-        position_id="POS-AAPL-001",
+        position_id=PositionId("POS-AAPL-001"),
         quantity="all",
         order_type="market",
         close_rationale_type="risk_management",
@@ -718,7 +725,7 @@ async def test_dispatch_engine_guardrail_close_routes_to_submit_equity_close() -
         client=client,
         queries=queries,
         execution=_execution_config(),
-        client_order_id="MON.session-abc.42.0",
+        client_order_id=ClientOrderId("MON.session-abc.42.0"),
         position_symbol="AAPL",
         position_qty=10.0,
         position_side="long",
@@ -764,7 +771,7 @@ async def test_dispatch_returns_gateway_submission_failed_on_retry_exhaustion() 
         client=client,
         queries=queries,
         execution=cfg,
-        client_order_id=_CLIENT_ORDER_ID,
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
     )
     assert isinstance(outcome, GatewaySubmissionFailed)
     assert outcome.attempt_count >= 1
@@ -789,7 +796,7 @@ async def test_dispatch_raises_when_asset_type_missing_for_close() -> None:
             client=client,
             queries=queries,
             execution=_execution_config(),
-            client_order_id=_CLIENT_ORDER_ID,
+            client_order_id=ClientOrderId(_CLIENT_ORDER_ID),
             # position_asset_type omitted
         )
 

@@ -30,10 +30,12 @@ __all__ = [
     "OccSymbol",
     "OrderId",
     "PositionId",
+    "RecommendationId",
     "Symbol",
     "ThesisId",
     "command_id",
     "envelope_id",
+    "recommendation_id",
 ]
 
 
@@ -45,6 +47,7 @@ AlpacaOrderId = NewType("AlpacaOrderId", str)
 ClientOrderId = NewType("ClientOrderId", str)
 EnvelopeId = NewType("EnvelopeId", str)
 InvocationId = NewType("InvocationId", str)
+RecommendationId = NewType("RecommendationId", str)
 ThesisId = NewType("ThesisId", str)
 Symbol = NewType("Symbol", str)
 OccSymbol = NewType("OccSymbol", str)
@@ -90,6 +93,21 @@ Mirrors ``alphamind.execution.oms.command_ids._ENGINE_COMMAND_ID_PATTERN``.
 """
 
 
+_ANALYST_RECOMMENDATION_ID_PATTERN = re.compile(r"^REC-[0-9]+$")
+"""Analyst-originated recommendation ID: ``REC-{n}``.
+
+Mirrors the pattern in
+``docs/design/04-decision-layer/analyst-output-schema.md``.
+"""
+
+_STRATEGIST_RECOMMENDATION_ID_PATTERN = re.compile(r"^SA(-ORD)?-[0-9]+$")
+"""Strategist-originated recommendation ID: ``SA-{n}`` or ``SA-ORD-{n}``.
+
+Mirrors the pattern in
+``docs/design/04-decision-layer/strategist-output-schema.md``.
+"""
+
+
 def envelope_id(value: str) -> EnvelopeId:
     """Construct an :class:`EnvelopeId`, validating the pattern at the boundary.
 
@@ -126,3 +144,24 @@ def command_id(value: str) -> CommandId:
         )
         raise ValueError(msg)
     return CommandId(value)
+
+
+def recommendation_id(value: str) -> RecommendationId:
+    """Construct a :class:`RecommendationId`, validating the pattern at the boundary.
+
+    Accepts both analyst-originated (``REC-{n}``) and strategist-originated
+    (``SA-{n}`` or ``SA-ORD-{n}``) recommendation IDs — both share the
+    :class:`RecommendationId` type downstream.
+
+    Raises :class:`ValueError` if ``value`` matches neither pattern.
+    """
+    if not (
+        _ANALYST_RECOMMENDATION_ID_PATTERN.fullmatch(value)
+        or _STRATEGIST_RECOMMENDATION_ID_PATTERN.fullmatch(value)
+    ):
+        msg = (
+            f"recommendation_id must match {_ANALYST_RECOMMENDATION_ID_PATTERN.pattern!r} "
+            f"or {_STRATEGIST_RECOMMENDATION_ID_PATTERN.pattern!r}; got {value!r}"
+        )
+        raise ValueError(msg)
+    return RecommendationId(value)

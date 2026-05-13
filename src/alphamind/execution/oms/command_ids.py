@@ -21,6 +21,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict
 
+from alphamind._kernel.ids import EnvelopeId, InvocationId
 from alphamind.commands.pm_envelope import PMEnvelope
 
 __all__ = [
@@ -65,8 +66,8 @@ class PMCommandIdComponents(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    invocation_id: str
-    envelope_id: str
+    invocation_id: InvocationId
+    envelope_id: EnvelopeId
     command_ordinal: int
     attempt_seq: int
 
@@ -173,8 +174,8 @@ def parse_pm_command_id(command_id: str) -> PMCommandIdComponents:
     if match is None:
         raise ValueError(f"command_id does not match PM-originated pattern, got {command_id!r}")
     return PMCommandIdComponents(
-        invocation_id=match["inv"],
-        envelope_id=match["env"],
+        invocation_id=InvocationId(match["inv"]),
+        envelope_id=EnvelopeId(match["env"]),
         command_ordinal=int(match["ord"]),
         attempt_seq=int(match["seq"]),
     )

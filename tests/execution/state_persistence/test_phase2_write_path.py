@@ -24,6 +24,17 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    EnvelopeId,
+    InvocationId,
+    OrderId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.commands.command_models import (
     BracketOrderParameters,
     EntryOrder,
@@ -412,7 +423,7 @@ def _open_command(
 def _close_command(position_id: str = "POS-NVDA-001") -> CloseCommand:
     return CloseCommand(
         command_type="close",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         quantity="all",
         order_type="market",
         limit_price=None,
@@ -437,7 +448,7 @@ def _adjust_command(
 
     return AdjustCommand(
         command_type="adjust",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         adjustment_rationale="Tighten stop.",
         new_stop_level=(
             NewStopLevel(trigger_price=145.0, order_type="stop", limit_price=None)
@@ -460,13 +471,13 @@ def _adjust_command(
 
 
 def _cancel_command(order_id: str = "ord-entry-1") -> CancelCommand:
-    return CancelCommand(command_type="cancel", order_id=order_id, cancel_reason="stale")
+    return CancelCommand(command_type="cancel", order_id=OrderId(order_id), cancel_reason="stale")
 
 
 def _add_command(position_id: str = "POS-NVDA-001") -> AddCommand:
     return AddCommand(
         command_type="add",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         additional_quantity=5.0,
         additional_dollar_value=5_000.0,
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
@@ -488,10 +499,10 @@ def _make_analyst_envelope(
     if not commands:
         commands = (_open_command(),)
     return PMAnalystEnvelope(
-        envelope_id=envelope_id,
-        invocation_id=_INV_ID,
+        envelope_id=EnvelopeId(envelope_id),
+        invocation_id=InvocationId(_INV_ID),
         source_provenance="pm_analyst",
-        source_recommendation_id="REC-1",
+        source_recommendation_id=RecommendationId("REC-1"),
         recommendation_type="new_entry",
         verdict="approve",
         evaluation=_all_pass_thesis_eval(),
@@ -511,12 +522,12 @@ def _make_strategist_envelope(
     if not commands:
         commands = (_close_command(position_id=position_id),)
     return PMStrategistEnvelope(
-        envelope_id=envelope_id,
-        invocation_id=_INV_ID,
+        envelope_id=EnvelopeId(envelope_id),
+        invocation_id=InvocationId(_INV_ID),
         source_provenance="pm_strategist",
-        source_recommendation_id="SA-1",
+        source_recommendation_id=RecommendationId("SA-1"),
         recommendation_type="position_assessment",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         verdict="approve",
         evaluation=_all_pass_position_eval(),
         modifications=(),
@@ -551,7 +562,7 @@ def _open_position(
     from alphamind.portfolio_state.records.positions import PositionFill
 
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=10.0,
         average_cost_basis_per_share=150.0,
     )
@@ -588,7 +599,7 @@ def _active_thesis(
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -608,8 +619,8 @@ def _active_thesis(
     generation_at = _NOW - timedelta(hours=4)
     time_expectation_hours = 24.0
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="NVDA momentum",
         key_catalyst="Earnings beat",
         position_size_rationale="5% sized.",
@@ -633,16 +644,18 @@ def _active_bracket(
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-entry-1",
+        entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -1091,11 +1104,11 @@ async def _seed_pending_protective_order(
     )
 
     rec = OrderRecord(
-        order_id=order_id,
-        position_id=position_id,
-        bracket_id=bracket_id,
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id),
+        bracket_id=BracketId(bracket_id),
         role=OrderRole.PRICE_STOP,
-        instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
         direction=OrderDirection.SELL,
         order_type=OrderType.STOP,
         order_class=OrderClass.OTO,
@@ -1103,15 +1116,15 @@ async def _seed_pending_protective_order(
         quantity=10.0,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
-        alpaca_order_id=f"alp-{order_id}",
-        alpaca_order_id_chain=(f"alp-{order_id}",),
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
         submission_timestamp=_NOW - timedelta(hours=1),
         last_update_timestamp=_NOW - timedelta(hours=1),
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=10.0,
         modification_count=0,
-        originating_thesis_id=thesis_id,
+        originating_thesis_id=ThesisId(thesis_id) if thesis_id is not None else None,
         originating_pm_command_id=None,
         age_hours=1.0,
     )
@@ -1144,11 +1157,11 @@ async def _seed_pending_entry_order(
     )
 
     rec = OrderRecord(
-        order_id=order_id,
-        position_id=position_id,
-        bracket_id=bracket_id,
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id),
+        bracket_id=BracketId(bracket_id),
         role=OrderRole.ENTRY,
-        instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
         direction=OrderDirection.BUY,
         order_type=OrderType.MARKET,
         order_class=OrderClass.BRACKET,
@@ -1156,15 +1169,15 @@ async def _seed_pending_entry_order(
         quantity=10.0,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
-        alpaca_order_id=f"alp-{order_id}",
-        alpaca_order_id_chain=(f"alp-{order_id}",),
+        alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+        alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
         submission_timestamp=_NOW - timedelta(hours=1),
         last_update_timestamp=_NOW - timedelta(hours=1),
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=10.0,
         modification_count=0,
-        originating_thesis_id=thesis_id,
+        originating_thesis_id=ThesisId(thesis_id) if thesis_id is not None else None,
         originating_pm_command_id=None,
         age_hours=1.0,
     )
@@ -1261,7 +1274,7 @@ async def test_close_command_with_partial_quantity_uses_command_quantity(
 
     partial_close = CloseCommand(
         command_type="close",
-        position_id="POS-NVDA-001",
+        position_id=PositionId("POS-NVDA-001"),
         quantity=3.0,
         order_type="market",
         limit_price=None,
@@ -1311,7 +1324,7 @@ async def test_close_all_against_pending_position_raises(
             "direction": Direction.LONG,
             "entry_timestamp": None,
             "details": EquityPositionDetails(
-                ticker="NVDA",
+                ticker=Symbol("NVDA"),
                 share_count=0.0,
                 average_cost_basis_per_share=0.0,
             ),
@@ -1397,11 +1410,11 @@ async def test_cancel_command_releases_capital_from_order_notional(
     # Seed 5000 reserved capital; the LIMIT entry at $50 x 100 shares = $5000.
     await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=5_000.0)
     entry_rec = OrderRecord(
-        order_id="ord-entry-bigsize",
-        position_id="POS-NVDA-001",
-        bracket_id="BRK-NVDA-1",
+        order_id=OrderId("ord-entry-bigsize"),
+        position_id=PositionId("POS-NVDA-001"),
+        bracket_id=BracketId("BRK-NVDA-1"),
         role=OrderRole.ENTRY,
-        instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
         direction=OrderDirection.BUY,
         order_type=OrderType.LIMIT,
         order_class=OrderClass.BRACKET,
@@ -1409,15 +1422,15 @@ async def test_cancel_command_releases_capital_from_order_notional(
         quantity=100.0,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
-        alpaca_order_id="alp-ord-entry-bigsize",
-        alpaca_order_id_chain=("alp-ord-entry-bigsize",),
+        alpaca_order_id=AlpacaOrderId("alp-ord-entry-bigsize"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-ord-entry-bigsize"),),
         submission_timestamp=_NOW - timedelta(hours=1),
         last_update_timestamp=_NOW - timedelta(hours=1),
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=100.0,
         modification_count=0,
-        originating_thesis_id="THE-NVDA-1",
+        originating_thesis_id=ThesisId("THE-NVDA-1"),
         originating_pm_command_id=None,
         age_hours=1.0,
     )
@@ -1480,11 +1493,11 @@ async def test_cancel_command_on_protective_leg_does_not_release_capital(
     # amount, reserved_capital_usd would clamp to 0 (1000 - 1400 floored at
     # 0); we'd lose the 1000 USD entry reservation invisibly.
     stop_leg_rec = OrderRecord(
-        order_id="ord-protective-stop",
-        position_id="POS-NVDA-001",
-        bracket_id="BRK-NVDA-1",
+        order_id=OrderId("ord-protective-stop"),
+        position_id=PositionId("POS-NVDA-001"),
+        bracket_id=BracketId("BRK-NVDA-1"),
         role=OrderRole.PRICE_STOP,
-        instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
         direction=OrderDirection.SELL,
         order_type=OrderType.STOP,
         order_class=OrderClass.OTO,
@@ -1492,15 +1505,15 @@ async def test_cancel_command_on_protective_leg_does_not_release_capital(
         quantity=10.0,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
-        alpaca_order_id="alp-ord-protective-stop",
-        alpaca_order_id_chain=("alp-ord-protective-stop",),
+        alpaca_order_id=AlpacaOrderId("alp-ord-protective-stop"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-ord-protective-stop"),),
         submission_timestamp=_NOW - timedelta(hours=1),
         last_update_timestamp=_NOW - timedelta(hours=1),
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=10.0,
         modification_count=0,
-        originating_thesis_id="THE-NVDA-1",
+        originating_thesis_id=ThesisId("THE-NVDA-1"),
         originating_pm_command_id=None,
         age_hours=1.0,
     )
@@ -1638,11 +1651,11 @@ async def test_adjust_command_cancels_old_protective_order_and_submits_new(
     await _seed_invocation_substrate(factory)
     await _seed_cash_ledger(factory)
     old_stop = OrderRecord(
-        order_id="ord-old-stop",
-        position_id="POS-NVDA-001",
-        bracket_id="BRK-NVDA-1",
+        order_id=OrderId("ord-old-stop"),
+        position_id=PositionId("POS-NVDA-001"),
+        bracket_id=BracketId("BRK-NVDA-1"),
         role=OrderRole.PRICE_STOP,
-        instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
         direction=OrderDirection.SELL,
         order_type=OrderType.STOP,
         order_class=OrderClass.OTO,
@@ -1650,15 +1663,15 @@ async def test_adjust_command_cancels_old_protective_order_and_submits_new(
         quantity=10.0,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
-        alpaca_order_id="alp-ord-old-stop",
-        alpaca_order_id_chain=("alp-ord-old-stop",),
+        alpaca_order_id=AlpacaOrderId("alp-ord-old-stop"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-ord-old-stop"),),
         submission_timestamp=_NOW - timedelta(hours=1),
         last_update_timestamp=_NOW - timedelta(hours=1),
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=10.0,
         modification_count=0,
-        originating_thesis_id="THE-NVDA-1",
+        originating_thesis_id=ThesisId("THE-NVDA-1"),
         originating_pm_command_id=None,
         age_hours=1.0,
     )
@@ -1746,11 +1759,11 @@ async def test_adjust_stop_only_leaves_take_profit_leg_pending(
 
     def _build(order_id: str, role: OrderRole, params: PriceParameters) -> OrderRecord:
         return OrderRecord(
-            order_id=order_id,
-            position_id="POS-NVDA-001",
-            bracket_id="BRK-NVDA-1",
+            order_id=OrderId(order_id),
+            position_id=PositionId("POS-NVDA-001"),
+            bracket_id=BracketId("BRK-NVDA-1"),
             role=role,
-            instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+            instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
             direction=OrderDirection.SELL,
             order_type=OrderType.STOP if role is OrderRole.PRICE_STOP else OrderType.LIMIT,
             order_class=OrderClass.OTO,
@@ -1758,15 +1771,15 @@ async def test_adjust_stop_only_leaves_take_profit_leg_pending(
             quantity=10.0,
             duration=OrderDuration.DAY,
             status=OrderStatus.PENDING,
-            alpaca_order_id=f"alp-{order_id}",
-            alpaca_order_id_chain=(f"alp-{order_id}",),
+            alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+            alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
             submission_timestamp=_NOW - timedelta(hours=1),
             last_update_timestamp=_NOW - timedelta(hours=1),
             filled_quantity=0.0,
             avg_fill_price=None,
             remaining_quantity=10.0,
             modification_count=0,
-            originating_thesis_id="THE-NVDA-1",
+            originating_thesis_id=ThesisId("THE-NVDA-1"),
             originating_pm_command_id=None,
             age_hours=1.0,
         )
@@ -1868,11 +1881,11 @@ async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(
     # LIMIT order at $100 x 10 shares = $1,000 notional — the CANCEL writeback
     # releases the order's notional (limit_price x remaining_quantity).
     entry_order_rec = OrderRecord(
-        order_id="ord-entry-1",
-        position_id="POS-NVDA-001",
-        bracket_id="BRK-NVDA-1",
+        order_id=OrderId("ord-entry-1"),
+        position_id=PositionId("POS-NVDA-001"),
+        bracket_id=BracketId("BRK-NVDA-1"),
         role=OrderRole.ENTRY,
-        instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
         direction=OrderDirection.BUY,
         order_type=OrderType.LIMIT,
         order_class=OrderClass.BRACKET,
@@ -1880,24 +1893,24 @@ async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(
         quantity=10.0,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
-        alpaca_order_id="alp-ord-entry-1",
-        alpaca_order_id_chain=("alp-ord-entry-1",),
+        alpaca_order_id=AlpacaOrderId("alp-ord-entry-1"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-ord-entry-1"),),
         submission_timestamp=_NOW - timedelta(hours=1),
         last_update_timestamp=_NOW - timedelta(hours=1),
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=10.0,
         modification_count=0,
-        originating_thesis_id="THE-NVDA-1",
+        originating_thesis_id=ThesisId("THE-NVDA-1"),
         originating_pm_command_id=None,
         age_hours=1.0,
     )
     old_stop_rec = OrderRecord(
-        order_id="ord-old-stop",
-        position_id="POS-NVDA-001",
-        bracket_id="BRK-NVDA-1",
+        order_id=OrderId("ord-old-stop"),
+        position_id=PositionId("POS-NVDA-001"),
+        bracket_id=BracketId("BRK-NVDA-1"),
         role=OrderRole.PRICE_STOP,
-        instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
         direction=OrderDirection.SELL,
         order_type=OrderType.STOP,
         order_class=OrderClass.OTO,
@@ -1905,15 +1918,15 @@ async def test_cancel_command_on_entry_dissolves_bracket_and_resolves_thesis(
         quantity=10.0,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
-        alpaca_order_id="alp-ord-old-stop",
-        alpaca_order_id_chain=("alp-ord-old-stop",),
+        alpaca_order_id=AlpacaOrderId("alp-ord-old-stop"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-ord-old-stop"),),
         submission_timestamp=_NOW - timedelta(hours=1),
         last_update_timestamp=_NOW - timedelta(hours=1),
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=10.0,
         modification_count=0,
-        originating_thesis_id="THE-NVDA-1",
+        originating_thesis_id=ThesisId("THE-NVDA-1"),
         originating_pm_command_id=None,
         age_hours=1.0,
     )

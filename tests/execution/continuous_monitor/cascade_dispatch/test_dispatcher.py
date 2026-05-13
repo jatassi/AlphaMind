@@ -21,6 +21,13 @@ import pytest
 # ``submit_envelope_mcp``-derived symbols (mirror of the discipline in
 # ``tests/execution/oms/test_submit_engine_envelope.py``).
 import alphamind.decision.portfolio_manager.models  # noqa: F401
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind._kernel.regime import RegimeTransitionState
 from alphamind.commands.engine_envelope import (
     EngineEnvelope as OmsEngineEnvelope,
@@ -154,14 +161,14 @@ def _equity_position_view(
 ) -> PositionView:
     """Build a PositionView for an equity position. Long-only by default."""
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=cost_basis,
     )
     record = PositionRecord(
-        position_id=position_id,
-        thesis_id=f"THE-{position_id}",
-        bracket_id=f"BRK-{position_id}",
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THE-{position_id}"),
+        bracket_id=BracketId(f"BRK-{position_id}"),
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_NOW,
@@ -264,7 +271,7 @@ class _RecordingSubmit:
             command_id=f"{envelope.envelope_id}.0",
             acknowledgment=Acknowledgment(
                 position_id=envelope.commands[0].position_id,
-                order_id=f"ORD-{envelope.commands[0].position_id}",
+                order_id=OrderId(f"ORD-{envelope.commands[0].position_id}"),
             ),
         )
 

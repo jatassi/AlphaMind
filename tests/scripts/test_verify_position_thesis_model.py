@@ -28,6 +28,15 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -171,8 +180,8 @@ def test_wave2_thesis_record_float_time_expectation() -> None:
     components = _make_three_components(now)
     # float should parse
     r = ThesisRecord(
-        thesis_id="t1",
-        position_id="p1",
+        thesis_id=ThesisId("t1"),
+        position_id=PositionId("p1"),
         summary="test",
         key_catalyst="cat",
         components=components,
@@ -208,7 +217,7 @@ def test_wave2_position_weight_pct_negative() -> None:
 
     now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
     details = EquityPositionDetails(
-        ticker="AAPL", share_count=100.0, average_cost_basis_per_share=150.0
+        ticker=Symbol("AAPL"), share_count=100.0, average_cost_basis_per_share=150.0
     )
     fill = PositionFill(
         fill_timestamp=now,
@@ -218,7 +227,7 @@ def test_wave2_position_weight_pct_negative() -> None:
         fees=0.0,
     )
     record = PositionRecord(
-        position_id="pos1",
+        position_id=PositionId("pos1"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -341,11 +350,11 @@ def test_wave2_order_record_mleg_with_equity_rejected() -> None:
     now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
     with pytest.raises(ValidationError):
         OrderRecord(
-            order_id="ord1",
-            position_id="pos1",
-            bracket_id="brk1",
+            order_id=OrderId("ord1"),
+            position_id=PositionId("pos1"),
+            bracket_id=BracketId("brk1"),
             role=OrderRole.ENTRY,
-            instrument_spec=EquityInstrumentSpec(ticker="AAPL"),
+            instrument_spec=EquityInstrumentSpec(ticker=Symbol("AAPL")),
             direction=OrderDirection.BUY,
             order_type=OrderType.MARKET,
             order_class=OrderClass.MLEG,
@@ -353,8 +362,8 @@ def test_wave2_order_record_mleg_with_equity_rejected() -> None:
             quantity=100.0,
             duration=OrderDuration.DAY,
             status=OrderStatus.PENDING,
-            alpaca_order_id="alp1",
-            alpaca_order_id_chain=("alp1",),
+            alpaca_order_id=AlpacaOrderId("alp1"),
+            alpaca_order_id_chain=(AlpacaOrderId("alp1"),),
             submission_timestamp=now,
             last_update_timestamp=now,
             filled_quantity=0.0,
@@ -382,8 +391,8 @@ def test_wave2_thesis_position_size_rationale_empty_rejected() -> None:
     components = _make_three_components(now)
     with pytest.raises(ValidationError):
         ThesisRecord(
-            thesis_id="t1",
-            position_id="p1",
+            thesis_id=ThesisId("t1"),
+            position_id=PositionId("p1"),
             summary="test",
             key_catalyst="cat",
             position_size_rationale="",
@@ -449,8 +458,10 @@ def test_wave4_price_trigger_on_price_stop_passes() -> None:
     leg = BracketLeg(
         leg_id="leg1",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id="ord1",
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=800.0, direction="LTE"),
+        order_id=OrderId("ord1"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=800.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
@@ -476,7 +487,7 @@ def test_wave4_time_trigger_on_price_stop_rejected() -> None:
         BracketLeg(
             leg_id="leg1",
             leg_type=BracketLegType.PRICE_STOP,
-            order_id="ord1",
+            order_id=OrderId("ord1"),
             trigger=TimeTrigger(deadline=now),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
@@ -496,8 +507,10 @@ def test_wave4_pl_anchor_on_take_profit_passes() -> None:
     leg = BracketLeg(
         leg_id="leg1",
         leg_type=BracketLegType.TAKE_PROFIT,
-        order_id="ord1",
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=900.0, direction="GTE"),
+        order_id=OrderId("ord1"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=900.0, direction="GTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
         pl_anchor=PLAnchorSpec(spec_type="target", pct=0.80, planned_entry_price=18.50),
@@ -571,7 +584,7 @@ def test_wave5_discriminated_union_bogus_instrument_type_rejected() -> None:
 
     with pytest.raises(ValidationError):
         PositionRecord(
-            position_id="pos1",
+            position_id=PositionId("pos1"),
             thesis_id=None,
             bracket_id=None,
             status="PENDING",  # type: ignore[arg-type]
@@ -624,7 +637,7 @@ def test_wave6_base_position_protocol_isinstance() -> None:
 
     now = datetime(2026, 5, 1, 12, 0, 0, tzinfo=UTC)
     details = EquityPositionDetails(
-        ticker="AAPL", share_count=100.0, average_cost_basis_per_share=150.0
+        ticker=Symbol("AAPL"), share_count=100.0, average_cost_basis_per_share=150.0
     )
     fill = PositionFill(
         fill_timestamp=now,
@@ -634,7 +647,7 @@ def test_wave6_base_position_protocol_isinstance() -> None:
         fees=0.0,
     )
     record = PositionRecord(
-        position_id="pos1",
+        position_id=PositionId("pos1"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -766,7 +779,7 @@ def _make_three_components(now: object) -> tuple[Any, ...]:
     return (
         ThesisComponent(
             component_id="c1",
-            thesis_id="t1",
+            thesis_id=ThesisId("t1"),
             component_type=ThesisComponentType.ENTRY_RATIONALE,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -779,7 +792,7 @@ def _make_three_components(now: object) -> tuple[Any, ...]:
         ),
         ThesisComponent(
             component_id="c2",
-            thesis_id="t1",
+            thesis_id=ThesisId("t1"),
             component_type=ThesisComponentType.TARGET_RATIONALE,
             linked_bracket_leg_type=BracketLegType.TAKE_PROFIT,
             linked_bracket_leg_id="leg_tp",
@@ -792,7 +805,7 @@ def _make_three_components(now: object) -> tuple[Any, ...]:
         ),
         ThesisComponent(
             component_id="c3",
-            thesis_id="t1",
+            thesis_id=ThesisId("t1"),
             component_type=ThesisComponentType.INVALIDATION_RATIONALE,
             linked_bracket_leg_type=BracketLegType.PRICE_STOP,
             linked_bracket_leg_id="leg_ps",
@@ -828,33 +841,37 @@ def _make_bracket_record(
         BracketLeg(
             leg_id="leg_tp",
             leg_type=BracketLegType.TAKE_PROFIT,
-            order_id="ord1",
-            trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=200.0, direction="GTE"),
+            order_id=OrderId("ord1"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("AAPL"), threshold_usd=200.0, direction="GTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
         ),
         BracketLeg(
             leg_id="leg_ps",
             leg_type=BracketLegType.PRICE_STOP,
-            order_id="ord2",
-            trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+            order_id=OrderId("ord2"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
         ),
         BracketLeg(
             leg_id="leg_te",
             leg_type=BracketLegType.TIME_EXPIRATION,
-            order_id="ord3",
+            order_id=OrderId("ord3"),
             trigger=TimeTrigger(deadline=now_tz),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
         ),
     )
     return BracketRecord(
-        bracket_id="brk1",
-        position_id="pos1",
+        bracket_id=BracketId("brk1"),
+        position_id=PositionId("pos1"),
         status=BracketStatus.PENDING_ENTRY,
-        entry_order_id="entry1",
+        entry_order_id=OrderId("entry1"),
         protective_legs=legs,
         modification_history=(),
         corporate_action_cancellation_reason=None,

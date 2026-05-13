@@ -23,6 +23,13 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import (
+    BracketId,
+    CommandId,
+    OrderId,
+    PositionId,
+    Symbol,
+)
 from alphamind.execution.state_persistence.tables.bracket_legs import BracketLegRow
 from alphamind.execution.state_persistence.tables.brackets import BracketRow
 from alphamind.execution.state_persistence.tables.brackets_codec import (
@@ -86,9 +93,9 @@ def _take_profit_leg(
     return BracketLeg(
         leg_id=leg_id,
         leg_type=BracketLegType.TAKE_PROFIT,
-        order_id=order_id,
+        order_id=OrderId(order_id) if order_id is not None else None,
         trigger=PriceTrigger(
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             threshold_usd=200.0,
             direction="GTE",
         ),
@@ -107,9 +114,9 @@ def _price_stop_leg(
     return BracketLeg(
         leg_id=leg_id,
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=order_id,
+        order_id=OrderId(order_id) if order_id is not None else None,
         trigger=PriceTrigger(
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             threshold_usd=140.0,
             direction="LTE",
         ),
@@ -128,7 +135,7 @@ def _time_expiration_leg(
     return BracketLeg(
         leg_id=leg_id,
         leg_type=BracketLegType.TIME_EXPIRATION,
-        order_id=order_id,
+        order_id=OrderId(order_id) if order_id is not None else None,
         trigger=TimeTrigger(deadline=deadline),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
@@ -161,10 +168,10 @@ def _three_leg_bracket(
     corporate_action_cancellation_reason: str | None = None,
 ) -> BracketRecord:
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.PENDING_ENTRY,
-        entry_order_id="entry-1",
+        entry_order_id=OrderId("entry-1"),
         protective_legs=(
             _take_profit_leg(leg_id=f"{bracket_id}::0"),
             _price_stop_leg(leg_id=f"{bracket_id}::1"),
@@ -404,10 +411,10 @@ class TestBracketCodecRoundTrip:
         # An event-invalidation advisory leg has no order_id; the bracket still
         # needs a mechanical backstop, so we pair it with a price-stop leg.
         original = BracketRecord(
-            bracket_id="brk-event",
-            position_id="pos-event",
+            bracket_id=BracketId("brk-event"),
+            position_id=PositionId("pos-event"),
             status=BracketStatus.PENDING_ENTRY,
-            entry_order_id="entry-event",
+            entry_order_id=OrderId("entry-event"),
             protective_legs=(
                 _price_stop_leg(leg_id="brk-event::0"),
                 _event_invalidation_leg(leg_id="brk-event::1"),
@@ -428,7 +435,7 @@ class TestBracketCodecRoundTrip:
         history = (
             BracketLegModification(
                 timestamp=_T0,
-                pm_command_id="cmd-1",
+                pm_command_id=CommandId("cmd-1"),
                 source="PM",
                 field_changed="threshold_usd",
                 old_value="140.0",
@@ -461,10 +468,10 @@ class TestBracketCodecRoundTrip:
         leg_with_anchor = _take_profit_leg(leg_id="brk-anchor::0", pl_anchor=anchor)
         # Pair with a price-stop for hard-backstop satisfaction.
         original = BracketRecord(
-            bracket_id="brk-anchor",
-            position_id="pos-anchor",
+            bracket_id=BracketId("brk-anchor"),
+            position_id=PositionId("pos-anchor"),
             status=BracketStatus.PENDING_ENTRY,
-            entry_order_id="entry-anchor",
+            entry_order_id=OrderId("entry-anchor"),
             protective_legs=(leg_with_anchor, _price_stop_leg(leg_id="brk-anchor::1")),
             modification_history=(),
             corporate_action_cancellation_reason=None,

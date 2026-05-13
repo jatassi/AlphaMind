@@ -17,6 +17,10 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    OrderId,
+    PositionId,
+)
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -324,7 +328,7 @@ def _add_command(position_id: str = "POS-NVDA-001") -> AddCommand:
     """Build a canonical ADD command (no embedded instrument)."""
     return AddCommand(
         command_type="add",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         additional_quantity=5.0,
         additional_dollar_value=5_000.0,
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
@@ -361,7 +365,7 @@ def _close_command(
 
 
 def _cancel_command(order_id: str = "ORD-1") -> CancelCommand:
-    return CancelCommand(command_type="cancel", order_id=order_id, cancel_reason="stale")
+    return CancelCommand(command_type="cancel", order_id=OrderId(order_id), cancel_reason="stale")
 
 
 def _make_analyst_envelope(**overrides: Any) -> PMAnalystEnvelope:

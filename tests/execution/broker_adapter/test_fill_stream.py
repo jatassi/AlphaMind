@@ -25,6 +25,10 @@ from alpaca.trading.enums import OrderStatus as AlpacaOrderStatus
 from alpaca.trading.models import Order, TradeUpdate
 from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    ClientOrderId,
+)
 from alphamind.execution.broker_adapter import (
     FillReport,
     OrderStatus,
@@ -109,8 +113,8 @@ def _build_trade_update(
 class TestFillReportSchema:
     def test_is_frozen(self) -> None:
         report = FillReport(
-            client_order_id="oms-1",
-            alpaca_order_id="apc-1",
+            client_order_id=ClientOrderId("oms-1"),
+            alpaca_order_id=AlpacaOrderId("apc-1"),
             parent_client_order_id=None,
             parent_alpaca_order_id=None,
             event_type="filled",
@@ -135,8 +139,8 @@ class TestFillReportSchema:
         bad_event = cast(Any, "totally_made_up")
         with pytest.raises(ValidationError):
             FillReport(
-                client_order_id="oms-1",
-                alpaca_order_id="apc-1",
+                client_order_id=ClientOrderId("oms-1"),
+                alpaca_order_id=AlpacaOrderId("apc-1"),
                 parent_client_order_id=None,
                 parent_alpaca_order_id=None,
                 event_type=bad_event,

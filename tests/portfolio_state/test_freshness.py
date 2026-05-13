@@ -7,6 +7,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    Symbol,
+)
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -69,7 +72,7 @@ def _make_config(
 
 def _make_open_position(position_id: str = "POS-001", ticker: str = "NVDA") -> PositionView:
     equity = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=100.0,
         average_cost_basis_per_share=500.0,
         borrow_rate_pct=None,
@@ -116,7 +119,7 @@ def _make_open_position(position_id: str = "POS-001", ticker: str = "NVDA") -> P
 
 def _make_pending_position(position_id: str = "PEND-001", ticker: str = "AAPL") -> PositionView:
     equity = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=10.0,
         average_cost_basis_per_share=150.0,
         borrow_rate_pct=None,

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
+from alphamind._kernel.ids import PositionId, ThesisId
 from alphamind.execution.state_persistence.tables.theses import ThesisRow
 from alphamind.execution.state_persistence.tables.thesis_components import ThesisComponentRow
 from alphamind.portfolio_state.records.orders import BracketLegType
@@ -125,8 +126,8 @@ def rows_to_record(
     )
 
     return ThesisRecord(
-        thesis_id=thesis_row.thesis_id,
-        position_id=thesis_row.position_id,
+        thesis_id=ThesisId(thesis_row.thesis_id),
+        position_id=PositionId(thesis_row.position_id),
         summary=thesis_row.summary,
         key_catalyst=payload["key_catalyst"],
         position_size_rationale=thesis_row.position_size_rationale,
@@ -177,7 +178,7 @@ def _component_from_row(
     )
     return ThesisComponent(
         component_id=row.component_id,
-        thesis_id=row.thesis_id,
+        thesis_id=ThesisId(row.thesis_id),
         component_type=ThesisComponentType(row.component_type),
         linked_bracket_leg_type=leg_type,
         linked_bracket_leg_id=row.linked_bracket_leg,

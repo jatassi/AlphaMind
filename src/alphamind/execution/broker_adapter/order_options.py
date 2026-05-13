@@ -37,6 +37,7 @@ from alpaca.trading.requests import (
     StopLimitOrderRequest,
 )
 
+from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol
 from alphamind.commands.command_models import (
     AddCommand,
     CloseCommand,
@@ -63,9 +64,9 @@ from alphamind.portfolio_state.records.positions import OptionContractType
 class OptionsSubmission:
     """Alpaca's acknowledgment record for a submitted single-leg options order."""
 
-    alpaca_order_id: str
-    client_order_id: str
-    occ_symbol: str
+    alpaca_order_id: AlpacaOrderId
+    client_order_id: ClientOrderId
+    occ_symbol: OccSymbol
     status: str
     order_class: str  # always "simple" for options
 
@@ -397,9 +398,9 @@ async def _submit(
     order = outcome.payload
     return Submitted(
         payload=OptionsSubmission(
-            alpaca_order_id=str(order.id),
-            client_order_id=order.client_order_id,
-            occ_symbol=occ_symbol,
+            alpaca_order_id=AlpacaOrderId(str(order.id)),
+            client_order_id=ClientOrderId(order.client_order_id),
+            occ_symbol=OccSymbol(occ_symbol),
             status=order.status.value,
             order_class=order.order_class.value,
         ),

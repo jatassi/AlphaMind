@@ -21,6 +21,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from alphamind._kernel.ids import (
+    EnvelopeId,
+    PositionId,
+)
 from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.commands.command_models import (
@@ -185,7 +189,7 @@ def _add_command(position_id: str = "POS-NVDA-001") -> AddCommand:
     """
     return AddCommand(
         command_type="add",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         additional_quantity=5.0,
         additional_dollar_value=5_000.0,
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
@@ -846,7 +850,7 @@ class TestCloseCommandRiskManagementSubtype:
         # discriminated-union validation succeeds.
         bad_close = CloseCommand(
             command_type="close",
-            position_id="POS-NVDA-001",
+            position_id=PositionId("POS-NVDA-001"),
             quantity="all",
             order_type="market",
             limit_price=None,
@@ -1196,7 +1200,7 @@ class TestErrorInventoryCompleteness:
         )
 
         result = ValidationResult(
-            envelope_id="ENV-REC-1",
+            envelope_id=EnvelopeId("ENV-REC-1"),
             errors=(),
             warnings=(
                 ValidationWarning(

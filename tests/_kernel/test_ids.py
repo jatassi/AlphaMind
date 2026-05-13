@@ -8,6 +8,10 @@ value.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
 
 def test_order_id_is_str_at_runtime() -> None:
     from alphamind._kernel.ids import OrderId
@@ -18,7 +22,7 @@ def test_order_id_is_str_at_runtime() -> None:
 
 
 def test_every_newtype_alias_is_str_at_runtime() -> None:
-    """All 11 NewType aliases pass through to ``str`` at runtime.
+    """All NewType aliases pass through to ``str`` at runtime.
 
     NewType has no runtime cost — the alias is the identity function on the
     supertype. Verifying every alias here pins the runtime contract so a
@@ -34,6 +38,7 @@ def test_every_newtype_alias_is_str_at_runtime() -> None:
         OccSymbol,
         OrderId,
         PositionId,
+        RecommendationId,
         Symbol,
         ThesisId,
     )
@@ -48,6 +53,7 @@ def test_every_newtype_alias_is_str_at_runtime() -> None:
         OccSymbol,
         OrderId,
         PositionId,
+        RecommendationId,
         Symbol,
         ThesisId,
     )
@@ -85,6 +91,7 @@ def test_newtype_aliases_are_distinct_identities() -> None:
         "ClientOrderId": ids.ClientOrderId,
         "EnvelopeId": ids.EnvelopeId,
         "InvocationId": ids.InvocationId,
+        "RecommendationId": ids.RecommendationId,
         "ThesisId": ids.ThesisId,
         "Symbol": ids.Symbol,
         "OccSymbol": ids.OccSymbol,
@@ -207,9 +214,90 @@ def test_kernel_ids_all_lists_every_public_name() -> None:
         "ClientOrderId",
         "EnvelopeId",
         "InvocationId",
+        "RecommendationId",
         "ThesisId",
         "Symbol",
         "OccSymbol",
         "envelope_id",
         "command_id",
+        "recommendation_id",
     }
+
+
+def test_recommendation_id_accepts_analyst_pattern() -> None:
+    """Analyst-originated recommendation IDs match ``^REC-[0-9]+$``."""
+    from alphamind._kernel.ids import recommendation_id
+
+    for raw in ("REC-1", "REC-42", "REC-999"):
+        assert recommendation_id(raw) == raw
+
+
+def test_recommendation_id_accepts_strategist_pattern() -> None:
+    """Strategist-originated recommendation IDs match ``^SA(-ORD)?-[0-9]+$``.
+
+    Both analyst and strategist recommendation IDs share the
+    :class:`RecommendationId` type; the constructor accepts either valid shape.
+    """
+    from alphamind._kernel.ids import recommendation_id
+
+    for raw in ("SA-1", "SA-ORD-7", "SA-99"):
+        assert recommendation_id(raw) == raw
+
+
+def test_recommendation_id_rejects_invalid_input() -> None:
+    import pytest
+
+    from alphamind._kernel.ids import recommendation_id
+
+    for raw in ("", "REC-", "SA-", "ENV-REC-1", "random", "REC-abc"):
+        with pytest.raises(ValueError, match="recommendation_id"):
+            recommendation_id(raw)
+
+
+def test_synthetic_id_confusion_fails_mypy() -> None:
+    """``mypy`` flags passing one ID type to a function expecting another.
+
+    This is the load-bearing assertion of the story: NewType aliases must
+    be distinct at type-check time, so an accidental cross-assignment of
+    ``EnvelopeId`` to a parameter expecting ``PositionId`` is caught by the
+    type checker.
+
+    The snippet is written to ``src/alphamind/_kernel/`` (so the project's
+    mypy config can resolve ``alphamind.*`` imports) and removed regardless
+    of test outcome. Modeled after the synthetic-violation pattern in
+    ``tests/test_import_linter.py``. The project's ``[tool.mypy]`` config
+    already sets ``strict = true``.
+    """
+    import subprocess
+
+    target = PROJECT_ROOT / "src" / "alphamind" / "_kernel" / "_synthetic_violation.py"
+    snippet = (
+        '"""Synthetic ID-confusion module used by tests/_kernel/test_ids.py."""\n\n'
+        "from alphamind._kernel.ids import EnvelopeId, PositionId\n\n\n"
+        "def _takes_position(p: PositionId) -> None: ...\n\n\n"
+        "_e: EnvelopeId = EnvelopeId('ENV-REC-1')\n"
+        "_takes_position(_e)\n"
+    )
+    try:
+        target.write_text(snippet, encoding="utf-8")
+        result = subprocess.run(
+            ["uv", "run", "mypy", str(target)],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+    finally:
+        target.unlink(missing_ok=True)
+
+    assert result.returncode != 0, (
+        "mypy accepted passing an EnvelopeId to a function expecting "
+        "PositionId — the NewType aliases are not distinct at type-check time.\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    combined = result.stdout + result.stderr
+    assert "PositionId" in combined and "EnvelopeId" in combined, (
+        "mypy failed but did not name the PositionId / EnvelopeId mismatch.\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )

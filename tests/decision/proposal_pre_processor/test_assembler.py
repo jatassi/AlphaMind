@@ -12,6 +12,13 @@ from typing import Any, Literal
 
 import pytest
 
+from alphamind._kernel.ids import (
+    InvocationId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.decision.analyst.models import (
     AnalystOutput,
     EntryOrder,
@@ -130,7 +137,7 @@ def _analyst_output_normal(
     recommendations: tuple[Recommendation, ...] = (),
 ) -> AnalystOutput:
     return AnalystOutput(
-        invocation_id=invocation_id,
+        invocation_id=InvocationId(invocation_id),
         timestamp=_NOW,
         mode="normal",
         recommendations=recommendations,
@@ -143,13 +150,13 @@ def _analyst_output_watchlist(
     watchlist: tuple[WatchlistEntry, ...] = (),
 ) -> AnalystOutput:
     return AnalystOutput(
-        invocation_id=invocation_id,
+        invocation_id=InvocationId(invocation_id),
         timestamp=_NOW,
         mode="watchlist",
         watchlist=watchlist
         or (
             WatchlistEntry(
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 sector="tech",
                 thesis_summary="watch.",
                 estimated_conviction=3,
@@ -166,7 +173,7 @@ def _strategist_output(
     pending_order_assessments: tuple[PendingOrderAssessment, ...] = (),
 ) -> StrategistOutput:
     return StrategistOutput(
-        invocation_id=invocation_id,
+        invocation_id=InvocationId(invocation_id),
         timestamp=_NOW,
         mode=mode,
         position_assessments=position_assessments,
@@ -179,9 +186,11 @@ def _strategist_output(
 
 def _equity_recommendation(rec_id: str = "REC-1", underlying: str = "NVDA") -> Recommendation:
     return Recommendation(
-        recommendation_id=rec_id,
-        instrument=InstrumentEquity(asset_type="equity", ticker=underlying, direction="long"),
-        underlying=underlying,
+        recommendation_id=RecommendationId(rec_id),
+        instrument=InstrumentEquity(
+            asset_type="equity", ticker=Symbol(underlying), direction="long"
+        ),
+        underlying=Symbol(underlying),
         sector="tech",
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
@@ -193,7 +202,7 @@ def _equity_recommendation(rec_id: str = "REC-1", underlying: str = "NVDA") -> R
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger=underlying, comparator="<=", trigger_price=90.0
+                    underlying_trigger=Symbol(underlying), comparator="<=", trigger_price=90.0
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             ),
@@ -214,10 +223,10 @@ def _close_assessment(
     sa_id: str = "SA-1", position_id: str = "POS-1", underlying: str = "NVDA"
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id=f"THESIS-{position_id[4:]}",
-        underlying=underlying,
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THESIS-{position_id[4:]}"),
+        underlying=Symbol(underlying),
         sector="tech",
         thesis_status="invalidated",
         recommended_action="close",
@@ -402,7 +411,7 @@ def test_analyst_section_normal_threads_conflicts() -> None:
 
 def test_analyst_section_watchlist_passes_watchlist_through() -> None:
     entry = WatchlistEntry(
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         sector="tech",
         thesis_summary="watch.",
         estimated_conviction=3,
@@ -419,7 +428,7 @@ def test_analyst_section_watchlist_passes_watchlist_through() -> None:
 def test_analyst_section_watchlist_ignores_conflicts() -> None:
     """Watchlist mode never wraps records, so any conflicts arg is moot."""
     entry = WatchlistEntry(
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         sector="tech",
         thesis_summary="watch.",
         estimated_conviction=3,

@@ -16,6 +16,14 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    CommandId,
+    OrderId,
+    PositionId,
+    ThesisId,
+)
 from alphamind.execution.state_persistence.tables.orders import OrderRow
 from alphamind.portfolio_state.records.orders import (
     InstrumentSpec,
@@ -47,7 +55,9 @@ class _OrderMetadata(BaseModel):
 
 
 _INSTRUMENT_SPEC_ADAPTER: TypeAdapter[InstrumentSpec] = TypeAdapter(InstrumentSpec)
-_ALPACA_CHAIN_ADAPTER: TypeAdapter[tuple[str, ...]] = TypeAdapter(tuple[str, ...])
+_ALPACA_CHAIN_ADAPTER: TypeAdapter[tuple[AlpacaOrderId, ...]] = TypeAdapter(
+    tuple[AlpacaOrderId, ...]
+)
 
 
 def record_to_row(record: OrderRecord) -> OrderRow:
@@ -90,9 +100,9 @@ def row_to_record(row: OrderRow) -> OrderRecord:
     last_update_ts = datetime.fromisoformat(row.last_update_timestamp)
     metadata = _OrderMetadata.model_validate_json(row.metadata_json)
     return OrderRecord(
-        order_id=row.order_id,
-        position_id=row.position_id,
-        bracket_id=row.bracket_id,
+        order_id=OrderId(row.order_id),
+        position_id=PositionId(row.position_id) if row.position_id is not None else None,
+        bracket_id=BracketId(row.bracket_id),
         role=OrderRole(row.order_role),
         instrument_spec=_INSTRUMENT_SPEC_ADAPTER.validate_json(row.instrument_spec_json),
         direction=OrderDirection(row.direction),
@@ -102,7 +112,7 @@ def row_to_record(row: OrderRow) -> OrderRecord:
         quantity=row.quantity,
         duration=OrderDuration(row.duration),
         status=OrderStatus(row.status),
-        alpaca_order_id=row.alpaca_order_id,
+        alpaca_order_id=AlpacaOrderId(row.alpaca_order_id),
         alpaca_order_id_chain=_ALPACA_CHAIN_ADAPTER.validate_json(row.alpaca_order_id_chain_json),
         submission_timestamp=submission_ts,
         last_update_timestamp=last_update_ts,
@@ -110,8 +120,12 @@ def row_to_record(row: OrderRow) -> OrderRecord:
         avg_fill_price=row.average_fill_price,
         remaining_quantity=row.remaining_quantity,
         modification_count=row.modification_count,
-        originating_thesis_id=metadata.originating_thesis_id,
-        originating_pm_command_id=metadata.originating_pm_command_id,
+        originating_thesis_id=ThesisId(metadata.originating_thesis_id)
+        if metadata.originating_thesis_id is not None
+        else None,
+        originating_pm_command_id=CommandId(metadata.originating_pm_command_id)
+        if metadata.originating_pm_command_id is not None
+        else None,
         age_hours=metadata.age_hours,
     )
 

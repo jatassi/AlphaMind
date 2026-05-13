@@ -6,6 +6,9 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    Symbol,
+)
 from alphamind.portfolio_state.computations.pnl import (
     compute_drawdown_by_source_pct,
     compute_portfolio_pnl,
@@ -36,12 +39,12 @@ _FILL = PositionFill(
     fees=0.0,
 )
 _LONG_EQUITY = EquityPositionDetails(
-    ticker="AAPL",
+    ticker=Symbol("AAPL"),
     share_count=10.0,
     average_cost_basis_per_share=100.0,
 )
 _SHORT_EQUITY = EquityPositionDetails(
-    ticker="TSLA",
+    ticker=Symbol("TSLA"),
     share_count=5.0,
     average_cost_basis_per_share=200.0,
     borrow_rate_pct=0.5,

@@ -16,6 +16,13 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -272,7 +279,7 @@ def _make_open_position(
 ) -> PositionRecord:
     """Build a position record. closed_at is recorded on the latest fill if status=CLOSED."""
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=10.0,
         average_cost_basis_per_share=150.0,
     )
@@ -320,7 +327,7 @@ def _make_thesis_record(
 ) -> ThesisRecord:
     component = ThesisComponent(
         component_id=f"{thesis_id}-entry",
-        thesis_id=thesis_id,
+        thesis_id=ThesisId(thesis_id),
         component_type=ThesisComponentType.ENTRY_RATIONALE,
         linked_bracket_leg_type=None,
         linked_bracket_leg_id=None,
@@ -335,7 +342,7 @@ def _make_thesis_record(
     )
     target = ThesisComponent(
         component_id=f"{thesis_id}-target",
-        thesis_id=thesis_id,
+        thesis_id=ThesisId(thesis_id),
         component_type=ThesisComponentType.TARGET_RATIONALE,
         linked_bracket_leg_type=None,
         linked_bracket_leg_id=None,
@@ -350,7 +357,7 @@ def _make_thesis_record(
     )
     invalidation = ThesisComponent(
         component_id=f"{thesis_id}-invalid",
-        thesis_id=thesis_id,
+        thesis_id=ThesisId(thesis_id),
         component_type=ThesisComponentType.INVALIDATION_RATIONALE,
         linked_bracket_leg_type=None,
         linked_bracket_leg_id=None,
@@ -366,8 +373,8 @@ def _make_thesis_record(
     generation_at = _NOW - timedelta(hours=4)
     time_expectation_hours = 24.0
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="AAPL momentum",
         key_catalyst="Q3 earnings beat",
         position_size_rationale="Sized at 5% conviction-3",
@@ -391,16 +398,18 @@ def _make_bracket_record(
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id=f"{bracket_id}-ord-entry",
+        entry_order_id=OrderId(f"{bracket_id}-ord-entry"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -420,7 +429,7 @@ def _make_pending_order(
             "position_id": None,
             "bracket_id": bracket_id,
             "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker="AAPL"),
+            "instrument_spec": EquityInstrumentSpec(ticker=Symbol("AAPL")),
             "direction": OrderDirection.BUY,
             "order_type": OrderType.MARKET,
             "order_class": OrderClass.SIMPLE,
@@ -1598,7 +1607,7 @@ async def _seed_parity_fixture(
     stub_ids_needed: list[str] = [bracket_parent.entry_order_id] + [
         lrow.order_id for lrow in leg_rows if lrow.order_id is not None
     ]
-    seeded_order_ids = {fx.pending_order.order_id}
+    seeded_order_ids: set[str] = {fx.pending_order.order_id}
     async with factory() as sess:
         for oid in stub_ids_needed:
             if oid not in seeded_order_ids:
@@ -1746,7 +1755,7 @@ async def test_assemble_snapshot_against_sql_repo_produces_populated_snapshot(
     stub_ids_needed = [bracket_parent.entry_order_id] + [
         lrow.order_id for lrow in leg_rows if lrow.order_id is not None
     ]
-    seeded_order_ids = {test_order.order_id}
+    seeded_order_ids: set[str] = {test_order.order_id}
     async with factory() as sess:
         for oid in stub_ids_needed:
             if oid not in seeded_order_ids:

@@ -53,6 +53,15 @@ if TYPE_CHECKING:
     )
     from alphamind.execution.oms.broker_dispatch import BrokerDispatchResult
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    ClientOrderId,
+    CommandId,
+    EnvelopeId,
+    OccSymbol,
+    OrderId,
+    PositionId,
+)
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.commands.command_models import (
     AddCommand,
@@ -408,7 +417,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
                 invocation_handle, failed_entry, state_persistence_config
             )
         return _build_envelope_level_rejection(
-            envelope_id=envelope_id,
+            envelope_id=EnvelopeId(envelope_id),
             invocation_id=state.invocation_id,
             suggested_modification=_format_first_error(exc),
             log_state=state,
@@ -485,7 +494,7 @@ async def _handle_submit_envelope(  # noqa: PLR0913 — engine-stub orchestrator
             await _emit_command_abandoned_via_phase2(
                 invocation_handle,
                 envelope_id=envelope.envelope_id,
-                command_id=abandoned.command_id,
+                command_id=CommandId(abandoned.command_id),
                 originating_agent=envelope.source_provenance,
                 command_type=abandoned.command_type,
                 failure_reason=abandoned.failure_reason,
@@ -534,8 +543,8 @@ async def _persist_envelope_outcome_via_phase2(
 async def _emit_command_abandoned_via_phase2(
     invocation_handle: Any,
     *,
-    envelope_id: str,
-    command_id: str,
+    envelope_id: EnvelopeId,
+    command_id: CommandId,
     originating_agent: str,
     command_type: Literal["OPEN", "CLOSE", "ADD", "ADJUST", "CANCEL"],
     failure_reason: str,
@@ -627,7 +636,7 @@ def _format_first_error(exc: ValidationError) -> str:
 
 def _build_envelope_level_rejection(
     *,
-    envelope_id: str,
+    envelope_id: EnvelopeId,
     invocation_id: str,
     suggested_modification: str,
     log_state: SubmitEnvelopeState,
@@ -751,7 +760,7 @@ def _process_one_command(
     if isinstance(command, CloseCommand):
         ack = Acknowledgment(
             position_id=command.position_id,
-            order_id=f"ORD-CLOSE-{command.position_id}",
+            order_id=OrderId(f"ORD-CLOSE-{command.position_id}"),
         )
         return SubmissionResult(
             command_ordinal=command_ordinal,
@@ -920,19 +929,19 @@ def _build_acknowledgment(
         )
         if isinstance(command, OpenCommand):
             return Acknowledgment(
-                position_id=f"POS-{ticker}-stub",
-                order_id=f"ORD-{ticker}-stub",
+                position_id=PositionId(f"POS-{ticker}-stub"),
+                order_id=OrderId(f"ORD-{ticker}-stub"),
                 validation_metadata=metadata,
             )
         return Acknowledgment(
             position_id=command.position_id,
-            order_id=f"ORD-{ticker}-stub",
+            order_id=OrderId(f"ORD-{ticker}-stub"),
             validation_metadata=metadata,
         )
     # AdjustCommand
     return Acknowledgment(
         position_id=command.position_id,
-        order_id=f"ORD-ADJUST-{command.position_id}",
+        order_id=OrderId(f"ORD-ADJUST-{command.position_id}"),
     )
 
 
@@ -1123,7 +1132,7 @@ async def _route_through_broker(
                 client=client,
                 queries=queries,
                 execution=execution_config,
-                client_order_id=result.command_id,
+                client_order_id=ClientOrderId(result.command_id),
                 **context_kwargs,
             )
         except PermanentRejectionError as exc:
@@ -1449,7 +1458,7 @@ async def _cancel_command_context(
     return {"target_alpaca_order_id": order_row.alpaca_order_id}
 
 
-async def _read_position(position_id: str, *, invocation_handle: Any) -> Any:
+async def _read_position(position_id: PositionId, *, invocation_handle: Any) -> Any:
     from alphamind.execution.state_persistence.tables.positions import PositionRow
     from alphamind.execution.state_persistence.tables.positions_codec import (
         row_to_record as position_row_to_record,
@@ -1491,7 +1500,7 @@ def _persisted_legs_to_mleg_acks(legs: Any) -> tuple[Any, ...]:
         )
         acks.append(
             MLEGLegAck(
-                occ_symbol=occ,
+                occ_symbol=OccSymbol(occ),
                 side=side,
                 ratio_qty=1,
                 position_intent=intent,
@@ -1528,7 +1537,9 @@ def _to_rejection(result: SubmissionResult, *, code: str, reason: str) -> Submis
     )
 
 
-def _with_real_order_id(result: SubmissionResult, alpaca_order_id: str) -> SubmissionResult:
+def _with_real_order_id(
+    result: SubmissionResult, alpaca_order_id: AlpacaOrderId
+) -> SubmissionResult:
     """Return a copy of *result* whose acknowledgment ``order_id`` is the broker's id."""
     if result.acknowledgment is None:
         return result

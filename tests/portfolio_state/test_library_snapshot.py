@@ -12,6 +12,10 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -232,7 +236,7 @@ def _make_equity_position_view(
     if direction == Direction.SHORT:
         # Short positions require borrow fields
         details: EquityPositionDetails = EquityPositionDetails(
-            ticker=ticker,
+            ticker=Symbol(ticker),
             share_count=share_count,
             average_cost_basis_per_share=market_value_usd / max(share_count, 1),
             borrow_rate_pct=borrow_rate_pct if borrow_rate_pct is not None else 0.5,
@@ -241,7 +245,7 @@ def _make_equity_position_view(
         )
     else:
         details = EquityPositionDetails(
-            ticker=ticker,
+            ticker=Symbol(ticker),
             share_count=share_count,
             average_cost_basis_per_share=market_value_usd / max(share_count, 1),
         )
@@ -264,7 +268,7 @@ def _make_equity_position_view(
         resolved_history = execution_history
 
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=status,
@@ -319,7 +323,7 @@ def _make_options_position_view(
         iv_used=0.30,
     )
     details_opt = OptionsPositionDetails(
-        underlying_ticker=underlying,
+        underlying_ticker=Symbol(underlying),
         strike_price=100.0,
         expiration_date=_OPTION_EXPIRY,
         contract_type=OptionContractType.CALL,
@@ -342,7 +346,7 @@ def _make_options_position_view(
         else ()
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=status,
@@ -792,7 +796,7 @@ def test_unresolvable_position_skipped_with_warning(caplog: pytest.LogCaptureFix
         ),
     )
     record = PositionRecord(
-        position_id="POS-STRATEGY-EMPTY",
+        position_id=PositionId("POS-STRATEGY-EMPTY"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -1110,7 +1114,7 @@ def test_pending_positions_included() -> None:
 def test_strategy_position_ticker_and_greeks() -> None:
     """AC: Strategy position ticker from first leg; current_greeks from strategy_greeks."""
     leg_options = OptionsPositionDetails(
-        underlying_ticker="NVDA",
+        underlying_ticker=Symbol("NVDA"),
         strike_price=100.0,
         expiration_date=_OPTION_EXPIRY,
         contract_type=OptionContractType.CALL,
@@ -1137,7 +1141,7 @@ def test_strategy_position_ticker_and_greeks() -> None:
         strategy_greeks=strategy_greeks,
     )
     record = PositionRecord(
-        position_id="POS-STRAT",
+        position_id=PositionId("POS-STRAT"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,

@@ -5,6 +5,9 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    Symbol,
+)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -27,7 +30,7 @@ _FILL = PositionFill(
     fees=1.0,
 )
 _LONG_EQUITY = EquityPositionDetails(
-    ticker="AAPL",
+    ticker=Symbol("AAPL"),
     share_count=100.0,
     average_cost_basis_per_share=150.0,
 )

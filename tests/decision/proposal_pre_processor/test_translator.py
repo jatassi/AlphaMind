@@ -11,6 +11,12 @@ from types import MappingProxyType
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.decision.analyst.models import (
     EntryOrder,
     GuardrailValidationResult,
@@ -121,7 +127,9 @@ def _invalidation_leg() -> InvalidationLeg:
         leg_id="INV-1",
         type="price",
         is_hard=True,
-        condition=PriceCondition(underlying_trigger="AAPL", comparator="<=", trigger_price=140.0),
+        condition=PriceCondition(
+            underlying_trigger=Symbol("AAPL"), comparator="<=", trigger_price=140.0
+        ),
         order_parameters=OrderParameters(order_type="market"),
     )
 
@@ -158,9 +166,9 @@ def _equity_recommendation(
     if order_type == "stop_limit":
         entry_order_kwargs["stop_price"] = 150.0
     return Recommendation(
-        recommendation_id=rec_id,
+        recommendation_id=RecommendationId(rec_id),
         instrument=InstrumentEquity(asset_type="equity", ticker=underlying, direction=direction),  # type: ignore[arg-type]
-        underlying=underlying,
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         conviction_level=3,
         entry_order=EntryOrder(**entry_order_kwargs),  # type: ignore[arg-type]
@@ -219,16 +227,16 @@ def _option_recommendation(
     premium_at_risk: float | None = 750.0,
 ) -> Recommendation:
     return Recommendation(
-        recommendation_id=rec_id,
+        recommendation_id=RecommendationId(rec_id),
         instrument=InstrumentOption(
             asset_type="option",
-            underlying=underlying,
+            underlying=Symbol(underlying),
             strike=strike,
             expiration=_EXP,
             contract_type=contract_type,  # type: ignore[arg-type]
             direction=direction,  # type: ignore[arg-type]
         ),
-        underlying=underlying,
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
@@ -256,11 +264,11 @@ def _strategy_recommendation(
     premium_at_risk: float | None = 600.0,
 ) -> Recommendation:
     return Recommendation(
-        recommendation_id=rec_id,
+        recommendation_id=RecommendationId(rec_id),
         instrument=InstrumentStrategy(
             asset_type="strategy",
             strategy_type="vertical_spread",
-            underlying=underlying,
+            underlying=Symbol(underlying),
             legs=(
                 StrategyLeg(
                     strike=150.0,
@@ -278,7 +286,7 @@ def _strategy_recommendation(
                 ),
             ),
         ),
-        underlying=underlying,
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
@@ -429,10 +437,10 @@ def _close_assessment(
     quantity: float | str = "all",
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id="THESIS-1",
-        underlying=underlying,
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         thesis_status="on-track",
         recommended_action="close",
@@ -454,10 +462,10 @@ def _reduce_assessment(
     quantity: float = 30.0,
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id="THESIS-1",
-        underlying="AAPL",
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol("AAPL"),
         sector="tech",
         thesis_status="at-risk",
         recommended_action="reduce",
@@ -480,10 +488,10 @@ def _add_assessment(
     additional_dollar_value: float = 7_500.0,
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id="THESIS-1",
-        underlying="AAPL",
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol("AAPL"),
         sector="tech",
         thesis_status="on-track",
         recommended_action="add",
@@ -508,10 +516,10 @@ def _adjust_bracket_assessment(
     position_id: str = "POS-1",
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id="THESIS-1",
-        underlying="AAPL",
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol("AAPL"),
         sector="tech",
         thesis_status="on-track",
         recommended_action="adjust-bracket",
@@ -530,10 +538,10 @@ def _adjust_bracket_assessment(
 
 def _hold_assessment(sa_id: str = "SA-5", position_id: str = "POS-1") -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id="THESIS-1",
-        underlying="AAPL",
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol("AAPL"),
         sector="tech",
         thesis_status="on-track",
         recommended_action="hold",

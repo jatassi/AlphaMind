@@ -12,6 +12,10 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+from alphamind._kernel.ids import (
+    InvocationId,
+    Symbol,
+)
 from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.decision.analyst.models import (
@@ -83,7 +87,9 @@ def _make_guardrail_result(**overrides: Any) -> GuardrailValidationResult:
 def _make_recommendation(**overrides: Any) -> Recommendation:
     defaults: dict[str, Any] = {
         "recommendation_id": "REC-1",
-        "instrument": InstrumentEquity(asset_type="equity", ticker="NVDA", direction="long"),
+        "instrument": InstrumentEquity(
+            asset_type="equity", ticker=Symbol("NVDA"), direction="long"
+        ),
         "underlying": "NVDA",
         "sector": "semis",
         "conviction_level": 4,
@@ -96,7 +102,7 @@ def _make_recommendation(**overrides: Any) -> Recommendation:
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger="NVDA", comparator="<=", trigger_price=820.0
+                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=820.0
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             ),
@@ -188,7 +194,7 @@ class TestLegIdPairing:
                     type="price",
                     is_hard=True,
                     condition=PriceCondition(
-                        underlying_trigger="NVDA", comparator="<=", trigger_price=820.0
+                        underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=820.0
                     ),
                     order_parameters=OrderParameters(order_type="market"),
                 ),
@@ -222,7 +228,9 @@ class TestLegIdPairing:
 class TestUnderlyingMatchesInstrument:
     def test_equity_underlying_mismatch_is_error(self) -> None:
         rec = _make_recommendation(
-            instrument=InstrumentEquity(asset_type="equity", ticker="AMD", direction="long"),
+            instrument=InstrumentEquity(
+                asset_type="equity", ticker=Symbol("AMD"), direction="long"
+            ),
             underlying="NVDA",
         )
         output = _make_output(recommendations=(rec,))
@@ -239,7 +247,7 @@ class TestUnderlyingMatchesInstrument:
         rec = _make_recommendation(
             instrument=InstrumentOption(
                 asset_type="option",
-                underlying="AMD",
+                underlying=Symbol("AMD"),
                 strike=180.0,
                 expiration=date(2026, 5, 16),
                 contract_type="call",
@@ -265,7 +273,7 @@ class TestUnderlyingMatchesInstrument:
             instrument=InstrumentStrategy(
                 asset_type="strategy",
                 strategy_type="vertical_spread",
-                underlying="NVDA",
+                underlying=Symbol("NVDA"),
                 legs=(
                     StrategyLeg(
                         strike=820.0,
@@ -408,7 +416,7 @@ class TestAssetTypePermitted:
         rec = _make_recommendation(
             instrument=InstrumentOption(
                 asset_type="option",
-                underlying="NVDA",
+                underlying=Symbol("NVDA"),
                 strike=820.0,
                 expiration=date(2026, 5, 16),
                 contract_type="call",
@@ -438,7 +446,7 @@ class TestAssetTypePermitted:
         rec = _make_recommendation(
             instrument=InstrumentOption(
                 asset_type="option",
-                underlying="NVDA",
+                underlying=Symbol("NVDA"),
                 strike=820.0,
                 expiration=date(2026, 5, 16),
                 contract_type="call",
@@ -790,14 +798,14 @@ class TestLayer3Referential:
 class TestWatchlistMode:
     def test_baseline_watchlist_passes(self) -> None:
         watch = WatchlistEntry(
-            ticker="NVDA",
+            ticker=Symbol("NVDA"),
             sector="semis",
             thesis_summary="Watching for confirmation.",
             estimated_conviction=3,
             source_references=("SA-TECH-2",),
         )
         output = AnalystOutput(
-            invocation_id="inv-001",
+            invocation_id=InvocationId("inv-001"),
             timestamp=_ts("2026-04-23T14:31:22Z"),
             mode="watchlist",
             watchlist=(watch,),
@@ -811,13 +819,13 @@ class TestWatchlistMode:
 
     def test_watchlist_sector_outside_active_set_is_error(self) -> None:
         watch = WatchlistEntry(
-            ticker="JPM",
+            ticker=Symbol("JPM"),
             sector="financials",
             thesis_summary="Watching JPM.",
             estimated_conviction=2,
         )
         output = AnalystOutput(
-            invocation_id="inv-001",
+            invocation_id=InvocationId("inv-001"),
             timestamp=_ts("2026-04-23T14:31:22Z"),
             mode="watchlist",
             watchlist=(watch,),
@@ -833,14 +841,14 @@ class TestWatchlistMode:
 
     def test_watchlist_unknown_source_reference_is_error(self) -> None:
         watch = WatchlistEntry(
-            ticker="NVDA",
+            ticker=Symbol("NVDA"),
             sector="semis",
             thesis_summary="Watching NVDA.",
             estimated_conviction=3,
             source_references=("SA-TECH-99",),
         )
         output = AnalystOutput(
-            invocation_id="inv-001",
+            invocation_id=InvocationId("inv-001"),
             timestamp=_ts("2026-04-23T14:31:22Z"),
             mode="watchlist",
             watchlist=(watch,),

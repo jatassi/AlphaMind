@@ -16,6 +16,10 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import (
+    PositionId,
+    ThesisId,
+)
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine, make_session_factory
 from alphamind.portfolio_state.records import (
@@ -72,7 +76,7 @@ def _make_component(
 ) -> ThesisComponent:
     return ThesisComponent(
         component_id=component_id,
-        thesis_id=thesis_id,
+        thesis_id=ThesisId(thesis_id),
         component_type=component_type,
         linked_bracket_leg_type=linked_bracket_leg_type,
         linked_bracket_leg_id=linked_bracket_leg_id,
@@ -105,8 +109,8 @@ def _full_components() -> tuple[ThesisComponent, ...]:
 
 def _active_thesis() -> ThesisRecord:
     return ThesisRecord(
-        thesis_id="thesis-1",
-        position_id="pos-1",
+        thesis_id=ThesisId("thesis-1"),
+        position_id=PositionId("pos-1"),
         summary="Test thesis",
         key_catalyst="earnings beat",
         position_size_rationale="medium-conviction sizing",
@@ -149,8 +153,8 @@ def _resolved_thesis() -> ThesisRecord:
         ),
     )
     return ThesisRecord(
-        thesis_id="thesis-1",
-        position_id="pos-1",
+        thesis_id=ThesisId("thesis-1"),
+        position_id=PositionId("pos-1"),
         summary="Resolved test thesis",
         key_catalyst="earnings",
         position_size_rationale=None,
@@ -169,8 +173,8 @@ def _resolved_thesis() -> ThesisRecord:
 
 def _cancelled_thesis() -> ThesisRecord:
     return ThesisRecord(
-        thesis_id="thesis-2",
-        position_id="pos-2",
+        thesis_id=ThesisId("thesis-2"),
+        position_id=PositionId("pos-2"),
         summary="Cancelled before fill",
         key_catalyst="vol expansion",
         position_size_rationale=None,
@@ -600,8 +604,8 @@ class TestActiveThesisValidator:
 
         with pytest.raises(ValidationError):
             ThesisRecord(
-                thesis_id="thesis-1",
-                position_id="pos-1",
+                thesis_id=ThesisId("thesis-1"),
+                position_id=PositionId("pos-1"),
                 summary="bad active",
                 key_catalyst="cat",
                 position_size_rationale=None,

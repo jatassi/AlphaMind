@@ -12,6 +12,10 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    EnvelopeId,
+    InvocationId,
+)
 from alphamind.commands.command_models import (
     BracketOrderParameters,
     EntryOrder,
@@ -262,8 +266,8 @@ class TestParsePMCommandId:
     def test_worked_example_post_rejection(self) -> None:
         components = parse_pm_command_id("inv-2026-04-23T14-30Z.ENV-REC-2.0.1")
         assert components == PMCommandIdComponents(
-            invocation_id="2026-04-23T14-30Z",
-            envelope_id="ENV-REC-2",
+            invocation_id=InvocationId("2026-04-23T14-30Z"),
+            envelope_id=EnvelopeId("ENV-REC-2"),
             command_ordinal=0,
             attempt_seq=1,
         )

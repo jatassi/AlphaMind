@@ -23,6 +23,7 @@ This module bridges the two — a thin, pure translator that:
 
 from __future__ import annotations
 
+from alphamind._kernel.ids import EnvelopeId, PositionId
 from alphamind.commands.command_models import CloseCommand
 from alphamind.commands.engine_envelope import (
     BreachDetails as OmsBreachDetails,
@@ -58,7 +59,7 @@ def to_oms_engine_envelope(envelope: EngineEnvelope) -> OmsEngineEnvelope:
     oms_close = _close_command_from(envelope.command)
     oms_trigger = _trigger_record_from(envelope.guardrail_trigger_record)
     return OmsEngineEnvelope(
-        envelope_id=envelope.envelope_id,
+        envelope_id=EnvelopeId(envelope.envelope_id),
         invocation_id=None,
         trigger_timestamp=envelope.trigger_timestamp,
         source_provenance=envelope.source_provenance,
@@ -76,7 +77,7 @@ def _close_command_from(command: EngineCloseCommand) -> CloseCommand:
     return CloseCommand(
         command_id=None,
         command_type="close",
-        position_id=command.position_id,
+        position_id=PositionId(command.position_id),
         quantity=command.quantity_or_all,
         order_type=command.execution_method,
         limit_price=command.limit_price,

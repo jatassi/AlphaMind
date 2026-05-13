@@ -6,6 +6,9 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    Symbol,
+)
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.computations.exposure import (
     SectorResolver,
@@ -64,7 +67,7 @@ def _make_long_equity(
             "direction": Direction.LONG,
             "entry_timestamp": _NOW,
             "details": EquityPositionDetails(
-                ticker=ticker,
+                ticker=Symbol(ticker),
                 share_count=100.0,
                 average_cost_basis_per_share=notional / 100.0,
             ),
@@ -105,7 +108,7 @@ def _make_short_equity(
             "direction": Direction.SHORT,
             "entry_timestamp": _NOW,
             "details": EquityPositionDetails(
-                ticker=ticker,
+                ticker=Symbol(ticker),
                 share_count=100.0,
                 average_cost_basis_per_share=notional / 100.0,
                 borrow_rate_pct=0.5,
@@ -143,7 +146,7 @@ def _make_long_option(
     """Build a long put (negative delta) for testing sign-based bucket assignment."""
     greeks = OptionGreeks(delta=delta, gamma=0.05, theta=-0.01, vega=0.3)
     options_details = OptionsPositionDetails(
-        underlying_ticker=ticker,
+        underlying_ticker=Symbol(ticker),
         strike_price=200.0,
         expiration_date=date(2025, 12, 31),
         contract_type=OptionContractType.PUT,

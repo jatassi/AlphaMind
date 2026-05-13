@@ -37,6 +37,7 @@ from alpaca.trading.requests import (
     OptionLegRequest,
 )
 
+from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol
 from alphamind.commands.command_models import (
     AddCommand,
     CloseCommand,
@@ -66,7 +67,7 @@ PositionIntentLiteral = Literal["buy_to_open", "sell_to_open", "buy_to_close", "
 class MLEGLegAck:
     """Per-leg child of an mleg parent acknowledgment."""
 
-    occ_symbol: str
+    occ_symbol: OccSymbol
     side: Literal["buy", "sell"]
     ratio_qty: int
     position_intent: PositionIntentLiteral
@@ -76,8 +77,8 @@ class MLEGLegAck:
 class MLEGSubmission:
     """Alpaca's acknowledgment record for a submitted mleg order."""
 
-    alpaca_order_id: str
-    client_order_id: str
+    alpaca_order_id: AlpacaOrderId
+    client_order_id: ClientOrderId
     status: str
     legs: tuple[MLEGLegAck, ...]
     strategy_type: StrategyType
@@ -281,7 +282,7 @@ def _legs_to_acks(
     """
     return tuple(
         MLEGLegAck(
-            occ_symbol=leg.symbol,
+            occ_symbol=OccSymbol(leg.symbol),
             side=_required_side(leg).value,
             ratio_qty=int(leg.ratio_qty),
             position_intent=_required_intent(leg).value,
@@ -328,8 +329,8 @@ async def _submit(
     if isinstance(outcome, Submitted):
         order = outcome.payload
         submission = MLEGSubmission(
-            alpaca_order_id=str(order.id),
-            client_order_id=order.client_order_id,
+            alpaca_order_id=AlpacaOrderId(str(order.id)),
+            client_order_id=ClientOrderId(order.client_order_id),
             status=order.status.value,
             legs=_legs_to_acks(leg_requests),
             strategy_type=strategy_type,

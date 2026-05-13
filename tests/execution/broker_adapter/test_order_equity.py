@@ -25,6 +25,11 @@ from alpaca.trading.requests import (
     StopLimitOrderRequest,
 )
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    ClientOrderId,
+    PositionId,
+)
 from alphamind.commands.command_models import (
     AddCommand,
     BracketOrderParameters,
@@ -160,7 +165,7 @@ def _make_add_command(
 ) -> AddCommand:
     return AddCommand(
         command_type="add",
-        position_id="pos-001",
+        position_id=PositionId("pos-001"),
         additional_quantity=50.0,
         additional_dollar_value=8500.0,
         entry_order=EntryOrder(type=entry_type, limit_price=limit_price),  # type: ignore[arg-type]
@@ -182,7 +187,7 @@ def _make_close_command(
 ) -> CloseCommand:
     return CloseCommand(
         command_type="close",
-        position_id="pos-001",
+        position_id=PositionId("pos-001"),
         quantity=quantity,  # type: ignore[arg-type]
         order_type=order_type,  # type: ignore[arg-type]
         limit_price=limit_price,
@@ -211,8 +216,8 @@ def _make_fake_order(
 
 def test_equity_submission_is_frozen_dataclass() -> None:
     sub = EquitySubmission(
-        alpaca_order_id="alp-123",
-        client_order_id=_CLIENT_ORDER_ID_INV,
+        alpaca_order_id=AlpacaOrderId("alp-123"),
+        client_order_id=ClientOrderId(_CLIENT_ORDER_ID_INV),
         status="accepted",
         order_class="bracket",
     )
@@ -221,7 +226,7 @@ def test_equity_submission_is_frozen_dataclass() -> None:
     assert sub.order_class == "bracket"
     # frozen — assignment must raise FrozenInstanceError
     with pytest.raises(FrozenInstanceError):
-        sub.alpaca_order_id = "other"  # type: ignore[misc]
+        sub.alpaca_order_id = AlpacaOrderId("other")  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

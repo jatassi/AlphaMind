@@ -28,6 +28,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, Final, Literal, Protocol, cast
 
+from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol
 from alphamind.execution.broker_adapter.fill_stream import (
     FillReport,
     OrderStatus,
@@ -182,9 +183,10 @@ def _build_parent_report(
 ) -> FillReport:
     """Build the single-event / mleg-parent report from *snapshot*."""
     fill_price, fill_quantity = _fill_metrics(snapshot.status, snapshot)
+    occ = _occ_symbol_for_parent(snapshot)
     return FillReport(
-        client_order_id=snapshot.client_order_id,
-        alpaca_order_id=_parent_alpaca_order_id(snapshot, event),
+        client_order_id=ClientOrderId(snapshot.client_order_id),
+        alpaca_order_id=AlpacaOrderId(_parent_alpaca_order_id(snapshot, event)),
         parent_client_order_id=None,
         parent_alpaca_order_id=None,
         event_type=event,
@@ -194,7 +196,7 @@ def _build_parent_report(
         cumulative_filled_quantity=snapshot.filled_qty,
         remaining_quantity=max(snapshot.qty - snapshot.filled_qty, 0.0),
         execution_venue=None,
-        occ_symbol=_occ_symbol_for_parent(snapshot),
+        occ_symbol=OccSymbol(occ) if occ is not None else None,
         position_intent=None,
         raw_event_payload=raw_payload,
     )
@@ -216,8 +218,8 @@ def _build_leg_report(
     leg_event = _STATUS_TO_EVENT.get(leg.status, parent.event_type)
     fill_price, fill_quantity = _fill_metrics(leg.status, leg)
     return FillReport(
-        client_order_id=leg.order_id,
-        alpaca_order_id=leg.order_id,
+        client_order_id=ClientOrderId(leg.order_id),
+        alpaca_order_id=AlpacaOrderId(leg.order_id),
         parent_client_order_id=parent.client_order_id,
         parent_alpaca_order_id=parent.alpaca_order_id,
         event_type=leg_event,
@@ -227,7 +229,7 @@ def _build_leg_report(
         cumulative_filled_quantity=leg.filled_qty,
         remaining_quantity=max(leg.qty - leg.filled_qty, 0.0),
         execution_venue=None,
-        occ_symbol=leg.symbol,
+        occ_symbol=OccSymbol(leg.symbol),
         position_intent=_position_intent_for(leg),
         raw_event_payload=raw_payload,
     )

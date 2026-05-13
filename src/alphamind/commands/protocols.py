@@ -30,6 +30,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from alphamind._kernel.ids import ClientOrderId
+
 if TYPE_CHECKING:
     from alphamind.commands.command_models import OMSCommand
     from alphamind.commands.pm_envelope import PMEnvelope
@@ -67,7 +69,7 @@ class BrokerDispatch(Protocol):
         self,
         command: OMSCommand,
         *,
-        client_order_id: str,
+        client_order_id: ClientOrderId,
         **context: Any,
     ) -> Any: ...
 

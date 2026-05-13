@@ -6,6 +6,9 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    Symbol,
+)
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.position_model import (
     compute_strategy_breakeven_levels,
@@ -43,7 +46,7 @@ def _leg(
         leg_id=leg_id,
         direction=direction,
         options=OptionsPositionDetails(
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             strike_price=strike,
             expiration_date=expiration_date,
             contract_type=contract_type,

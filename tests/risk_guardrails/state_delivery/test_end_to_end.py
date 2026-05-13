@@ -18,6 +18,13 @@ from types import MappingProxyType
 
 import pytest
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+)
 from alphamind._kernel.regime import (
     DrawdownTier,
     RegimeLabel,
@@ -550,7 +557,7 @@ def _build_equity_position(
     if is_short:
         market_value = -market_value
     equity = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=10.0,
         average_cost_basis_per_share=100.0,
         borrow_rate_pct=0.5 if is_short else None,
@@ -565,7 +572,7 @@ def _build_equity_position(
         fees=1.0,
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -602,7 +609,7 @@ def _build_option_position(
 ) -> PositionView:
     market_value = weight_pct * _TOTAL_PORTFOLIO_VALUE_USD / 100.0
     options = OptionsPositionDetails(
-        underlying_ticker=ticker,
+        underlying_ticker=Symbol(ticker),
         strike_price=100.0,
         expiration_date=date(2026, 6, 19),
         contract_type=OptionContractType.CALL,
@@ -619,7 +626,7 @@ def _build_option_position(
         fees=1.0,
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -996,11 +1003,11 @@ def _make_halt_state() -> HaltState:
 
 
 def _build_pending_order() -> OrderRecord:
-    spec = EquityInstrumentSpec(ticker="NVDA")
+    spec = EquityInstrumentSpec(ticker=Symbol("NVDA"))
     return OrderRecord(
-        order_id="ORD-PENDING-1",
-        position_id="POS-NVDA-001",
-        bracket_id="BRK-PENDING-1",
+        order_id=OrderId("ORD-PENDING-1"),
+        position_id=PositionId("POS-NVDA-001"),
+        bracket_id=BracketId("BRK-PENDING-1"),
         role=OrderRole.ENTRY,
         instrument_spec=spec,
         direction=OrderDirection.BUY,
@@ -1009,8 +1016,8 @@ def _build_pending_order() -> OrderRecord:
         quantity=10.0,
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
-        alpaca_order_id="alp-1",
-        alpaca_order_id_chain=("alp-1",),
+        alpaca_order_id=AlpacaOrderId("alp-1"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-1"),),
         submission_timestamp=_ENTRY_TIMESTAMP,
         last_update_timestamp=_ENTRY_TIMESTAMP,
         filled_quantity=0.0,

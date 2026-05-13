@@ -32,6 +32,10 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.session import MonitorSession
 from alphamind.execution.continuous_monitor.underlying_stream import (
@@ -61,14 +65,14 @@ def _now() -> datetime:
 
 def _equity_position(*, position_id: str, ticker: str) -> PositionRecord:
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_now(),
         details=EquityPositionDetails(
-            ticker=ticker, share_count=10.0, average_cost_basis_per_share=100.0
+            ticker=Symbol(ticker), share_count=10.0, average_cost_basis_per_share=100.0
         ),
         execution_history=(
             PositionFill(

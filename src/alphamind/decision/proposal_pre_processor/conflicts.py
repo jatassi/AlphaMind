@@ -17,6 +17,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from alphamind._kernel.ids import Symbol
 from alphamind.decision.analyst.models import (
     InstrumentEquity,
     InstrumentOption,
@@ -35,7 +36,14 @@ from alphamind.decision.strategist.models import (
 
 @dataclass(frozen=True, slots=True)
 class ConflictDetectionResult:
-    """Mirror-symmetric conflict matrix produced by :func:`detect_conflicts`."""
+    """Mirror-symmetric conflict matrix produced by :func:`detect_conflicts`.
+
+    Dict keys are stored as plain ``str`` rather than ``RecommendationId``: the
+    consumers (tests and proposal-pre-processor assembly) index with literal
+    strings, and NewType invariance in ``Mapping`` keys made that boundary
+    awkward. The underlying record ids that populate these dicts remain
+    ``RecommendationId`` at their source — this surface is informational only.
+    """
 
     analyst_conflicts_by_rec_id: Mapping[str, tuple[AnalystSideConflict, ...]]
     strategist_position_conflicts_by_assessment_id: Mapping[str, tuple[StrategistSideConflict, ...]]
@@ -64,10 +72,12 @@ def detect_conflicts(
     pending_buckets: dict[str, list[StrategistSideConflict]] = {
         po.pending_order_assessment_id: [] for po in pending_order_assessments
     }
-    underlying_by_assessment_id = {pa.assessment_id: pa.underlying for pa in position_assessments}
+    underlying_by_assessment_id: dict[str, Symbol] = {
+        pa.assessment_id: pa.underlying for pa in position_assessments
+    }
     # Pre-compute per-pending-order classification and resolved underlying so
     # the inner rec-loop is O(N*M) appends rather than O(N*M) re-resolutions.
-    eligible_pending: list[tuple[PendingOrderAssessment, ConflictType, str]] = []
+    eligible_pending: list[tuple[PendingOrderAssessment, ConflictType, Symbol]] = []
     for pending in pending_order_assessments:
         classification = _classify_pending(pending)
         if classification is None:
@@ -176,8 +186,8 @@ def _classify_pending(pending: PendingOrderAssessment) -> ConflictType | None:
 
 def _resolve_pending_underlying(
     pending: PendingOrderAssessment,
-    underlying_by_assessment_id: dict[str, str],
-) -> str | None:
+    underlying_by_assessment_id: Mapping[str, Symbol],
+) -> Symbol | None:
     """Resolve a pending entry order's underlying via its linked assessment.
 
     Returns ``None`` if the pending order has no ``linked_position_assessment_id``

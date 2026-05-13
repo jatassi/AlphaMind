@@ -6,6 +6,10 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -35,14 +39,14 @@ def _short_mara_position() -> PositionView:
     """A6 / A7 fixture: 140 shares short MARA at $20 avg cost, current $28."""
     fill_ts = datetime(2026, 4, 28, 14, 0, tzinfo=UTC)
     record = PositionRecord(
-        position_id="POS-MARA-001",
+        position_id=PositionId("POS-MARA-001"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.SHORT,
         entry_timestamp=fill_ts,
         details=EquityPositionDetails(
-            ticker="MARA",
+            ticker=Symbol("MARA"),
             share_count=140.0,
             average_cost_basis_per_share=20.0,
             borrow_rate_pct=2.5,

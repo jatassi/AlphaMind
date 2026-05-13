@@ -39,6 +39,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    ClientOrderId,
+    OccSymbol,
+    PositionId,
+)
 from alphamind.commands.command_models import (
     BracketOrderParameters,
     CloseCommand,
@@ -539,7 +545,7 @@ async def _drive_lifecycle(ctx: VerifyContext, plan: _LifecyclePlan) -> PhaseRes
             client=client,
             queries=ctx.queries,
             execution=ctx.execution,
-            client_order_id=_client_order_id_for_phase(f"{plan.role_prefix}-open"),
+            client_order_id=ClientOrderId(_client_order_id_for_phase(f"{plan.role_prefix}-open")),
         )
         if isinstance(open_outcome, GatewaySubmissionFailed):
             return PhaseResult.failed(
@@ -561,7 +567,7 @@ async def _drive_lifecycle(ctx: VerifyContext, plan: _LifecyclePlan) -> PhaseRes
 
         close_command = CloseCommand(
             command_type="close",
-            position_id=f"verify-{plan.role_prefix}-{open_alpaca_id}",
+            position_id=PositionId(f"verify-{plan.role_prefix}-{open_alpaca_id}"),
             quantity="all",
             order_type="market",
             close_rationale_type="target_reached",
@@ -571,7 +577,7 @@ async def _drive_lifecycle(ctx: VerifyContext, plan: _LifecyclePlan) -> PhaseRes
             client=client,
             queries=ctx.queries,
             execution=ctx.execution,
-            client_order_id=_client_order_id_for_phase(f"{plan.role_prefix}-close"),
+            client_order_id=ClientOrderId(_client_order_id_for_phase(f"{plan.role_prefix}-close")),
             **plan.close_context,
         )
         if isinstance(close_outcome, GatewaySubmissionFailed):
@@ -625,13 +631,13 @@ async def _cleanup_residue(
             await submit_cancel(
                 client=client,
                 execution=ctx.execution,
-                target_alpaca_order_id=pending_alpaca_order_id,
+                target_alpaca_order_id=AlpacaOrderId(pending_alpaca_order_id),
             )
 
     if position_opened:
         cleanup_close = CloseCommand(
             command_type="close",
-            position_id=plan.cleanup_position_id,
+            position_id=PositionId(plan.cleanup_position_id),
             quantity="all",
             order_type="market",
             close_rationale_type="risk_management",
@@ -643,7 +649,9 @@ async def _cleanup_residue(
                 client=client,
                 queries=ctx.queries,
                 execution=ctx.execution,
-                client_order_id=_client_order_id_for_phase(f"{plan.role_prefix}-cleanup"),
+                client_order_id=ClientOrderId(
+                    _client_order_id_for_phase(f"{plan.role_prefix}-cleanup")
+                ),
                 **plan.close_context,
             )
 
@@ -1023,13 +1031,13 @@ def _build_mleg_open_legs(
 
     return (
         MLEGLegAck(
-            occ_symbol=_build_occ(underlying, expiration, long_strike),
+            occ_symbol=OccSymbol(_build_occ(underlying, expiration, long_strike)),
             side="buy",
             ratio_qty=1,
             position_intent="buy_to_open",
         ),
         MLEGLegAck(
-            occ_symbol=_build_occ(underlying, expiration, short_strike),
+            occ_symbol=OccSymbol(_build_occ(underlying, expiration, short_strike)),
             side="sell",
             ratio_qty=1,
             position_intent="sell_to_open",

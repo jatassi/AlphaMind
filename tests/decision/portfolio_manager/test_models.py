@@ -23,6 +23,12 @@ from typing import Any, get_args
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from alphamind._kernel.ids import (
+    EnvelopeId,
+    InvocationId,
+    PositionId,
+    RecommendationId,
+)
 from alphamind.commands.command_models import (
     BracketOrderParameters,
     EntryOrder,
@@ -90,7 +96,7 @@ def _position_eval_all_pass() -> PositionActionEvaluation:
 def _close_command_basic() -> CloseCommand:
     return CloseCommand(
         command_type="close",
-        position_id="POS-NVDA-001",
+        position_id=PositionId("POS-NVDA-001"),
         quantity="all",
         order_type="market",
         limit_price=None,
@@ -493,12 +499,12 @@ class TestEnvelopeIdSourceProvenance:
         """An ENV-REC-* envelope cannot have source_provenance=pm_strategist."""
         with pytest.raises(ValidationError):
             PMStrategistEnvelope(
-                envelope_id="ENV-REC-1",
-                invocation_id="inv-2026-05-05",
+                envelope_id=EnvelopeId("ENV-REC-1"),
+                invocation_id=InvocationId("inv-2026-05-05"),
                 source_provenance="pm_strategist",
-                source_recommendation_id="SA-1",
+                source_recommendation_id=RecommendationId("SA-1"),
                 recommendation_type="position_assessment",
-                position_id="POS-1",
+                position_id=PositionId("POS-1"),
                 verdict="approve",
                 evaluation=_position_eval_all_pass(),
                 modifications=(),
@@ -512,10 +518,10 @@ class TestEnvelopeIdSourceProvenance:
         """An ENV-SA-* envelope cannot have source_provenance=pm_analyst."""
         with pytest.raises(ValidationError):
             PMAnalystEnvelope(
-                envelope_id="ENV-SA-1",
-                invocation_id="inv-2026-05-05",
+                envelope_id=EnvelopeId("ENV-SA-1"),
+                invocation_id=InvocationId("inv-2026-05-05"),
                 source_provenance="pm_analyst",
-                source_recommendation_id="REC-1",
+                source_recommendation_id=RecommendationId("REC-1"),
                 recommendation_type="new_entry",
                 verdict="approve",
                 evaluation=_thesis_eval_all_pass(),
@@ -595,7 +601,7 @@ class TestDiscriminatedUnion:
 class TestPMCompletionRecord:
     def test_minimal_record_constructs(self) -> None:
         record = PMCompletionRecord(
-            invocation_id="inv-2026-05-05",
+            invocation_id=InvocationId("inv-2026-05-05"),
             timestamp=_NOW,
             envelopes_submitted=3,
             verdict_summary=VerdictSummary(approve=2, approve_with_modification=1, reject=0),
@@ -604,7 +610,7 @@ class TestPMCompletionRecord:
 
     def test_zero_envelopes_constructs(self) -> None:
         record = PMCompletionRecord(
-            invocation_id="inv-1",
+            invocation_id=InvocationId("inv-1"),
             timestamp=_NOW,
             envelopes_submitted=0,
             verdict_summary=VerdictSummary(approve=0, approve_with_modification=0, reject=0),
@@ -614,7 +620,7 @@ class TestPMCompletionRecord:
     def test_sum_mismatch_rejected(self) -> None:
         with pytest.raises(ValidationError, match=r"(?i)sum"):
             PMCompletionRecord(
-                invocation_id="inv-1",
+                invocation_id=InvocationId("inv-1"),
                 timestamp=_NOW,
                 envelopes_submitted=3,
                 verdict_summary=VerdictSummary(approve=1, approve_with_modification=1, reject=0),
@@ -635,7 +641,7 @@ class TestCloseCommandInvariants:
         with pytest.raises(ValidationError, match=r"(?i)risk_management_subtype"):
             CloseCommand(
                 command_type="close",
-                position_id="POS-1",
+                position_id=PositionId("POS-1"),
                 quantity="all",
                 order_type="market",
                 close_rationale_type="risk_management",
@@ -644,7 +650,7 @@ class TestCloseCommandInvariants:
     def test_risk_management_with_pm_directed_subtype_accepted(self) -> None:
         cmd = CloseCommand(
             command_type="close",
-            position_id="POS-1",
+            position_id=PositionId("POS-1"),
             quantity="all",
             order_type="market",
             close_rationale_type="risk_management",
@@ -655,7 +661,7 @@ class TestCloseCommandInvariants:
     def test_thesis_invalidated_no_subtype_required(self) -> None:
         cmd = CloseCommand(
             command_type="close",
-            position_id="POS-1",
+            position_id=PositionId("POS-1"),
             quantity="all",
             order_type="market",
             close_rationale_type="thesis_invalidated",
@@ -1053,17 +1059,17 @@ class TestFrozen:
     def test_envelope_is_frozen(self) -> None:
         envelope = _make_analyst_envelope()
         with pytest.raises(ValidationError):
-            envelope.envelope_id = "ENV-REC-99"
+            envelope.envelope_id = EnvelopeId("ENV-REC-99")
 
     def test_completion_record_is_frozen(self) -> None:
         record = PMCompletionRecord(
-            invocation_id="inv-1",
+            invocation_id=InvocationId("inv-1"),
             timestamp=_NOW,
             envelopes_submitted=0,
             verdict_summary=VerdictSummary(approve=0, approve_with_modification=0, reject=0),
         )
         with pytest.raises(ValidationError):
-            record.invocation_id = "inv-2"
+            record.invocation_id = InvocationId("inv-2")
 
 
 # ---------------------------------------------------------------------------

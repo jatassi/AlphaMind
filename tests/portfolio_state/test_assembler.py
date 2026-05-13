@@ -9,6 +9,10 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from alphamind._kernel.ids import (
+    OrderId,
+    Symbol,
+)
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -258,7 +262,7 @@ def _make_open_equity_position(
     direction: Direction = Direction.LONG,
 ) -> PositionRecord:
     equity = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=cost_per_share,
         borrow_rate_pct=0.5 if direction == Direction.SHORT else None,
@@ -325,7 +329,7 @@ def _make_pending_order(
     position_id: str = "POS-001",
     submission_timestamp: datetime = _ORDER_SUBMITTED_AT,
 ) -> OrderRecord:
-    spec = EquityInstrumentSpec(ticker="NVDA")
+    spec = EquityInstrumentSpec(ticker=Symbol("NVDA"))
     return OrderRecord.model_validate(
         {
             "order_id": order_id,
@@ -363,16 +367,20 @@ def _make_bracket(
     stop_leg = BracketLeg(
         leg_id="leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id="ord-stop-1",
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=stop_price, direction="LTE"),
+        order_id=OrderId("ord-stop-1"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=stop_price, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     target_leg = BracketLeg(
         leg_id="leg-target",
         leg_type=BracketLegType.TAKE_PROFIT,
-        order_id="ord-target-1",
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=target_price, direction="GTE"),
+        order_id=OrderId("ord-target-1"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=target_price, direction="GTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
@@ -398,7 +406,7 @@ def _make_options_position(
     delta: float = 0.5,
 ) -> PositionRecord:
     options = OptionsPositionDetails(
-        underlying_ticker=underlying_ticker,
+        underlying_ticker=Symbol(underlying_ticker),
         strike_price=500.0,
         expiration_date=date(2025, 12, 31),
         contract_type=OptionContractType.CALL,
@@ -450,7 +458,7 @@ def _make_strategy_position(
     premium2: float = 5.0,
 ) -> PositionRecord:
     leg1_options = OptionsPositionDetails(
-        underlying_ticker=leg1_underlying,
+        underlying_ticker=Symbol(leg1_underlying),
         strike_price=500.0,
         expiration_date=date(2025, 12, 31),
         contract_type=OptionContractType.CALL,
@@ -460,7 +468,7 @@ def _make_strategy_position(
         greeks=OptionGreeks(delta=0.5, gamma=0.01, theta=-0.5, vega=0.2),
     )
     leg2_options = OptionsPositionDetails(
-        underlying_ticker=leg2_underlying,
+        underlying_ticker=Symbol(leg2_underlying),
         strike_price=510.0,
         expiration_date=date(2025, 12, 31),
         contract_type=OptionContractType.PUT,

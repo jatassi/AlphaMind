@@ -15,6 +15,11 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    ClientOrderId,
+    OccSymbol,
+)
 from alphamind.execution.broker_adapter import FillReport
 from alphamind.execution.continuous_monitor.fill_stream_consumer import (
     fill_report_to_fill_record,
@@ -44,10 +49,14 @@ def _equity_fill_report(
     timestamp: datetime | None = None,
 ) -> FillReport:
     return FillReport(
-        client_order_id=client_order_id,
-        alpaca_order_id=alpaca_order_id,
-        parent_client_order_id=parent_client_order_id,
-        parent_alpaca_order_id=parent_alpaca_order_id,
+        client_order_id=ClientOrderId(client_order_id),
+        alpaca_order_id=AlpacaOrderId(alpaca_order_id),
+        parent_client_order_id=ClientOrderId(parent_client_order_id)
+        if parent_client_order_id is not None
+        else None,
+        parent_alpaca_order_id=AlpacaOrderId(parent_alpaca_order_id)
+        if parent_alpaca_order_id is not None
+        else None,
         event_type=event_type,
         fill_timestamp=timestamp or _ts(30),
         fill_price=fill_price,
@@ -55,7 +64,7 @@ def _equity_fill_report(
         cumulative_filled_quantity=cumulative,
         remaining_quantity=remaining,
         execution_venue=None,
-        occ_symbol=occ_symbol,
+        occ_symbol=OccSymbol(occ_symbol) if occ_symbol is not None else None,
         position_intent=None,
         raw_event_payload={},
     )

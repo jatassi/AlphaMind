@@ -45,6 +45,10 @@ import yaml
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.config.loaders import (
     load_modes,
     load_overlays,
@@ -158,14 +162,14 @@ def held_position_at_5pct() -> PositionView:
     """
     fill_timestamp = datetime(2026, 4, 29, 13, 30, tzinfo=UTC)
     record = PositionRecord(
-        position_id="NVDA-LONG-1",
+        position_id=PositionId("NVDA-LONG-1"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=fill_timestamp,
         details=EquityPositionDetails(
-            ticker="NVDA",
+            ticker=Symbol("NVDA"),
             share_count=10.0,
             average_cost_basis_per_share=100.0,
             borrow_rate_pct=None,

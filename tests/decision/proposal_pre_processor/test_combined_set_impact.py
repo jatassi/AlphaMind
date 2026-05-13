@@ -15,6 +15,12 @@ from types import MappingProxyType
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.decision.analyst.models import (
     EntryOrder,
     GuardrailValidationResult,
@@ -208,7 +214,9 @@ def _invalidation_leg() -> InvalidationLeg:
         leg_id="INV-1",
         type="price",
         is_hard=True,
-        condition=PriceCondition(underlying_trigger="AAPL", comparator="<=", trigger_price=140.0),
+        condition=PriceCondition(
+            underlying_trigger=Symbol("AAPL"), comparator="<=", trigger_price=140.0
+        ),
         order_parameters=OrderParameters(order_type="market"),
     )
 
@@ -223,9 +231,9 @@ def _equity_recommendation(
     dollar_value: float = 15_000.0,
 ) -> Recommendation:
     return Recommendation(
-        recommendation_id=rec_id,
+        recommendation_id=RecommendationId(rec_id),
         instrument=InstrumentEquity(asset_type="equity", ticker=underlying, direction=direction),  # type: ignore[arg-type]
-        underlying=underlying,
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
@@ -252,10 +260,10 @@ def _close_assessment(
     sector: str = "tech",
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id="THESIS-1",
-        underlying=underlying,
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         thesis_status="on-track",
         recommended_action="close",
@@ -545,16 +553,16 @@ def test_feature_disabled_proposals_raise() -> None:
     config = _full_config(options_enabled=False)
     market = _market()
     option_rec = Recommendation(
-        recommendation_id="REC-1",
+        recommendation_id=RecommendationId("REC-1"),
         instrument=InstrumentOption(
             asset_type="option",
-            underlying="AAPL",
+            underlying=Symbol("AAPL"),
             strike=150.0,
             expiration=_EXP,
             contract_type="call",
             direction="long",
         ),
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         sector="tech",
         conviction_level=3,
         entry_order=EntryOrder(type="market"),

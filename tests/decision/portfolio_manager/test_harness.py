@@ -20,6 +20,13 @@ from unittest.mock import patch
 
 import pytest
 
+from alphamind._kernel.ids import (
+    EnvelopeId,
+    InvocationId,
+    OrderId,
+    PositionId,
+    RecommendationId,
+)
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -1154,10 +1161,10 @@ async def test_submission_log_threads_from_engine_stub_state_cell(
     """
     eval_pass = CriterionAssessment(status="pass")
     envelope = PMAnalystEnvelope(
-        envelope_id="ENV-REC-1",
-        invocation_id="inv-log-001",
+        envelope_id=EnvelopeId("ENV-REC-1"),
+        invocation_id=InvocationId("inv-log-001"),
         source_provenance="pm_analyst",
-        source_recommendation_id="REC-1",
+        source_recommendation_id=RecommendationId("REC-1"),
         recommendation_type="new_entry",
         verdict="approve",
         evaluation=ThesisQualityEvaluation(
@@ -1221,7 +1228,7 @@ async def test_submission_log_threads_from_engine_stub_state_cell(
                 status="accepted",
                 command_id="inv-log-001.ENV-REC-1.0.0",
                 acknowledgment=Acknowledgment(
-                    position_id="POS-NVDA-stub", order_id="ORD-NVDA-stub"
+                    position_id=PositionId("POS-NVDA-stub"), order_id=OrderId("ORD-NVDA-stub")
                 ),
             ),
         ),

@@ -19,6 +19,15 @@ from typing import Any, Literal
 from pydantic import TypeAdapter
 from sqlalchemy import select
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    CommandId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
@@ -1490,7 +1499,7 @@ async def _append_bracket_modification(
         *history,
         BracketLegModification(
             timestamp=timestamp,
-            pm_command_id=pm_command_id,
+            pm_command_id=CommandId(pm_command_id),
             source=BracketModificationSource.PM.value,
             field_changed="protective_leg_order",
             old_value=",".join(old_order_ids) or "<none>",
@@ -1761,11 +1770,11 @@ def _build_pending_order(  # noqa: PLR0913 — captures every NOT-NULL OrderReco
     """
     alpaca_id = alpaca_order_id_override or f"alp-{order_id}"
     return OrderRecord(
-        order_id=order_id,
-        position_id=position_id,
-        bracket_id=bracket_id,
+        order_id=OrderId(order_id),
+        position_id=PositionId(position_id) if position_id is not None else None,
+        bracket_id=BracketId(bracket_id),
         role=role,
-        instrument_spec=EquityInstrumentSpec(ticker=ticker),
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
         direction=direction,
         order_type=order_type,
         order_class=order_class,
@@ -1773,16 +1782,16 @@ def _build_pending_order(  # noqa: PLR0913 — captures every NOT-NULL OrderReco
         quantity=quantity,
         duration=OrderDuration.DAY,
         status=OrderStatus.PENDING,
-        alpaca_order_id=alpaca_id,
-        alpaca_order_id_chain=(alpaca_id,),
+        alpaca_order_id=AlpacaOrderId(alpaca_id),
+        alpaca_order_id_chain=(AlpacaOrderId(alpaca_id),),
         submission_timestamp=timestamp,
         last_update_timestamp=timestamp,
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=quantity,
         modification_count=0,
-        originating_thesis_id=thesis_id,
-        originating_pm_command_id=pm_command_id,
+        originating_thesis_id=ThesisId(thesis_id) if thesis_id is not None else None,
+        originating_pm_command_id=CommandId(pm_command_id),
         age_hours=0.0,
     )
 
@@ -1831,7 +1840,7 @@ def _build_pending_position(
             )
             raise ValueError(msg)
         details: EquityPositionDetails | OptionsPositionDetails = OptionsPositionDetails(
-            underlying_ticker=instrument.underlying,
+            underlying_ticker=Symbol(instrument.underlying),
             strike_price=instrument.strike,
             expiration_date=date.fromisoformat(instrument.expiration),
             contract_type=(
@@ -1853,7 +1862,7 @@ def _build_pending_position(
     elif isinstance(instrument, EquityInstrument):
         short_fields_present = direction == Direction.SHORT
         details = EquityPositionDetails(
-            ticker=instrument.ticker,
+            ticker=Symbol(instrument.ticker),
             share_count=0.0,
             average_cost_basis_per_share=0.0,
             borrow_rate_pct=0.0 if short_fields_present else None,
@@ -1918,7 +1927,7 @@ def _build_active_thesis(
         persisted_components.append(
             ThesisComponent(
                 component_id=f"{thesis_id}-{component_type.value.lower()}",
-                thesis_id=thesis_id,
+                thesis_id=ThesisId(thesis_id),
                 component_type=component_type,
                 linked_bracket_leg_type=None,
                 linked_bracket_leg_id=None,
@@ -1949,7 +1958,7 @@ def _build_active_thesis(
         persisted_components.append(
             ThesisComponent(
                 component_id=f"{thesis_id}-{component_type.value.lower()}",
-                thesis_id=thesis_id,
+                thesis_id=ThesisId(thesis_id),
                 component_type=component_type,
                 linked_bracket_leg_type=None,
                 linked_bracket_leg_id=None,
@@ -1964,8 +1973,8 @@ def _build_active_thesis(
 
     time_expectation_hours = 24.0
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary=summary,
         key_catalyst=summary,
         position_size_rationale=None,
@@ -2005,9 +2014,9 @@ def _wire_leg_to_bracket_leg(
         return BracketLeg(
             leg_id=leg_id,
             leg_type=BracketLegType.PRICE_STOP,
-            order_id=leg_order_id,
+            order_id=OrderId(leg_order_id) if leg_order_id is not None else None,
             trigger=PriceTrigger(
-                underlying_ticker=wire_leg.condition.underlying_trigger or ticker,
+                underlying_ticker=Symbol(wire_leg.condition.underlying_trigger or ticker),
                 threshold_usd=wire_leg.condition.trigger_price,
                 direction=direction,
             ),
@@ -2018,7 +2027,7 @@ def _wire_leg_to_bracket_leg(
         return BracketLeg(
             leg_id=leg_id,
             leg_type=BracketLegType.TIME_EXPIRATION,
-            order_id=leg_order_id,
+            order_id=OrderId(leg_order_id) if leg_order_id is not None else None,
             trigger=TimeTrigger(deadline=wire_leg.condition.deadline),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
@@ -2049,9 +2058,9 @@ def _target_to_bracket_leg(
     return BracketLeg(
         leg_id=leg_id,
         leg_type=BracketLegType.TAKE_PROFIT,
-        order_id=target_order_id,
+        order_id=OrderId(target_order_id),
         trigger=PriceTrigger(
-            underlying_ticker=ticker,
+            underlying_ticker=Symbol(ticker),
             threshold_usd=target.price if target.price is not None else 0.01,
             direction="GTE" if direction == Direction.LONG else "LTE",
         ),
@@ -2094,10 +2103,10 @@ def _build_pending_bracket(
             )
         )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.PENDING_ENTRY,
-        entry_order_id=entry_order_id,
+        entry_order_id=OrderId(entry_order_id),
         protective_legs=(target_leg, *invalidation_legs),
         modification_history=(),
         corporate_action_cancellation_reason=None,

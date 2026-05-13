@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from alphamind._kernel.ids import EnvelopeId
+
 __all__ = [
     "ValidationError",
     "ValidationResult",
@@ -42,7 +44,7 @@ class ValidationWarning(BaseModel, frozen=True):
 class ValidationResult(BaseModel, frozen=True):
     """Aggregate outcome of running :func:`validate_pm_envelope`."""
 
-    envelope_id: str
+    envelope_id: EnvelopeId
     errors: tuple[ValidationError, ...]
     warnings: tuple[ValidationWarning, ...]
 

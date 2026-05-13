@@ -10,6 +10,9 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    Symbol,
+)
 from alphamind.decision.analyst.models import (
     EntryOrder,
     GuardrailValidationResult,
@@ -79,7 +82,9 @@ def _make_guardrail_result(**overrides: Any) -> GuardrailValidationResult:
 def _make_recommendation(**overrides: Any) -> Recommendation:
     defaults: dict[str, Any] = {
         "recommendation_id": "REC-1",
-        "instrument": InstrumentEquity(asset_type="equity", ticker="NVDA", direction="long"),
+        "instrument": InstrumentEquity(
+            asset_type="equity", ticker=Symbol("NVDA"), direction="long"
+        ),
         "underlying": "NVDA",
         "sector": "semis",
         "conviction_level": 4,
@@ -92,7 +97,7 @@ def _make_recommendation(**overrides: Any) -> Recommendation:
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger="NVDA", comparator="<=", trigger_price=820.0
+                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=820.0
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             ),

@@ -15,6 +15,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from alphamind._kernel.ids import BracketId, PositionId, Symbol, ThesisId
+
 _FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
 _NonNegFiniteFloat = Annotated[float, Field(ge=0.0, allow_inf_nan=False)]
 
@@ -151,7 +153,7 @@ class EquityPositionDetails(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     instrument_type: Literal[InstrumentType.EQUITY] = InstrumentType.EQUITY
-    ticker: str
+    ticker: Symbol
     share_count: float
     average_cost_basis_per_share: float
     borrow_rate_pct: float | None = None
@@ -165,7 +167,7 @@ class OptionsPositionDetails(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     instrument_type: Literal[InstrumentType.OPTIONS] = InstrumentType.OPTIONS
-    underlying_ticker: str
+    underlying_ticker: Symbol
     strike_price: float
     expiration_date: date
     contract_type: OptionContractType
@@ -208,10 +210,10 @@ PositionDetailsPayload = Annotated[
 
 def resolve_ticker(
     details: EquityPositionDetails | OptionsPositionDetails | StrategyPositionDetails,
-) -> str | None:
+) -> Symbol | None:
     """Extract the underlying ticker from a position-details payload.
 
-    Returns the ticker string for equity and options positions, the first leg's
+    Returns the ticker for equity and options positions, the first leg's
     underlying ticker for multi-leg strategies, or ``None`` when a strategy has
     no legs. Callers that need an empty-string sentinel on miss should adapt
     locally via ``resolve_ticker(details) or ""``.
@@ -236,9 +238,9 @@ class PositionRecord(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    position_id: str
-    thesis_id: str | None
-    bracket_id: str | None
+    position_id: PositionId
+    thesis_id: ThesisId | None
+    bracket_id: BracketId | None
     status: PositionStatus
     direction: Direction
     entry_timestamp: datetime | None
@@ -248,7 +250,7 @@ class PositionRecord(BaseModel):
     realized_pnl_to_date_usd: float | None
 
     corporate_action_adjustment_needed: bool
-    parent_position_id: str | None
+    parent_position_id: PositionId | None
     origin: str | None
 
     @property

@@ -22,6 +22,13 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
@@ -255,7 +262,7 @@ def _make_pending_entry_order(
             "position_id": position_id,
             "bracket_id": bracket_id,
             "role": role,
-            "instrument_spec": EquityInstrumentSpec(ticker="AAPL"),
+            "instrument_spec": EquityInstrumentSpec(ticker=Symbol("AAPL")),
             "direction": direction,
             "order_type": OrderType.MARKET,
             "order_class": OrderClass.SIMPLE,
@@ -289,7 +296,7 @@ def _make_pending_position(
     average_cost_basis_per_share: float = 0.0,
 ) -> PositionRecord:
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=average_cost_basis_per_share,
     )
@@ -326,7 +333,7 @@ def _make_open_position(
     from alphamind.portfolio_state.records.positions import PositionFill
 
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=average_cost_basis_per_share,
     )
@@ -361,16 +368,18 @@ def _make_pending_bracket(bracket_id: str = "brk-1", position_id: str = "pos-1")
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.PENDING_ENTRY,
-        entry_order_id="ord-entry-1",
+        entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -382,16 +391,18 @@ def _make_active_bracket(bracket_id: str = "brk-1", position_id: str = "pos-1") 
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-entry-1",
+        entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -406,7 +417,7 @@ def _make_active_thesis(
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -426,8 +437,8 @@ def _make_active_thesis(
     generation_at = _NOW - timedelta(hours=4)
     time_expectation_hours = 24.0
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="AAPL momentum",
         key_catalyst="Q3 earnings beat",
         position_size_rationale="Sized at 5%",
@@ -458,7 +469,7 @@ def _make_thesis_with_resolved_components(
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -478,8 +489,8 @@ def _make_thesis_with_resolved_components(
     generation_at = _NOW - timedelta(hours=4)
     time_expectation_hours = 24.0
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="AAPL momentum",
         key_catalyst="Q3 earnings beat",
         position_size_rationale="Sized at 5%",
@@ -838,7 +849,7 @@ async def test_exit_fill_closes_position_and_resolves_thesis(
     thesis_row, component_rows = thesis_record_to_rows(_make_thesis_with_resolved_components())
     bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
     leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
-    seeded_order_ids = {entry_order.order_id, close_order.order_id}
+    seeded_order_ids: set[str] = {entry_order.order_id, close_order.order_id}
     async with factory() as sess:
         sess.add(position_record_to_row(_make_open_position()))
         sess.add(thesis_row)
@@ -1638,7 +1649,7 @@ async def test_fill_before_ca_reflects_pre_action_quantity_at_fill(
     thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
     bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
     leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
-    seeded_order_ids = {entry_order.order_id, add_order.order_id}
+    seeded_order_ids: set[str] = {entry_order.order_id, add_order.order_id}
     async with factory() as sess:
         sess.add(position_record_to_row(_make_open_position(share_count=10.0)))
         sess.add(thesis_row)
@@ -1733,7 +1744,7 @@ async def test_fill_after_ca_reflects_post_action_quantity_at_fill(
     thesis_row, component_rows = thesis_record_to_rows(_make_active_thesis())
     bracket_row, leg_rows = bracket_record_to_rows(_make_active_bracket())
     leg_order_ids = [lrow.order_id for lrow in leg_rows if lrow.order_id is not None]
-    seeded_order_ids = {entry_order.order_id, add_order.order_id}
+    seeded_order_ids: set[str] = {entry_order.order_id, add_order.order_id}
     async with factory() as sess:
         sess.add(position_record_to_row(_make_open_position(share_count=10.0)))
         sess.add(thesis_row)

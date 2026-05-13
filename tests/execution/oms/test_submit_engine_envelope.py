@@ -21,6 +21,15 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 # Import portfolio_manager.models first to break the latent cycle between
 # alphamind.execution.oms (engine-stub MCP) and alphamind.decision.portfolio_manager.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
+from alphamind._kernel.ids import (
+    BracketId,
+    CommandId,
+    EnvelopeId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.commands.command_models import CloseCommand
 from alphamind.commands.engine_envelope import (
     BreachDetails,
@@ -230,7 +239,7 @@ def _open_position(
     from alphamind.portfolio_state.records.positions import PositionFill
 
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=10.0,
         average_cost_basis_per_share=150.0,
     )
@@ -267,7 +276,7 @@ def _active_thesis(
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -287,8 +296,8 @@ def _active_thesis(
     generation_at = _NOW - timedelta(hours=4)
     time_expectation_hours = 24.0
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="NVDA momentum",
         key_catalyst="Earnings beat",
         position_size_rationale="5% sized.",
@@ -312,16 +321,18 @@ def _active_bracket(
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id=f"{bracket_id}-ord-entry",
+        entry_order_id=OrderId(f"{bracket_id}-ord-entry"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -383,9 +394,9 @@ def _engine_close_command(
     command_id: str | None = None,
 ) -> CloseCommand:
     return CloseCommand(
-        command_id=command_id,
+        command_id=CommandId(command_id) if command_id is not None else None,
         command_type="close",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         quantity="all",
         order_type="market",
         close_rationale_type="risk_management",
@@ -431,7 +442,7 @@ def _engine_envelope(
     if trigger_record is None:
         trigger_record = _trigger_record()
     return EngineEnvelope(
-        envelope_id=envelope_id,
+        envelope_id=EnvelopeId(envelope_id),
         invocation_id=None,
         trigger_timestamp=_TRIGGER_TS,
         source_provenance="engine_guardrail",

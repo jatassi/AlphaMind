@@ -23,6 +23,10 @@ from pydantic import TypeAdapter, ValidationError
 # alphamind.execution.oms (engine-stub MCP) and alphamind.decision.portfolio_manager
 # (harness imports back from the OMS). Mirrors test_submit_envelope_mcp.py.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
+from alphamind._kernel.ids import (
+    OrderId,
+    PositionId,
+)
 from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
@@ -171,7 +175,7 @@ def _open_command() -> OpenCommand:
 def _close_command() -> CloseCommand:
     return CloseCommand(
         command_type="close",
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         quantity="all",
         order_type="market",
         close_rationale_type="target_reached",
@@ -181,7 +185,7 @@ def _close_command() -> CloseCommand:
 def _adjust_command() -> AdjustCommand:
     return AdjustCommand(
         command_type="adjust",
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         adjustment_rationale="bracket revision",
         new_stop_level=NewStopLevel(trigger_price=130.0, order_type="market"),
     )
@@ -190,7 +194,7 @@ def _adjust_command() -> AdjustCommand:
 def _cancel_command() -> CancelCommand:
     return CancelCommand(
         command_type="cancel",
-        order_id="ord-1",
+        order_id=OrderId("ord-1"),
         cancel_reason="thesis no longer valid",
     )
 
@@ -198,7 +202,7 @@ def _cancel_command() -> CancelCommand:
 def _add_command() -> AddCommand:
     return AddCommand(
         command_type="add",
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         additional_quantity=10.0,
         additional_dollar_value=1500.0,
         entry_order=_entry_order_market(),
@@ -377,7 +381,7 @@ class TestCloseCommand:
         with pytest.raises(ValidationError):
             CloseCommand(
                 command_type="close",
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 quantity="all",
                 order_type="market",
                 close_rationale_type="tactical_exit",  # type: ignore[arg-type]
@@ -387,14 +391,14 @@ class TestCloseCommand:
         with pytest.raises(ValidationError):
             CloseCommand(
                 command_type="close",
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 quantity="all",
                 order_type="limit",
                 close_rationale_type="target_reached",
             )
         CloseCommand(
             command_type="close",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             quantity="all",
             order_type="limit",
             limit_price=170.0,
@@ -405,14 +409,14 @@ class TestCloseCommand:
         with pytest.raises(ValidationError):
             CloseCommand(
                 command_type="close",
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 quantity="all",
                 order_type="market",
                 close_rationale_type="thesis_invalidated",
             )
         CloseCommand(
             command_type="close",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             quantity="all",
             order_type="market",
             close_rationale_type="thesis_invalidated",
@@ -423,14 +427,14 @@ class TestCloseCommand:
         with pytest.raises(ValidationError):
             CloseCommand(
                 command_type="close",
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 quantity="all",
                 order_type="market",
                 close_rationale_type="risk_management",
             )
         CloseCommand(
             command_type="close",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             quantity="all",
             order_type="market",
             close_rationale_type="risk_management",
@@ -441,14 +445,14 @@ class TestCloseCommand:
         with pytest.raises(ValidationError):
             CloseCommand(
                 command_type="close",
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 quantity="all",
                 order_type="market",
                 close_rationale_type="conviction_reduced",
             )
         CloseCommand(
             command_type="close",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             quantity=10.0,
             order_type="market",
             close_rationale_type="conviction_reduced",
@@ -464,14 +468,14 @@ class TestAdjustCommand:
         with pytest.raises(ValidationError):
             AdjustCommand(
                 command_type="adjust",
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 adjustment_rationale="x",
             )
 
     def test_accepts_each_change_field(self) -> None:
         AdjustCommand(
             command_type="adjust",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             adjustment_rationale="x",
             new_target_level=NewTargetLevel(
                 target_type="absolute_price", price=170.0, order_type="limit"
@@ -479,19 +483,19 @@ class TestAdjustCommand:
         )
         AdjustCommand(
             command_type="adjust",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             adjustment_rationale="x",
             new_time_expiration=_DEADLINE,
         )
         AdjustCommand(
             command_type="adjust",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             adjustment_rationale="x",
             new_event_invalidation=NewEventInvalidation(event_description="ev"),
         )
         AdjustCommand(
             command_type="adjust",
-            position_id="pos-1",
+            position_id=PositionId("pos-1"),
             adjustment_rationale="x",
             thesis_component_updates=(_thesis_component(),),
         )
@@ -512,7 +516,7 @@ class TestAddCommand:
         with pytest.raises(ValidationError):
             AddCommand(
                 command_type="add",
-                position_id="pos-1",
+                position_id=PositionId("pos-1"),
                 additional_quantity=10.0,
                 additional_dollar_value=1500.0,
                 entry_order=_entry_order_market(),

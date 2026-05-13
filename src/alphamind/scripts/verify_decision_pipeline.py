@@ -56,6 +56,13 @@ from typing import Any
 
 import yaml
 
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -246,7 +253,7 @@ def _make_equity_position(
             "direction": direction,
             "entry_timestamp": _AS_OF - timedelta(hours=age_hours),
             "details": EquityPositionDetails(
-                ticker=ticker,
+                ticker=Symbol(ticker),
                 share_count=share_count,
                 average_cost_basis_per_share=avg_cost,
             ),
@@ -266,9 +273,9 @@ def _make_bracket(*, position_id: str, ticker: str) -> BracketRecord:
         BracketLeg(
             leg_id=f"LEG-{position_id}-TP",
             leg_type=BracketLegType.TAKE_PROFIT,
-            order_id=f"ORD-{position_id}-TP",
+            order_id=OrderId(f"ORD-{position_id}-TP"),
             trigger=PriceTrigger(
-                underlying_ticker=ticker,
+                underlying_ticker=Symbol(ticker),
                 threshold_usd=spot * 1.10,
                 direction="GTE",
             ),
@@ -278,9 +285,9 @@ def _make_bracket(*, position_id: str, ticker: str) -> BracketRecord:
         BracketLeg(
             leg_id=f"LEG-{position_id}-PS",
             leg_type=BracketLegType.PRICE_STOP,
-            order_id=f"ORD-{position_id}-PS",
+            order_id=OrderId(f"ORD-{position_id}-PS"),
             trigger=PriceTrigger(
-                underlying_ticker=ticker,
+                underlying_ticker=Symbol(ticker),
                 threshold_usd=spot * 0.95,
                 direction="LTE",
             ),
@@ -289,10 +296,10 @@ def _make_bracket(*, position_id: str, ticker: str) -> BracketRecord:
         ),
     )
     return BracketRecord(
-        bracket_id=f"BRK-{position_id}",
-        position_id=position_id,
+        bracket_id=BracketId(f"BRK-{position_id}"),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id=f"ORD-{position_id}-ENTRY",
+        entry_order_id=OrderId(f"ORD-{position_id}-ENTRY"),
         protective_legs=legs,
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -305,7 +312,7 @@ def _make_thesis(*, position_id: str, ticker: str) -> ThesisRecord:
     components = (
         ThesisComponent(
             component_id=f"TC-{position_id}-1",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ThesisComponentType.ENTRY_RATIONALE,
             linked_bracket_leg_type=None,
             instrument_reference=position_id,
@@ -317,7 +324,7 @@ def _make_thesis(*, position_id: str, ticker: str) -> ThesisRecord:
         ),
         ThesisComponent(
             component_id=f"TC-{position_id}-2",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ThesisComponentType.TARGET_RATIONALE,
             linked_bracket_leg_type=BracketLegType.TAKE_PROFIT,
             instrument_reference=position_id,
@@ -329,7 +336,7 @@ def _make_thesis(*, position_id: str, ticker: str) -> ThesisRecord:
         ),
         ThesisComponent(
             component_id=f"TC-{position_id}-3",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ThesisComponentType.INVALIDATION_RATIONALE,
             linked_bracket_leg_type=BracketLegType.PRICE_STOP,
             instrument_reference=position_id,
@@ -341,8 +348,8 @@ def _make_thesis(*, position_id: str, ticker: str) -> ThesisRecord:
         ),
     )
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary=f"Long {ticker} on sector momentum.",
         components=components,
         status=ThesisRecordStatus.ACTIVE,

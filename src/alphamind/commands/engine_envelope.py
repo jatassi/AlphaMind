@@ -30,9 +30,14 @@ from pydantic import (
     ConfigDict,
     Field,
     TypeAdapter,
+    field_validator,
     model_validator,
 )
 
+from alphamind._kernel.ids import EnvelopeId
+from alphamind._kernel.ids import (
+    envelope_id as _envelope_id_constructor,
+)
 from alphamind.commands.command_models import CloseCommand
 
 __all__ = [
@@ -136,12 +141,17 @@ class EngineEnvelope(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    envelope_id: str = Field(pattern=r"^MON\.[^.]+\.[0-9]+$")
+    envelope_id: EnvelopeId = Field(pattern=r"^MON\.[^.]+\.[0-9]+$")
     invocation_id: None = None
     trigger_timestamp: datetime
     source_provenance: SourceProvenance
     guardrail_trigger_record: GuardrailTriggerRecord
     commands: tuple[CloseCommand, ...] = Field(min_length=1, max_length=1)
+
+    @field_validator("envelope_id", mode="after")
+    @classmethod
+    def _construct_envelope_id(cls, value: str) -> EnvelopeId:
+        return _envelope_id_constructor(value)
 
     @model_validator(mode="after")
     def _validate_invariants(self) -> EngineEnvelope:

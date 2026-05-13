@@ -8,6 +8,15 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    CommandId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.portfolio_state.records.positions import InstrumentType, OptionContractType
 
 
@@ -114,7 +123,7 @@ class EquityInstrumentSpec(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     instrument_type: Literal[InstrumentType.EQUITY] = InstrumentType.EQUITY
-    ticker: str = Field(min_length=1)
+    ticker: Symbol = Field(min_length=1)
 
 
 class OptionsInstrumentSpec(BaseModel):
@@ -123,7 +132,7 @@ class OptionsInstrumentSpec(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     instrument_type: Literal[InstrumentType.OPTIONS] = InstrumentType.OPTIONS
-    underlying: str = Field(min_length=1)
+    underlying: Symbol = Field(min_length=1)
     strike: float
     expiration: date
     contract_type: OptionContractType
@@ -170,9 +179,9 @@ class OrderRecord(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    order_id: str
-    position_id: str | None
-    bracket_id: str
+    order_id: OrderId
+    position_id: PositionId | None
+    bracket_id: BracketId
     role: OrderRole
     instrument_spec: InstrumentSpec
     direction: OrderDirection
@@ -182,16 +191,16 @@ class OrderRecord(BaseModel):
     quantity: float
     duration: OrderDuration
     status: OrderStatus
-    alpaca_order_id: str
-    alpaca_order_id_chain: tuple[str, ...]
+    alpaca_order_id: AlpacaOrderId
+    alpaca_order_id_chain: tuple[AlpacaOrderId, ...]
     submission_timestamp: datetime
     last_update_timestamp: datetime
     filled_quantity: float
     avg_fill_price: float | None
     remaining_quantity: float
     modification_count: int
-    originating_thesis_id: str | None
-    originating_pm_command_id: str | None
+    originating_thesis_id: ThesisId | None
+    originating_pm_command_id: CommandId | None
     age_hours: float
 
     @model_validator(mode="after")
@@ -307,7 +316,7 @@ class BracketLegModification(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     timestamp: datetime
-    pm_command_id: str | None
+    pm_command_id: CommandId | None
     source: str
     field_changed: str
     old_value: str
@@ -327,7 +336,7 @@ class PriceTrigger(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     trigger_type: Literal["price"] = "price"
-    underlying_ticker: str = Field(min_length=1)
+    underlying_ticker: Symbol = Field(min_length=1)
     threshold_usd: Annotated[float, Field(gt=0, allow_inf_nan=False)]
     direction: Literal["GTE", "LTE"]
 
@@ -433,7 +442,7 @@ class BracketLeg(BaseModel):
 
     leg_id: str
     leg_type: BracketLegType
-    order_id: str | None
+    order_id: OrderId | None
     trigger: TriggerPayload
     enforcement: BracketLegEnforcement
     status: BracketLegStatus
@@ -496,10 +505,10 @@ class BracketRecord(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    bracket_id: str
-    position_id: str
+    bracket_id: BracketId
+    position_id: PositionId
     status: BracketStatus
-    entry_order_id: str
+    entry_order_id: OrderId
     protective_legs: tuple[BracketLeg, ...]
     modification_history: tuple[BracketLegModification, ...]
     corporate_action_cancellation_reason: str | None

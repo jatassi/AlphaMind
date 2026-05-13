@@ -17,6 +17,13 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.broker_adapter.queries import PositionSnapshot
 from alphamind.execution.state_persistence.invocation_context.context import (
@@ -207,7 +214,7 @@ def _make_open_equity_position(
     average_cost_basis_per_share: float = 50.0,
 ) -> PositionRecord:
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=average_cost_basis_per_share,
     )
@@ -250,7 +257,7 @@ def _make_open_options_position(
     strike_price: float = 60.0,
 ) -> PositionRecord:
     details = OptionsPositionDetails(
-        underlying_ticker=underlying_ticker,
+        underlying_ticker=Symbol(underlying_ticker),
         strike_price=strike_price,
         expiration_date=date(2026, 12, 18),
         contract_type=OptionContractType.CALL,
@@ -297,7 +304,7 @@ def _make_open_strategy_position(
         leg_id="leg-long",
         direction=Direction.LONG,
         options=OptionsPositionDetails(
-            underlying_ticker=underlying_ticker,
+            underlying_ticker=Symbol(underlying_ticker),
             strike_price=55.0,
             expiration_date=date(2026, 12, 18),
             contract_type=OptionContractType.CALL,
@@ -311,7 +318,7 @@ def _make_open_strategy_position(
         leg_id="leg-short",
         direction=Direction.SHORT,
         options=OptionsPositionDetails(
-            underlying_ticker=underlying_ticker,
+            underlying_ticker=Symbol(underlying_ticker),
             strike_price=65.0,
             expiration_date=date(2026, 12, 18),
             contract_type=OptionContractType.CALL,
@@ -376,7 +383,7 @@ def _make_pending_entry_order(
             "position_id": position_id,
             "bracket_id": bracket_id,
             "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=ticker),
+            "instrument_spec": EquityInstrumentSpec(ticker=Symbol(ticker)),
             "direction": OrderDirection.BUY,
             "order_type": OrderType.MARKET,
             "order_class": OrderClass.SIMPLE,
@@ -409,16 +416,16 @@ def _make_active_bracket(
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker=ticker, threshold_usd=45.0, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(underlying_ticker=Symbol(ticker), threshold_usd=45.0, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id=entry_order_id,
+        entry_order_id=OrderId(entry_order_id),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -430,7 +437,7 @@ def _make_active_thesis(thesis_id: str = "thesis-1", position_id: str = "pos-1")
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -449,8 +456,8 @@ def _make_active_thesis(thesis_id: str = "thesis-1", position_id: str = "pos-1")
     )
     generation_at = _NOW - timedelta(hours=4)
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="TGT momentum",
         key_catalyst="Acquisition rumor",
         position_size_rationale="Sized at 5%",

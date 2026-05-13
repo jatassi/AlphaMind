@@ -32,6 +32,15 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    CommandId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
 from alphamind._kernel.regime import (
     RegimeLabel,
@@ -306,14 +315,14 @@ def _make_equity_position(
     )
     notional = share_count * _current_price_lookup(ticker)
     record = PositionRecord(
-        position_id=position_id,
-        thesis_id=f"THESIS-{position_id}",
-        bracket_id=f"BRK-{position_id}",
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THESIS-{position_id}"),
+        bracket_id=BracketId(f"BRK-{position_id}"),
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_AS_OF - timedelta(hours=age_hours),
         details=EquityPositionDetails(
-            ticker=ticker,
+            ticker=Symbol(ticker),
             share_count=share_count,
             average_cost_basis_per_share=avg_cost,
         ),
@@ -347,7 +356,7 @@ def _make_thesis_record(
     components = (
         ThesisComponent(
             component_id=f"TC-{position_id}-1",
-            thesis_id=f"THESIS-{position_id}",
+            thesis_id=ThesisId(f"THESIS-{position_id}"),
             component_type=ThesisComponentType.ENTRY_RATIONALE,
             linked_bracket_leg_type=None,
             instrument_reference=position_id,
@@ -359,7 +368,7 @@ def _make_thesis_record(
         ),
         ThesisComponent(
             component_id=f"TC-{position_id}-2",
-            thesis_id=f"THESIS-{position_id}",
+            thesis_id=ThesisId(f"THESIS-{position_id}"),
             component_type=ThesisComponentType.TARGET_RATIONALE,
             linked_bracket_leg_type=BracketLegType.TAKE_PROFIT,
             instrument_reference=position_id,
@@ -371,7 +380,7 @@ def _make_thesis_record(
         ),
         ThesisComponent(
             component_id=f"TC-{position_id}-3",
-            thesis_id=f"THESIS-{position_id}",
+            thesis_id=ThesisId(f"THESIS-{position_id}"),
             component_type=ThesisComponentType.INVALIDATION_RATIONALE,
             linked_bracket_leg_type=BracketLegType.PRICE_STOP,
             instrument_reference=position_id,
@@ -383,8 +392,8 @@ def _make_thesis_record(
         ),
     )
     return ThesisRecord(
-        thesis_id=f"THESIS-{position_id}",
-        position_id=position_id,
+        thesis_id=ThesisId(f"THESIS-{position_id}"),
+        position_id=PositionId(position_id),
         summary=summary,
         components=components,
         status=ThesisRecordStatus.ACTIVE,
@@ -406,9 +415,9 @@ def _make_bracket(*, position_id: str) -> BracketRecord:
         BracketLeg(
             leg_id=f"LEG-{position_id}-TP",
             leg_type=BracketLegType.TAKE_PROFIT,
-            order_id=f"ORD-{position_id}-TP",
+            order_id=OrderId(f"ORD-{position_id}-TP"),
             trigger=PriceTrigger(
-                underlying_ticker="AAPL",
+                underlying_ticker=Symbol("AAPL"),
                 threshold_usd=200.0,
                 direction="GTE",
             ),
@@ -418,9 +427,9 @@ def _make_bracket(*, position_id: str) -> BracketRecord:
         BracketLeg(
             leg_id=f"LEG-{position_id}-PS",
             leg_type=BracketLegType.PRICE_STOP,
-            order_id=f"ORD-{position_id}-PS",
+            order_id=OrderId(f"ORD-{position_id}-PS"),
             trigger=PriceTrigger(
-                underlying_ticker="AAPL",
+                underlying_ticker=Symbol("AAPL"),
                 threshold_usd=150.0,
                 direction="LTE",
             ),
@@ -429,10 +438,10 @@ def _make_bracket(*, position_id: str) -> BracketRecord:
         ),
     )
     return BracketRecord(
-        bracket_id=f"BRK-{position_id}",
-        position_id=position_id,
+        bracket_id=BracketId(f"BRK-{position_id}"),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id=f"ORD-{position_id}-ENTRY",
+        entry_order_id=OrderId(f"ORD-{position_id}-ENTRY"),
         protective_legs=legs,
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -442,27 +451,27 @@ def _make_bracket(*, position_id: str) -> BracketRecord:
 def _make_pending_order(*, position_id: str, ticker: str) -> OrderRecord:
     """Build one pending limit order for the normal-scenario position."""
     return OrderRecord(
-        order_id=f"ORD-{position_id}-PEND",
-        position_id=position_id,
-        bracket_id=f"BRK-{position_id}",
+        order_id=OrderId(f"ORD-{position_id}-PEND"),
+        position_id=PositionId(position_id),
+        bracket_id=BracketId(f"BRK-{position_id}"),
         role=OrderRole.ADD_ENTRY,
-        instrument_spec=EquityInstrumentSpec(ticker=ticker),
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
         direction=OrderDirection.BUY,
         order_type=OrderType.LIMIT,
         price_parameters=PriceParameters(limit_price=_current_price_lookup(ticker) * 0.99),
         quantity=2.0,
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
-        alpaca_order_id="alp-001",
-        alpaca_order_id_chain=("alp-001",),
+        alpaca_order_id=AlpacaOrderId("alp-001"),
+        alpaca_order_id_chain=(AlpacaOrderId("alp-001"),),
         submission_timestamp=_AS_OF - timedelta(hours=2),
         last_update_timestamp=_AS_OF - timedelta(hours=2),
         filled_quantity=0.0,
         avg_fill_price=None,
         remaining_quantity=2.0,
         modification_count=0,
-        originating_thesis_id=f"THESIS-{position_id}",
-        originating_pm_command_id="cmd-001",
+        originating_thesis_id=ThesisId(f"THESIS-{position_id}"),
+        originating_pm_command_id=CommandId("cmd-001"),
         age_hours=2.0,
     )
 

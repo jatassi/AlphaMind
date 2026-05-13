@@ -12,6 +12,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from alphamind._kernel.ids import (
+    PositionId,
+)
 from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.decision.strategist.models import (
@@ -581,7 +584,7 @@ class TestDefensivePostureSummaryPresence:
             defensive_posture_summary=DefensivePostureSummary(
                 reduction_priority=(
                     ReductionPriorityEntry(
-                        position_id="POS-NVDA-001", priority_rationale="Weakest thesis."
+                        position_id=PositionId("POS-NVDA-001"), priority_rationale="Weakest thesis."
                     ),
                 ),
                 capital_preservation_notes="Capital preservation notes.",
@@ -903,7 +906,7 @@ class TestLayer3PortfolioLevelReferences:
             defensive_posture_summary=DefensivePostureSummary(
                 reduction_priority=(
                     ReductionPriorityEntry(
-                        position_id="POS-NVDA-001",
+                        position_id=PositionId("POS-NVDA-001"),
                         priority_rationale="Weakest thesis.",
                     ),
                 ),

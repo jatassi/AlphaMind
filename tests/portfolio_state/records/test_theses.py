@@ -7,6 +7,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    PositionId,
+    ThesisId,
+)
 from alphamind.portfolio_state.records.orders import BracketLegType
 from alphamind.portfolio_state.records.theses import (
     KeyAssumption,
@@ -127,7 +131,7 @@ def _make_component(
 ) -> ThesisComponent:
     return ThesisComponent(
         component_id="comp-1",
-        thesis_id="thesis-1",
+        thesis_id=ThesisId("thesis-1"),
         component_type=component_type,
         linked_bracket_leg_type=linked_bracket_leg_type,
         instrument_reference="AAPL",
@@ -149,7 +153,7 @@ def _make_full_components(
         _make_component(ThesisComponentType.ENTRY_RATIONALE, outcome, notes),
         ThesisComponent(
             component_id="comp-2",
-            thesis_id="thesis-1",
+            thesis_id=ThesisId("thesis-1"),
             component_type=ThesisComponentType.TARGET_RATIONALE,
             linked_bracket_leg_type=None,
             instrument_reference="AAPL",
@@ -161,7 +165,7 @@ def _make_full_components(
         ),
         ThesisComponent(
             component_id="comp-3",
-            thesis_id="thesis-1",
+            thesis_id=ThesisId("thesis-1"),
             component_type=ThesisComponentType.INVALIDATION_RATIONALE,
             linked_bracket_leg_type=BracketLegType.PRICE_STOP,
             instrument_reference="AAPL",
@@ -505,8 +509,8 @@ def test_time_expectation_exactly_61s_off_fails() -> None:
 
 def test_recent_thesis_resolution_valid() -> None:
     res = RecentThesisResolution(
-        thesis_id="thesis-1",
-        position_id="pos-1",
+        thesis_id=ThesisId("thesis-1"),
+        position_id=PositionId("pos-1"),
         resolution_category=ThesisResolutionCategory.VALIDATED,
         component_outcomes=(("comp-1", ThesisComponentOutcome.VALIDATED),),
         resolution_pnl_usd=300.0,
@@ -520,8 +524,8 @@ def test_recent_thesis_resolution_valid() -> None:
 
 def test_recent_thesis_resolution_invalidated_with_post_mortem() -> None:
     res = RecentThesisResolution(
-        thesis_id="thesis-2",
-        position_id="pos-2",
+        thesis_id=ThesisId("thesis-2"),
+        position_id=PositionId("pos-2"),
         resolution_category=ThesisResolutionCategory.INVALIDATED_STOPPED_CORRECTLY,
         component_outcomes=(("comp-1", ThesisComponentOutcome.WRONG),),
         resolution_pnl_usd=-200.0,

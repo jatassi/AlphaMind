@@ -32,6 +32,7 @@ from alpaca.trading.requests import (
     TakeProfitRequest,
 )
 
+from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId
 from alphamind.commands.command_models import (
     AddCommand,
     CloseCommand,
@@ -73,8 +74,8 @@ class EquitySubmission:
     order-record hydration (story 03e).
     """
 
-    alpaca_order_id: str
-    client_order_id: str
+    alpaca_order_id: AlpacaOrderId
+    client_order_id: ClientOrderId
     status: str  # Alpaca's reported status: accepted | new | pending_new | …
     order_class: str  # simple | bracket | oco | oto
 
@@ -328,8 +329,8 @@ async def _submit_and_map(
         case Submitted(payload=order, attempt_count=n):
             return Submitted(
                 EquitySubmission(
-                    alpaca_order_id=str(order.id),
-                    client_order_id=order.client_order_id,
+                    alpaca_order_id=AlpacaOrderId(str(order.id)),
+                    client_order_id=ClientOrderId(order.client_order_id),
                     status=order.status.value,
                     order_class=order.order_class.value,
                 ),

@@ -21,6 +21,13 @@ from alpaca.trading.requests import (
     OptionLegRequest,
 )
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    ClientOrderId,
+    CommandId,
+    OccSymbol,
+    PositionId,
+)
 from alphamind.commands.command_models import (
     AddCommand,
     BracketOrderParameters,
@@ -137,7 +144,7 @@ def _strategy_open_command(
         ),
     )
     return OpenCommand(
-        command_id=command_id,
+        command_id=CommandId(command_id),
         command_type="open",
         instrument=instrument,
         entry_order=entry,
@@ -267,8 +274,8 @@ def test_module_exports_public_symbols() -> None:
 
 def test_mleg_submission_is_frozen_dataclass() -> None:
     submission = MLEGSubmission(
-        alpaca_order_id="x",
-        client_order_id="inv-y",
+        alpaca_order_id=AlpacaOrderId("x"),
+        client_order_id=ClientOrderId("inv-y"),
         status="accepted",
         legs=(),
         strategy_type="vertical_spread",
@@ -279,7 +286,7 @@ def test_mleg_submission_is_frozen_dataclass() -> None:
 
 def test_mleg_leg_ack_is_frozen_dataclass() -> None:
     leg = MLEGLegAck(
-        occ_symbol="NVDA  260619C00800000",
+        occ_symbol=OccSymbol("NVDA  260619C00800000"),
         side="buy",
         ratio_qty=1,
         position_intent="buy_to_open",
@@ -495,22 +502,22 @@ async def test_close_inverts_each_legs_position_intent() -> None:
     # CLOSE inverts to (sell_to_close, buy_to_close), with sides flipped accordingly.
     open_legs = (
         MLEGLegAck(
-            occ_symbol="NVDA  260619C00800000",
+            occ_symbol=OccSymbol("NVDA  260619C00800000"),
             side="buy",
             ratio_qty=1,
             position_intent="buy_to_open",
         ),
         MLEGLegAck(
-            occ_symbol="NVDA  260619C00820000",
+            occ_symbol=OccSymbol("NVDA  260619C00820000"),
             side="sell",
             ratio_qty=1,
             position_intent="sell_to_open",
         ),
     )
     close_command = CloseCommand(
-        command_id="inv-test.ENV-SA-1.1.1",
+        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
         command_type="close",
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         quantity="all",
         order_type="market",
         close_rationale_type="target_reached",
@@ -551,22 +558,22 @@ async def test_close_with_multi_underlying_open_legs_rejected() -> None:
     """Open legs that span multiple underlyings raise ValueError."""
     open_legs = (
         MLEGLegAck(
-            occ_symbol="NVDA  260619C00800000",
+            occ_symbol=OccSymbol("NVDA  260619C00800000"),
             side="buy",
             ratio_qty=1,
             position_intent="buy_to_open",
         ),
         MLEGLegAck(
-            occ_symbol="AAPL  260619C00150000",
+            occ_symbol=OccSymbol("AAPL  260619C00150000"),
             side="sell",
             ratio_qty=1,
             position_intent="sell_to_open",
         ),
     )
     close_command = CloseCommand(
-        command_id="inv-test.ENV-SA-1.1.1",
+        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
         command_type="close",
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         quantity=1.0,
         order_type="market",
         close_rationale_type="target_reached",
@@ -589,22 +596,22 @@ async def test_close_with_limit_price_uses_limit_order_request() -> None:
     """Close with a net-credit limit price submits a LimitOrderRequest mleg."""
     open_legs = (
         MLEGLegAck(
-            occ_symbol="NVDA  260619C00800000",
+            occ_symbol=OccSymbol("NVDA  260619C00800000"),
             side="buy",
             ratio_qty=1,
             position_intent="buy_to_open",
         ),
         MLEGLegAck(
-            occ_symbol="NVDA  260619C00820000",
+            occ_symbol=OccSymbol("NVDA  260619C00820000"),
             side="sell",
             ratio_qty=1,
             position_intent="sell_to_open",
         ),
     )
     close_command = CloseCommand(
-        command_id="inv-test.ENV-SA-1.1.1",
+        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
         command_type="close",
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         quantity=1.0,
         order_type="limit",
         limit_price=2.50,
@@ -631,22 +638,22 @@ async def test_close_with_quantity_all_requires_position_units() -> None:
     """``quantity="all"`` without ``position_units`` raises ValueError."""
     open_legs = (
         MLEGLegAck(
-            occ_symbol="NVDA  260619C00800000",
+            occ_symbol=OccSymbol("NVDA  260619C00800000"),
             side="buy",
             ratio_qty=1,
             position_intent="buy_to_open",
         ),
         MLEGLegAck(
-            occ_symbol="NVDA  260619C00820000",
+            occ_symbol=OccSymbol("NVDA  260619C00820000"),
             side="sell",
             ratio_qty=1,
             position_intent="sell_to_open",
         ),
     )
     close_command = CloseCommand(
-        command_id="inv-test.ENV-SA-1.1.1",
+        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
         command_type="close",
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         quantity="all",
         order_type="market",
         close_rationale_type="target_reached",
@@ -678,22 +685,22 @@ async def test_add_scales_ratios_by_additional_quantity_preserving_intent() -> N
     """
     open_legs = (
         MLEGLegAck(
-            occ_symbol="NVDA  260619C00800000",
+            occ_symbol=OccSymbol("NVDA  260619C00800000"),
             side="buy",
             ratio_qty=1,
             position_intent="buy_to_open",
         ),
         MLEGLegAck(
-            occ_symbol="NVDA  260619C00820000",
+            occ_symbol=OccSymbol("NVDA  260619C00820000"),
             side="sell",
             ratio_qty=1,
             position_intent="sell_to_open",
         ),
     )
     add_command = AddCommand(
-        command_id="inv-test.ENV-SA-1.1.1",
+        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
         command_type="add",
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         additional_quantity=3.0,
         additional_dollar_value=3000.0,
         entry_order=EntryOrder(type="market"),
@@ -733,22 +740,22 @@ async def test_add_with_uneven_ratios_resimplifies() -> None:
     """ADD scales (1, 2) by 4 → (4, 8) → simplifies to (1, 2)."""
     open_legs = (
         MLEGLegAck(
-            occ_symbol="NVDA  260619C00800000",
+            occ_symbol=OccSymbol("NVDA  260619C00800000"),
             side="buy",
             ratio_qty=1,
             position_intent="buy_to_open",
         ),
         MLEGLegAck(
-            occ_symbol="NVDA  260619C00820000",
+            occ_symbol=OccSymbol("NVDA  260619C00820000"),
             side="sell",
             ratio_qty=2,
             position_intent="sell_to_open",
         ),
     )
     add_command = AddCommand(
-        command_id="inv-test.ENV-SA-1.1.1",
+        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
         command_type="add",
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         additional_quantity=4.0,
         additional_dollar_value=4000.0,
         entry_order=EntryOrder(type="market"),
@@ -880,7 +887,7 @@ async def test_open_invalid_legs_rejection_reraises_for_strategist_substitution(
 async def test_open_with_equity_instrument_raises_type_error() -> None:
     """Equity instrument routes to submit_equity_*; mleg path rejects."""
     equity_open = OpenCommand(
-        command_id="inv-test.ENV-SA-1.1.1",
+        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker="NVDA", direction="long"),
         entry_order=EntryOrder(type="market"),
@@ -924,7 +931,7 @@ async def test_open_with_equity_instrument_raises_type_error() -> None:
 async def test_open_with_single_leg_option_instrument_raises_type_error() -> None:
     """Single-leg option routes to submit_options_*; mleg path rejects."""
     option_open = OpenCommand(
-        command_id="inv-test.ENV-SA-1.1.1",
+        command_id=CommandId("inv-test.ENV-SA-1.1.1"),
         command_type="open",
         instrument=OptionInstrument(
             asset_type="option",

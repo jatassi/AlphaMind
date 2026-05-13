@@ -7,6 +7,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    OrderId,
+    Symbol,
+    ThesisId,
+)
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -124,7 +129,7 @@ def _make_fill(price: float = 150.0) -> PositionFill:
 
 def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> PositionView:
     equity = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=100.0,
         average_cost_basis_per_share=150.0,
     )
@@ -161,7 +166,7 @@ def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> Positi
 
 def _make_pending_position(pos_id: str = "POS-PEND") -> PositionView:
     equity = EquityPositionDetails(
-        ticker="GOOG",
+        ticker=Symbol("GOOG"),
         share_count=10.0,
         average_cost_basis_per_share=2800.0,
     )
@@ -200,8 +205,10 @@ def _make_bracket(bracket_id: str = "BRK-001", position_id: str = "POS-001") -> 
     leg = BracketLeg(
         leg_id="leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id="ord-stop-1",
-        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId("ord-stop-1"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
@@ -222,7 +229,7 @@ def _make_pending_order(
     order_id: str = "ORD-001",
     position_id: str = "POS-001",
 ) -> OrderRecord:
-    spec = EquityInstrumentSpec(ticker="AAPL")
+    spec = EquityInstrumentSpec(ticker=Symbol("AAPL"))
     return OrderRecord.model_validate(
         {
             "order_id": order_id,
@@ -258,7 +265,7 @@ def _make_thesis(
     def _comp(ctype: ThesisComponentType, cid: str) -> ThesisComponent:
         return ThesisComponent(
             component_id=cid,
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ctype,
             linked_bracket_leg_type=None,
             instrument_reference="AAPL",

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import uuid
 
+from alphamind._kernel.ids import PositionId, Symbol
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationHandle,
 )
@@ -114,12 +115,12 @@ def _build_spin_off_child(
         live_execution_estimate=None,
     )
     details = EquityPositionDetails(
-        ticker=child_ticker,
+        ticker=Symbol(child_ticker),
         share_count=child_qty,
         average_cost_basis_per_share=child_basis,
     )
     return PositionRecord(
-        position_id=uuid.uuid4().hex,
+        position_id=PositionId(uuid.uuid4().hex),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -128,8 +129,8 @@ def _build_spin_off_child(
         details=details,
         execution_history=(fill,),
         realized_pnl_to_date_usd=None,
-        corporate_action_adjustment_needed=True,
         parent_position_id=parent.position_id,
+        corporate_action_adjustment_needed=True,
         origin=f"spin_off_from_{parent.position_id}",
     )
 

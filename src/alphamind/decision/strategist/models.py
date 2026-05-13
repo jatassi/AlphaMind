@@ -38,9 +38,21 @@ from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
+    field_validator,
     model_validator,
 )
 
+from alphamind._kernel.ids import (
+    InvocationId,
+    OrderId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
+from alphamind._kernel.ids import (
+    recommendation_id as _recommendation_id_constructor,
+)
 from alphamind.portfolio_state.views.thesis_health import ComponentHealthEntry
 from alphamind.risk_guardrails.guardrail_evaluation import Greeks, RuleProjection
 
@@ -297,10 +309,10 @@ class PositionAssessment(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
 
-    assessment_id: str = Field(pattern=r"^SA-[0-9]+$")
-    position_id: str = Field(min_length=1)
-    thesis_id: str = Field(min_length=1)
-    underlying: str = Field(min_length=1)
+    assessment_id: RecommendationId = Field(pattern=r"^SA-[0-9]+$")
+    position_id: PositionId = Field(min_length=1)
+    thesis_id: ThesisId = Field(min_length=1)
+    underlying: Symbol = Field(min_length=1)
     sector: Sector
     thesis_status: ThesisStatus
     prior_status: ThesisStatus | None = None
@@ -320,6 +332,11 @@ class PositionAssessment(BaseModel):
     # active thesis component. Mirrors the data carried on
     # ``ThesisHealthSnapshot.component_health``; the typed shape is the schema.
     component_health: tuple[ComponentHealthEntry, ...] = ()
+
+    @field_validator("assessment_id", mode="after")
+    @classmethod
+    def _construct_assessment_id(cls, value: str) -> RecommendationId:
+        return _recommendation_id_constructor(value)
 
     @model_validator(mode="after")
     def _validate_invariants(self) -> PositionAssessment:
@@ -423,9 +440,9 @@ class PendingOrderAssessment(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    pending_order_assessment_id: str = Field(pattern=r"^SA-ORD-[0-9]+$")
-    order_id: str = Field(min_length=1)
-    position_id: str = Field(min_length=1)
+    pending_order_assessment_id: RecommendationId = Field(pattern=r"^SA-ORD-[0-9]+$")
+    order_id: OrderId = Field(min_length=1)
+    position_id: PositionId = Field(min_length=1)
     order_type: Literal[
         "entry_limit",
         "entry_stop_limit",
@@ -439,9 +456,18 @@ class PendingOrderAssessment(BaseModel):
     fill_probability_assessment: Literal["likely_soon", "plausible", "unlikely"]
     recommended_action: Literal["maintain", "modify", "cancel"]
     modification_parameters: ModificationParameters | None = None
-    linked_position_assessment_id: str | None = Field(default=None, pattern=r"^SA-[0-9]+$")
+    linked_position_assessment_id: RecommendationId | None = Field(
+        default=None, pattern=r"^SA-[0-9]+$"
+    )
     drift_rationale: str = Field(min_length=1)
     action_rationale: str = Field(min_length=1)
+
+    @field_validator("pending_order_assessment_id", "linked_position_assessment_id", mode="after")
+    @classmethod
+    def _construct_assessment_id(cls, value: str | None) -> RecommendationId | None:
+        if value is None:
+            return None
+        return _recommendation_id_constructor(value)
 
     @model_validator(mode="after")
     def _validate_modify_requires_parameters(self) -> PendingOrderAssessment:
@@ -500,7 +526,7 @@ class ReductionPriorityEntry(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    position_id: str = Field(min_length=1)
+    position_id: PositionId = Field(min_length=1)
     priority_rationale: str = Field(min_length=1)
 
 
@@ -544,7 +570,7 @@ class StrategistOutput(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid", arbitrary_types_allowed=True)
 
-    invocation_id: str = Field(min_length=1)
+    invocation_id: InvocationId = Field(min_length=1)
     timestamp: datetime
     mode: Literal["normal", "defensive_posture"]
     position_assessments: tuple[PositionAssessment, ...]

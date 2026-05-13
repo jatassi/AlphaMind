@@ -23,6 +23,10 @@ from pydantic import TypeAdapter, ValidationError
 # Import portfolio_manager.models first to break the latent cycle between
 # alphamind.execution.oms (engine-stub MCP) and alphamind.decision.portfolio_manager.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
+from alphamind._kernel.ids import (
+    EnvelopeId,
+    PositionId,
+)
 from alphamind.commands.command_models import CloseCommand
 from alphamind.commands.engine_envelope import (
     BreachDetails,
@@ -47,7 +51,7 @@ def _close_command(
 ) -> CloseCommand:
     return CloseCommand(
         command_type="close",
-        position_id="pos-1",
+        position_id=PositionId("pos-1"),
         quantity="all",
         order_type="market",
         close_rationale_type=close_rationale_type,  # type: ignore[arg-type]
@@ -94,7 +98,7 @@ def _envelope(
     if trigger_record is None:
         trigger_record = _trigger_record(trigger_timestamp=trigger_timestamp)
     return EngineEnvelope(
-        envelope_id=envelope_id,
+        envelope_id=EnvelopeId(envelope_id),
         invocation_id=invocation_id,
         trigger_timestamp=trigger_timestamp,
         source_provenance="engine_guardrail",
@@ -150,7 +154,7 @@ class TestFrozen:
     def test_engine_envelope_frozen(self) -> None:
         env = _envelope()
         with pytest.raises(ValidationError):
-            env.envelope_id = "MON.other.0"
+            env.envelope_id = EnvelopeId("MON.other.0")
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +180,7 @@ class TestInvocationIdNull:
     def test_rejects_non_none_invocation_id(self) -> None:
         with pytest.raises(ValidationError):
             EngineEnvelope(
-                envelope_id="MON.session-abc.42",
+                envelope_id=EnvelopeId("MON.session-abc.42"),
                 invocation_id="inv-1",  # type: ignore[arg-type]
                 trigger_timestamp=_TRIGGER_TS,
                 source_provenance="engine_guardrail",
@@ -186,7 +190,7 @@ class TestInvocationIdNull:
 
     def test_accepts_none_invocation_id_implicitly(self) -> None:
         env = EngineEnvelope(
-            envelope_id="MON.session-abc.42",
+            envelope_id=EnvelopeId("MON.session-abc.42"),
             trigger_timestamp=_TRIGGER_TS,
             source_provenance="engine_guardrail",
             guardrail_trigger_record=_trigger_record(),
@@ -235,7 +239,7 @@ class TestTriggerTimestampEquality:
         other_ts = datetime(2026, 5, 9, 15, 0, tzinfo=UTC)
         with pytest.raises(ValidationError):
             EngineEnvelope(
-                envelope_id="MON.session-abc.42",
+                envelope_id=EnvelopeId("MON.session-abc.42"),
                 trigger_timestamp=other_ts,
                 source_provenance="engine_guardrail",
                 guardrail_trigger_record=rec,

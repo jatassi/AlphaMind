@@ -5,6 +5,9 @@ from datetime import UTC, date, datetime
 import pytest
 from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    Symbol,
+)
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -257,7 +260,7 @@ class TestPositionFill:
 class TestEquityPositionDetails:
     def test_long_construction(self) -> None:
         d = EquityPositionDetails(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             share_count=100.0,
             average_cost_basis_per_share=150.0,
             borrow_rate_pct=None,
@@ -269,7 +272,7 @@ class TestEquityPositionDetails:
 
     def test_short_construction(self) -> None:
         d = EquityPositionDetails(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             share_count=100.0,
             average_cost_basis_per_share=150.0,
             borrow_rate_pct=0.5,
@@ -281,12 +284,12 @@ class TestEquityPositionDetails:
 
     def test_frozen(self) -> None:
         d = EquityPositionDetails(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             share_count=100.0,
             average_cost_basis_per_share=150.0,
         )
         with pytest.raises(ValidationError):
-            d.ticker = "MSFT"
+            d.ticker = Symbol("MSFT")
 
     def test_required_fields_enforced(self) -> None:
         with pytest.raises(ValidationError):
@@ -322,7 +325,7 @@ class TestOptionsPositionDetails:
     def test_frozen(self) -> None:
         d = _make_options_details()
         with pytest.raises(ValidationError):
-            d.underlying_ticker = "MSFT"
+            d.underlying_ticker = Symbol("MSFT")
 
     def test_required_fields_enforced(self) -> None:
         with pytest.raises(ValidationError):
@@ -393,12 +396,12 @@ _FILL = PositionFill(
     fees=1.0,
 )
 _LONG_EQUITY = EquityPositionDetails(
-    ticker="AAPL",
+    ticker=Symbol("AAPL"),
     share_count=100.0,
     average_cost_basis_per_share=150.0,
 )
 _SHORT_EQUITY = EquityPositionDetails(
-    ticker="AAPL",
+    ticker=Symbol("AAPL"),
     share_count=100.0,
     average_cost_basis_per_share=150.0,
     borrow_rate_pct=0.5,
@@ -590,7 +593,7 @@ class TestDirectionShortFields:
 
     def test_short_with_missing_borrow_rate_fails(self) -> None:
         partial = EquityPositionDetails(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             share_count=100.0,
             average_cost_basis_per_share=150.0,
             borrow_rate_pct=None,
@@ -742,7 +745,7 @@ class TestLiveExecutionEstimate:
 class TestResolveTicker:
     def test_equity_returns_ticker(self) -> None:
         details = EquityPositionDetails(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             share_count=100.0,
             average_cost_basis_per_share=150.0,
         )

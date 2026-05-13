@@ -31,6 +31,9 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import (
+    Symbol,
+)
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.state_persistence.tables.orders import OrderRow
 from alphamind.execution.state_persistence.tables.orders_codec import (
@@ -91,12 +94,12 @@ def session(engine: Engine) -> Iterator[Session]:
 
 
 def _equity_spec() -> EquityInstrumentSpec:
-    return EquityInstrumentSpec(ticker="AAPL")
+    return EquityInstrumentSpec(ticker=Symbol("AAPL"))
 
 
 def _options_spec() -> OptionsInstrumentSpec:
     return OptionsInstrumentSpec(
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         strike=150.0,
         expiration=EXP,
         contract_type=OptionContractType.CALL,
@@ -109,7 +112,7 @@ def _strategy_spec() -> StrategyInstrumentSpec:
         legs=(
             _options_spec(),
             OptionsInstrumentSpec(
-                underlying="AAPL",
+                underlying=Symbol("AAPL"),
                 strike=160.0,
                 expiration=EXP,
                 contract_type=OptionContractType.CALL,

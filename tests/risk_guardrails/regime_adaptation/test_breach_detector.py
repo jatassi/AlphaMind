@@ -14,6 +14,10 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind._kernel.regime import (
     RegimeTransitionState,
     RiskZone,
@@ -66,7 +70,7 @@ def _equity_position(
 ) -> PositionView:
     is_short = direction == Direction.SHORT
     equity_details = EquityPositionDetails(
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         share_count=10.0,
         average_cost_basis_per_share=100.0,
         borrow_rate_pct=0.5 if is_short else None,
@@ -75,7 +79,7 @@ def _equity_position(
     )
     delta_adjusted = 1000.0 if direction == Direction.LONG else -1000.0
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,

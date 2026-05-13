@@ -12,6 +12,9 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+from alphamind._kernel.ids import (
+    Symbol,
+)
 from alphamind.execution.continuous_monitor.greeks_refresh.recompute import (
     recompute_greeks,
     recompute_strategy_greeks,
@@ -33,7 +36,7 @@ def _options(
     expiration: date = date(2026, 6, 19),
 ) -> OptionsPositionDetails:
     return OptionsPositionDetails(
-        underlying_ticker="AAPL",
+        underlying_ticker=Symbol("AAPL"),
         strike_price=strike,
         expiration_date=expiration,
         contract_type=contract_type,
@@ -152,7 +155,7 @@ class TestRecomputeStrategyGreeks:
         """A strategy with leg ``contract_count > 1`` scales the per-leg greeks
         by the absolute contract count; direction handles the sign."""
         long_leg_options = OptionsPositionDetails(
-            underlying_ticker="SPY",
+            underlying_ticker=Symbol("SPY"),
             strike_price=500.0,
             expiration_date=date(2026, 6, 19),
             contract_type=OptionContractType.CALL,

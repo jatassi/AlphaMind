@@ -15,6 +15,10 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.config.models.guardrails import BreachResponse
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -204,14 +208,14 @@ def _short_position(
 ) -> PositionView:
     fill_ts = datetime(2026, 4, 28, 14, 0, tzinfo=UTC)
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.SHORT,
         entry_timestamp=fill_ts,
         details=EquityPositionDetails(
-            ticker=ticker,
+            ticker=Symbol(ticker),
             share_count=100.0,
             average_cost_basis_per_share=market_value_usd / 100.0,
             borrow_rate_pct=2.5,
@@ -256,14 +260,14 @@ def _long_position(
 ) -> PositionView:
     fill_ts = datetime(2026, 4, 28, 14, 0, tzinfo=UTC)
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=fill_ts,
         details=EquityPositionDetails(
-            ticker=ticker,
+            ticker=Symbol(ticker),
             share_count=100.0,
             average_cost_basis_per_share=market_value_usd / 100.0,
         ),

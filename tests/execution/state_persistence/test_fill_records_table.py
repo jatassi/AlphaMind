@@ -35,6 +35,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import (
+    Symbol,
+)
 from alphamind.execution.state_persistence.invocation_context.records import (
     InvocationRecord,
     ProcessLifetimeRecord,
@@ -144,7 +147,7 @@ def _order_record(order_id: str = "ord-1") -> OrderRecord:
             "position_id": None,
             "bracket_id": "brk-1",
             "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker="AAPL"),
+            "instrument_spec": EquityInstrumentSpec(ticker=Symbol("AAPL")),
             "direction": OrderDirection.BUY,
             "order_type": OrderType.MARKET,
             "order_class": OrderClass.SIMPLE,

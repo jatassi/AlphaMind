@@ -18,6 +18,7 @@ from datetime import datetime
 
 from pydantic import TypeAdapter
 
+from alphamind._kernel.ids import BracketId, PositionId, ThesisId
 from alphamind.execution.state_persistence.tables.positions import PositionRow
 from alphamind.portfolio_state.records.positions import (
     Direction,
@@ -78,9 +79,9 @@ def row_to_record(row: PositionRow) -> PositionRecord:
         raise ValueError(msg)
 
     return PositionRecord(
-        position_id=row.position_id,
-        thesis_id=row.thesis_id,
-        bracket_id=row.bracket_id,
+        position_id=PositionId(row.position_id),
+        thesis_id=ThesisId(row.thesis_id) if row.thesis_id is not None else None,
+        bracket_id=BracketId(row.bracket_id) if row.bracket_id is not None else None,
         status=PositionStatus(row.status),
         direction=Direction(row.direction),
         entry_timestamp=(
@@ -90,7 +91,9 @@ def row_to_record(row: PositionRow) -> PositionRecord:
         execution_history=_HISTORY_ADAPTER.validate_json(row.execution_history_json),
         realized_pnl_to_date_usd=row.realized_pnl_to_date_usd,
         corporate_action_adjustment_needed=bool(row.corporate_action_adjustment_needed),
-        parent_position_id=row.parent_position_id,
+        parent_position_id=PositionId(row.parent_position_id)
+        if row.parent_position_id is not None
+        else None,
         origin=row.origin,
     )
 

@@ -23,6 +23,12 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import (
+    BracketId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.state_persistence.tables.positions import PositionRow
 from alphamind.execution.state_persistence.tables.positions_codec import (
@@ -107,14 +113,14 @@ def _equity_position(
         fills = ()
     realized = 12.50 if status == PositionStatus.CLOSED else None
     return PositionRecord(
-        position_id=position_id,
-        thesis_id="thesis-1",
-        bracket_id="bracket-1",
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("thesis-1"),
+        bracket_id=BracketId("bracket-1"),
         status=status,
         direction=direction,
         entry_timestamp=None if status == PositionStatus.PENDING else _FILL_TS,
         details=EquityPositionDetails(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             share_count=100.0,
             average_cost_basis_per_share=150.31,
             borrow_rate_pct=2.5 if is_short else None,
@@ -140,14 +146,14 @@ def _options_position(*, position_id: str = "pos-opt-1") -> PositionRecord:
         refresh_failed=False,
     )
     return PositionRecord(
-        position_id=position_id,
-        thesis_id="thesis-opt-1",
-        bracket_id="bracket-opt-1",
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("thesis-opt-1"),
+        bracket_id=BracketId("bracket-opt-1"),
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_FILL_TS,
         details=OptionsPositionDetails(
-            underlying_ticker="MSFT",
+            underlying_ticker=Symbol("MSFT"),
             strike_price=420.0,
             expiration_date=date(2026, 6, 19),
             contract_type=OptionContractType.CALL,
@@ -177,7 +183,7 @@ def _strategy_position(*, position_id: str = "pos-strat-1") -> PositionRecord:
         leg_id="leg-long-call",
         direction=Direction.LONG,
         options=OptionsPositionDetails(
-            underlying_ticker="SPY",
+            underlying_ticker=Symbol("SPY"),
             strike_price=520.0,
             expiration_date=date(2026, 6, 19),
             contract_type=OptionContractType.CALL,
@@ -191,7 +197,7 @@ def _strategy_position(*, position_id: str = "pos-strat-1") -> PositionRecord:
         leg_id="leg-short-call",
         direction=Direction.SHORT,
         options=OptionsPositionDetails(
-            underlying_ticker="SPY",
+            underlying_ticker=Symbol("SPY"),
             strike_price=530.0,
             expiration_date=date(2026, 6, 19),
             contract_type=OptionContractType.CALL,
@@ -202,9 +208,9 @@ def _strategy_position(*, position_id: str = "pos-strat-1") -> PositionRecord:
         ),
     )
     return PositionRecord(
-        position_id=position_id,
-        thesis_id="thesis-strat-1",
-        bracket_id="bracket-strat-1",
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("thesis-strat-1"),
+        bracket_id=BracketId("bracket-strat-1"),
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_FILL_TS,
@@ -408,14 +414,14 @@ class TestInvariantRejection:
         # record — the SQL CHECK does not need to encode this rule.
         with pytest.raises(ValueError, match="execution_history"):
             PositionRecord(
-                position_id="pos-bad-pending",
+                position_id=PositionId("pos-bad-pending"),
                 thesis_id=None,
                 bracket_id=None,
                 status=PositionStatus.PENDING,
                 direction=Direction.LONG,
                 entry_timestamp=None,
                 details=EquityPositionDetails(
-                    ticker="AAPL",
+                    ticker=Symbol("AAPL"),
                     share_count=100.0,
                     average_cost_basis_per_share=150.0,
                 ),
@@ -437,14 +443,14 @@ class TestInvariantRejection:
     def test_closed_with_null_realized_pnl_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="realized_pnl_to_date_usd"):
             PositionRecord(
-                position_id="pos-bad-closed",
+                position_id=PositionId("pos-bad-closed"),
                 thesis_id=None,
                 bracket_id=None,
                 status=PositionStatus.CLOSED,
                 direction=Direction.LONG,
                 entry_timestamp=_FILL_TS,
                 details=EquityPositionDetails(
-                    ticker="AAPL",
+                    ticker=Symbol("AAPL"),
                     share_count=100.0,
                     average_cost_basis_per_share=150.0,
                 ),

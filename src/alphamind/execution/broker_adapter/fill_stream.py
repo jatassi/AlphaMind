@@ -31,6 +31,8 @@ from typing import Any, Final, Literal, Protocol, cast
 from alpaca.trading.models import Order, TradeUpdate
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId, OccSymbol
+
 OrderStatus = Literal[
     "new",
     "filled",
@@ -68,10 +70,10 @@ class FillReport(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    client_order_id: str
-    alpaca_order_id: str
-    parent_client_order_id: str | None
-    parent_alpaca_order_id: str | None
+    client_order_id: ClientOrderId
+    alpaca_order_id: AlpacaOrderId
+    parent_client_order_id: ClientOrderId | None
+    parent_alpaca_order_id: AlpacaOrderId | None
     event_type: OrderStatus
     fill_timestamp: datetime
     fill_price: float | None
@@ -79,7 +81,7 @@ class FillReport(BaseModel):
     cumulative_filled_quantity: float
     remaining_quantity: float
     execution_venue: str | None
-    occ_symbol: str | None
+    occ_symbol: OccSymbol | None
     position_intent: PositionIntentLiteral | None
     raw_event_payload: dict[str, Any]
 
@@ -170,9 +172,10 @@ def _build_parent_report(
     order = update.order
     fill_price, fill_quantity = _extract_fill_metrics(update)
     cumulative, remaining = _compute_quantities(order)
+    occ = _occ_symbol_for_parent(order)
     return FillReport(
-        client_order_id=order.client_order_id,
-        alpaca_order_id=str(order.id),
+        client_order_id=ClientOrderId(order.client_order_id),
+        alpaca_order_id=AlpacaOrderId(str(order.id)),
         parent_client_order_id=None,
         parent_alpaca_order_id=None,
         event_type=status,
@@ -182,7 +185,7 @@ def _build_parent_report(
         cumulative_filled_quantity=cumulative,
         remaining_quantity=remaining,
         execution_venue=None,
-        occ_symbol=_occ_symbol_for_parent(order),
+        occ_symbol=OccSymbol(occ) if occ is not None else None,
         position_intent=None,
         raw_event_payload=raw_payload,
     )
@@ -198,8 +201,8 @@ def _build_leg_report(
     """Build a per-leg child report for an mleg parent event."""
     cumulative, remaining = _compute_quantities(leg)
     return FillReport(
-        client_order_id=leg.client_order_id,
-        alpaca_order_id=str(leg.id),
+        client_order_id=ClientOrderId(leg.client_order_id),
+        alpaca_order_id=AlpacaOrderId(str(leg.id)),
         parent_client_order_id=parent.client_order_id,
         parent_alpaca_order_id=parent.alpaca_order_id,
         event_type=status,
@@ -209,7 +212,7 @@ def _build_leg_report(
         cumulative_filled_quantity=cumulative,
         remaining_quantity=remaining,
         execution_venue=None,
-        occ_symbol=leg.symbol,
+        occ_symbol=OccSymbol(leg.symbol) if leg.symbol is not None else None,
         position_intent=_position_intent_for(leg),
         raw_event_payload=raw_payload,
     )

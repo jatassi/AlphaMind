@@ -18,6 +18,10 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.continuous_monitor.greeks_refresh import (
     IVQuote,
@@ -118,14 +122,14 @@ def _options_position(
         refresh_failed=False,
     )
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=datetime(2026, 5, 1, 14, 30, tzinfo=UTC),
         details=OptionsPositionDetails(
-            underlying_ticker=underlying_ticker,
+            underlying_ticker=Symbol(underlying_ticker),
             strike_price=strike,
             expiration_date=expiration,
             contract_type=OptionContractType.CALL,
@@ -152,7 +156,7 @@ def _options_position(
 
 def _strategy_position(*, position_id: str, as_of_timestamp: datetime) -> PositionRecord:
     leg_one_options = OptionsPositionDetails(
-        underlying_ticker="SPY",
+        underlying_ticker=Symbol("SPY"),
         strike_price=500.0,
         expiration_date=date(2026, 6, 19),
         contract_type=OptionContractType.CALL,
@@ -164,7 +168,7 @@ def _strategy_position(*, position_id: str, as_of_timestamp: datetime) -> Positi
         ),
     )
     leg_two_options = OptionsPositionDetails(
-        underlying_ticker="SPY",
+        underlying_ticker=Symbol("SPY"),
         strike_price=510.0,
         expiration_date=date(2026, 6, 19),
         contract_type=OptionContractType.CALL,
@@ -179,7 +183,7 @@ def _strategy_position(*, position_id: str, as_of_timestamp: datetime) -> Positi
         delta=0.2, gamma=0.0, theta=-0.005, vega=0.03, as_of_timestamp=as_of_timestamp
     )
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -285,7 +289,7 @@ class FakeActivityLog:
 class TestOccSymbolForOptions:
     def test_call_format(self) -> None:
         details = OptionsPositionDetails(
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             strike_price=200.0,
             expiration_date=date(2026, 6, 19),
             contract_type=OptionContractType.CALL,
@@ -298,7 +302,7 @@ class TestOccSymbolForOptions:
 
     def test_put_format(self) -> None:
         details = OptionsPositionDetails(
-            underlying_ticker="AAPL",
+            underlying_ticker=Symbol("AAPL"),
             strike_price=200.5,
             expiration_date=date(2026, 6, 19),
             contract_type=OptionContractType.PUT,

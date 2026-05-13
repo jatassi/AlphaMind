@@ -7,6 +7,11 @@ from datetime import UTC, date, datetime
 import pytest
 from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    Symbol,
+)
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.records.orders import (
     BracketLeg,
@@ -45,12 +50,12 @@ TODAY = date(2025, 6, 15)
 
 
 def _equity_spec() -> EquityInstrumentSpec:
-    return EquityInstrumentSpec(ticker="AAPL")
+    return EquityInstrumentSpec(ticker=Symbol("AAPL"))
 
 
 def _options_spec() -> OptionsInstrumentSpec:
     return OptionsInstrumentSpec(
-        underlying="AAPL",
+        underlying=Symbol("AAPL"),
         strike=150.0,
         expiration=TODAY,
         contract_type=OptionContractType.CALL,
@@ -99,9 +104,9 @@ def _make_order(**overrides: object) -> OrderRecord:
 def _trigger_for(leg_type: BracketLegType) -> PriceTrigger | TimeTrigger | EventTrigger:
     """Build the canonical typed trigger payload for a given leg_type."""
     if leg_type == BracketLegType.TAKE_PROFIT:
-        return PriceTrigger(underlying_ticker="AAPL", threshold_usd=160.0, direction="GTE")
+        return PriceTrigger(underlying_ticker=Symbol("AAPL"), threshold_usd=160.0, direction="GTE")
     if leg_type == BracketLegType.PRICE_STOP:
-        return PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE")
+        return PriceTrigger(underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE")
     if leg_type == BracketLegType.TIME_EXPIRATION:
         return TimeTrigger(deadline=datetime(2025, 6, 1, 16, 0, tzinfo=UTC))
     return EventTrigger(description="thesis invalidated")
@@ -115,7 +120,7 @@ def _make_mechanical_leg(
     return BracketLeg(
         leg_id=leg_id,
         leg_type=leg_type,
-        order_id="ord-stop",
+        order_id=OrderId("ord-stop"),
         trigger=_trigger_for(leg_type),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=status,
@@ -587,7 +592,7 @@ class TestBracketLegEventInvalidation:
             BracketLeg(
                 leg_id="leg-1",
                 leg_type=BracketLegType.EVENT_INVALIDATION,
-                order_id="ord-1",  # must be None for EVENT_INVALIDATION
+                order_id=OrderId("ord-1"),  # must be None for EVENT_INVALIDATION
                 trigger=EventTrigger(description="thesis invalidation event"),
                 enforcement=BracketLegEnforcement.ADVISORY,
                 status=BracketLegStatus.PENDING_ACTIVATION,
@@ -597,8 +602,10 @@ class TestBracketLegEventInvalidation:
         leg = BracketLeg(
             leg_id="leg-1",
             leg_type=BracketLegType.PRICE_STOP,
-            order_id="ord-stop",
-            trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+            order_id=OrderId("ord-stop"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.PENDING_ACTIVATION,
         )
@@ -660,8 +667,10 @@ class TestHardBackstopRule:
         advisory_stop = BracketLeg(
             leg_id="leg-1",
             leg_type=BracketLegType.PRICE_STOP,
-            order_id="ord-stop",
-            trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+            order_id=OrderId("ord-stop"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+            ),
             enforcement=BracketLegEnforcement.ADVISORY,  # advisory, not mechanical
             status=BracketLegStatus.PENDING_ACTIVATION,
         )
@@ -769,7 +778,7 @@ class TestOrderRecordFrozen:
     def test_order_record_is_frozen(self) -> None:
         order = _make_order()
         with pytest.raises((AttributeError, ValidationError)):
-            order.order_id = "changed"
+            order.order_id = OrderId("changed")
 
 
 # ---------------------------------------------------------------------------
@@ -781,7 +790,7 @@ class TestBracketRecordFrozen:
     def test_bracket_record_is_frozen(self) -> None:
         bracket = _make_bracket()
         with pytest.raises((AttributeError, ValidationError)):
-            bracket.bracket_id = "changed"
+            bracket.bracket_id = BracketId("changed")
 
 
 # ---------------------------------------------------------------------------
@@ -833,7 +842,9 @@ _LEG_PRICE_TRIGGER_TYPES = (BracketLegType.TAKE_PROFIT, BracketLegType.PRICE_STO
 
 class TestPriceTrigger:
     def test_construct_with_valid_fields(self) -> None:
-        trigger = PriceTrigger(underlying_ticker="NVDA", threshold_usd=800.0, direction="LTE")
+        trigger = PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=800.0, direction="LTE"
+        )
         assert trigger.trigger_type == "price"
         assert trigger.underlying_ticker == "NVDA"
         assert trigger.threshold_usd == 800.0
@@ -841,15 +852,15 @@ class TestPriceTrigger:
 
     def test_negative_threshold_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            PriceTrigger(underlying_ticker="NVDA", threshold_usd=-5.0, direction="LTE")
+            PriceTrigger(underlying_ticker=Symbol("NVDA"), threshold_usd=-5.0, direction="LTE")
 
     def test_zero_threshold_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            PriceTrigger(underlying_ticker="NVDA", threshold_usd=0.0, direction="LTE")
+            PriceTrigger(underlying_ticker=Symbol("NVDA"), threshold_usd=0.0, direction="LTE")
 
     def test_empty_ticker_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            PriceTrigger(underlying_ticker="", threshold_usd=10.0, direction="LTE")
+            PriceTrigger(underlying_ticker=Symbol(""), threshold_usd=10.0, direction="LTE")
 
     def test_invalid_direction_rejected(self) -> None:
         with pytest.raises(ValidationError):
@@ -858,7 +869,9 @@ class TestPriceTrigger:
             )
 
     def test_frozen(self) -> None:
-        trigger = PriceTrigger(underlying_ticker="NVDA", threshold_usd=10.0, direction="GTE")
+        trigger = PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=10.0, direction="GTE"
+        )
         with pytest.raises((AttributeError, ValidationError)):
             trigger.threshold_usd = 20.0
 
@@ -900,8 +913,10 @@ class TestBracketLegTriggerLegTypeValidator:
         leg = BracketLeg(
             leg_id="leg-1",
             leg_type=BracketLegType.TAKE_PROFIT,
-            order_id="ord-1",
-            trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=200.0, direction="GTE"),
+            order_id=OrderId("ord-1"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("NVDA"), threshold_usd=200.0, direction="GTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.ACTIVE,
         )
@@ -911,8 +926,10 @@ class TestBracketLegTriggerLegTypeValidator:
         leg = BracketLeg(
             leg_id="leg-1",
             leg_type=BracketLegType.PRICE_STOP,
-            order_id="ord-1",
-            trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=160.0, direction="LTE"),
+            order_id=OrderId("ord-1"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("NVDA"), threshold_usd=160.0, direction="LTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.ACTIVE,
         )
@@ -922,7 +939,7 @@ class TestBracketLegTriggerLegTypeValidator:
         leg = BracketLeg(
             leg_id="leg-1",
             leg_type=BracketLegType.TIME_EXPIRATION,
-            order_id="ord-1",
+            order_id=OrderId("ord-1"),
             trigger=TimeTrigger(deadline=datetime(2026, 6, 1, 16, 0, tzinfo=UTC)),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.ACTIVE,
@@ -946,7 +963,7 @@ class TestBracketLegTriggerLegTypeValidator:
             BracketLeg(
                 leg_id="leg-1",
                 leg_type=leg_type,
-                order_id="ord-1",
+                order_id=OrderId("ord-1"),
                 trigger=TimeTrigger(deadline=datetime(2026, 6, 1, 16, 0, tzinfo=UTC)),
                 enforcement=BracketLegEnforcement.MECHANICAL,
                 status=BracketLegStatus.ACTIVE,
@@ -958,7 +975,7 @@ class TestBracketLegTriggerLegTypeValidator:
             BracketLeg(
                 leg_id="leg-1",
                 leg_type=leg_type,
-                order_id="ord-1",
+                order_id=OrderId("ord-1"),
                 trigger=EventTrigger(description="qualitative"),
                 enforcement=BracketLegEnforcement.MECHANICAL,
                 status=BracketLegStatus.ACTIVE,
@@ -969,8 +986,10 @@ class TestBracketLegTriggerLegTypeValidator:
             BracketLeg(
                 leg_id="leg-1",
                 leg_type=BracketLegType.TIME_EXPIRATION,
-                order_id="ord-1",
-                trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=10.0, direction="GTE"),
+                order_id=OrderId("ord-1"),
+                trigger=PriceTrigger(
+                    underlying_ticker=Symbol("NVDA"), threshold_usd=10.0, direction="GTE"
+                ),
                 enforcement=BracketLegEnforcement.MECHANICAL,
                 status=BracketLegStatus.ACTIVE,
             )
@@ -980,7 +999,7 @@ class TestBracketLegTriggerLegTypeValidator:
             BracketLeg(
                 leg_id="leg-1",
                 leg_type=BracketLegType.TIME_EXPIRATION,
-                order_id="ord-1",
+                order_id=OrderId("ord-1"),
                 trigger=EventTrigger(description="qualitative"),
                 enforcement=BracketLegEnforcement.MECHANICAL,
                 status=BracketLegStatus.ACTIVE,
@@ -992,7 +1011,9 @@ class TestBracketLegTriggerLegTypeValidator:
                 leg_id="leg-1",
                 leg_type=BracketLegType.EVENT_INVALIDATION,
                 order_id=None,
-                trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=10.0, direction="GTE"),
+                trigger=PriceTrigger(
+                    underlying_ticker=Symbol("NVDA"), threshold_usd=10.0, direction="GTE"
+                ),
                 enforcement=BracketLegEnforcement.ADVISORY,
                 status=BracketLegStatus.ACTIVE,
             )
@@ -1016,8 +1037,10 @@ class TestBracketLegTriggerDiscriminatedUnionRoundTrip:
         leg = BracketLeg(
             leg_id="leg-1",
             leg_type=BracketLegType.PRICE_STOP,
-            order_id="ord-1",
-            trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=160.0, direction="LTE"),
+            order_id=OrderId("ord-1"),
+            trigger=PriceTrigger(
+                underlying_ticker=Symbol("NVDA"), threshold_usd=160.0, direction="LTE"
+            ),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.ACTIVE,
         )
@@ -1031,7 +1054,7 @@ class TestBracketLegTriggerDiscriminatedUnionRoundTrip:
         leg = BracketLeg(
             leg_id="leg-1",
             leg_type=BracketLegType.TIME_EXPIRATION,
-            order_id="ord-1",
+            order_id=OrderId("ord-1"),
             trigger=TimeTrigger(deadline=deadline),
             enforcement=BracketLegEnforcement.MECHANICAL,
             status=BracketLegStatus.ACTIVE,
@@ -1163,7 +1186,7 @@ def _make_leg_with_anchor(
     return BracketLeg(
         leg_id="leg-1",
         leg_type=leg_type,
-        order_id=None if leg_type == BracketLegType.EVENT_INVALIDATION else "ord-1",
+        order_id=None if leg_type == BracketLegType.EVENT_INVALIDATION else OrderId("ord-1"),
         trigger=_trigger_for(leg_type),
         enforcement=(
             BracketLegEnforcement.ADVISORY

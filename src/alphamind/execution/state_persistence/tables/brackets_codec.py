@@ -17,6 +17,7 @@ from datetime import datetime
 
 from pydantic import TypeAdapter
 
+from alphamind._kernel.ids import BracketId, OrderId, PositionId
 from alphamind.execution.state_persistence.tables.bracket_legs import BracketLegRow
 from alphamind.execution.state_persistence.tables.brackets import BracketRow
 from alphamind.portfolio_state.records.orders import (
@@ -76,10 +77,10 @@ def rows_to_record(bracket_row: BracketRow, leg_rows: tuple[BracketLegRow, ...])
     legs = tuple(_row_to_leg(row) for row in leg_rows)
     history = _MODIFICATION_HISTORY_ADAPTER.validate_json(bracket_row.modification_history_json)
     return BracketRecord(
-        bracket_id=bracket_row.bracket_id,
-        position_id=bracket_row.position_id,
+        bracket_id=BracketId(bracket_row.bracket_id),
+        position_id=PositionId(bracket_row.position_id),
         status=BracketStatus(bracket_row.status),
-        entry_order_id=bracket_row.entry_order_id,
+        entry_order_id=OrderId(bracket_row.entry_order_id),
         protective_legs=legs,
         modification_history=history,
         corporate_action_cancellation_reason=bracket_row.corporate_action_cancellation_reason,
@@ -115,7 +116,7 @@ def _row_to_leg(row: BracketLegRow) -> BracketLeg:
     return BracketLeg(
         leg_id=row.bracket_leg_id,
         leg_type=BracketLegType(row.leg_type),
-        order_id=row.order_id,
+        order_id=OrderId(row.order_id) if row.order_id is not None else None,
         trigger=_TRIGGER_ADAPTER.validate_json(row.trigger_payload_json),
         enforcement=BracketLegEnforcement(row.enforcement),
         status=BracketLegStatus(row.leg_status),

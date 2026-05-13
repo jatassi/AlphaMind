@@ -8,6 +8,10 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    Symbol,
+    ThesisId,
+)
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -112,7 +116,7 @@ def _make_fill() -> PositionFill:
 
 def _make_open_position(pos_id: str = "POS-001", ticker: str = "AAPL") -> PositionView:
     equity = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=100.0,
         average_cost_basis_per_share=150.0,
     )
@@ -154,7 +158,7 @@ def _make_thesis_component(
 ) -> ThesisComponent:
     return ThesisComponent(
         component_id=cid,
-        thesis_id=thesis_id,
+        thesis_id=ThesisId(thesis_id),
         component_type=ctype,
         linked_bracket_leg_type=None,
         instrument_reference="AAPL",

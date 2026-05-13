@@ -35,6 +35,13 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    ClientOrderId,
+    OccSymbol,
+    OrderId,
+    PositionId,
+)
 from alphamind.commands.engine_envelope import EngineEnvelope
 from alphamind.commands.submission_results import (
     Acknowledgment,
@@ -225,8 +232,8 @@ async def submit_engine_envelope(
     # CLOSE submits to Alpaca first; the persisted order carries the broker's
     # real ``alpaca_order_id``. Otherwise (legacy fixture-only path), the
     # synthetic acknowledgment behavior is preserved.
-    submitted_alpaca_order_id: str | None = None
-    submitted_ack_order_id: str = f"ORD-CLOSE-{embedded.position_id}"
+    submitted_alpaca_order_id: AlpacaOrderId | None = None
+    submitted_ack_order_id: OrderId = OrderId(f"ORD-CLOSE-{embedded.position_id}")
     if client is not None and queries is not None and execution_config is not None:
         dispatch_outcome = await _dispatch_engine_close(
             embedded,
@@ -234,17 +241,19 @@ async def submit_engine_envelope(
             client=client,
             queries=queries,
             execution_config=execution_config,
-            client_order_id=command_id,
+            client_order_id=ClientOrderId(command_id),
         )
-        if isinstance(dispatch_outcome, str):
-            submitted_alpaca_order_id = dispatch_outcome
-            submitted_ack_order_id = dispatch_outcome
-        else:
+        if isinstance(dispatch_outcome, _BrokerFailure):
             return _build_engine_gateway_failure_result(
                 command_id=command_id,
                 envelope=envelope,
                 reason=dispatch_outcome,
             )
+        submitted_alpaca_order_id = dispatch_outcome
+        # The Acknowledgment.order_id surfaces the broker's real id when present;
+        # ``submitted_ack_order_id`` is OrderId-typed so we cast the AlpacaOrderId
+        # at the engine-stub boundary.
+        submitted_ack_order_id = OrderId(dispatch_outcome)
 
     # Persist the protective CLOSE via the Phase 2 writeback machinery.
     # Threading engine-guardrail provenance + position_selection_rationale +
@@ -290,7 +299,7 @@ async def submit_engine_envelope(
         command_id=command_id,
         acknowledgment=Acknowledgment(
             position_id=embedded.position_id,
-            order_id=submitted_ack_order_id,
+            order_id=OrderId(submitted_ack_order_id),
         ),
     )
 
@@ -307,8 +316,8 @@ async def _dispatch_engine_close(
     client: TradingClient,
     queries: AccountStateQueries,
     execution_config: ExecutionConfig,
-    client_order_id: str,
-) -> str | _BrokerFailure:
+    client_order_id: ClientOrderId,
+) -> AlpacaOrderId | _BrokerFailure:
     """Dispatch the engine-originated CLOSE through the broker adapter.
 
     Resolves position context (symbol / quantity / side) from the persisted
@@ -380,7 +389,7 @@ async def _dispatch_engine_close(
 def _engine_close_dispatch_kwargs(
     position: Any,
     *,
-    position_id: str,
+    position_id: PositionId,
 ) -> dict[str, Any]:
     """Project the persisted *position* into the dispatcher's per-asset kwargs.
 
@@ -444,7 +453,7 @@ def _engine_close_dispatch_kwargs(
             )
             legs.append(
                 MLEGLegAck(
-                    occ_symbol=occ,
+                    occ_symbol=OccSymbol(occ),
                     side=side,
                     ratio_qty=1,
                     position_intent=intent,

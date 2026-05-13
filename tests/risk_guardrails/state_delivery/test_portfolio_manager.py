@@ -7,6 +7,10 @@ from itertools import pairwise
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind._kernel.regime import (
     DrawdownTier,
     RegimeLabel,
@@ -205,7 +209,7 @@ def _make_position(
 ) -> PositionView:
     is_short = direction == Direction.SHORT
     equity = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=100.0,
         average_cost_basis_per_share=150.0,
         borrow_rate_pct=0.5 if is_short else None,
@@ -220,7 +224,7 @@ def _make_position(
         fees=1.0,
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,

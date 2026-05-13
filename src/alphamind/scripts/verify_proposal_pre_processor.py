@@ -35,6 +35,13 @@ from typing import Any
 
 import jsonschema
 
+from alphamind._kernel.ids import (
+    InvocationId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.decision.analyst.models import AnalystOutput
 from alphamind.decision.proposal_pre_processor.models import (
     BUNDLE_OUTPUT_SCHEMA,
@@ -194,7 +201,7 @@ def _make_halt_plo() -> PortfolioLevelObservations:
         defensive_posture_summary=DefensivePostureSummary(
             reduction_priority=(
                 ReductionPriorityEntry(
-                    position_id="POS-NVDA",
+                    position_id=PositionId("POS-NVDA"),
                     priority_rationale=(
                         "Highest risk-adjusted weight in a correlated sector cluster."
                     ),
@@ -249,10 +256,10 @@ def build_fixture_normal_strategist_output(*, invocation_id: str) -> StrategistO
     """
     assessments = (
         PositionAssessment(
-            assessment_id="SA-1",
-            position_id="POS-NVDA",
-            thesis_id="THESIS-POS-NVDA",
-            underlying="NVDA",
+            assessment_id=RecommendationId("SA-1"),
+            position_id=PositionId("POS-NVDA"),
+            thesis_id=ThesisId("THESIS-POS-NVDA"),
+            underlying=Symbol("NVDA"),
             sector="semis",
             thesis_status="on-track",
             prior_status="on-track",
@@ -265,10 +272,10 @@ def build_fixture_normal_strategist_output(*, invocation_id: str) -> StrategistO
             action_rationale="Hold; thesis on-track.",
         ),
         PositionAssessment(
-            assessment_id="SA-2",
-            position_id="POS-JPM",
-            thesis_id="THESIS-POS-JPM",
-            underlying="JPM",
+            assessment_id=RecommendationId("SA-2"),
+            position_id=PositionId("POS-JPM"),
+            thesis_id=ThesisId("THESIS-POS-JPM"),
+            underlying=Symbol("JPM"),
             sector="financials",
             thesis_status="on-track",
             prior_status="on-track",
@@ -281,10 +288,10 @@ def build_fixture_normal_strategist_output(*, invocation_id: str) -> StrategistO
             action_rationale="Hold; thesis on-track.",
         ),
         PositionAssessment(
-            assessment_id="SA-3",
-            position_id="POS-XOM",
-            thesis_id="THESIS-POS-XOM",
-            underlying="XOM",
+            assessment_id=RecommendationId("SA-3"),
+            position_id=PositionId("POS-XOM"),
+            thesis_id=ThesisId("THESIS-POS-XOM"),
+            underlying=Symbol("XOM"),
             sector="energy",
             thesis_status="partially-realized",
             prior_status="on-track",
@@ -297,10 +304,10 @@ def build_fixture_normal_strategist_output(*, invocation_id: str) -> StrategistO
             action_rationale="Hold; target not yet reached.",
         ),
         PositionAssessment(
-            assessment_id="SA-4",
-            position_id="POS-AAPL",
-            thesis_id="THESIS-POS-AAPL",
-            underlying="AAPL",
+            assessment_id=RecommendationId("SA-4"),
+            position_id=PositionId("POS-AAPL"),
+            thesis_id=ThesisId("THESIS-POS-AAPL"),
+            underlying=Symbol("AAPL"),
             sector="tech",
             thesis_status="on-track",
             prior_status="on-track",
@@ -314,7 +321,7 @@ def build_fixture_normal_strategist_output(*, invocation_id: str) -> StrategistO
         ),
     )
     return StrategistOutput(
-        invocation_id=invocation_id,
+        invocation_id=InvocationId(invocation_id),
         timestamp=_AS_OF,
         mode="normal",
         position_assessments=assessments,
@@ -331,10 +338,10 @@ def build_fixture_halt_strategist_output(*, invocation_id: str) -> StrategistOut
     """
     assessments = (
         PositionAssessment(
-            assessment_id="SA-1",
-            position_id="POS-NVDA",
-            thesis_id="THESIS-POS-NVDA",
-            underlying="NVDA",
+            assessment_id=RecommendationId("SA-1"),
+            position_id=PositionId("POS-NVDA"),
+            thesis_id=ThesisId("THESIS-POS-NVDA"),
+            underlying=Symbol("NVDA"),
             sector="semis",
             thesis_status="at-risk",
             prior_status="on-track",
@@ -347,10 +354,10 @@ def build_fixture_halt_strategist_output(*, invocation_id: str) -> StrategistOut
             action_rationale="Hold pending halt resolution.",
         ),
         PositionAssessment(
-            assessment_id="SA-2",
-            position_id="POS-MSFT",
-            thesis_id="THESIS-POS-MSFT",
-            underlying="MSFT",
+            assessment_id=RecommendationId("SA-2"),
+            position_id=PositionId("POS-MSFT"),
+            thesis_id=ThesisId("THESIS-POS-MSFT"),
+            underlying=Symbol("MSFT"),
             sector="tech",
             thesis_status="at-risk",
             prior_status="on-track",
@@ -363,10 +370,10 @@ def build_fixture_halt_strategist_output(*, invocation_id: str) -> StrategistOut
             action_rationale="Hold; engine closure already executed.",
         ),
         PositionAssessment(
-            assessment_id="SA-3",
-            position_id="POS-GOOGL",
-            thesis_id="THESIS-POS-GOOGL",
-            underlying="GOOGL",
+            assessment_id=RecommendationId("SA-3"),
+            position_id=PositionId("POS-GOOGL"),
+            thesis_id=ThesisId("THESIS-POS-GOOGL"),
+            underlying=Symbol("GOOGL"),
             sector="tech",
             thesis_status="on-track",
             prior_status="on-track",
@@ -379,10 +386,10 @@ def build_fixture_halt_strategist_output(*, invocation_id: str) -> StrategistOut
             action_rationale="Hold.",
         ),
         PositionAssessment(
-            assessment_id="SA-4",
-            position_id="POS-JPM",
-            thesis_id="THESIS-POS-JPM",
-            underlying="JPM",
+            assessment_id=RecommendationId("SA-4"),
+            position_id=PositionId("POS-JPM"),
+            thesis_id=ThesisId("THESIS-POS-JPM"),
+            underlying=Symbol("JPM"),
             sector="financials",
             thesis_status="on-track",
             prior_status="on-track",
@@ -395,10 +402,10 @@ def build_fixture_halt_strategist_output(*, invocation_id: str) -> StrategistOut
             action_rationale="Hold.",
         ),
         PositionAssessment(
-            assessment_id="SA-5",
-            position_id="POS-XOM",
-            thesis_id="THESIS-POS-XOM",
-            underlying="XOM",
+            assessment_id=RecommendationId("SA-5"),
+            position_id=PositionId("POS-XOM"),
+            thesis_id=ThesisId("THESIS-POS-XOM"),
+            underlying=Symbol("XOM"),
             sector="energy",
             thesis_status="partially-realized",
             prior_status="on-track",
@@ -411,10 +418,10 @@ def build_fixture_halt_strategist_output(*, invocation_id: str) -> StrategistOut
             action_rationale="Hold.",
         ),
         PositionAssessment(
-            assessment_id="SA-6",
-            position_id="POS-AAPL",
-            thesis_id="THESIS-POS-AAPL",
-            underlying="AAPL",
+            assessment_id=RecommendationId("SA-6"),
+            position_id=PositionId("POS-AAPL"),
+            thesis_id=ThesisId("THESIS-POS-AAPL"),
+            underlying=Symbol("AAPL"),
             sector="tech",
             thesis_status="on-track",
             prior_status="on-track",
@@ -428,7 +435,7 @@ def build_fixture_halt_strategist_output(*, invocation_id: str) -> StrategistOut
         ),
     )
     return StrategistOutput(
-        invocation_id=invocation_id,
+        invocation_id=InvocationId(invocation_id),
         timestamp=_AS_OF,
         mode="defensive_posture",
         position_assessments=assessments,
@@ -445,10 +452,10 @@ def build_fixture_emergency_strategist_output(*, invocation_id: str) -> Strategi
     """
     assessments = (
         PositionAssessment(
-            assessment_id="SA-1",
-            position_id="POS-NVDA",
-            thesis_id="THESIS-POS-NVDA",
-            underlying="NVDA",
+            assessment_id=RecommendationId("SA-1"),
+            position_id=PositionId("POS-NVDA"),
+            thesis_id=ThesisId("THESIS-POS-NVDA"),
+            underlying=Symbol("NVDA"),
             sector="semis",
             thesis_status="on-track",
             prior_status="on-track",
@@ -468,10 +475,10 @@ def build_fixture_emergency_strategist_output(*, invocation_id: str) -> Strategi
             ),
         ),
         PositionAssessment(
-            assessment_id="SA-2",
-            position_id="POS-JPM",
-            thesis_id="THESIS-POS-JPM",
-            underlying="JPM",
+            assessment_id=RecommendationId("SA-2"),
+            position_id=PositionId("POS-JPM"),
+            thesis_id=ThesisId("THESIS-POS-JPM"),
+            underlying=Symbol("JPM"),
             sector="financials",
             thesis_status="on-track",
             prior_status="on-track",
@@ -484,10 +491,10 @@ def build_fixture_emergency_strategist_output(*, invocation_id: str) -> Strategi
             action_rationale="Hold.",
         ),
         PositionAssessment(
-            assessment_id="SA-3",
-            position_id="POS-XOM",
-            thesis_id="THESIS-POS-XOM",
-            underlying="XOM",
+            assessment_id=RecommendationId("SA-3"),
+            position_id=PositionId("POS-XOM"),
+            thesis_id=ThesisId("THESIS-POS-XOM"),
+            underlying=Symbol("XOM"),
             sector="energy",
             thesis_status="on-track",
             prior_status="on-track",
@@ -500,10 +507,10 @@ def build_fixture_emergency_strategist_output(*, invocation_id: str) -> Strategi
             action_rationale="Hold.",
         ),
         PositionAssessment(
-            assessment_id="SA-4",
-            position_id="POS-AAPL",
-            thesis_id="THESIS-POS-AAPL",
-            underlying="AAPL",
+            assessment_id=RecommendationId("SA-4"),
+            position_id=PositionId("POS-AAPL"),
+            thesis_id=ThesisId("THESIS-POS-AAPL"),
+            underlying=Symbol("AAPL"),
             sector="tech",
             thesis_status="on-track",
             prior_status="on-track",
@@ -517,7 +524,7 @@ def build_fixture_emergency_strategist_output(*, invocation_id: str) -> Strategi
         ),
     )
     return StrategistOutput(
-        invocation_id=invocation_id,
+        invocation_id=InvocationId(invocation_id),
         timestamp=_AS_OF,
         mode="normal",
         position_assessments=assessments,
@@ -969,7 +976,7 @@ def _build_scenario_inputs(
 
     elif scenario == "normal_with_breach":
         # Use a synthetic invocation_id (not from fixture) — both outputs share it.
-        inv_id = "20260504T143000Z-verify-pre-processor-breach"
+        inv_id = InvocationId("20260504T143000Z-verify-pre-processor-breach")
         analyst_out = _build_normal_with_breach_analyst_output(invocation_id=inv_id)
         strategist_out = build_fixture_normal_strategist_output(invocation_id=inv_id)
         snapshot = build_fixture_portfolio_state_snapshot_near_limit()

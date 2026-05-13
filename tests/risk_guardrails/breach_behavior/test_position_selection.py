@@ -7,6 +7,10 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -57,14 +61,14 @@ def _make_long_position(
     """Construct a synthetic OPEN long equity PositionView for selection tests."""
     fill_timestamp = datetime(2026, 4, 29, 13, 30, tzinfo=UTC)
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=fill_timestamp,
         details=EquityPositionDetails(
-            ticker=ticker,
+            ticker=Symbol(ticker),
             share_count=10.0,
             average_cost_basis_per_share=100.0,
             borrow_rate_pct=None,
@@ -110,14 +114,14 @@ def _make_short_position(
     """Construct a synthetic OPEN short equity PositionView for selection tests."""
     fill_timestamp = datetime(2026, 4, 29, 13, 30, tzinfo=UTC)
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.SHORT,
         entry_timestamp=fill_timestamp,
         details=EquityPositionDetails(
-            ticker=ticker,
+            ticker=Symbol(ticker),
             share_count=10.0,
             average_cost_basis_per_share=100.0,
             borrow_rate_pct=0.5,

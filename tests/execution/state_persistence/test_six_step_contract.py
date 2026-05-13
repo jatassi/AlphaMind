@@ -39,6 +39,16 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    BracketId,
+    EnvelopeId,
+    InvocationId,
+    OrderId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -288,7 +298,7 @@ def _pending_entry_order(
             "position_id": position_id,
             "bracket_id": bracket_id,
             "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker="AAPL"),
+            "instrument_spec": EquityInstrumentSpec(ticker=Symbol("AAPL")),
             "direction": OrderDirection.BUY,
             "order_type": OrderType.MARKET,
             "order_class": OrderClass.SIMPLE,
@@ -318,7 +328,7 @@ def _pending_position(
     thesis_id: str = "thesis-six",
 ) -> PositionRecord:
     details = EquityPositionDetails(
-        ticker="AAPL", share_count=0.0, average_cost_basis_per_share=0.0
+        ticker=Symbol("AAPL"), share_count=0.0, average_cost_basis_per_share=0.0
     )
     return PositionRecord.model_validate(
         {
@@ -346,16 +356,18 @@ def _pending_bracket(
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.PENDING_ENTRY,
-        entry_order_id="ord-entry-six",
+        entry_order_id=OrderId("ord-entry-six"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -371,7 +383,7 @@ def _active_thesis(
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -390,8 +402,8 @@ def _active_thesis(
     )
     generation_at = _NOW - timedelta(hours=4)
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="AAPL momentum",
         key_catalyst="Q3 earnings",
         position_size_rationale="Sized at 5%",
@@ -483,7 +495,7 @@ def _pending_protective_stop_order(
             "position_id": position_id,
             "bracket_id": bracket_id,
             "role": OrderRole.PRICE_STOP,
-            "instrument_spec": EquityInstrumentSpec(ticker="AAPL"),
+            "instrument_spec": EquityInstrumentSpec(ticker=Symbol("AAPL")),
             "direction": OrderDirection.SELL,
             "order_type": OrderType.STOP,
             "order_class": OrderClass.SIMPLE,
@@ -611,10 +623,10 @@ async def _build_repo(
 def _open_envelope(envelope_id: str = "ENV-REC-7") -> PMEnvelope:
     p = CriterionAssessment(status="pass", note=None)
     return PMAnalystEnvelope(
-        envelope_id=envelope_id,
-        invocation_id=_INV_ID,
+        envelope_id=EnvelopeId(envelope_id),
+        invocation_id=InvocationId(_INV_ID),
         source_provenance="pm_analyst",
-        source_recommendation_id="REC-7",
+        source_recommendation_id=RecommendationId("REC-7"),
         recommendation_type="new_entry",
         verdict="approve",
         evaluation=ThesisQualityEvaluation(

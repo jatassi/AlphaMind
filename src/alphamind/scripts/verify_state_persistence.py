@@ -35,6 +35,16 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    BracketId,
+    EnvelopeId,
+    InvocationId,
+    OrderId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
 from alphamind._kernel.regime import RiskZone
 from alphamind.commands.command_models import (
     BracketOrderParameters,
@@ -310,7 +320,7 @@ def _pending_entry_order() -> OrderRecord:
             "position_id": None,
             "bracket_id": _BRACKET_ID,
             "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=_TICKER),
+            "instrument_spec": EquityInstrumentSpec(ticker=Symbol(_TICKER)),
             "direction": OrderDirection.BUY,
             "order_type": OrderType.MARKET,
             "order_class": OrderClass.SIMPLE,
@@ -347,7 +357,7 @@ def _pending_protective_stop_order() -> OrderRecord:
             "position_id": None,
             "bracket_id": _BRACKET_ID,
             "role": OrderRole.PRICE_STOP,
-            "instrument_spec": EquityInstrumentSpec(ticker=_TICKER),
+            "instrument_spec": EquityInstrumentSpec(ticker=Symbol(_TICKER)),
             "direction": OrderDirection.SELL,
             "order_type": OrderType.STOP,
             "order_class": OrderClass.SIMPLE,
@@ -380,7 +390,7 @@ def _pending_position() -> PositionRecord:
             "direction": Direction.LONG,
             "entry_timestamp": None,
             "details": EquityPositionDetails(
-                ticker=_TICKER,
+                ticker=Symbol(_TICKER),
                 share_count=0.0,
                 average_cost_basis_per_share=0.0,
             ),
@@ -397,16 +407,18 @@ def _pending_bracket() -> BracketRecord:
     leg = BracketLeg(
         leg_id=f"{_BRACKET_ID}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{_BRACKET_ID}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker=_TICKER, threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId(f"{_BRACKET_ID}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol(_TICKER), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
     return BracketRecord(
-        bracket_id=_BRACKET_ID,
-        position_id=_POSITION_ID,
+        bracket_id=BracketId(_BRACKET_ID),
+        position_id=PositionId(_POSITION_ID),
         status=BracketStatus.PENDING_ENTRY,
-        entry_order_id=_ENTRY_ORDER_ID,
+        entry_order_id=OrderId(_ENTRY_ORDER_ID),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -418,7 +430,7 @@ def _active_thesis() -> ThesisRecord:
     components = tuple(
         ThesisComponent(
             component_id=f"{_THESIS_ID}-{ct.value.lower()}",
-            thesis_id=_THESIS_ID,
+            thesis_id=ThesisId(_THESIS_ID),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -437,8 +449,8 @@ def _active_thesis() -> ThesisRecord:
     )
     generation_at = _NOW - timedelta(hours=4)
     return ThesisRecord(
-        thesis_id=_THESIS_ID,
-        position_id=_POSITION_ID,
+        thesis_id=ThesisId(_THESIS_ID),
+        position_id=PositionId(_POSITION_ID),
         summary="AAPL momentum",
         key_catalyst="Q3 earnings beat",
         position_size_rationale="Sized at 5% conviction-3",
@@ -575,10 +587,10 @@ def _phase_d_open_envelope(invocation_id: str) -> PMEnvelope:
         ),
     )
     return PMAnalystEnvelope(
-        envelope_id=_PHASE_D_ENVELOPE_ID,
-        invocation_id=invocation_id,
+        envelope_id=EnvelopeId(_PHASE_D_ENVELOPE_ID),
+        invocation_id=InvocationId(invocation_id),
         source_provenance="pm_analyst",
-        source_recommendation_id=_PHASE_D_RECOMMENDATION_ID,
+        source_recommendation_id=RecommendationId(_PHASE_D_RECOMMENDATION_ID),
         recommendation_type="new_entry",
         verdict="approve",
         evaluation=_all_pass_thesis_evaluation(),

@@ -17,6 +17,10 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.execution.continuous_monitor.underlying_stream import (
     compute_target_underlyings,
 )
@@ -60,14 +64,14 @@ def _equity(
     ts = datetime(2026, 5, 11, 14, 30, 0, tzinfo=UTC)
     history: tuple[PositionFill, ...] = (_fill(ts),) if status == PositionStatus.OPEN else ()
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=status,
         direction=Direction.LONG,
         entry_timestamp=ts if status == PositionStatus.OPEN else None,
         details=EquityPositionDetails(
-            ticker=ticker,
+            ticker=Symbol(ticker),
             share_count=10.0,
             average_cost_basis_per_share=100.0,
         ),
@@ -85,7 +89,7 @@ def _greeks() -> OptionGreeks:
 
 def _options_details(underlying: str) -> OptionsPositionDetails:
     return OptionsPositionDetails(
-        underlying_ticker=underlying,
+        underlying_ticker=Symbol(underlying),
         strike_price=100.0,
         expiration_date=date(2026, 6, 19),
         contract_type=OptionContractType.CALL,
@@ -99,7 +103,7 @@ def _options_details(underlying: str) -> OptionsPositionDetails:
 def _options(*, position_id: str, underlying: str) -> PositionRecord:
     ts = datetime(2026, 5, 11, 14, 30, 0, tzinfo=UTC)
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -121,7 +125,7 @@ def _strategy(*, position_id: str, leg_underlyings: tuple[str, ...]) -> Position
         for i, u in enumerate(leg_underlyings)
     )
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,

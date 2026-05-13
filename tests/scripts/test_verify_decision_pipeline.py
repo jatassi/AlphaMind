@@ -26,6 +26,13 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    InvocationId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.decision.analyst.runner import AnalystResult
@@ -166,7 +173,7 @@ def _stub_pipeline_result(
     timestamp = datetime(2026, 5, 10, 14, 30, tzinfo=UTC)
 
     analyst_output = AnalystOutput(
-        invocation_id=inv_id,
+        invocation_id=InvocationId(inv_id),
         timestamp=timestamp,
         mode="normal",
         recommendations=() if has_recommendations else None,
@@ -188,10 +195,10 @@ def _stub_pipeline_result(
 
     assessments = tuple(
         PositionAssessment(
-            assessment_id=f"SA-{i}",
-            position_id=f"POS-{i}",
-            thesis_id=f"THESIS-{i}",
-            underlying="AAPL",
+            assessment_id=RecommendationId(f"SA-{i}"),
+            position_id=PositionId(f"POS-{i}"),
+            thesis_id=ThesisId(f"THESIS-{i}"),
+            underlying=Symbol("AAPL"),
             sector="tech",
             thesis_status="on-track",
             prior_status="on-track",
@@ -207,7 +214,7 @@ def _stub_pipeline_result(
     )
     strategist_result = StrategistResult(
         output=StrategistOutput(
-            invocation_id=inv_id,
+            invocation_id=InvocationId(inv_id),
             timestamp=timestamp,
             mode="normal",
             position_assessments=assessments,
@@ -284,7 +291,7 @@ def _stub_pipeline_result(
     # presence, not about each entry being a real envelope-shaped dataclass.
     pm_result = PMResult.model_construct(
         output=PMCompletionRecord(
-            invocation_id=inv_id,
+            invocation_id=InvocationId(inv_id),
             timestamp=timestamp,
             envelopes_submitted=envelopes_submitted,
             verdict_summary=VerdictSummary(
@@ -415,7 +422,7 @@ def test_validate_pipeline_result_fails_on_analyst_mode_mismatch() -> None:
         recommendations=None,
         watchlist=(
             WatchlistEntry(
-                ticker="AAPL",
+                ticker=Symbol("AAPL"),
                 sector="tech",
                 thesis_summary="placeholder thesis",
                 estimated_conviction=2,

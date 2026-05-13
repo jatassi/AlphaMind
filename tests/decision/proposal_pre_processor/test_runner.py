@@ -14,6 +14,14 @@ from typing import Any, Literal
 import jsonschema
 import pytest
 
+from alphamind._kernel.ids import (
+    InvocationId,
+    OrderId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.decision.analyst.models import (
     AnalystOutput,
     EntryOrder,
@@ -35,6 +43,7 @@ from alphamind.decision.proposal_pre_processor import (
     ProposalPreProcessorBundle,
     run_proposal_pre_processor,
 )
+from alphamind.decision.proposal_pre_processor.models import AnalystSideConflict
 from alphamind.decision.strategist.models import (
     AddParameters,
     CloseParameters,
@@ -197,7 +206,9 @@ def _invalidation_leg(rec_id: str = "REC-1") -> InvalidationLeg:
         leg_id=f"INV-{rec_id[4:]}",
         type="price",
         is_hard=True,
-        condition=PriceCondition(underlying_trigger="AAPL", comparator="<=", trigger_price=140.0),
+        condition=PriceCondition(
+            underlying_trigger=Symbol("AAPL"), comparator="<=", trigger_price=140.0
+        ),
         order_parameters=OrderParameters(order_type="market"),
     )
 
@@ -214,9 +225,11 @@ def _equity_recommendation(
 ) -> Recommendation:
     leg = _invalidation_leg(rec_id)
     return Recommendation(
-        recommendation_id=rec_id,
-        instrument=InstrumentEquity(asset_type="equity", ticker=underlying, direction=direction),
-        underlying=underlying,
+        recommendation_id=RecommendationId(rec_id),
+        instrument=InstrumentEquity(
+            asset_type="equity", ticker=Symbol(underlying), direction=direction
+        ),
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         conviction_level=conviction_level,
         entry_order=EntryOrder(type="market"),
@@ -237,7 +250,7 @@ def _equity_recommendation(
 
 def _watchlist_entry(ticker: str = "AAPL") -> WatchlistEntry:
     return WatchlistEntry(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         sector="tech",
         thesis_summary="Watch for breakout.",
         estimated_conviction=3,
@@ -253,10 +266,10 @@ def _hold_assessment(
     remedy_flag: str | None = None,
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id=f"THESIS-{position_id[4:]}",
-        underlying=underlying,
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THESIS-{position_id[4:]}"),
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         thesis_status="on-track",
         recommended_action="hold",
@@ -274,10 +287,10 @@ def _close_assessment(
     sector: str = "tech",
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id=f"THESIS-{position_id[4:]}",
-        underlying=underlying,
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THESIS-{position_id[4:]}"),
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         thesis_status="invalidated",
         recommended_action="close",
@@ -303,10 +316,10 @@ def _reduce_assessment(
     sector: str = "tech",
 ) -> PositionAssessment:
     return PositionAssessment(
-        assessment_id=sa_id,
-        position_id=position_id,
-        thesis_id=f"THESIS-{position_id[4:]}",
-        underlying=underlying,
+        assessment_id=RecommendationId(sa_id),
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THESIS-{position_id[4:]}"),
+        underlying=Symbol(underlying),
         sector=sector,  # type: ignore[arg-type]
         thesis_status="partially-realized",
         recommended_action="reduce",
@@ -330,15 +343,17 @@ def _entry_pending_order(
         ModificationParameters(new_limit_price=99.0) if recommended_action == "modify" else None
     )
     return PendingOrderAssessment(
-        pending_order_assessment_id=pending_id,
-        order_id=f"ORD-{pending_id[7:]}",
-        position_id=f"POS-{pending_id[7:]}",
+        pending_order_assessment_id=RecommendationId(pending_id),
+        order_id=OrderId(f"ORD-{pending_id[7:]}"),
+        position_id=PositionId(f"POS-{pending_id[7:]}"),
         order_type="entry_limit",
         order_age_hours=2.0,
         fill_probability_assessment="plausible",
         recommended_action=recommended_action,
         modification_parameters=modification,
-        linked_position_assessment_id=linked_assessment_id,
+        linked_position_assessment_id=RecommendationId(linked_assessment_id)
+        if linked_assessment_id is not None
+        else None,
         drift_rationale="Drift.",
         action_rationale="Action.",
     )
@@ -373,13 +388,13 @@ def _analyst_output(
 ) -> AnalystOutput:
     if mode == "normal":
         return AnalystOutput(
-            invocation_id=invocation_id,
+            invocation_id=InvocationId(invocation_id),
             timestamp=_NOW,
             mode="normal",
             recommendations=recommendations if recommendations is not None else (),
         )
     return AnalystOutput(
-        invocation_id=invocation_id,
+        invocation_id=InvocationId(invocation_id),
         timestamp=_NOW,
         mode="watchlist",
         watchlist=watchlist if watchlist is not None else (_watchlist_entry(),),
@@ -399,7 +414,7 @@ def _strategist_output(
         else _portfolio_observations()
     )
     return StrategistOutput(
-        invocation_id=invocation_id,
+        invocation_id=InvocationId(invocation_id),
         timestamp=_NOW,
         mode=mode,
         position_assessments=position_assessments,
@@ -758,7 +773,7 @@ def test_mirror_symmetry_strategist_side_to_analyst() -> None:
     )
 
     assert bundle.analyst_section.recommendations is not None
-    analyst_conflicts_by_rec_id = {
+    analyst_conflicts_by_rec_id: dict[str, tuple[AnalystSideConflict, ...]] = {
         wr.recommendation.recommendation_id: wr.pre_processor_annotations.conflicts
         for wr in bundle.analyst_section.recommendations
     }
@@ -1001,10 +1016,10 @@ def test_add_action_yields_entry_vs_add_conflict() -> None:
     rec = _equity_recommendation(rec_id="REC-1", underlying="AAPL", direction="long")
 
     add_assessment = PositionAssessment(
-        assessment_id="SA-1",
-        position_id="POS-1",
-        thesis_id="THESIS-1",
-        underlying="AAPL",
+        assessment_id=RecommendationId("SA-1"),
+        position_id=PositionId("POS-1"),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol("AAPL"),
         sector="tech",
         thesis_status="on-track",
         recommended_action="add",

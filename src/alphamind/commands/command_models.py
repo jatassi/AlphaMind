@@ -42,6 +42,8 @@ from pydantic import (
     model_validator,
 )
 
+from alphamind._kernel.ids import CommandId, OrderId, PositionId
+
 __all__ = [
     "AddCommand",
     "AdjustCommand",
@@ -427,7 +429,7 @@ class OpenCommand(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    command_id: str | None = Field(default=None, description=_COMMAND_ID_DESCRIPTION)
+    command_id: CommandId | None = Field(default=None, description=_COMMAND_ID_DESCRIPTION)
     command_type: Literal["open"]
     instrument: Instrument
     entry_order: EntryOrder
@@ -451,9 +453,9 @@ class CloseCommand(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    command_id: str | None = Field(default=None, description=_COMMAND_ID_DESCRIPTION)
+    command_id: CommandId | None = Field(default=None, description=_COMMAND_ID_DESCRIPTION)
     command_type: Literal["close"]
-    position_id: str = Field(min_length=1)
+    position_id: PositionId = Field(min_length=1)
     quantity: float | Literal["all"]
     order_type: Literal["market", "limit"]
     limit_price: float | None = Field(default=None, gt=0)
@@ -488,9 +490,9 @@ class AdjustCommand(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    command_id: str | None = Field(default=None, description=_COMMAND_ID_DESCRIPTION)
+    command_id: CommandId | None = Field(default=None, description=_COMMAND_ID_DESCRIPTION)
     command_type: Literal["adjust"]
-    position_id: str = Field(min_length=1)
+    position_id: PositionId = Field(min_length=1)
     adjustment_rationale: str = Field(min_length=1)
     new_stop_level: NewStopLevel | None = None
     new_target_level: NewTargetLevel | None = None
@@ -519,9 +521,9 @@ class CancelCommand(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    command_id: str | None = Field(default=None, description=_COMMAND_ID_DESCRIPTION)
+    command_id: CommandId | None = Field(default=None, description=_COMMAND_ID_DESCRIPTION)
     command_type: Literal["cancel"]
-    order_id: str = Field(min_length=1)
+    order_id: OrderId = Field(min_length=1)
     cancel_reason: str = Field(min_length=1)
 
 
@@ -535,9 +537,9 @@ class AddCommand(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    command_id: str | None = Field(default=None, description=_COMMAND_ID_DESCRIPTION)
+    command_id: CommandId | None = Field(default=None, description=_COMMAND_ID_DESCRIPTION)
     command_type: Literal["add"]
-    position_id: str = Field(min_length=1)
+    position_id: PositionId = Field(min_length=1)
     additional_quantity: float = Field(gt=0)
     additional_dollar_value: float = Field(gt=0)
     entry_order: EntryOrder

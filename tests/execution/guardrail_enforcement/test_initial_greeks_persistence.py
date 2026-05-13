@@ -51,6 +51,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 # ``submit_envelope_mcp``. Mirrors the pattern in
 # ``tests/execution/oms/test_submit_envelope_mcp.py``.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
+from alphamind._kernel.ids import (
+    EnvelopeId,
+    InvocationId,
+    RecommendationId,
+)
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -404,10 +409,10 @@ def _open_options_command() -> OpenCommand:
 def _envelope() -> PMAnalystEnvelope:
     pass_assessment = CriterionAssessment(status="pass", note=None)
     return PMAnalystEnvelope(
-        envelope_id="ENV-REC-1",
-        invocation_id=_INV_ID,
+        envelope_id=EnvelopeId("ENV-REC-1"),
+        invocation_id=InvocationId(_INV_ID),
         source_provenance="pm_analyst",
-        source_recommendation_id="REC-1",
+        source_recommendation_id=RecommendationId("REC-1"),
         recommendation_type="new_entry",
         verdict="approve",
         evaluation=ThesisQualityEvaluation(

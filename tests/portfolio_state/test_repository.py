@@ -8,6 +8,9 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    Symbol,
+)
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -413,7 +416,9 @@ def _make_bracket_record(position_id: str) -> BracketRecord:
             "leg_id": "leg-1",
             "leg_type": BracketLegType.PRICE_STOP,
             "order_id": "ord-1",
-            "trigger": PriceTrigger(underlying_ticker="AAPL", threshold_usd=140.0, direction="LTE"),
+            "trigger": PriceTrigger(
+                underlying_ticker=Symbol("AAPL"), threshold_usd=140.0, direction="LTE"
+            ),
             "enforcement": BracketLegEnforcement.MECHANICAL,
             "status": BracketLegStatus.ACTIVE,
         }

@@ -26,6 +26,16 @@ from alpaca.trading.enums import OrderClass, OrderSide, OrderStatus, TimeInForce
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    ClientOrderId,
+    EnvelopeId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.commands.command_models import (
     BracketOrderParameters,
     CloseCommand,
@@ -245,7 +255,7 @@ def _open_position(
     from alphamind.portfolio_state.records.positions import PositionFill
 
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=10.0,
         average_cost_basis_per_share=150.0,
     )
@@ -282,7 +292,7 @@ def _active_thesis(
     components = tuple(
         PersistedThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -302,8 +312,8 @@ def _active_thesis(
     generation_at = _NOW - timedelta(hours=4)
     time_expectation_hours = 24.0
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary="NVDA momentum",
         key_catalyst="Earnings beat",
         position_size_rationale="5% sized.",
@@ -327,16 +337,18 @@ def _active_bracket(
     leg = BracketLeg(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{bracket_id}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker="NVDA", threshold_usd=140.0, direction="LTE"),
+        order_id=OrderId(f"{bracket_id}-ord-stop"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol("NVDA"), threshold_usd=140.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id=f"{bracket_id}-ord-entry",
+        entry_order_id=OrderId(f"{bracket_id}-ord-entry"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -457,7 +469,7 @@ def _build_db_factory(tmp_path: Path) -> tuple[Any, async_sessionmaker[AsyncSess
 def _engine_close_command() -> CloseCommand:
     return CloseCommand(
         command_type="close",
-        position_id="POS-NVDA-001",
+        position_id=PositionId("POS-NVDA-001"),
         quantity="all",
         order_type="market",
         close_rationale_type="risk_management",
@@ -467,7 +479,7 @@ def _engine_close_command() -> CloseCommand:
 
 def _engine_envelope() -> EngineEnvelope:
     return EngineEnvelope(
-        envelope_id="MON.session-abc.42",
+        envelope_id=EnvelopeId("MON.session-abc.42"),
         invocation_id=None,
         trigger_timestamp=_TRIGGER_TS,
         source_provenance="engine_guardrail",
@@ -806,8 +818,8 @@ async def test_pm_envelope_open_equity_routes_through_injected_broker_dispatch(
         ) -> Any:
             captured.append(command)
             payload = EquitySubmission(
-                alpaca_order_id=str(expected_alpaca_order_id),
-                client_order_id=client_order_id,
+                alpaca_order_id=AlpacaOrderId(str(expected_alpaca_order_id)),
+                client_order_id=ClientOrderId(client_order_id),
                 status="accepted",
                 order_class="simple",
             )
@@ -815,8 +827,8 @@ async def test_pm_envelope_open_equity_routes_through_injected_broker_dispatch(
 
             return Submitted(
                 payload=BrokerDispatchResult(
-                    alpaca_order_id=str(expected_alpaca_order_id),
-                    client_order_id=client_order_id,
+                    alpaca_order_id=AlpacaOrderId(str(expected_alpaca_order_id)),
+                    client_order_id=ClientOrderId(client_order_id),
                     status="accepted",
                     order_class="simple",
                     payload_kind="equity",
@@ -1261,7 +1273,7 @@ def _options_open_position(
     )
 
     details = OptionsPositionDetails(
-        underlying_ticker="NVDA",
+        underlying_ticker=Symbol("NVDA"),
         strike_price=420.0,
         expiration_date=_date(2026, 6, 19),
         contract_type=OptionContractType.CALL,
@@ -1327,7 +1339,7 @@ def _strategy_open_position(
         leg_id="leg-1",
         direction=Direction.LONG,
         options=OptionsPositionDetails(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             strike_price=420.0,
             expiration_date=expiration,
             contract_type=OptionContractType.CALL,
@@ -1347,7 +1359,7 @@ def _strategy_open_position(
         leg_id="leg-2",
         direction=Direction.SHORT,
         options=OptionsPositionDetails(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             strike_price=425.0,
             expiration_date=expiration,
             contract_type=OptionContractType.CALL,
@@ -1435,11 +1447,11 @@ def _seed_pending_protective_orders(
 
     def _build(order_id: str, role: OrderRole, params: PriceParameters) -> OrderRecord:
         return OrderRecord(
-            order_id=order_id,
-            position_id=position_id,
-            bracket_id=bracket_id,
+            order_id=OrderId(order_id),
+            position_id=PositionId(position_id),
+            bracket_id=BracketId(bracket_id),
             role=role,
-            instrument_spec=EquityInstrumentSpec(ticker="NVDA"),
+            instrument_spec=EquityInstrumentSpec(ticker=Symbol("NVDA")),
             direction=OrderDirection.SELL,
             order_type=OrderType.STOP if role is OrderRole.PRICE_STOP else OrderType.LIMIT,
             order_class=OrderClass.OTO,
@@ -1447,15 +1459,15 @@ def _seed_pending_protective_orders(
             quantity=10.0,
             duration=OrderDuration.DAY,
             status=OrderStatus.PENDING,
-            alpaca_order_id=f"alp-{order_id}",
-            alpaca_order_id_chain=(f"alp-{order_id}",),
+            alpaca_order_id=AlpacaOrderId(f"alp-{order_id}"),
+            alpaca_order_id_chain=(AlpacaOrderId(f"alp-{order_id}"),),
             submission_timestamp=_NOW - timedelta(hours=1),
             last_update_timestamp=_NOW - timedelta(hours=1),
             filled_quantity=0.0,
             avg_fill_price=None,
             remaining_quantity=10.0,
             modification_count=0,
-            originating_thesis_id=thesis_id,
+            originating_thesis_id=ThesisId(thesis_id),
             originating_pm_command_id=None,
             age_hours=1.0,
         )
@@ -1480,7 +1492,7 @@ def _adjust_stop_command(position_id: str) -> Any:
 
     return AdjustCommand(
         command_type="adjust",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         adjustment_rationale="Tighten stop.",
         new_stop_level=NewStopLevel(trigger_price=145.0, order_type="stop", limit_price=None),
         new_target_level=None,
@@ -1496,7 +1508,7 @@ def _adjust_target_command(position_id: str) -> Any:
 
     return AdjustCommand(
         command_type="adjust",
-        position_id=position_id,
+        position_id=PositionId(position_id),
         adjustment_rationale="Raise target.",
         new_stop_level=None,
         new_target_level=NewTargetLevel(price=210.0, order_type="limit"),

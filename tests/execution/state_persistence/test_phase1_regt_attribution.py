@@ -22,6 +22,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    Symbol,
+)
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
 from alphamind.execution.state_persistence.invocation_context.context import (
@@ -195,7 +198,7 @@ def _make_pending_entry_order(
             "position_id": position_id,
             "bracket_id": _BRACKET_ID,
             "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=ticker),
+            "instrument_spec": EquityInstrumentSpec(ticker=Symbol(ticker)),
             "direction": direction,
             "order_type": OrderType.MARKET,
             "order_class": OrderClass.SIMPLE,
@@ -226,7 +229,7 @@ def _make_pending_position(
     """Pending position with ``bracket_id=None`` — the wedge skips bracket
     transitions entirely when the position carries no bracket_id."""
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=0.0,
         average_cost_basis_per_share=0.0,
     )

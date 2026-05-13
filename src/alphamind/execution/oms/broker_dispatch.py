@@ -42,6 +42,7 @@ from typing import Any, Literal
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide
 
+from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId
 from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
@@ -111,8 +112,8 @@ class BrokerDispatchResult:
     canceled order's id (the cancellation has no fresh order id).
     """
 
-    alpaca_order_id: str
-    client_order_id: str
+    alpaca_order_id: AlpacaOrderId
+    client_order_id: ClientOrderId
     status: str
     order_class: str
     payload_kind: PayloadKind
@@ -130,7 +131,7 @@ async def dispatch_command_to_broker(  # noqa: PLR0913 — caller threads every 
     client: TradingClient,
     queries: AccountStateQueries,
     execution: ExecutionConfig,
-    client_order_id: str,
+    client_order_id: ClientOrderId,
     # Threaded from portfolio state at the call site for CLOSE / ADD on options:
     position_symbol: str | None = None,
     position_qty: float | None = None,
@@ -143,7 +144,7 @@ async def dispatch_command_to_broker(  # noqa: PLR0913 — caller threads every 
     strategy_type: StrategyType | None = None,
     position_units: float | None = None,
     # Threaded from order record for ADJUST / CANCEL:
-    target_alpaca_order_id: str | None = None,
+    target_alpaca_order_id: AlpacaOrderId | None = None,
     target_asset_class: ReplaceAssetClass | None = None,
     target_order_class: ReplaceOrderClass | None = None,
     fields: ReplaceFields | None = None,
@@ -230,7 +231,7 @@ async def _dispatch_open(
     *,
     client: TradingClient,
     execution: ExecutionConfig,
-    client_order_id: str,
+    client_order_id: ClientOrderId,
 ) -> SubmissionOutcome[BrokerDispatchResult]:
     instrument = command.instrument
     if isinstance(instrument, EquityInstrument):
@@ -266,7 +267,7 @@ async def _dispatch_add(  # noqa: PLR0913 — ADD threads every per-asset-type p
     *,
     client: TradingClient,
     execution: ExecutionConfig,
-    client_order_id: str,
+    client_order_id: ClientOrderId,
     position_asset_type: Literal["equity", "option", "strategy"] | None,
     position_symbol: str | None,
     position_side: Literal["long", "short"] | None,
@@ -324,7 +325,7 @@ async def _dispatch_close(  # noqa: PLR0913 — close threads every per-asset-ty
     *,
     client: TradingClient,
     execution: ExecutionConfig,
-    client_order_id: str,
+    client_order_id: ClientOrderId,
     position_asset_type: Literal["equity", "option", "strategy"] | None,
     position_symbol: str | None,
     position_qty: float | None,
@@ -372,7 +373,7 @@ async def _close_equity(
     *,
     client: TradingClient,
     execution: ExecutionConfig,
-    client_order_id: str,
+    client_order_id: ClientOrderId,
     position_symbol: str | None,
     position_qty: float | None,
     position_side: Literal["long", "short"] | None,
@@ -400,7 +401,7 @@ async def _close_option(
     *,
     client: TradingClient,
     execution: ExecutionConfig,
-    client_order_id: str,
+    client_order_id: ClientOrderId,
     occ_symbol: str | None,
     position_qty: float | None,
     position_intent: Literal["buy_to_close", "sell_to_close"] | None,
@@ -428,7 +429,7 @@ async def _close_strategy(
     *,
     client: TradingClient,
     execution: ExecutionConfig,
-    client_order_id: str,
+    client_order_id: ClientOrderId,
     open_legs: Sequence[MLEGLegAck] | None,
     strategy_type: StrategyType | None,
     position_units: float | None,
@@ -454,7 +455,7 @@ async def _dispatch_adjust(
     *,
     client: TradingClient,
     execution: ExecutionConfig,
-    target_alpaca_order_id: str | None,
+    target_alpaca_order_id: AlpacaOrderId | None,
     target_asset_class: ReplaceAssetClass | None,
     target_order_class: ReplaceOrderClass | None,
     fields: ReplaceFields | None,
@@ -469,7 +470,7 @@ async def _dispatch_adjust(
     outcome = await submit_replace(
         client=client,
         execution=execution,
-        target_alpaca_order_id=target_alpaca_order_id,
+        target_alpaca_order_id=AlpacaOrderId(target_alpaca_order_id),
         target_asset_class=target_asset_class,
         target_order_class=target_order_class,
         fields=replace_fields,
@@ -481,14 +482,14 @@ async def _dispatch_cancel(
     *,
     client: TradingClient,
     execution: ExecutionConfig,
-    target_alpaca_order_id: str | None,
+    target_alpaca_order_id: AlpacaOrderId | None,
 ) -> SubmissionOutcome[BrokerDispatchResult]:
     if target_alpaca_order_id is None:
         raise _missing("target_alpaca_order_id", command_kind="CANCEL")
     outcome = await submit_cancel(
         client=client,
         execution=execution,
-        target_alpaca_order_id=target_alpaca_order_id,
+        target_alpaca_order_id=AlpacaOrderId(target_alpaca_order_id),
     )
     return _wrap_cancel(outcome, target_alpaca_order_id=target_alpaca_order_id)
 
@@ -587,7 +588,7 @@ def _wrap_replace(
 def _wrap_cancel(
     outcome: SubmissionOutcome[Any],
     *,
-    target_alpaca_order_id: str,
+    target_alpaca_order_id: AlpacaOrderId,
 ) -> SubmissionOutcome[BrokerDispatchResult]:
     if isinstance(outcome, GatewaySubmissionFailed):
         return outcome
@@ -596,7 +597,7 @@ def _wrap_cancel(
         payload=BrokerDispatchResult(
             alpaca_order_id=target_alpaca_order_id,
             # Cancel has no fresh client_order_id; surface the target id for log queries.
-            client_order_id=target_alpaca_order_id,
+            client_order_id=ClientOrderId(target_alpaca_order_id),
             status="canceled" if ack.accepted else "cancel_pending",
             order_class="cancel",
             payload_kind="equity",  # cancel is asset-agnostic; payload_kind unused downstream.

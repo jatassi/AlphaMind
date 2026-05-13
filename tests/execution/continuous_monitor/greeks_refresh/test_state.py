@@ -7,6 +7,10 @@ from datetime import UTC, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.execution.continuous_monitor.greeks_refresh import LastRefreshState
 from alphamind.execution.continuous_monitor.greeks_refresh.state import (
     seed_last_refresh_states,
@@ -47,14 +51,14 @@ def _options_position(
         fees=0.0,
     )
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=datetime(2026, 5, 1, 14, 30, tzinfo=UTC),
         details=OptionsPositionDetails(
-            underlying_ticker=underlying_ticker,
+            underlying_ticker=Symbol(underlying_ticker),
             strike_price=200.0,
             expiration_date=datetime(2026, 6, 19, tzinfo=UTC).date(),
             contract_type=OptionContractType.CALL,
@@ -73,7 +77,7 @@ def _options_position(
 
 def _strategy_position(*, position_id: str, as_of_timestamp: datetime | None) -> PositionRecord:
     leg_details = OptionsPositionDetails(
-        underlying_ticker="SPY",
+        underlying_ticker=Symbol("SPY"),
         strike_price=500.0,
         expiration_date=datetime(2026, 6, 19, tzinfo=UTC).date(),
         contract_type=OptionContractType.CALL,
@@ -105,7 +109,7 @@ def _strategy_position(*, position_id: str, as_of_timestamp: datetime | None) ->
         fees=0.0,
     )
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,

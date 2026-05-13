@@ -21,6 +21,9 @@ from collections.abc import Sequence
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    OccSymbol,
+)
 from alphamind.commands.command_models import (
     CloseCommand,
     StrategyType,
@@ -342,7 +345,7 @@ def _open_legs_from_strategy(
         )
         acks.append(
             MLEGLegAck(
-                occ_symbol=occ,
+                occ_symbol=OccSymbol(occ),
                 side=side,  # type: ignore[arg-type]
                 ratio_qty=int(opt.contract_count),
                 position_intent=intent,

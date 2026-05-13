@@ -8,6 +8,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from alphamind._kernel.ids import PositionId, ThesisId
 from alphamind.portfolio_state.records.orders import BracketLegType
 
 
@@ -81,7 +82,7 @@ class ThesisComponent(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     component_id: str
-    thesis_id: str
+    thesis_id: ThesisId
     component_type: ThesisComponentType
     linked_bracket_leg_type: BracketLegType | None
     linked_bracket_leg_id: str | None = None
@@ -103,8 +104,8 @@ class ThesisRecord(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    thesis_id: str
-    position_id: str
+    thesis_id: ThesisId
+    position_id: PositionId
     summary: str
     key_catalyst: str
     # The analyst's prose rationale for *why this size at this conviction*.
@@ -227,8 +228,8 @@ class RecentThesisResolution(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    thesis_id: str
-    position_id: str
+    thesis_id: ThesisId
+    position_id: PositionId
     resolution_category: ThesisResolutionCategory
     component_outcomes: tuple[tuple[str, ThesisComponentOutcome], ...]
     resolution_pnl_usd: float

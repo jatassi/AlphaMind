@@ -28,6 +28,13 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
@@ -269,7 +276,7 @@ def _make_options_spec(
     contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
 ) -> OptionsInstrumentSpec:
     return OptionsInstrumentSpec(
-        underlying=_UNDERLYING,
+        underlying=Symbol(_UNDERLYING),
         strike=strike,
         expiration=_EXPIRATION,
         contract_type=contract_type,
@@ -286,7 +293,7 @@ def _make_options_details(
     contract_multiplier: float = LISTED_OPTION_CONTRACT_MULTIPLIER,
 ) -> OptionsPositionDetails:
     return OptionsPositionDetails(
-        underlying_ticker=_UNDERLYING,
+        underlying_ticker=Symbol(_UNDERLYING),
         strike_price=strike,
         expiration_date=_EXPIRATION,
         contract_type=contract_type,
@@ -573,15 +580,17 @@ def _make_pending_strategy_bracket(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
         order_id=None,
-        trigger=PriceTrigger(underlying_ticker=_UNDERLYING, threshold_usd=405.0, direction="LTE"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol(_UNDERLYING), threshold_usd=405.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.PENDING_ENTRY,
-        entry_order_id="ord-strat-parent",
+        entry_order_id=OrderId("ord-strat-parent"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -597,15 +606,17 @@ def _make_active_strategy_bracket(
         leg_id=f"{bracket_id}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
         order_id=None,
-        trigger=PriceTrigger(underlying_ticker=_UNDERLYING, threshold_usd=405.0, direction="LTE"),
+        trigger=PriceTrigger(
+            underlying_ticker=Symbol(_UNDERLYING), threshold_usd=405.0, direction="LTE"
+        ),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-strat-parent",
+        entry_order_id=OrderId("ord-strat-parent"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -620,7 +631,7 @@ def _make_active_strategy_thesis(
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -640,8 +651,8 @@ def _make_active_strategy_thesis(
     generation_at = _NOW - timedelta(hours=4)
     time_expectation_hours = 24.0
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary=f"{_UNDERLYING} iron condor — defined-risk neutral",
         key_catalyst="Range-bound trade plan",
         position_size_rationale="Sized to max-loss budget",
@@ -670,7 +681,7 @@ def _make_strategy_thesis_with_resolved_components(
     components = tuple(
         ThesisComponent(
             component_id=f"{thesis_id}-{ct.value.lower()}",
-            thesis_id=thesis_id,
+            thesis_id=ThesisId(thesis_id),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -690,8 +701,8 @@ def _make_strategy_thesis_with_resolved_components(
     generation_at = _NOW - timedelta(hours=4)
     time_expectation_hours = 24.0
     return ThesisRecord(
-        thesis_id=thesis_id,
-        position_id=position_id,
+        thesis_id=ThesisId(thesis_id),
+        position_id=PositionId(position_id),
         summary=f"{_UNDERLYING} iron condor",
         key_catalyst="Range-bound",
         position_size_rationale="Sized to max-loss budget",

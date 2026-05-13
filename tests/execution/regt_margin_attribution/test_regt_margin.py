@@ -6,6 +6,10 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.portfolio_state.records.positions import (
     Direction,
     EquityPositionDetails,
@@ -46,7 +50,7 @@ def _equity_position(
 ) -> PositionRecord:
     is_short = direction == Direction.SHORT
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=cost_basis,
         borrow_rate_pct=0.05 if is_short else None,
@@ -57,7 +61,7 @@ def _equity_position(
     history = () if status == PositionStatus.PENDING else (_fill(),)
     realized = 0.0 if status == PositionStatus.CLOSED else None
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=status,
@@ -84,7 +88,7 @@ def _option_position(
     status: PositionStatus = PositionStatus.OPEN,
 ) -> PositionRecord:
     details = OptionsPositionDetails(
-        underlying_ticker=underlying_ticker,
+        underlying_ticker=Symbol(underlying_ticker),
         strike_price=strike_price,
         expiration_date=date(2026, 12, 19),
         contract_type=contract_type,
@@ -96,7 +100,7 @@ def _option_position(
     history = () if status == PositionStatus.PENDING else (_fill(),)
     realized = 0.0 if status == PositionStatus.CLOSED else None
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=status,
@@ -268,7 +272,7 @@ def test_strategy_position_sums_per_leg_margins() -> None:
         leg_id="l1",
         direction=Direction.SHORT,
         options=OptionsPositionDetails(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             strike_price=520.0,
             expiration_date=date(2026, 12, 19),
             contract_type=OptionContractType.CALL,
@@ -286,7 +290,7 @@ def test_strategy_position_sums_per_leg_margins() -> None:
         leg_id="l2",
         direction=Direction.SHORT,
         options=OptionsPositionDetails(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             strike_price=480.0,
             expiration_date=date(2026, 12, 19),
             contract_type=OptionContractType.PUT,
@@ -303,7 +307,7 @@ def test_strategy_position_sums_per_leg_margins() -> None:
         leg_id="l3",
         direction=Direction.LONG,
         options=OptionsPositionDetails(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             strike_price=560.0,
             expiration_date=date(2026, 12, 19),
             contract_type=OptionContractType.CALL,
@@ -320,7 +324,7 @@ def test_strategy_position_sums_per_leg_margins() -> None:
         leg_id="l4",
         direction=Direction.LONG,
         options=OptionsPositionDetails(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             strike_price=440.0,
             expiration_date=date(2026, 12, 19),
             contract_type=OptionContractType.PUT,
@@ -342,7 +346,7 @@ def test_strategy_position_sums_per_leg_margins() -> None:
     )
 
     pos = PositionRecord(
-        position_id="strat1",
+        position_id=PositionId("strat1"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,

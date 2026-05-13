@@ -17,6 +17,13 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    OrderId,
+    PositionId,
+    RecommendationId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.decision.proposal_pre_processor import BUNDLE_OUTPUT_SCHEMA
 from alphamind.decision.proposal_pre_processor.models import (
     BUNDLE_OUTPUT_SCHEMA as MODULE_BUNDLE_OUTPUT_SCHEMA,
@@ -83,10 +90,10 @@ def _make_portfolio_level_observations() -> PortfolioLevelObservations:
 
 def _make_position_assessment() -> PositionAssessment:
     return PositionAssessment(
-        assessment_id="SA-1",
-        position_id="POS-1",
-        thesis_id="THESIS-1",
-        underlying="NVDA",
+        assessment_id=RecommendationId("SA-1"),
+        position_id=PositionId("POS-1"),
+        thesis_id=ThesisId("THESIS-1"),
+        underlying=Symbol("NVDA"),
         sector="tech",
         thesis_status="on-track",
         recommended_action="hold",
@@ -97,9 +104,9 @@ def _make_position_assessment() -> PositionAssessment:
 
 def _make_pending_order_assessment() -> PendingOrderAssessment:
     return PendingOrderAssessment(
-        pending_order_assessment_id="SA-ORD-1",
-        order_id="ORD-1",
-        position_id="POS-1",
+        pending_order_assessment_id=RecommendationId("SA-ORD-1"),
+        order_id=OrderId("ORD-1"),
+        position_id=PositionId("POS-1"),
         order_type="entry_limit",
         order_age_hours=2.0,
         fill_probability_assessment="plausible",

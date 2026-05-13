@@ -6,6 +6,12 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+)
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.portfolio_state.computations.positions import (
     MissingLegPriceError,
@@ -83,7 +89,7 @@ def _equity_position(
 ) -> PositionRecord:
     is_short = direction == Direction.SHORT
     equity_details = EquityPositionDetails(
-        ticker="AAPL",
+        ticker=Symbol("AAPL"),
         share_count=share_count,
         average_cost_basis_per_share=avg_cost,
         borrow_rate_pct=0.5 if is_short else None,
@@ -91,7 +97,7 @@ def _equity_position(
         margin_held_usd=500.0 if is_short else None,
     )
     return PositionRecord(
-        position_id="pos-001",
+        position_id=PositionId("pos-001"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -117,7 +123,7 @@ def _options_details(
     contract_type: OptionContractType = OptionContractType.CALL,
 ) -> OptionsPositionDetails:
     return OptionsPositionDetails(
-        underlying_ticker="AAPL",
+        underlying_ticker=Symbol("AAPL"),
         strike_price=150.0,
         expiration_date=date(2025, 3, 21),
         contract_type=contract_type,
@@ -136,7 +142,7 @@ def _options_position(
     direction: Direction = Direction.LONG,
 ) -> PositionRecord:
     return PositionRecord(
-        position_id="pos-002",
+        position_id=PositionId("pos-002"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -173,7 +179,7 @@ def _strategy_position(
         for leg_id, cc, mult, delta in legs
     )
     return PositionRecord(
-        position_id="pos-003",
+        position_id=PositionId("pos-003"),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -222,13 +228,13 @@ def _bracket(
         trigger: PriceTrigger | TimeTrigger | EventTrigger
         if leg_type == BracketLegType.TAKE_PROFIT:
             trigger = PriceTrigger(
-                underlying_ticker="AAPL",
+                underlying_ticker=Symbol("AAPL"),
                 threshold_usd=float(trigger_value),
                 direction="GTE",
             )
         elif leg_type == BracketLegType.PRICE_STOP:
             trigger = PriceTrigger(
-                underlying_ticker="AAPL",
+                underlying_ticker=Symbol("AAPL"),
                 threshold_usd=float(trigger_value),
                 direction="LTE",
             )
@@ -240,17 +246,19 @@ def _bracket(
             BracketLeg(
                 leg_id=f"leg-{i}",
                 leg_type=leg_type,
-                order_id=None if leg_type == BracketLegType.EVENT_INVALIDATION else "ord-001",
+                order_id=None
+                if leg_type == BracketLegType.EVENT_INVALIDATION
+                else OrderId("ord-001"),
                 trigger=trigger,
                 enforcement=enforcement,
                 status=BracketLegStatus.ACTIVE,
             )
         )
     return BracketRecord(
-        bracket_id="brk-001",
-        position_id="pos-001",
+        bracket_id=BracketId("brk-001"),
+        position_id=PositionId("pos-001"),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-000",
+        entry_order_id=OrderId("ord-000"),
         protective_legs=tuple(bracket_legs),
         modification_history=(),
         corporate_action_cancellation_reason=None,

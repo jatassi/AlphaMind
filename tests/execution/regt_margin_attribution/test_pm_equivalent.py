@@ -12,6 +12,10 @@ from datetime import UTC, date, datetime
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind.execution.regt_margin_attribution import (
     IvShockMultipliers,
     RegTMarginAttributionConfig,
@@ -95,7 +99,7 @@ def _equity_position(
 ) -> PositionRecord:
     is_short = direction == Direction.SHORT
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=100.0,
         borrow_rate_pct=0.05 if is_short else None,
@@ -104,7 +108,7 @@ def _equity_position(
     )
     execution_history = (_fill(),) if status == PositionStatus.OPEN else ()
     return PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=status,

@@ -14,6 +14,10 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    InvocationId,
+    Symbol,
+)
 from alphamind.decision.analyst.models import (
     AnalystOutput,
     EntryOrder,
@@ -211,7 +215,9 @@ def _make_guardrail_result(**overrides: Any) -> GuardrailValidationResult:
 def _make_recommendation(**overrides: Any) -> Recommendation:
     defaults: dict[str, Any] = {
         "recommendation_id": "REC-1",
-        "instrument": InstrumentEquity(asset_type="equity", ticker="NVDA", direction="long"),
+        "instrument": InstrumentEquity(
+            asset_type="equity", ticker=Symbol("NVDA"), direction="long"
+        ),
         "underlying": "NVDA",
         "sector": "semis",
         "conviction_level": 4,
@@ -224,7 +230,7 @@ def _make_recommendation(**overrides: Any) -> Recommendation:
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger="NVDA", comparator="<=", trigger_price=820.0
+                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=820.0
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             ),
@@ -285,7 +291,7 @@ class TestModeInvariant:
     def test_normal_requires_recommendations(self) -> None:
         with pytest.raises(ValidationError, match=r"(?i)recommendations"):
             AnalystOutput(
-                invocation_id="inv-001",
+                invocation_id=InvocationId("inv-001"),
                 timestamp=_ts("2026-04-23T14:31:22Z"),
                 mode="normal",
                 recommendations=None,
@@ -294,14 +300,14 @@ class TestModeInvariant:
 
     def test_normal_forbids_watchlist(self) -> None:
         watch = WatchlistEntry(
-            ticker="NVDA",
+            ticker=Symbol("NVDA"),
             sector="semis",
             thesis_summary="Watching for confirmation.",
             estimated_conviction=3,
         )
         with pytest.raises(ValidationError, match=r"(?i)watchlist"):
             AnalystOutput(
-                invocation_id="inv-001",
+                invocation_id=InvocationId("inv-001"),
                 timestamp=_ts("2026-04-23T14:31:22Z"),
                 mode="normal",
                 recommendations=(_make_recommendation(),),
@@ -311,7 +317,7 @@ class TestModeInvariant:
     def test_watchlist_requires_watchlist_field(self) -> None:
         with pytest.raises(ValidationError, match=r"(?i)watchlist"):
             AnalystOutput(
-                invocation_id="inv-001",
+                invocation_id=InvocationId("inv-001"),
                 timestamp=_ts("2026-04-23T14:31:22Z"),
                 mode="watchlist",
                 recommendations=None,
@@ -320,14 +326,14 @@ class TestModeInvariant:
 
     def test_watchlist_forbids_recommendations(self) -> None:
         watch = WatchlistEntry(
-            ticker="NVDA",
+            ticker=Symbol("NVDA"),
             sector="semis",
             thesis_summary="Watching for confirmation.",
             estimated_conviction=3,
         )
         with pytest.raises(ValidationError, match=r"(?i)recommendations"):
             AnalystOutput(
-                invocation_id="inv-001",
+                invocation_id=InvocationId("inv-001"),
                 timestamp=_ts("2026-04-23T14:31:22Z"),
                 mode="watchlist",
                 recommendations=(_make_recommendation(),),
@@ -337,7 +343,7 @@ class TestModeInvariant:
     def test_normal_with_empty_recommendations_allowed(self) -> None:
         """Quiet-day case: mode=normal, recommendations=()."""
         output = AnalystOutput(
-            invocation_id="inv-001",
+            invocation_id=InvocationId("inv-001"),
             timestamp=_ts("2026-04-23T14:31:22Z"),
             mode="normal",
             recommendations=(),
@@ -347,7 +353,7 @@ class TestModeInvariant:
 
     def test_watchlist_with_empty_watchlist_allowed(self) -> None:
         output = AnalystOutput(
-            invocation_id="inv-001",
+            invocation_id=InvocationId("inv-001"),
             timestamp=_ts("2026-04-23T14:31:22Z"),
             mode="watchlist",
             watchlist=(),
@@ -368,7 +374,7 @@ class TestTimestampTzAware:
         # warranted suppression because the rejection is the behavior under test.
         with pytest.raises(ValidationError, match=r"(?i)tz|timezone|aware"):
             AnalystOutput(
-                invocation_id="inv-001",
+                invocation_id=InvocationId("inv-001"),
                 timestamp=datetime(2026, 4, 23, 14, 31, 22),  # noqa: DTZ001
                 mode="normal",
                 recommendations=(),
@@ -376,7 +382,7 @@ class TestTimestampTzAware:
 
     def test_utc_aware_datetime_accepted(self) -> None:
         output = AnalystOutput(
-            invocation_id="inv-001",
+            invocation_id=InvocationId("inv-001"),
             timestamp=datetime(2026, 4, 23, 14, 31, 22, tzinfo=UTC),
             mode="normal",
             recommendations=(),
@@ -506,7 +512,7 @@ class TestInvalidationLegInvariant:
                 type="price",
                 is_hard=False,
                 condition=PriceCondition(
-                    underlying_trigger="NVDA", comparator="<=", trigger_price=820.0
+                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=820.0
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             )
@@ -518,7 +524,7 @@ class TestInvalidationLegInvariant:
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger="NVDA", comparator="<=", trigger_price=820.0
+                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=820.0
                 ),
                 order_parameters=None,
             )
@@ -529,7 +535,7 @@ class TestInvalidationLegInvariant:
             type="price",
             is_hard=True,
             condition=PriceCondition(
-                underlying_trigger="NVDA", comparator="<=", trigger_price=820.0
+                underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=820.0
             ),
             order_parameters=OrderParameters(order_type="market"),
         )
@@ -643,7 +649,7 @@ class TestWatchlistEntrySector:
     def test_all_four_values_accepted(self) -> None:
         for s in ("tech", "semis", "financials", "energy"):
             we = WatchlistEntry(
-                ticker="NVDA",
+                ticker=Symbol("NVDA"),
                 sector=s,
                 thesis_summary="Watching catalyst.",
                 estimated_conviction=3,
@@ -653,7 +659,7 @@ class TestWatchlistEntrySector:
     def test_three_way_value_rejected(self) -> None:
         with pytest.raises(ValidationError):
             WatchlistEntry(
-                ticker="NVDA",
+                ticker=Symbol("NVDA"),
                 sector="tech_semis",  # type: ignore[arg-type]  # deliberate runtime rejection
                 thesis_summary="x",
                 estimated_conviction=3,
@@ -668,7 +674,9 @@ class TestWatchlistEntrySector:
 class TestInstrumentUnion:
     def test_equity_dispatches(self) -> None:
         rec = _make_recommendation(
-            instrument=InstrumentEquity(asset_type="equity", ticker="AAPL", direction="long")
+            instrument=InstrumentEquity(
+                asset_type="equity", ticker=Symbol("AAPL"), direction="long"
+            )
         )
         assert isinstance(rec.instrument, InstrumentEquity)
 
@@ -676,7 +684,7 @@ class TestInstrumentUnion:
         rec = _make_recommendation(
             instrument=InstrumentOption(
                 asset_type="option",
-                underlying="NVDA",
+                underlying=Symbol("NVDA"),
                 strike=850.0,
                 expiration=date(2026, 5, 17),
                 contract_type="call",
@@ -707,7 +715,7 @@ class TestInstrumentUnion:
             instrument=InstrumentStrategy(
                 asset_type="strategy",
                 strategy_type="vertical_spread",
-                underlying="NVDA",
+                underlying=Symbol("NVDA"),
                 legs=legs,
             )
         )
@@ -719,7 +727,7 @@ class TestInstrumentUnion:
             InstrumentStrategy(
                 asset_type="strategy",
                 strategy_type="vertical_spread",
-                underlying="NVDA",
+                underlying=Symbol("NVDA"),
                 legs=(
                     StrategyLeg(
                         strike=850.0,

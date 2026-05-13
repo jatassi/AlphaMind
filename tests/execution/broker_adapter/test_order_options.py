@@ -27,6 +27,9 @@ from alpaca.trading.requests import (
     StopLimitOrderRequest,
 )
 
+from alphamind._kernel.ids import (
+    PositionId,
+)
 from alphamind.commands.command_models import (
     AddCommand,
     BracketOrderParameters,
@@ -191,7 +194,7 @@ def _add_options_command(
 ) -> AddCommand:
     return AddCommand(
         command_type="add",
-        position_id="POS-1",
+        position_id=PositionId("POS-1"),
         additional_quantity=quantity,
         additional_dollar_value=5_000.0,
         entry_order=EntryOrder(
@@ -217,7 +220,7 @@ def _close_options_command(
 ) -> CloseCommand:
     return CloseCommand(
         command_type="close",
-        position_id="POS-1",
+        position_id=PositionId("POS-1"),
         quantity=quantity,  # type: ignore[arg-type]
         order_type=order_type,  # type: ignore[arg-type]
         limit_price=limit_price,

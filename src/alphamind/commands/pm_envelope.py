@@ -29,9 +29,22 @@ from pydantic import (
     Discriminator,
     Field,
     TypeAdapter,
+    field_validator,
     model_validator,
 )
 
+from alphamind._kernel.ids import (
+    EnvelopeId,
+    InvocationId,
+    PositionId,
+    RecommendationId,
+)
+from alphamind._kernel.ids import (
+    envelope_id as _envelope_id_constructor,
+)
+from alphamind._kernel.ids import (
+    recommendation_id as _recommendation_id_constructor,
+)
 from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
@@ -220,10 +233,10 @@ class PMAnalystEnvelope(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    envelope_id: str = Field(pattern=r"^ENV-REC-[0-9]+$")
-    invocation_id: str = Field(min_length=1)
+    envelope_id: EnvelopeId = Field(pattern=r"^ENV-REC-[0-9]+$")
+    invocation_id: InvocationId = Field(min_length=1)
     source_provenance: Literal["pm_analyst"]
-    source_recommendation_id: str = Field(pattern=r"^REC-[0-9]+$")
+    source_recommendation_id: RecommendationId = Field(pattern=r"^REC-[0-9]+$")
     recommendation_type: Literal["new_entry"]
     position_id: None = None
     verdict: Verdict
@@ -233,6 +246,16 @@ class PMAnalystEnvelope(BaseModel):
     rationale_narrative: str = Field(min_length=1)
     anti_patterns_identified: tuple[AntiPattern, ...] | None = None
     commands: tuple[OMSCommand, ...]
+
+    @field_validator("envelope_id", mode="after")
+    @classmethod
+    def _construct_envelope_id(cls, value: str) -> EnvelopeId:
+        return _envelope_id_constructor(value)
+
+    @field_validator("source_recommendation_id", mode="after")
+    @classmethod
+    def _construct_source_recommendation_id(cls, value: str) -> RecommendationId:
+        return _recommendation_id_constructor(value)
 
     @model_validator(mode="after")
     def _validate_invariants(self) -> PMAnalystEnvelope:
@@ -245,12 +268,12 @@ class PMStrategistEnvelope(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    envelope_id: str = Field(pattern=r"^ENV-(SA|SA-ORD)-[0-9]+$")
-    invocation_id: str = Field(min_length=1)
+    envelope_id: EnvelopeId = Field(pattern=r"^ENV-(SA|SA-ORD)-[0-9]+$")
+    invocation_id: InvocationId = Field(min_length=1)
     source_provenance: Literal["pm_strategist"]
-    source_recommendation_id: str = Field(pattern=r"^SA(-ORD)?-[0-9]+$")
+    source_recommendation_id: RecommendationId = Field(pattern=r"^SA(-ORD)?-[0-9]+$")
     recommendation_type: Literal["position_assessment", "pending_order_assessment"]
-    position_id: str = Field(min_length=1)
+    position_id: PositionId = Field(min_length=1)
     verdict: Verdict
     evaluation: PositionActionEvaluation
     modifications: tuple[ModificationRecord, ...]
@@ -258,6 +281,16 @@ class PMStrategistEnvelope(BaseModel):
     rationale_narrative: str = Field(min_length=1)
     anti_patterns_identified: tuple[AntiPattern, ...] | None = None
     commands: tuple[OMSCommand, ...]
+
+    @field_validator("envelope_id", mode="after")
+    @classmethod
+    def _construct_envelope_id(cls, value: str) -> EnvelopeId:
+        return _envelope_id_constructor(value)
+
+    @field_validator("source_recommendation_id", mode="after")
+    @classmethod
+    def _construct_source_recommendation_id(cls, value: str) -> RecommendationId:
+        return _recommendation_id_constructor(value)
 
     @model_validator(mode="after")
     def _validate_invariants(self) -> PMStrategistEnvelope:
@@ -296,7 +329,7 @@ class PMCompletionRecord(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    invocation_id: str = Field(min_length=1)
+    invocation_id: InvocationId = Field(min_length=1)
     timestamp: datetime
     envelopes_submitted: int = Field(ge=0)
     verdict_summary: VerdictSummary

@@ -9,6 +9,13 @@ from typing import Any
 
 import pytest
 
+from alphamind._kernel.ids import (
+    AlpacaOrderId,
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+)
 from alphamind._kernel.regime import (
     DrawdownTier,
     RegimeLabel,
@@ -326,7 +333,7 @@ def _make_equity_position(
 ) -> PositionView:
     is_short = direction == Direction.SHORT
     equity_details = EquityPositionDetails(
-        ticker=position_id.split("-")[1],
+        ticker=Symbol(position_id.split("-")[1]),
         share_count=100.0,
         average_cost_basis_per_share=100.0,
         borrow_rate_pct=1.0 if is_short else None,
@@ -334,7 +341,7 @@ def _make_equity_position(
         margin_held_usd=5_000.0 if is_short else None,
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -474,19 +481,19 @@ def _make_pm_pending_order(
     age_hours: float = 1.5,
 ) -> OrderRecord:
     return OrderRecord(
-        order_id=order_id,
+        order_id=OrderId(order_id),
         position_id=None,
-        bracket_id="BR-001",
+        bracket_id=BracketId("BR-001"),
         role=OrderRole.ENTRY,
-        instrument_spec=EquityInstrumentSpec(ticker=ticker),
+        instrument_spec=EquityInstrumentSpec(ticker=Symbol(ticker)),
         direction=direction,
         order_type=OrderType.LIMIT,
         price_parameters=PriceParameters(limit_price=limit_price),
         quantity=quantity,
         duration=OrderDuration.GTC,
         status=OrderStatus.PENDING,
-        alpaca_order_id="ALPACA-001",
-        alpaca_order_id_chain=("ALPACA-001",),
+        alpaca_order_id=AlpacaOrderId("ALPACA-001"),
+        alpaca_order_id_chain=(AlpacaOrderId("ALPACA-001"),),
         submission_timestamp=datetime(2026, 4, 28, 13, 0, 0, tzinfo=UTC),
         last_update_timestamp=datetime(2026, 4, 28, 13, 0, 0, tzinfo=UTC),
         filled_quantity=0.0,

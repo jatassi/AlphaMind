@@ -57,6 +57,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.regt_margin_attribution import (
     load_regt_margin_attribution_config,
@@ -372,14 +379,14 @@ def _execution_history_fill(
 def _seed_long_nvda_equity() -> PositionRecord:
     """OPEN long NVDA equity; contributes to the NVDA class-group margin."""
     return PositionRecord(
-        position_id=_SEED_NVDA_LONG_POS,
+        position_id=PositionId(_SEED_NVDA_LONG_POS),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW - timedelta(hours=48),
         details=EquityPositionDetails(
-            ticker=_NVDA,
+            ticker=Symbol(_NVDA),
             share_count=50.0,
             average_cost_basis_per_share=900.0,
         ),
@@ -400,14 +407,14 @@ def _seed_long_nvda_equity() -> PositionRecord:
 def _seed_short_amd_equity() -> PositionRecord:
     """OPEN short AMD equity; contributes to the AMD class-group margin."""
     return PositionRecord(
-        position_id=_SEED_AMD_SHORT_POS,
+        position_id=PositionId(_SEED_AMD_SHORT_POS),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.SHORT,
         entry_timestamp=_NOW - timedelta(hours=36),
         details=EquityPositionDetails(
-            ticker=_AMD,
+            ticker=Symbol(_AMD),
             share_count=100.0,
             average_cost_basis_per_share=150.0,
             borrow_rate_pct=0.04,
@@ -431,7 +438,7 @@ def _seed_short_amd_equity() -> PositionRecord:
 def _seed_long_spy_call() -> PositionRecord:
     """OPEN long SPY call; contributes to the SPY class-group margin."""
     details = OptionsPositionDetails(
-        underlying_ticker=_SPY,
+        underlying_ticker=Symbol(_SPY),
         strike_price=545.0,
         expiration_date=_SPY_CALL_EXPIRATION,
         contract_type=OptionContractType.CALL,
@@ -441,7 +448,7 @@ def _seed_long_spy_call() -> PositionRecord:
         greeks=_FIXTURE_GREEKS,
     )
     return PositionRecord(
-        position_id=_SEED_SPY_CALL_POS,
+        position_id=PositionId(_SEED_SPY_CALL_POS),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -465,7 +472,7 @@ def _seed_long_spy_call() -> PositionRecord:
 def _seed_nvda_bull_call_spread() -> PositionRecord:
     """OPEN NVDA bull call spread (long 900, short 950); contributes to NVDA class-group."""
     long_leg_details = OptionsPositionDetails(
-        underlying_ticker=_NVDA,
+        underlying_ticker=Symbol(_NVDA),
         strike_price=900.0,
         expiration_date=_SPREAD_EXPIRATION,
         contract_type=OptionContractType.CALL,
@@ -475,7 +482,7 @@ def _seed_nvda_bull_call_spread() -> PositionRecord:
         greeks=_FIXTURE_GREEKS,
     )
     short_leg_details = OptionsPositionDetails(
-        underlying_ticker=_NVDA,
+        underlying_ticker=Symbol(_NVDA),
         strike_price=950.0,
         expiration_date=_SPREAD_EXPIRATION,
         contract_type=OptionContractType.CALL,
@@ -497,7 +504,7 @@ def _seed_nvda_bull_call_spread() -> PositionRecord:
         strategy_greeks=_FIXTURE_GREEKS,
     )
     return PositionRecord(
-        position_id=_SEED_NVDA_SPREAD_POS,
+        position_id=PositionId(_SEED_NVDA_SPREAD_POS),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -535,14 +542,14 @@ def _seeded_portfolio() -> tuple[PositionRecord, ...]:
 def _buy_entry_position_pending() -> PositionRecord:
     """PENDING NVDA long equity awaiting the buy entry fill."""
     return PositionRecord(
-        position_id=_BUY_POSITION_ID,
-        thesis_id=_BUY_THESIS_ID,
-        bracket_id=_BUY_BRACKET_ID,
+        position_id=PositionId(_BUY_POSITION_ID),
+        thesis_id=ThesisId(_BUY_THESIS_ID),
+        bracket_id=BracketId(_BUY_BRACKET_ID),
         status=PositionStatus.PENDING,
         direction=Direction.LONG,
         entry_timestamp=None,
         details=EquityPositionDetails(
-            ticker=_NVDA,
+            ticker=Symbol(_NVDA),
             share_count=0.0,
             average_cost_basis_per_share=0.0,
         ),
@@ -561,7 +568,7 @@ def _buy_entry_order() -> OrderRecord:
             "position_id": None,
             "bracket_id": _BUY_BRACKET_ID,
             "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=_NVDA),
+            "instrument_spec": EquityInstrumentSpec(ticker=Symbol(_NVDA)),
             "direction": OrderDirection.BUY,
             "order_type": OrderType.MARKET,
             "order_class": OrderClass.SIMPLE,
@@ -592,7 +599,7 @@ def _buy_entry_protective_stop_order() -> OrderRecord:
             "position_id": None,
             "bracket_id": _BUY_BRACKET_ID,
             "role": OrderRole.PRICE_STOP,
-            "instrument_spec": EquityInstrumentSpec(ticker=_NVDA),
+            "instrument_spec": EquityInstrumentSpec(ticker=Symbol(_NVDA)),
             "direction": OrderDirection.SELL,
             "order_type": OrderType.STOP,
             "order_class": OrderClass.SIMPLE,
@@ -619,16 +626,16 @@ def _buy_entry_bracket() -> BracketRecord:
     leg = BracketLeg(
         leg_id=f"{_BUY_BRACKET_ID}-leg-stop",
         leg_type=BracketLegType.PRICE_STOP,
-        order_id=f"{_BUY_BRACKET_ID}-ord-stop",
-        trigger=PriceTrigger(underlying_ticker=_NVDA, threshold_usd=850.0, direction="LTE"),
+        order_id=OrderId(f"{_BUY_BRACKET_ID}-ord-stop"),
+        trigger=PriceTrigger(underlying_ticker=Symbol(_NVDA), threshold_usd=850.0, direction="LTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.PENDING_ACTIVATION,
     )
     return BracketRecord(
-        bracket_id=_BUY_BRACKET_ID,
-        position_id=_BUY_POSITION_ID,
+        bracket_id=BracketId(_BUY_BRACKET_ID),
+        position_id=PositionId(_BUY_POSITION_ID),
         status=BracketStatus.PENDING_ENTRY,
-        entry_order_id=_BUY_ORDER_ID,
+        entry_order_id=OrderId(_BUY_ORDER_ID),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -640,7 +647,7 @@ def _buy_entry_thesis() -> ThesisRecord:
     components = tuple(
         ThesisComponent(
             component_id=f"{_BUY_THESIS_ID}-{ct.value.lower()}",
-            thesis_id=_BUY_THESIS_ID,
+            thesis_id=ThesisId(_BUY_THESIS_ID),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -659,8 +666,8 @@ def _buy_entry_thesis() -> ThesisRecord:
     )
     gen = _NOW - timedelta(hours=2)
     return ThesisRecord(
-        thesis_id=_BUY_THESIS_ID,
-        position_id=_BUY_POSITION_ID,
+        thesis_id=ThesisId(_BUY_THESIS_ID),
+        position_id=PositionId(_BUY_POSITION_ID),
         summary="NVDA momentum",
         key_catalyst="GTC roadmap update",
         position_size_rationale="Sized at 1% conviction-3",
@@ -686,14 +693,14 @@ def _sell_exit_position_open() -> PositionRecord:
     rather than a ``SELL_TO_OPEN`` against the seeded AMD short.
     """
     return PositionRecord(
-        position_id=_SELL_POSITION_ID,
-        thesis_id=_SELL_THESIS_ID,
-        bracket_id=_SELL_BRACKET_ID,
+        position_id=PositionId(_SELL_POSITION_ID),
+        thesis_id=ThesisId(_SELL_THESIS_ID),
+        bracket_id=BracketId(_SELL_BRACKET_ID),
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW - timedelta(hours=8),
         details=EquityPositionDetails(
-            ticker=_AMD,
+            ticker=Symbol(_AMD),
             share_count=20.0,
             average_cost_basis_per_share=140.0,
         ),
@@ -721,7 +728,7 @@ def _sell_historical_entry_order() -> OrderRecord:
             "position_id": _SELL_POSITION_ID,
             "bracket_id": _SELL_BRACKET_ID,
             "role": OrderRole.ENTRY,
-            "instrument_spec": EquityInstrumentSpec(ticker=_AMD),
+            "instrument_spec": EquityInstrumentSpec(ticker=Symbol(_AMD)),
             "direction": OrderDirection.BUY,
             "order_type": OrderType.MARKET,
             "order_class": OrderClass.SIMPLE,
@@ -751,7 +758,7 @@ def _sell_exit_order() -> OrderRecord:
             "position_id": _SELL_POSITION_ID,
             "bracket_id": _SELL_BRACKET_ID,
             "role": OrderRole.TAKE_PROFIT,
-            "instrument_spec": EquityInstrumentSpec(ticker=_AMD),
+            "instrument_spec": EquityInstrumentSpec(ticker=Symbol(_AMD)),
             "direction": OrderDirection.SELL,
             "order_type": OrderType.LIMIT,
             "order_class": OrderClass.SIMPLE,
@@ -778,16 +785,16 @@ def _sell_exit_bracket() -> BracketRecord:
     leg = BracketLeg(
         leg_id=f"{_SELL_BRACKET_ID}-leg-target",
         leg_type=BracketLegType.TAKE_PROFIT,
-        order_id=_SELL_ORDER_ID,
-        trigger=PriceTrigger(underlying_ticker=_AMD, threshold_usd=145.0, direction="GTE"),
+        order_id=OrderId(_SELL_ORDER_ID),
+        trigger=PriceTrigger(underlying_ticker=Symbol(_AMD), threshold_usd=145.0, direction="GTE"),
         enforcement=BracketLegEnforcement.MECHANICAL,
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=_SELL_BRACKET_ID,
-        position_id=_SELL_POSITION_ID,
+        bracket_id=BracketId(_SELL_BRACKET_ID),
+        position_id=PositionId(_SELL_POSITION_ID),
         status=BracketStatus.ACTIVE,
-        entry_order_id=_SELL_HISTORICAL_ENTRY_ORDER_ID,
+        entry_order_id=OrderId(_SELL_HISTORICAL_ENTRY_ORDER_ID),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,
@@ -799,7 +806,7 @@ def _sell_exit_thesis() -> ThesisRecord:
     components = tuple(
         ThesisComponent(
             component_id=f"{_SELL_THESIS_ID}-{ct.value.lower()}",
-            thesis_id=_SELL_THESIS_ID,
+            thesis_id=ThesisId(_SELL_THESIS_ID),
             component_type=ct,
             linked_bracket_leg_type=None,
             linked_bracket_leg_id=None,
@@ -818,8 +825,8 @@ def _sell_exit_thesis() -> ThesisRecord:
     )
     gen = _NOW - timedelta(hours=6)
     return ThesisRecord(
-        thesis_id=_SELL_THESIS_ID,
-        position_id=_SELL_POSITION_ID,
+        thesis_id=ThesisId(_SELL_THESIS_ID),
+        position_id=PositionId(_SELL_POSITION_ID),
         summary="AMD partial trim",
         key_catalyst="Resistance at $145",
         position_size_rationale="Partial exit on technical level",

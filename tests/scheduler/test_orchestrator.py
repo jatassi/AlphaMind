@@ -27,6 +27,9 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.ids import (
+    InvocationId,
+)
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.modes import Mode
 from alphamind.config.models.run_types import RunType
@@ -286,7 +289,7 @@ def _make_decision_result() -> Any:
 
     pm_result = PMResult(
         output=PMCompletionRecord(
-            invocation_id="inv-x",
+            invocation_id=InvocationId("inv-x"),
             timestamp=_NOW,
             envelopes_submitted=0,
             verdict_summary=VerdictSummary(approve=0, approve_with_modification=0, reject=0),

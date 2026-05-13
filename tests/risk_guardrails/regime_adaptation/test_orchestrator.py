@@ -25,6 +25,10 @@ import yaml
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -228,14 +232,14 @@ def _zero_positions() -> tuple[PositionView, ...]:
 
 def _equity_position(*, position_id: str, position_weight_pct: float) -> PositionView:
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW,
         details=EquityPositionDetails(
-            ticker="AAPL",
+            ticker=Symbol("AAPL"),
             share_count=10.0,
             average_cost_basis_per_share=100.0,
             borrow_rate_pct=None,

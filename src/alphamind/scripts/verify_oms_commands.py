@@ -49,6 +49,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 # ``tests/execution/oms/test_submit_engine_envelope.py``; without this the
 # transitive harness-side imports race with the lazy submodule load.
 import alphamind.decision.portfolio_manager.models  # noqa: F401
+from alphamind._kernel.ids import (
+    EnvelopeId,
+    InvocationId,
+    OrderId,
+    PositionId,
+    RecommendationId,
+)
 from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
@@ -171,7 +178,7 @@ def _close_command_variants() -> tuple[CloseCommand, ...]:
     return (
         CloseCommand(
             command_type="close",
-            position_id="POS-NVDA-INVALIDATED",
+            position_id=PositionId("POS-NVDA-INVALIDATED"),
             quantity="all",
             order_type="market",
             limit_price=None,
@@ -181,7 +188,7 @@ def _close_command_variants() -> tuple[CloseCommand, ...]:
         ),
         CloseCommand(
             command_type="close",
-            position_id="POS-NVDA-TARGET",
+            position_id=PositionId("POS-NVDA-TARGET"),
             quantity="all",
             order_type="limit",
             limit_price=950.0,
@@ -191,7 +198,7 @@ def _close_command_variants() -> tuple[CloseCommand, ...]:
         ),
         CloseCommand(
             command_type="close",
-            position_id="POS-NVDA-CONVICTION",
+            position_id=PositionId("POS-NVDA-CONVICTION"),
             quantity=5.0,
             order_type="market",
             limit_price=None,
@@ -201,7 +208,7 @@ def _close_command_variants() -> tuple[CloseCommand, ...]:
         ),
         CloseCommand(
             command_type="close",
-            position_id="POS-NVDA-RISK",
+            position_id=PositionId("POS-NVDA-RISK"),
             quantity="all",
             order_type="market",
             limit_price=None,
@@ -217,7 +224,7 @@ def _adjust_command_variants() -> tuple[AdjustCommand, ...]:
     return (
         AdjustCommand(
             command_type="adjust",
-            position_id="POS-NVDA-A1",
+            position_id=PositionId("POS-NVDA-A1"),
             adjustment_rationale="Tighten stop after favorable move.",
             new_stop_level=NewStopLevel(
                 trigger_price=820.0,
@@ -227,7 +234,7 @@ def _adjust_command_variants() -> tuple[AdjustCommand, ...]:
         ),
         AdjustCommand(
             command_type="adjust",
-            position_id="POS-NVDA-A2",
+            position_id=PositionId("POS-NVDA-A2"),
             adjustment_rationale="Lift target after upgrade.",
             new_target_level=NewTargetLevel(
                 target_type="absolute_price",
@@ -239,13 +246,13 @@ def _adjust_command_variants() -> tuple[AdjustCommand, ...]:
         ),
         AdjustCommand(
             command_type="adjust",
-            position_id="POS-NVDA-A3",
+            position_id=PositionId("POS-NVDA-A3"),
             adjustment_rationale="Extend time horizon.",
             new_time_expiration=datetime(2026, 6, 1, tzinfo=UTC),
         ),
         AdjustCommand(
             command_type="adjust",
-            position_id="POS-NVDA-A4",
+            position_id=PositionId("POS-NVDA-A4"),
             adjustment_rationale="Add event invalidation leg.",
             new_event_invalidation=NewEventInvalidation(
                 event_description="Earnings guidance cut.",
@@ -253,7 +260,7 @@ def _adjust_command_variants() -> tuple[AdjustCommand, ...]:
         ),
         AdjustCommand(
             command_type="adjust",
-            position_id="POS-NVDA-A5",
+            position_id=PositionId("POS-NVDA-A5"),
             adjustment_rationale="Refine entry rationale.",
             thesis_component_updates=(
                 ThesisComponent(
@@ -271,7 +278,7 @@ def _adjust_command_variants() -> tuple[AdjustCommand, ...]:
 def _cancel_command_variant() -> CancelCommand:
     return CancelCommand(
         command_type="cancel",
-        order_id="ORD-NVDA-PENDING",
+        order_id=OrderId("ORD-NVDA-PENDING"),
         cancel_reason="Pre-fill cancellation: thesis stale.",
     )
 
@@ -279,7 +286,7 @@ def _cancel_command_variant() -> CancelCommand:
 def _add_command_variant() -> AddCommand:
     return AddCommand(
         command_type="add",
-        position_id="POS-NVDA-EXISTING",
+        position_id=PositionId("POS-NVDA-EXISTING"),
         additional_quantity=5.0,
         additional_dollar_value=5_000.0,
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
@@ -303,7 +310,7 @@ def _add_command_variant() -> AddCommand:
 def _engine_envelope_variant() -> EngineEnvelope:
     trigger_ts = datetime(2026, 5, 9, 14, 30, tzinfo=UTC)
     return EngineEnvelope(
-        envelope_id="MON.session-verify.42",
+        envelope_id=EnvelopeId("MON.session-verify.42"),
         invocation_id=None,
         trigger_timestamp=trigger_ts,
         source_provenance="engine_guardrail",
@@ -324,7 +331,7 @@ def _engine_envelope_variant() -> EngineEnvelope:
         commands=(
             CloseCommand(
                 command_type="close",
-                position_id="POS-NVDA-001",
+                position_id=PositionId("POS-NVDA-001"),
                 quantity="all",
                 order_type="market",
                 limit_price=None,
@@ -510,10 +517,10 @@ def _phase_2_check_attempt_seq() -> str | None:
     )
     pass_assessment = CriterionAssessment(status="pass", note=None)
     envelope = PMAnalystEnvelope(
-        envelope_id=_WORKED_ENVELOPE_ID,
-        invocation_id=_WORKED_INVOCATION_ID,
+        envelope_id=EnvelopeId(_WORKED_ENVELOPE_ID),
+        invocation_id=InvocationId(_WORKED_INVOCATION_ID),
         source_provenance="pm_analyst",
-        source_recommendation_id="REC-2",
+        source_recommendation_id=RecommendationId("REC-2"),
         recommendation_type="new_entry",
         verdict="approve_with_modification",
         evaluation=ThesisQualityEvaluation(
@@ -638,10 +645,10 @@ def _phase_3_envelope() -> Any:
 
     pass_assessment = CriterionAssessment(status="pass", note=None)
     return PMAnalystEnvelope(
-        envelope_id=_PHASE_3_ENVELOPE_ID,
-        invocation_id=_PHASE_3_INVOCATION_ID,
+        envelope_id=EnvelopeId(_PHASE_3_ENVELOPE_ID),
+        invocation_id=InvocationId(_PHASE_3_INVOCATION_ID),
         source_provenance="pm_analyst",
-        source_recommendation_id=_PHASE_3_RECOMMENDATION_ID,
+        source_recommendation_id=RecommendationId(_PHASE_3_RECOMMENDATION_ID),
         recommendation_type="new_entry",
         verdict="approve",
         evaluation=ThesisQualityEvaluation(
@@ -1547,7 +1554,7 @@ async def run_phase_4_engine_envelope_path(db_path: Path) -> PhaseResult:
 def _phase_4_engine_envelope(*, position_id: str) -> EngineEnvelope:
     trigger_ts = _NOW
     return EngineEnvelope(
-        envelope_id=f"MON.{_PHASE_4_MONITOR_SESSION}.{_PHASE_4_TRIGGER_ID}",
+        envelope_id=EnvelopeId(f"MON.{_PHASE_4_MONITOR_SESSION}.{_PHASE_4_TRIGGER_ID}"),
         invocation_id=None,
         trigger_timestamp=trigger_ts,
         source_provenance="engine_guardrail",
@@ -1568,7 +1575,7 @@ def _phase_4_engine_envelope(*, position_id: str) -> EngineEnvelope:
         commands=(
             CloseCommand(
                 command_type="close",
-                position_id=position_id,
+                position_id=PositionId(position_id),
                 quantity="all",
                 order_type="market",
                 limit_price=None,

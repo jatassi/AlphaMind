@@ -30,6 +30,8 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
+from alphamind._kernel.ids import OrderId, PositionId
+
 __all__ = [
     "Acknowledgment",
     "GreeksLike",
@@ -110,8 +112,8 @@ class Acknowledgment(BaseModel):
 
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    position_id: str | None = None
-    order_id: str | None = None
+    position_id: PositionId | None = None
+    order_id: OrderId | None = None
     validation_metadata: _ValidationMetadata | None = None
     released_capital_usd: float | None = None
 

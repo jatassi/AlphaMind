@@ -22,6 +22,7 @@ from alpaca.trading.enums import TimeInForce
 from alpaca.trading.models import Order
 from alpaca.trading.requests import ReplaceOrderRequest
 
+from alphamind._kernel.ids import AlpacaOrderId, ClientOrderId
 from alphamind.config.models.execution import ExecutionConfig
 from alphamind.execution.broker_adapter.errors import classify_alpaca_error
 from alphamind.execution.broker_adapter.retry import (
@@ -44,9 +45,9 @@ class ReplacementAck:
     trade_updates (events handled by story 02f).
     """
 
-    new_alpaca_order_id: str
-    replaced_alpaca_order_id: str
-    client_order_id: str
+    new_alpaca_order_id: AlpacaOrderId
+    replaced_alpaca_order_id: AlpacaOrderId
+    client_order_id: ClientOrderId
     status: str  # Alpaca's reported replacement status
 
 
@@ -58,7 +59,7 @@ class CancellationAck:
     trade_updates separately.
     """
 
-    alpaca_order_id: str
+    alpaca_order_id: AlpacaOrderId
     accepted: bool
 
 
@@ -223,7 +224,7 @@ async def submit_replace(
     *,
     client: TradingClient,
     execution: ExecutionConfig,
-    target_alpaca_order_id: str,
+    target_alpaca_order_id: AlpacaOrderId,
     target_asset_class: AssetClass,
     target_order_class: OrderClass,
     fields: ReplaceFields,
@@ -259,9 +260,9 @@ async def submit_replace(
             ),
         )
         return ReplacementAck(
-            new_alpaca_order_id=str(response.id),
+            new_alpaca_order_id=AlpacaOrderId(str(response.id)),
             replaced_alpaca_order_id=target_alpaca_order_id,
-            client_order_id=str(response.client_order_id),
+            client_order_id=ClientOrderId(str(response.client_order_id)),
             status=str(response.status),
         )
 
@@ -276,7 +277,7 @@ async def submit_cancel(
     *,
     client: TradingClient,
     execution: ExecutionConfig,
-    target_alpaca_order_id: str,
+    target_alpaca_order_id: AlpacaOrderId,
 ) -> SubmissionOutcome[CancellationAck]:
     """Fire-and-forget cancel.
 

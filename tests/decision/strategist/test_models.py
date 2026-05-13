@@ -14,6 +14,11 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from alphamind._kernel.ids import (
+    InvocationId,
+    PositionId,
+    RecommendationId,
+)
 from alphamind.decision.strategist.models import (
     AddParameters,
     AdjustBracketParameters,
@@ -302,7 +307,7 @@ class TestModeInvariants:
             defensive_posture_summary=DefensivePostureSummary(
                 reduction_priority=(
                     ReductionPriorityEntry(
-                        position_id="POS-NVDA-001",
+                        position_id=PositionId("POS-NVDA-001"),
                         priority_rationale="Weakest thesis.",
                     ),
                 ),
@@ -836,12 +841,12 @@ class TestFrozenForbid:
     def test_models_frozen(self) -> None:
         pa = _make_position_assessment()
         with pytest.raises(ValidationError):
-            pa.assessment_id = "SA-99"
+            pa.assessment_id = RecommendationId("SA-99")
 
     def test_extra_field_forbidden(self) -> None:
         with pytest.raises(ValidationError, match=r"(?i)extra"):
             StrategistOutput(
-                invocation_id="inv-001",
+                invocation_id=InvocationId("inv-001"),
                 timestamp=_ts("2026-04-23T14:33:47Z"),
                 mode="normal",
                 position_assessments=(),

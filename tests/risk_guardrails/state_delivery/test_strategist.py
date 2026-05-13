@@ -7,6 +7,10 @@ from itertools import pairwise
 
 import pytest
 
+from alphamind._kernel.ids import (
+    PositionId,
+    Symbol,
+)
 from alphamind._kernel.regime import (
     DrawdownTier,
     RegimeLabel,
@@ -215,7 +219,7 @@ def _make_equity_position(
 ) -> PositionView:
     is_short = direction == Direction.SHORT
     equity_details = EquityPositionDetails(
-        ticker=position_id.split("-")[1],
+        ticker=Symbol(position_id.split("-")[1]),
         share_count=100.0,
         average_cost_basis_per_share=100.0,
         borrow_rate_pct=1.0 if is_short else None,
@@ -223,7 +227,7 @@ def _make_equity_position(
         margin_held_usd=5_000.0 if is_short else None,
     )
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
@@ -268,14 +272,14 @@ def _make_options_position(
     delta: float = 0.45,
 ) -> PositionView:
     record = PositionRecord(
-        position_id=position_id,
+        position_id=PositionId(position_id),
         thesis_id=None,
         bracket_id=None,
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=datetime(2026, 4, 27, 14, 0, 0, tzinfo=UTC),
         details=OptionsPositionDetails(
-            underlying_ticker=underlying_ticker,
+            underlying_ticker=Symbol(underlying_ticker),
             strike_price=150.0,
             expiration_date=datetime(2026, 6, 19, tzinfo=UTC).date(),
             contract_type=OptionContractType.CALL,

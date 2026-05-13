@@ -66,6 +66,13 @@ import alphamind.decision.portfolio_manager.models
 # Side-effect import: register state-persistence tables on ``Base.metadata``
 # so the in-memory engine in scenario (b) has the ``fill_records`` table.
 import alphamind.execution.state_persistence.tables  # noqa: F401
+from alphamind._kernel.ids import (
+    BracketId,
+    OrderId,
+    PositionId,
+    Symbol,
+    ThesisId,
+)
 from alphamind.commands.engine_envelope import (
     EngineEnvelope as OmsEngineEnvelope,
 )
@@ -271,14 +278,14 @@ def _options_position(
 ) -> PositionRecord:
     """Fixture: one long-NVDA call option position with a price-based stop."""
     return PositionRecord(
-        position_id=position_id,
-        thesis_id="THE-OPT-NVDA",
-        bracket_id=bracket_id,
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId("THE-OPT-NVDA"),
+        bracket_id=BracketId(bracket_id),
         status=PositionStatus.OPEN,
         direction=Direction.LONG,
         entry_timestamp=_NOW,
         details=OptionsPositionDetails(
-            underlying_ticker="NVDA",
+            underlying_ticker=Symbol("NVDA"),
             strike_price=850.0,
             expiration_date=date(2026, 6, 19),
             contract_type=OptionContractType.CALL,
@@ -849,14 +856,14 @@ def _equity_position_view(
 test_dispatcher._equity_position_view`.
     """
     details = EquityPositionDetails(
-        ticker=ticker,
+        ticker=Symbol(ticker),
         share_count=share_count,
         average_cost_basis_per_share=cost_basis,
     )
     record = PositionRecord(
-        position_id=position_id,
-        thesis_id=f"THE-{position_id}",
-        bracket_id=f"BRK-{position_id}",
+        position_id=PositionId(position_id),
+        thesis_id=ThesisId(f"THE-{position_id}"),
+        bracket_id=BracketId(f"BRK-{position_id}"),
         status=PositionStatus.OPEN,
         direction=direction,
         entry_timestamp=_NOW,
@@ -1053,7 +1060,7 @@ class _RecordingSubmit:
             command_id=f"{envelope.envelope_id}.0",
             acknowledgment=Acknowledgment(
                 position_id=envelope.commands[0].position_id,
-                order_id=f"ORD-{envelope.commands[0].position_id}",
+                order_id=OrderId(f"ORD-{envelope.commands[0].position_id}"),
             ),
         )
 
@@ -1245,7 +1252,7 @@ def _price_stop_bracket(
         leg_type=BracketLegType.PRICE_STOP,
         order_id=None,
         trigger=PriceTrigger(
-            underlying_ticker=underlying,
+            underlying_ticker=Symbol(underlying),
             threshold_usd=threshold,
             direction=direction,  # type: ignore[arg-type]
         ),
@@ -1253,10 +1260,10 @@ def _price_stop_bracket(
         status=BracketLegStatus.ACTIVE,
     )
     return BracketRecord(
-        bracket_id=bracket_id,
-        position_id=position_id,
+        bracket_id=BracketId(bracket_id),
+        position_id=PositionId(position_id),
         status=BracketStatus.ACTIVE,
-        entry_order_id="ord-entry-1",
+        entry_order_id=OrderId("ord-entry-1"),
         protective_legs=(leg,),
         modification_history=(),
         corporate_action_cancellation_reason=None,

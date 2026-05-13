@@ -18,6 +18,9 @@ from typing import Any, Literal
 
 import pytest
 
+from alphamind._kernel.ids import (
+    InvocationId,
+)
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.config.models.agents import AgentName, AllowedModel, BaseAgentConfig
@@ -309,14 +312,14 @@ def _make_analyst_output(*, mode: Literal["normal", "watchlist"] = "normal") -> 
 
     if mode == "normal":
         return AnalystOutput(
-            invocation_id=_INVOCATION_ID,
+            invocation_id=InvocationId(_INVOCATION_ID),
             timestamp=_TIMESTAMP,
             mode="normal",
             recommendations=(),
             watchlist=None,
         )
     return AnalystOutput(
-        invocation_id=_INVOCATION_ID,
+        invocation_id=InvocationId(_INVOCATION_ID),
         timestamp=_TIMESTAMP,
         mode="watchlist",
         recommendations=None,
@@ -355,7 +358,7 @@ def _make_strategist_output(*, mode: Literal["normal", "defensive_posture"] = "n
         ),
     )
     return StrategistOutput(
-        invocation_id=_INVOCATION_ID,
+        invocation_id=InvocationId(_INVOCATION_ID),
         timestamp=_TIMESTAMP,
         mode=mode,
         position_assessments=(),
@@ -461,7 +464,7 @@ def _make_pm_result() -> PMResult:
 
     return PMResult(
         output=PMCompletionRecord(
-            invocation_id=_INVOCATION_ID,
+            invocation_id=InvocationId(_INVOCATION_ID),
             timestamp=_TIMESTAMP,
             envelopes_submitted=0,
             verdict_summary=VerdictSummary(
