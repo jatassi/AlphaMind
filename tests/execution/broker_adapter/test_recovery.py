@@ -18,6 +18,7 @@ from typing import Any, Literal
 
 import pytest
 
+from alphamind._kernel.money import price
 from alphamind.execution.broker_adapter import (
     FillReport,
     OrderLegSnapshot,
@@ -74,7 +75,7 @@ def _build_order_snapshot(
         filled_at=filled_at,
         canceled_at=canceled_at,
         expired_at=expired_at,
-        filled_avg_price=filled_avg_price,
+        filled_avg_price=None if filled_avg_price is None else price(filled_avg_price),
         replaced_by=replaced_by,
         replaces=replaces,
         legs=tuple(legs) if legs is not None else None,
@@ -295,7 +296,7 @@ def _build_mleg_leg(
         symbol=occ_symbol,
         qty=qty,
         filled_qty=filled_qty,
-        filled_avg_price=filled_avg_price,
+        filled_avg_price=None if filled_avg_price is None else price(filled_avg_price),
         side=side,
         position_intent=position_intent,
         status=status,

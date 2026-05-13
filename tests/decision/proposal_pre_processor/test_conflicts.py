@@ -16,6 +16,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.decision.analyst.models import (
     EntryOrder,
     GuardrailValidationResult,
@@ -74,15 +75,19 @@ def _equity_recommendation(
         sector="tech",
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=10.0, dollar_value=1000.0, pct_of_portfolio=1.0),
-        target=Target(target_type="absolute_price", price=200.0, dollar_pl_target=500.0),
+        position_size=PositionSize(quantity=10.0, dollar_value=money(1000.0), pct_of_portfolio=1.0),
+        target=Target(
+            target_type="absolute_price", price=price(200.0), dollar_pl_target=money(500.0)
+        ),
         invalidation_legs=(
             InvalidationLeg(
                 leg_id="INV-1",
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger=Symbol(underlying), comparator="<=", trigger_price=90.0
+                    underlying_trigger=Symbol(underlying),
+                    comparator="<=",
+                    trigger_price=price(90.0),
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             ),
@@ -110,7 +115,7 @@ def _option_recommendation(
         instrument=InstrumentOption(
             asset_type="option",
             underlying=Symbol(underlying),
-            strike=100.0,
+            strike=price(100.0),
             expiration=date(2026, 6, 19),
             contract_type="call",
             direction=direction,
@@ -119,15 +124,19 @@ def _option_recommendation(
         sector="tech",
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=10.0, dollar_value=1000.0, pct_of_portfolio=1.0),
-        target=Target(target_type="absolute_price", price=200.0, dollar_pl_target=500.0),
+        position_size=PositionSize(quantity=10.0, dollar_value=money(1000.0), pct_of_portfolio=1.0),
+        target=Target(
+            target_type="absolute_price", price=price(200.0), dollar_pl_target=money(500.0)
+        ),
         invalidation_legs=(
             InvalidationLeg(
                 leg_id="INV-1",
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger=Symbol(underlying), comparator="<=", trigger_price=90.0
+                    underlying_trigger=Symbol(underlying),
+                    comparator="<=",
+                    trigger_price=price(90.0),
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             ),
@@ -170,11 +179,11 @@ def _add_assessment(assessment_id: str, underlying: str) -> PositionAssessment:
         action_parameters=AddParameters(
             action="add",
             additional_quantity=5.0,
-            additional_dollar_value=500.0,
+            additional_dollar_value=money(500.0),
             entry_order=StratEntryOrder(type="market"),
         ),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=0.5, net_directional_impact=0.5
+            sector_delta_adjusted_change=money(0.5), net_directional_impact=money(0.5)
         ),
         guardrail_validation_result=StratGuardrailValidationResult(
             overall="PASS", per_rule=(), checked_at=_NOW
@@ -196,7 +205,8 @@ def _reduce_assessment(assessment_id: str, underlying: str) -> PositionAssessmen
         recommended_action="reduce",
         action_parameters=ReduceParameters(action="reduce", quantity=5.0, order_type="market"),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=-0.5, net_directional_impact=-0.5
+            sector_delta_adjusted_change=signed_money(-0.5),
+            net_directional_impact=signed_money(-0.5),
         ),
         status_rationale="thesis half done",
         action_rationale="trim",
@@ -215,7 +225,9 @@ def _adjust_bracket_assessment(assessment_id: str, underlying: str) -> PositionA
         recommended_action="adjust-bracket",
         action_parameters=AdjustBracketParameters(
             action="adjust-bracket",
-            new_stop_level=BracketAdjustNewStopLevel(trigger_price=95.0, order_type="market"),
+            new_stop_level=BracketAdjustNewStopLevel(
+                trigger_price=price(95.0), order_type="market"
+            ),
         ),
         status_rationale="thesis intact",
         action_rationale="trail stop",
@@ -239,7 +251,8 @@ def _close_assessment(assessment_id: str, underlying: str) -> PositionAssessment
             close_rationale_type="thesis_invalidated",
         ),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+            sector_delta_adjusted_change=signed_money(-1.0),
+            net_directional_impact=signed_money(-1.0),
         ),
         status_rationale="invalidated",
         action_rationale="closing",
@@ -258,7 +271,9 @@ def _entry_pending_order(
     pointing at one of the supplied position_assessments.
     """
     modification_parameters = (
-        ModificationParameters(new_limit_price=99.0) if recommended_action == "modify" else None
+        ModificationParameters(new_limit_price=price(99.0))
+        if recommended_action == "modify"
+        else None
     )
     return PendingOrderAssessment(
         pending_order_assessment_id=RecommendationId(pending_id),

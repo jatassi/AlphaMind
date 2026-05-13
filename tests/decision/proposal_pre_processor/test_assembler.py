@@ -19,6 +19,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.decision.analyst.models import (
     AnalystOutput,
     EntryOrder,
@@ -194,15 +195,19 @@ def _equity_recommendation(rec_id: str = "REC-1", underlying: str = "NVDA") -> R
         sector="tech",
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=10.0, dollar_value=1000.0, pct_of_portfolio=1.0),
-        target=Target(target_type="absolute_price", price=200.0, dollar_pl_target=500.0),
+        position_size=PositionSize(quantity=10.0, dollar_value=money(1000.0), pct_of_portfolio=1.0),
+        target=Target(
+            target_type="absolute_price", price=price(200.0), dollar_pl_target=money(500.0)
+        ),
         invalidation_legs=(
             InvalidationLeg(
                 leg_id="INV-1",
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger=Symbol(underlying), comparator="<=", trigger_price=90.0
+                    underlying_trigger=Symbol(underlying),
+                    comparator="<=",
+                    trigger_price=price(90.0),
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             ),
@@ -237,7 +242,8 @@ def _close_assessment(
             close_rationale_type="thesis_invalidated",
         ),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+            sector_delta_adjusted_change=signed_money(-1.0),
+            net_directional_impact=signed_money(-1.0),
         ),
         status_rationale="invalidated",
         action_rationale="closing",

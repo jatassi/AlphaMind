@@ -13,6 +13,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -616,7 +617,7 @@ class TestPortfolioPnL:
     def test_frozen(self) -> None:
         pnl = _make_pnl()
         with pytest.raises((ValidationError, AttributeError)):
-            pnl.total_unrealized_pnl_usd = 999.0
+            pnl.total_unrealized_pnl_usd = money(999.0)
 
 
 # ---------------------------------------------------------------------------

@@ -28,6 +28,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.broker_adapter.queries import PositionSnapshot
 from alphamind.execution.corporate_actions.types import (
@@ -444,12 +445,12 @@ def _make_position_snapshot(
         symbol=symbol,
         asset_class="us_equity",
         qty=qty,
-        avg_entry_price=avg_entry_price,
-        market_value=qty * avg_entry_price,
-        cost_basis=qty * avg_entry_price,
-        unrealized_pl=0.0,
+        avg_entry_price=price(avg_entry_price),
+        market_value=money(qty * avg_entry_price),
+        cost_basis=money(qty * avg_entry_price),
+        unrealized_pl=money(0.0),
         unrealized_plpc=0.0,
-        current_price=avg_entry_price,
+        current_price=price(avg_entry_price),
         side="long",
     )
 

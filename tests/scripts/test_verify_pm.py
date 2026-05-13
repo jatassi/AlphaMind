@@ -26,6 +26,7 @@ from alphamind._kernel.ids import (
     PositionId,
     RecommendationId,
 )
+from alphamind._kernel.money import money
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.decision.portfolio_manager.models import (
@@ -150,7 +151,7 @@ def _make_envelope_for_log(invocation_id: str = "inv-pm-001") -> Any:
         command_type="add",
         position_id=PositionId("POS-AAPL-001"),
         additional_quantity=5.0,
-        additional_dollar_value=5_000.0,
+        additional_dollar_value=money(5_000.0),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
         thesis_addition_component=OMSThesisComponent(
             component_type="entry_rationale",

@@ -29,6 +29,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
@@ -560,12 +561,12 @@ def _make_unprocessed_fill(
         fill_id=fill_id,
         order_id=order_id,
         fill_timestamp=ts,
-        fill_price=fill_price,
+        fill_price=price(fill_price),
         fill_quantity=fill_quantity,
         remaining_quantity_after=remaining_quantity_after,
         order_status_after=order_status_after,
-        slippage_usd=slippage_usd,
-        fees_usd=fees_usd,
+        slippage_usd=None if slippage_usd is None else signed_money(slippage_usd),
+        fees_usd=money(fees_usd),
         execution_venue="NASDAQ",
         gateway_reference=f"alp-{fill_id}",
         persistence_timestamp=ts + timedelta(seconds=1),
@@ -1554,12 +1555,12 @@ def _alpaca_account_snapshot(*, cash: float = 100_000.0) -> TradeAccountSnapshot
     """Build a typed ``TradeAccountSnapshot`` for the new entry-point signature."""
     return TradeAccountSnapshot(
         account_id="alp-account-1",
-        cash=cash,
-        equity=cash,
-        buying_power=cash * 2.0,
-        regt_buying_power=cash * 2.0,
-        daytrading_buying_power=cash * 4.0,
-        maintenance_margin=0.0,
+        cash=money(cash),
+        equity=money(cash),
+        buying_power=money(cash * 2.0),
+        regt_buying_power=money(cash * 2.0),
+        daytrading_buying_power=money(cash * 4.0),
+        maintenance_margin=money(0.0),
         daytrade_count=0,
         pattern_day_trader=False,
         status="ACTIVE",
@@ -1572,12 +1573,12 @@ def _alpaca_equity_snapshot(*, symbol: str = "AAPL", qty: float = 10.0) -> Posit
         symbol=symbol,
         asset_class="us_equity",
         qty=qty,
-        avg_entry_price=150.0,
-        market_value=qty * 150.0,
-        cost_basis=qty * 150.0,
-        unrealized_pl=0.0,
+        avg_entry_price=price(150.0),
+        market_value=money(qty * 150.0),
+        cost_basis=money(qty * 150.0),
+        unrealized_pl=money(0.0),
         unrealized_plpc=0.0,
-        current_price=150.0,
+        current_price=price(150.0),
         side="long",
     )
 

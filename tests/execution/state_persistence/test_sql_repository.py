@@ -23,6 +23,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -644,13 +645,13 @@ async def _seed_drawdown_state(
 def _make_regt_attribution(regt_excess_over_pm: float) -> RegTMarginAttribution:
     """RegT attribution payload exercising only ``regt_excess_over_pm`` (the summed field)."""
     return RegTMarginAttribution(
-        regt_margin_before=0.0,
-        regt_margin_after=0.0,
-        regt_marginal_consumption=0.0,
-        pm_equivalent_before=0.0,
-        pm_equivalent_after=0.0,
-        pm_marginal_consumption=0.0,
-        regt_excess_over_pm=regt_excess_over_pm,
+        regt_margin_before=signed_money(0.0),
+        regt_margin_after=signed_money(0.0),
+        regt_marginal_consumption=signed_money(0.0),
+        pm_equivalent_before=signed_money(0.0),
+        pm_equivalent_after=signed_money(0.0),
+        pm_marginal_consumption=signed_money(0.0),
+        regt_excess_over_pm=signed_money(regt_excess_over_pm),
         pm_model_version="ibkr_mirror_v1_2025Q3",
     )
 
@@ -682,12 +683,12 @@ def _make_fill_record_for_aggregator(
         fill_id=fill_id,
         order_id=order_id,
         fill_timestamp=fill_timestamp,
-        fill_price=fill_price,
+        fill_price=price(fill_price),
         fill_quantity=1.0,
         remaining_quantity_after=0.0,
         order_status_after=OrderStatus.FILLED,
-        slippage_usd=0.0,
-        fees_usd=0.0,
+        slippage_usd=signed_money(0.0),
+        fees_usd=money(0.0),
         execution_venue=None,
         gateway_reference=None,
         persistence_timestamp=fill_timestamp,

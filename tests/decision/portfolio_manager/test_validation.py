@@ -25,6 +25,7 @@ from alphamind._kernel.ids import (
     EnvelopeId,
     PositionId,
 )
+from alphamind._kernel.money import money, price
 from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.commands.command_models import (
@@ -151,7 +152,7 @@ def _hard_price_invalidation_leg() -> PriceLeg:
         condition=PriceCondition(
             underlying_trigger="NVDA",
             comparator="<=",
-            trigger_price=750.0,
+            trigger_price=price(750.0),
         ),
         order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
     )
@@ -167,10 +168,10 @@ def _open_command(underlying: str = "NVDA") -> OpenCommand:
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker=underlying, direction="long"),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-        position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+        position_size=PositionSize(quantity=10.0, dollar_value=money(10_000.0)),
         target=Target(
             target_type="absolute_price",
-            price=950.0,
+            price=price(950.0),
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",
@@ -191,7 +192,7 @@ def _add_command(position_id: str = "POS-NVDA-001") -> AddCommand:
         command_type="add",
         position_id=PositionId(position_id),
         additional_quantity=5.0,
-        additional_dollar_value=5_000.0,
+        additional_dollar_value=money(5_000.0),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
         thesis_addition_component=ThesisComponent(
             component_type="entry_rationale",

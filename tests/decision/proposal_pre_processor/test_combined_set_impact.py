@@ -21,6 +21,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.decision.analyst.models import (
     EntryOrder,
     GuardrailValidationResult,
@@ -215,7 +216,7 @@ def _invalidation_leg() -> InvalidationLeg:
         type="price",
         is_hard=True,
         condition=PriceCondition(
-            underlying_trigger=Symbol("AAPL"), comparator="<=", trigger_price=140.0
+            underlying_trigger=Symbol("AAPL"), comparator="<=", trigger_price=price(140.0)
         ),
         order_parameters=OrderParameters(order_type="market"),
     )
@@ -238,9 +239,11 @@ def _equity_recommendation(
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
         position_size=PositionSize(
-            quantity=quantity, dollar_value=dollar_value, pct_of_portfolio=15.0
+            quantity=quantity, dollar_value=money(dollar_value), pct_of_portfolio=15.0
         ),
-        target=Target(target_type="absolute_price", price=200.0, dollar_pl_target=5000.0),
+        target=Target(
+            target_type="absolute_price", price=price(200.0), dollar_pl_target=money(5000.0)
+        ),
         invalidation_legs=(_invalidation_leg(),),
         guardrail_validation_result=_guardrail_result(),
         thesis_narrative="Test thesis",
@@ -274,7 +277,8 @@ def _close_assessment(
             close_rationale_type="target_reached",
         ),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=-15_000.0, net_directional_impact=-15_000.0
+            sector_delta_adjusted_change=signed_money(-15_000.0),
+            net_directional_impact=signed_money(-15_000.0),
         ),
         status_rationale="Target reached",
         action_rationale="Close",
@@ -557,7 +561,7 @@ def test_feature_disabled_proposals_raise() -> None:
         instrument=InstrumentOption(
             asset_type="option",
             underlying=Symbol("AAPL"),
-            strike=150.0,
+            strike=price(150.0),
             expiration=_EXP,
             contract_type="call",
             direction="long",
@@ -567,9 +571,14 @@ def test_feature_disabled_proposals_raise() -> None:
         conviction_level=3,
         entry_order=EntryOrder(type="market"),
         position_size=PositionSize(
-            quantity=5.0, dollar_value=2_000.0, pct_of_portfolio=2.0, premium_at_risk=750.0
+            quantity=5.0,
+            dollar_value=money(2_000.0),
+            pct_of_portfolio=2.0,
+            premium_at_risk=money(750.0),
         ),
-        target=Target(target_type="absolute_price", price=200.0, dollar_pl_target=5000.0),
+        target=Target(
+            target_type="absolute_price", price=price(200.0), dollar_pl_target=money(5000.0)
+        ),
         invalidation_legs=(_invalidation_leg(),),
         guardrail_validation_result=_guardrail_result(),
         thesis_narrative="Test thesis",

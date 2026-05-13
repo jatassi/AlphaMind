@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from alphamind._kernel.money import signed_money
 from alphamind.persistence.models import Base
 from alphamind.persistence.session import make_engine
 
@@ -156,23 +157,23 @@ def test_collect_assertion_failures_returns_empty_on_clean_pass() -> None:
     )
 
     attr_a = RegTMarginAttribution(
-        regt_margin_before=100.0,
-        regt_margin_after=150.0,
-        regt_marginal_consumption=50.0,
-        pm_equivalent_before=40.0,
-        pm_equivalent_after=60.0,
-        pm_marginal_consumption=20.0,
-        regt_excess_over_pm=30.0,
+        regt_margin_before=signed_money(100.0),
+        regt_margin_after=signed_money(150.0),
+        regt_marginal_consumption=signed_money(50.0),
+        pm_equivalent_before=signed_money(40.0),
+        pm_equivalent_after=signed_money(60.0),
+        pm_marginal_consumption=signed_money(20.0),
+        regt_excess_over_pm=signed_money(30.0),
         pm_model_version="ibkr_mirror_v1_2026Q2",
     )
     attr_b = RegTMarginAttribution(
-        regt_margin_before=200.0,
-        regt_margin_after=180.0,
-        regt_marginal_consumption=-20.0,
-        pm_equivalent_before=80.0,
-        pm_equivalent_after=70.0,
-        pm_marginal_consumption=-10.0,
-        regt_excess_over_pm=-10.0,
+        regt_margin_before=signed_money(200.0),
+        regt_margin_after=signed_money(180.0),
+        regt_marginal_consumption=signed_money(-20.0),
+        pm_equivalent_before=signed_money(80.0),
+        pm_equivalent_after=signed_money(70.0),
+        pm_marginal_consumption=signed_money(-10.0),
+        regt_excess_over_pm=signed_money(-10.0),
         pm_model_version="ibkr_mirror_v1_2026Q2",
     )
     rows = (
@@ -195,24 +196,24 @@ def test_collect_assertion_failures_flags_algebra_violation() -> None:
     )
 
     broken = RegTMarginAttribution(
-        regt_margin_before=100.0,
-        regt_margin_after=150.0,
-        regt_marginal_consumption=50.0,
-        pm_equivalent_before=40.0,
-        pm_equivalent_after=60.0,
-        pm_marginal_consumption=20.0,
+        regt_margin_before=signed_money(100.0),
+        regt_margin_after=signed_money(150.0),
+        regt_marginal_consumption=signed_money(50.0),
+        pm_equivalent_before=signed_money(40.0),
+        pm_equivalent_after=signed_money(60.0),
+        pm_marginal_consumption=signed_money(20.0),
         # Algebra says this should be 30.0; we set 99.0 to force the assertion to fail.
-        regt_excess_over_pm=99.0,
+        regt_excess_over_pm=signed_money(99.0),
         pm_model_version="ibkr_mirror_v1_2026Q2",
     )
     sane = RegTMarginAttribution(
-        regt_margin_before=200.0,
-        regt_margin_after=180.0,
-        regt_marginal_consumption=-20.0,
-        pm_equivalent_before=80.0,
-        pm_equivalent_after=70.0,
-        pm_marginal_consumption=-10.0,
-        regt_excess_over_pm=-10.0,
+        regt_margin_before=signed_money(200.0),
+        regt_margin_after=signed_money(180.0),
+        regt_marginal_consumption=signed_money(-20.0),
+        pm_equivalent_before=signed_money(80.0),
+        pm_equivalent_after=signed_money(70.0),
+        pm_marginal_consumption=signed_money(-10.0),
+        regt_excess_over_pm=signed_money(-10.0),
         pm_model_version="ibkr_mirror_v1_2026Q2",
     )
     rows = (
@@ -236,13 +237,13 @@ def test_collect_assertion_failures_flags_trailing_30d_mismatch() -> None:
     )
 
     attr = RegTMarginAttribution(
-        regt_margin_before=100.0,
-        regt_margin_after=150.0,
-        regt_marginal_consumption=50.0,
-        pm_equivalent_before=40.0,
-        pm_equivalent_after=60.0,
-        pm_marginal_consumption=20.0,
-        regt_excess_over_pm=30.0,
+        regt_margin_before=signed_money(100.0),
+        regt_margin_after=signed_money(150.0),
+        regt_marginal_consumption=signed_money(50.0),
+        pm_equivalent_before=signed_money(40.0),
+        pm_equivalent_after=signed_money(60.0),
+        pm_marginal_consumption=signed_money(20.0),
+        regt_excess_over_pm=signed_money(30.0),
         pm_model_version="ibkr_mirror_v1_2026Q2",
     )
     rows = (

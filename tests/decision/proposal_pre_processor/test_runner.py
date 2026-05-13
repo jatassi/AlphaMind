@@ -22,6 +22,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.decision.analyst.models import (
     AnalystOutput,
     EntryOrder,
@@ -207,7 +208,7 @@ def _invalidation_leg(rec_id: str = "REC-1") -> InvalidationLeg:
         type="price",
         is_hard=True,
         condition=PriceCondition(
-            underlying_trigger=Symbol("AAPL"), comparator="<=", trigger_price=140.0
+            underlying_trigger=Symbol("AAPL"), comparator="<=", trigger_price=price(140.0)
         ),
         order_parameters=OrderParameters(order_type="market"),
     )
@@ -234,9 +235,11 @@ def _equity_recommendation(
         conviction_level=conviction_level,
         entry_order=EntryOrder(type="market"),
         position_size=PositionSize(
-            quantity=quantity, dollar_value=dollar_value, pct_of_portfolio=3.0
+            quantity=quantity, dollar_value=money(dollar_value), pct_of_portfolio=3.0
         ),
-        target=Target(target_type="absolute_price", price=200.0, dollar_pl_target=5000.0),
+        target=Target(
+            target_type="absolute_price", price=price(200.0), dollar_pl_target=money(5000.0)
+        ),
         invalidation_legs=(leg,),
         guardrail_validation_result=_guardrail_result_analyst(),
         thesis_narrative="Thesis prose.",
@@ -301,7 +304,8 @@ def _close_assessment(
             close_rationale_type="thesis_invalidated",
         ),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=-5_000.0, net_directional_impact=-5_000.0
+            sector_delta_adjusted_change=signed_money(-5_000.0),
+            net_directional_impact=signed_money(-5_000.0),
         ),
         status_rationale="Invalidated.",
         action_rationale="Close.",
@@ -325,7 +329,8 @@ def _reduce_assessment(
         recommended_action="reduce",
         action_parameters=ReduceParameters(action="reduce", quantity=10.0, order_type="market"),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=-1_500.0, net_directional_impact=-1_500.0
+            sector_delta_adjusted_change=signed_money(-1_500.0),
+            net_directional_impact=signed_money(-1_500.0),
         ),
         status_rationale="Partial target reached.",
         action_rationale="Lock in half.",
@@ -340,7 +345,9 @@ def _entry_pending_order(
     recommended_action: Literal["maintain", "modify", "cancel"] = "maintain",
 ) -> PendingOrderAssessment:
     modification = (
-        ModificationParameters(new_limit_price=99.0) if recommended_action == "modify" else None
+        ModificationParameters(new_limit_price=price(99.0))
+        if recommended_action == "modify"
+        else None
     )
     return PendingOrderAssessment(
         pending_order_assessment_id=RecommendationId(pending_id),
@@ -1026,11 +1033,11 @@ def test_add_action_yields_entry_vs_add_conflict() -> None:
         action_parameters=AddParameters(
             action="add",
             additional_quantity=10.0,
-            additional_dollar_value=1500.0,
+            additional_dollar_value=money(1500.0),
             entry_order=StratEntryOrder(type="market"),
         ),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=1500.0, net_directional_impact=1500.0
+            sector_delta_adjusted_change=money(1500.0), net_directional_impact=money(1500.0)
         ),
         guardrail_validation_result=StratGuardrailValidationResult(
             overall="PASS", per_rule=(), checked_at=_NOW

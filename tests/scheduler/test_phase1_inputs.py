@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.money import money, price
 from alphamind.config.models.main import ExecutionMode
 from alphamind.config.models.venue import (
     Alpaca,
@@ -138,29 +139,31 @@ def _make_venue_config() -> VenueConfig:
 def _make_account_snapshot() -> TradeAccountSnapshot:
     return TradeAccountSnapshot(
         account_id="acc-1",
-        cash=10_000.0,
-        equity=10_000.0,
-        buying_power=10_000.0,
-        regt_buying_power=10_000.0,
-        daytrading_buying_power=10_000.0,
-        maintenance_margin=0.0,
+        cash=money(10_000.0),
+        equity=money(10_000.0),
+        buying_power=money(10_000.0),
+        regt_buying_power=money(10_000.0),
+        daytrading_buying_power=money(10_000.0),
+        maintenance_margin=money(0.0),
         daytrade_count=0,
         pattern_day_trader=False,
         status="ACTIVE",
     )
 
 
-def _make_position_snapshot(symbol: str = "AAPL", price: float = 150.0) -> PositionSnapshot:
+def _make_position_snapshot(
+    symbol: str = "AAPL", current_price_value: float = 150.0
+) -> PositionSnapshot:
     return PositionSnapshot(
         symbol=symbol,
         asset_class="us_equity",
         qty=10.0,
-        avg_entry_price=140.0,
-        market_value=1500.0,
-        cost_basis=1400.0,
-        unrealized_pl=100.0,
+        avg_entry_price=price(140.0),
+        market_value=money(1500.0),
+        cost_basis=money(1400.0),
+        unrealized_pl=money(100.0),
         unrealized_plpc=0.0714,
-        current_price=price,
+        current_price=price(current_price_value),
         side="long",
     )
 

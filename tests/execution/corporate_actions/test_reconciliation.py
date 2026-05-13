@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from alphamind._kernel.money import money, price
 from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
@@ -42,12 +43,12 @@ def _trade_account(
 ) -> TradeAccountSnapshot:
     return TradeAccountSnapshot(
         account_id="alp-account-1",
-        cash=cash,
-        equity=cash,
-        buying_power=buying_power,
-        regt_buying_power=buying_power,
-        daytrading_buying_power=buying_power,
-        maintenance_margin=0.0,
+        cash=money(cash),
+        equity=money(cash),
+        buying_power=money(buying_power),
+        regt_buying_power=money(buying_power),
+        daytrading_buying_power=money(buying_power),
+        maintenance_margin=money(0.0),
         daytrade_count=0,
         pattern_day_trader=False,
         status="ACTIVE",
@@ -59,12 +60,12 @@ def _equity_position_snapshot(*, symbol: str = "AAPL", qty: float = 10.0) -> Pos
         symbol=symbol,
         asset_class="us_equity",
         qty=qty,
-        avg_entry_price=150.0,
-        market_value=qty * 150.0,
-        cost_basis=qty * 150.0,
-        unrealized_pl=0.0,
+        avg_entry_price=price(150.0),
+        market_value=money(qty * 150.0),
+        cost_basis=money(qty * 150.0),
+        unrealized_pl=money(0.0),
         unrealized_plpc=0.0,
-        current_price=150.0,
+        current_price=price(150.0),
         side="long",
     )
 
@@ -184,12 +185,12 @@ async def test_reconcile_emits_alert_for_options_contract_count_delta(
         symbol="AAPL",  # match the underlying_ticker the reconciler reads
         asset_class="us_option",
         qty=4.0,
-        avg_entry_price=2.50,
-        market_value=4.0 * 250.0,
-        cost_basis=4.0 * 250.0,
-        unrealized_pl=0.0,
+        avg_entry_price=price(2.50),
+        market_value=money(4.0 * 250.0),
+        cost_basis=money(4.0 * 250.0),
+        unrealized_pl=money(0.0),
         unrealized_plpc=0.0,
-        current_price=2.50,
+        current_price=price(2.50),
         side="long",
     )
 

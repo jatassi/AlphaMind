@@ -19,6 +19,7 @@ from alphamind._kernel.ids import (
     PositionId,
     RecommendationId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.decision.strategist.models import (
     AddParameters,
     AdjustBracketParameters,
@@ -330,11 +331,11 @@ class TestModeInvariants:
             action_parameters=AddParameters(
                 action="add",
                 additional_quantity=1.0,
-                additional_dollar_value=100.0,
+                additional_dollar_value=money(100.0),
                 entry_order=EntryOrder(type="market"),
             ),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=1.0, net_directional_impact=1.0
+                sector_delta_adjusted_change=money(1.0), net_directional_impact=money(1.0)
             ),
             guardrail_validation_result=_make_guardrail_result(),
             add_conviction_justification="Strengthening signal absent at entry.",
@@ -353,11 +354,11 @@ class TestModeInvariants:
             action_parameters=AddParameters(
                 action="add",
                 additional_quantity=1.0,
-                additional_dollar_value=100.0,
+                additional_dollar_value=money(100.0),
                 entry_order=EntryOrder(type="market"),
             ),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=1.0, net_directional_impact=1.0
+                sector_delta_adjusted_change=money(1.0), net_directional_impact=money(1.0)
             ),
             guardrail_validation_result=_make_guardrail_result(),
             add_conviction_justification="Strengthening signal absent at entry.",
@@ -405,7 +406,8 @@ class TestPositionAssessmentInvariants:
                 close_rationale_type="thesis_invalidated",
             ),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
         )
         assert pa.thesis_status == "invalidated"
@@ -423,7 +425,8 @@ class TestPositionAssessmentInvariants:
                     close_rationale_type="risk_management",
                 ),
                 exposure_impact=ExposureImpact(
-                    sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                    sector_delta_adjusted_change=signed_money(-1.0),
+                    net_directional_impact=signed_money(-1.0),
                 ),
                 reduce_rationale="Test reduce rationale.",
             )
@@ -435,7 +438,8 @@ class TestPositionAssessmentInvariants:
                 action_parameters=None,
                 reduce_rationale="Test reduce rationale.",
                 exposure_impact=ExposureImpact(
-                    sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                    sector_delta_adjusted_change=signed_money(-1.0),
+                    net_directional_impact=signed_money(-1.0),
                 ),
             )
 
@@ -447,7 +451,8 @@ class TestPositionAssessmentInvariants:
                     action="reduce", quantity=2.0, order_type="market"
                 ),
                 exposure_impact=ExposureImpact(
-                    sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                    sector_delta_adjusted_change=signed_money(-1.0),
+                    net_directional_impact=signed_money(-1.0),
                 ),
             )
 
@@ -480,7 +485,9 @@ class TestPositionAssessmentInvariants:
                 recommended_action="adjust-bracket",
                 action_parameters=AdjustBracketParameters(
                     action="adjust-bracket",
-                    new_target_level=BracketAdjustNewTargetLevel(price=900.0, order_type="limit"),
+                    new_target_level=BracketAdjustNewTargetLevel(
+                        price=price(900.0), order_type="limit"
+                    ),
                 ),
             )
 
@@ -491,11 +498,11 @@ class TestPositionAssessmentInvariants:
                 action_parameters=AddParameters(
                     action="add",
                     additional_quantity=1.0,
-                    additional_dollar_value=100.0,
+                    additional_dollar_value=money(100.0),
                     entry_order=EntryOrder(type="market"),
                 ),
                 exposure_impact=ExposureImpact(
-                    sector_delta_adjusted_change=1.0, net_directional_impact=1.0
+                    sector_delta_adjusted_change=money(1.0), net_directional_impact=money(1.0)
                 ),
                 guardrail_validation_result=_make_guardrail_result(),
             )
@@ -507,11 +514,11 @@ class TestPositionAssessmentInvariants:
                 action_parameters=AddParameters(
                     action="add",
                     additional_quantity=1.0,
-                    additional_dollar_value=100.0,
+                    additional_dollar_value=money(100.0),
                     entry_order=EntryOrder(type="market"),
                 ),
                 exposure_impact=ExposureImpact(
-                    sector_delta_adjusted_change=1.0, net_directional_impact=1.0
+                    sector_delta_adjusted_change=money(1.0), net_directional_impact=money(1.0)
                 ),
                 add_conviction_justification="Strengthening signal.",
             )
@@ -601,7 +608,7 @@ class TestCloseParametersInvariants:
             action="close",
             quantity=2.0,
             order_type="limit",
-            limit_price=843.0,
+            limit_price=price(843.0),
             close_rationale_type="risk_management",
         )
         assert cp.limit_price == 843.0
@@ -630,7 +637,9 @@ class TestAdjustBracketAtLeastOneField:
     def test_only_new_stop_level_accepted(self) -> None:
         ap = AdjustBracketParameters(
             action="adjust-bracket",
-            new_stop_level=BracketAdjustNewStopLevel(trigger_price=820.0, order_type="market"),
+            new_stop_level=BracketAdjustNewStopLevel(
+                trigger_price=price(820.0), order_type="market"
+            ),
         )
         assert ap.new_stop_level is not None
 
@@ -671,7 +680,8 @@ class TestActionParametersDiscriminator:
             },
             thesis_status="invalidated",
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
         )
         assert isinstance(pa.action_parameters, CloseParameters)
@@ -686,7 +696,8 @@ class TestActionParametersDiscriminator:
             },
             reduce_rationale="Partial reduction rationale.",
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
         )
         assert isinstance(pa.action_parameters, ReduceParameters)
@@ -712,7 +723,7 @@ class TestActionParametersDiscriminator:
                 "entry_order": {"type": "market"},
             },
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=1.0, net_directional_impact=1.0
+                sector_delta_adjusted_change=money(1.0), net_directional_impact=money(1.0)
             ),
             guardrail_validation_result=_make_guardrail_result(),
             add_conviction_justification="Strengthening signal absent at entry.",
@@ -736,7 +747,7 @@ class TestPendingOrderInvariants:
     def test_modify_with_parameters_accepted(self) -> None:
         poa = _make_pending_order_assessment(
             recommended_action="modify",
-            modification_parameters=ModificationParameters(new_limit_price=400.0),
+            modification_parameters=ModificationParameters(new_limit_price=price(400.0)),
         )
         assert poa.modification_parameters is not None
 
@@ -814,8 +825,8 @@ class TestEnums:
                         close_rationale_type="thesis_invalidated",
                     ),
                     exposure_impact=ExposureImpact(
-                        sector_delta_adjusted_change=-1.0,
-                        net_directional_impact=-1.0,
+                        sector_delta_adjusted_change=signed_money(-1.0),
+                        net_directional_impact=signed_money(-1.0),
                     ),
                 )
             else:

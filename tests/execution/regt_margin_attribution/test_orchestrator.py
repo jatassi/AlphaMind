@@ -17,6 +17,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money
 from alphamind.execution.regt_margin_attribution import (
     IvShockMultipliers,
     RegTMarginAttributionConfig,
@@ -310,7 +311,7 @@ def test_record_is_frozen() -> None:
     )
 
     with pytest.raises(ValueError, match="frozen"):
-        result.regt_excess_over_pm = 99.0
+        result.regt_excess_over_pm = money(99.0)
 
 
 def test_finite_fields_when_inputs_are_finite() -> None:

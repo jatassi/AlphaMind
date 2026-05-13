@@ -30,6 +30,7 @@ from alphamind._kernel.ids import (
     ClientOrderId,
     PositionId,
 )
+from alphamind._kernel.money import money, price
 from alphamind.commands.command_models import (
     AddCommand,
     BracketOrderParameters,
@@ -109,7 +110,7 @@ def _make_price_leg(ticker: str = "AAPL", trigger: float = 150.0) -> PriceLeg:
         condition=PriceCondition(
             underlying_trigger=ticker,
             comparator="<=",
-            trigger_price=trigger,
+            trigger_price=price(trigger),
         ),
         order_parameters=BracketOrderParameters(order_type="stop", limit_price=None),
     )
@@ -124,10 +125,10 @@ def _make_time_leg() -> TimeLeg:
     )
 
 
-def _make_target(price: float = 200.0) -> Target:
+def _make_target(target_price: float = 200.0) -> Target:
     return Target(
         target_type="absolute_price",
-        price=price,
+        price=price(target_price),
         order_type="limit",
     )
 
@@ -151,7 +152,7 @@ def _make_open_command(
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker=ticker, direction=direction),  # type: ignore[arg-type]
         entry_order=entry_order,
-        position_size=PositionSize(quantity=100.0, dollar_value=17000.0),
+        position_size=PositionSize(quantity=100.0, dollar_value=money(17000.0)),
         target=target,
         invalidation_legs=invalidation_legs,
         thesis=_make_thesis(),
@@ -167,7 +168,7 @@ def _make_add_command(
         command_type="add",
         position_id=PositionId("pos-001"),
         additional_quantity=50.0,
-        additional_dollar_value=8500.0,
+        additional_dollar_value=money(8500.0),
         entry_order=EntryOrder(type=entry_type, limit_price=limit_price),  # type: ignore[arg-type]
         thesis_addition_component=ThesisComponent(
             component_type="entry_rationale",
@@ -190,7 +191,7 @@ def _make_close_command(
         position_id=PositionId("pos-001"),
         quantity=quantity,  # type: ignore[arg-type]
         order_type=order_type,  # type: ignore[arg-type]
-        limit_price=limit_price,
+        limit_price=None if limit_price is None else price(limit_price),
         close_rationale_type=close_rationale,  # type: ignore[arg-type]
     )
 
@@ -439,8 +440,10 @@ async def test_open_with_target_and_price_stop_produces_bracket() -> None:
     price_leg = PriceLeg(
         type="price",
         is_hard=True,
-        condition=PriceCondition(underlying_trigger="AAPL", comparator="<=", trigger_price=150.0),
-        order_parameters=BracketOrderParameters(order_type="stop_limit", limit_price=149.0),
+        condition=PriceCondition(
+            underlying_trigger="AAPL", comparator="<=", trigger_price=price(150.0)
+        ),
+        order_parameters=BracketOrderParameters(order_type="stop_limit", limit_price=price(149.0)),
     )
     cmd = _make_open_command(
         target=_make_target(200.0),

@@ -37,6 +37,7 @@ from alphamind._kernel.ids import (
     OrderId,
     PositionId,
 )
+from alphamind._kernel.money import money, price
 from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
@@ -120,8 +121,8 @@ def _equity_open_command(ticker: str = "AAPL") -> OpenCommand:
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker=ticker, direction="long"),
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=10.0, dollar_value=1500.0),
-        target=Target(target_type="absolute_price", price=200.0, order_type="limit"),
+        position_size=PositionSize(quantity=10.0, dollar_value=money(1500.0)),
+        target=Target(target_type="absolute_price", price=price(200.0), order_type="limit"),
         invalidation_legs=(
             PriceLeg(
                 type="price",
@@ -129,7 +130,7 @@ def _equity_open_command(ticker: str = "AAPL") -> OpenCommand:
                 condition=PriceCondition(
                     underlying_trigger=ticker,
                     comparator="<=",
-                    trigger_price=140.0,
+                    trigger_price=price(140.0),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),
@@ -144,14 +145,14 @@ def _option_open_command(underlying: str = "NVDA") -> OpenCommand:
         instrument=OptionInstrument(
             asset_type="option",
             underlying=underlying,
-            strike=900.0,
+            strike=price(900.0),
             expiration="2026-06-19",
             contract_type="call",
             direction="long",
         ),
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=2.0, dollar_value=1500.0),
-        target=Target(target_type="absolute_price", price=950.0, order_type="limit"),
+        position_size=PositionSize(quantity=2.0, dollar_value=money(1500.0)),
+        target=Target(target_type="absolute_price", price=price(950.0), order_type="limit"),
         invalidation_legs=(
             PriceLeg(
                 type="price",
@@ -159,7 +160,7 @@ def _option_open_command(underlying: str = "NVDA") -> OpenCommand:
                 condition=PriceCondition(
                     underlying_trigger=underlying,
                     comparator="<=",
-                    trigger_price=850.0,
+                    trigger_price=price(850.0),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),
@@ -177,14 +178,14 @@ def _strategy_open_command(underlying: str = "SPY") -> OpenCommand:
             underlying=underlying,
             legs=(
                 StrategyLeg(
-                    strike=400.0,
+                    strike=price(400.0),
                     expiration="2026-06-19",
                     contract_type="call",
                     direction="long",
                     quantity_ratio=1,
                 ),
                 StrategyLeg(
-                    strike=410.0,
+                    strike=price(410.0),
                     expiration="2026-06-19",
                     contract_type="call",
                     direction="short",
@@ -193,8 +194,8 @@ def _strategy_open_command(underlying: str = "SPY") -> OpenCommand:
             ),
         ),
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=1.0, dollar_value=500.0),
-        target=Target(target_type="absolute_price", price=10.0, order_type="limit"),
+        position_size=PositionSize(quantity=1.0, dollar_value=money(500.0)),
+        target=Target(target_type="absolute_price", price=price(10.0), order_type="limit"),
         invalidation_legs=(
             PriceLeg(
                 type="price",
@@ -202,7 +203,7 @@ def _strategy_open_command(underlying: str = "SPY") -> OpenCommand:
                 condition=PriceCondition(
                     underlying_trigger=underlying,
                     comparator="<=",
-                    trigger_price=395.0,
+                    trigger_price=price(395.0),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),
@@ -216,7 +217,7 @@ def _add_command(position_id: str = "POS-AAPL-001") -> AddCommand:
         command_type="add",
         position_id=PositionId(position_id),
         additional_quantity=5.0,
-        additional_dollar_value=750.0,
+        additional_dollar_value=money(750.0),
         entry_order=EntryOrder(type="market"),
         thesis_addition_component=ThesisComponent(
             component_type="entry_rationale",
@@ -243,7 +244,9 @@ def _adjust_command(position_id: str = "POS-AAPL-001") -> AdjustCommand:
         command_type="adjust",
         position_id=PositionId(position_id),
         adjustment_rationale="Tighten stop after run-up",
-        new_stop_level=NewStopLevel(trigger_price=170.0, order_type="stop", limit_price=None),
+        new_stop_level=NewStopLevel(
+            trigger_price=price(170.0), order_type="stop", limit_price=None
+        ),
     )
 
 
@@ -568,7 +571,7 @@ async def test_dispatch_add_options_routes_to_submit_options_add() -> None:
     instrument = OptionInstrument(
         asset_type="option",
         underlying="NVDA",
-        strike=900.0,
+        strike=price(900.0),
         expiration="2026-06-19",
         contract_type="call",
         direction="long",

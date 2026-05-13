@@ -28,6 +28,7 @@ from alphamind._kernel.ids import (
     OccSymbol,
     PositionId,
 )
+from alphamind._kernel.money import money, price
 from alphamind.commands.command_models import (
     AddCommand,
     BracketOrderParameters,
@@ -99,14 +100,14 @@ def _strategy_open_command(
     if legs is None:
         legs = (
             StrategyLeg(
-                strike=800.0,
+                strike=price(800.0),
                 expiration="2026-06-19",
                 contract_type="call",
                 direction="long",
                 quantity_ratio=1,
             ),
             StrategyLeg(
-                strike=820.0,
+                strike=price(820.0),
                 expiration="2026-06-19",
                 contract_type="call",
                 direction="short",
@@ -120,13 +121,13 @@ def _strategy_open_command(
         legs=legs,
     )
     entry = EntryOrder(type=entry_type, limit_price=limit_price)  # type: ignore[arg-type]
-    target = Target(target_type="absolute_price", price=850.0, order_type="limit")
+    target = Target(target_type="absolute_price", price=price(850.0), order_type="limit")
     invalidation = (
         PriceLeg(
             type="price",
             is_hard=True,
             condition=PriceCondition(
-                underlying_trigger=underlying, comparator="<=", trigger_price=780.0
+                underlying_trigger=underlying, comparator="<=", trigger_price=price(780.0)
             ),
             order_parameters=BracketOrderParameters(order_type="market"),
         ),
@@ -148,7 +149,7 @@ def _strategy_open_command(
         command_type="open",
         instrument=instrument,
         entry_order=entry,
-        position_size=PositionSize(quantity=quantity, dollar_value=1000.0),
+        position_size=PositionSize(quantity=quantity, dollar_value=money(1000.0)),
         target=target,
         invalidation_legs=invalidation,
         thesis=thesis,
@@ -158,14 +159,14 @@ def _strategy_open_command(
 def _vertical_spread_legs() -> tuple[StrategyLeg, ...]:
     return (
         StrategyLeg(
-            strike=800.0,
+            strike=price(800.0),
             expiration="2026-06-19",
             contract_type="call",
             direction="long",
             quantity_ratio=1,
         ),
         StrategyLeg(
-            strike=820.0,
+            strike=price(820.0),
             expiration="2026-06-19",
             contract_type="call",
             direction="short",
@@ -177,28 +178,28 @@ def _vertical_spread_legs() -> tuple[StrategyLeg, ...]:
 def _iron_condor_legs() -> tuple[StrategyLeg, ...]:
     return (
         StrategyLeg(
-            strike=850.0,
+            strike=price(850.0),
             expiration="2026-06-19",
             contract_type="put",
             direction="short",
             quantity_ratio=1,
         ),
         StrategyLeg(
-            strike=830.0,
+            strike=price(830.0),
             expiration="2026-06-19",
             contract_type="put",
             direction="long",
             quantity_ratio=1,
         ),
         StrategyLeg(
-            strike=900.0,
+            strike=price(900.0),
             expiration="2026-06-19",
             contract_type="call",
             direction="short",
             quantity_ratio=1,
         ),
         StrategyLeg(
-            strike=920.0,
+            strike=price(920.0),
             expiration="2026-06-19",
             contract_type="call",
             direction="long",
@@ -340,7 +341,7 @@ async def test_open_more_than_four_legs_rejected_before_sdk_call() -> None:
     """Strategy with > 4 legs raises ValueError before SDK touch."""
     five_legs = (
         StrategyLeg(
-            strike=float(800 + i * 10),
+            strike=price(float(800 + i * 10)),
             expiration="2026-06-19",
             contract_type="call",
             direction="long" if i % 2 == 0 else "short",
@@ -371,14 +372,14 @@ def _calendar_spread_legs() -> tuple[StrategyLeg, ...]:
     """Same strike, different expiration — long the longer-dated leg."""
     return (
         StrategyLeg(
-            strike=850.0,
+            strike=price(850.0),
             expiration="2026-06-19",
             contract_type="call",
             direction="short",
             quantity_ratio=1,
         ),
         StrategyLeg(
-            strike=850.0,
+            strike=price(850.0),
             expiration="2026-09-18",
             contract_type="call",
             direction="long",
@@ -391,14 +392,14 @@ def _straddle_legs() -> tuple[StrategyLeg, ...]:
     """Long call + long put at the same strike + expiration."""
     return (
         StrategyLeg(
-            strike=850.0,
+            strike=price(850.0),
             expiration="2026-06-19",
             contract_type="call",
             direction="long",
             quantity_ratio=1,
         ),
         StrategyLeg(
-            strike=850.0,
+            strike=price(850.0),
             expiration="2026-06-19",
             contract_type="put",
             direction="long",
@@ -411,14 +412,14 @@ def _strangle_legs() -> tuple[StrategyLeg, ...]:
     """Long call + long put at different strikes (otm both)."""
     return (
         StrategyLeg(
-            strike=900.0,
+            strike=price(900.0),
             expiration="2026-06-19",
             contract_type="call",
             direction="long",
             quantity_ratio=1,
         ),
         StrategyLeg(
-            strike=800.0,
+            strike=price(800.0),
             expiration="2026-06-19",
             contract_type="put",
             direction="long",
@@ -431,21 +432,21 @@ def _custom_legs() -> tuple[StrategyLeg, ...]:
     """Three-leg custom combination."""
     return (
         StrategyLeg(
-            strike=800.0,
+            strike=price(800.0),
             expiration="2026-06-19",
             contract_type="call",
             direction="long",
             quantity_ratio=1,
         ),
         StrategyLeg(
-            strike=820.0,
+            strike=price(820.0),
             expiration="2026-06-19",
             contract_type="call",
             direction="short",
             quantity_ratio=2,
         ),
         StrategyLeg(
-            strike=840.0,
+            strike=price(840.0),
             expiration="2026-06-19",
             contract_type="call",
             direction="long",
@@ -614,7 +615,7 @@ async def test_close_with_limit_price_uses_limit_order_request() -> None:
         position_id=PositionId("pos-1"),
         quantity=1.0,
         order_type="limit",
-        limit_price=2.50,
+        limit_price=price(2.50),
         close_rationale_type="target_reached",
     )
     client = _CapturingClient(response=_fake_alpaca_order(client_order_id="inv-test.ENV-SA-1.1.1"))
@@ -702,7 +703,7 @@ async def test_add_scales_ratios_by_additional_quantity_preserving_intent() -> N
         command_type="add",
         position_id=PositionId("pos-1"),
         additional_quantity=3.0,
-        additional_dollar_value=3000.0,
+        additional_dollar_value=money(3000.0),
         entry_order=EntryOrder(type="market"),
         thesis_addition_component=ThesisComponent(
             component_type="entry_rationale",
@@ -757,7 +758,7 @@ async def test_add_with_uneven_ratios_resimplifies() -> None:
         command_type="add",
         position_id=PositionId("pos-1"),
         additional_quantity=4.0,
-        additional_dollar_value=4000.0,
+        additional_dollar_value=money(4000.0),
         entry_order=EntryOrder(type="market"),
         thesis_addition_component=ThesisComponent(
             component_type="entry_rationale",
@@ -891,14 +892,14 @@ async def test_open_with_equity_instrument_raises_type_error() -> None:
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker="NVDA", direction="long"),
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=10, dollar_value=8000.0),
-        target=Target(target_type="absolute_price", price=850.0, order_type="limit"),
+        position_size=PositionSize(quantity=10, dollar_value=money(8000.0)),
+        target=Target(target_type="absolute_price", price=price(850.0), order_type="limit"),
         invalidation_legs=(
             PriceLeg(
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger="NVDA", comparator="<=", trigger_price=780.0
+                    underlying_trigger="NVDA", comparator="<=", trigger_price=price(780.0)
                 ),
                 order_parameters=BracketOrderParameters(order_type="market"),
             ),
@@ -936,20 +937,20 @@ async def test_open_with_single_leg_option_instrument_raises_type_error() -> Non
         instrument=OptionInstrument(
             asset_type="option",
             underlying="NVDA",
-            strike=800.0,
+            strike=price(800.0),
             expiration="2026-06-19",
             contract_type="call",
             direction="long",
         ),
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=1, dollar_value=200.0),
-        target=Target(target_type="absolute_price", price=820.0, order_type="limit"),
+        position_size=PositionSize(quantity=1, dollar_value=money(200.0)),
+        target=Target(target_type="absolute_price", price=price(820.0), order_type="limit"),
         invalidation_legs=(
             PriceLeg(
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger="NVDA", comparator="<=", trigger_price=780.0
+                    underlying_trigger="NVDA", comparator="<=", trigger_price=price(780.0)
                 ),
                 order_parameters=BracketOrderParameters(order_type="market"),
             ),
@@ -1080,28 +1081,28 @@ async def test_open_simplifies_ratios_with_common_factor_two() -> None:
     """Legs (2, 4, 2, 4) simplify to (1, 2, 1, 2) in the request."""
     legs = (
         StrategyLeg(
-            strike=850.0,
+            strike=price(850.0),
             expiration="2026-06-19",
             contract_type="put",
             direction="short",
             quantity_ratio=2,
         ),
         StrategyLeg(
-            strike=830.0,
+            strike=price(830.0),
             expiration="2026-06-19",
             contract_type="put",
             direction="long",
             quantity_ratio=4,
         ),
         StrategyLeg(
-            strike=900.0,
+            strike=price(900.0),
             expiration="2026-06-19",
             contract_type="call",
             direction="short",
             quantity_ratio=2,
         ),
         StrategyLeg(
-            strike=920.0,
+            strike=price(920.0),
             expiration="2026-06-19",
             contract_type="call",
             direction="long",

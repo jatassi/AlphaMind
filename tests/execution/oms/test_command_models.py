@@ -27,6 +27,7 @@ from alphamind._kernel.ids import (
     OrderId,
     PositionId,
 )
+from alphamind._kernel.money import money, price
 from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
@@ -70,7 +71,7 @@ def _option_instrument() -> OptionInstrument:
     return OptionInstrument(
         asset_type="option",
         underlying="AAPL",
-        strike=150.0,
+        strike=price(150.0),
         expiration="2026-06-19",
         contract_type="call",
         direction="long",
@@ -79,7 +80,7 @@ def _option_instrument() -> OptionInstrument:
 
 def _strategy_leg(strike: float = 150.0, contract_type: str = "call") -> StrategyLeg:
     return StrategyLeg(
-        strike=strike,
+        strike=price(strike),
         expiration="2026-06-19",
         contract_type=contract_type,  # type: ignore[arg-type]
         direction="long",
@@ -101,11 +102,11 @@ def _entry_order_market() -> EntryOrder:
 
 
 def _position_size() -> PositionSize:
-    return PositionSize(quantity=100.0, dollar_value=15_000.0, premium_at_risk=None)
+    return PositionSize(quantity=100.0, dollar_value=money(15_000.0), premium_at_risk=None)
 
 
 def _target_absolute() -> Target:
-    return Target(target_type="absolute_price", price=170.0, order_type="limit")
+    return Target(target_type="absolute_price", price=price(170.0), order_type="limit")
 
 
 def _price_leg(trigger_price: float = 140.0) -> PriceLeg:
@@ -113,7 +114,7 @@ def _price_leg(trigger_price: float = 140.0) -> PriceLeg:
         type="price",
         is_hard=True,
         condition=PriceCondition(
-            underlying_trigger="AAPL", comparator="<=", trigger_price=trigger_price
+            underlying_trigger="AAPL", comparator="<=", trigger_price=price(trigger_price)
         ),
         order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
     )
@@ -187,7 +188,7 @@ def _adjust_command() -> AdjustCommand:
         command_type="adjust",
         position_id=PositionId("pos-1"),
         adjustment_rationale="bracket revision",
-        new_stop_level=NewStopLevel(trigger_price=130.0, order_type="market"),
+        new_stop_level=NewStopLevel(trigger_price=price(130.0), order_type="market"),
     )
 
 
@@ -204,7 +205,7 @@ def _add_command() -> AddCommand:
         command_type="add",
         position_id=PositionId("pos-1"),
         additional_quantity=10.0,
-        additional_dollar_value=1500.0,
+        additional_dollar_value=money(1500.0),
         entry_order=_entry_order_market(),
         thesis_addition_component=_thesis_component("entry_rationale"),
     )
@@ -252,24 +253,24 @@ class TestEntryOrder:
     def test_limit_requires_limit_price(self) -> None:
         with pytest.raises(ValidationError):
             EntryOrder(type="limit")
-        EntryOrder(type="limit", limit_price=100.0)
+        EntryOrder(type="limit", limit_price=price(100.0))
 
     def test_stop_limit_requires_both_prices(self) -> None:
         with pytest.raises(ValidationError):
-            EntryOrder(type="stop_limit", limit_price=100.0)
+            EntryOrder(type="stop_limit", limit_price=price(100.0))
         with pytest.raises(ValidationError):
-            EntryOrder(type="stop_limit", stop_price=100.0)
-        EntryOrder(type="stop_limit", limit_price=100.0, stop_price=99.0)
+            EntryOrder(type="stop_limit", stop_price=price(100.0))
+        EntryOrder(type="stop_limit", limit_price=price(100.0), stop_price=price(99.0))
 
 
 class TestPositionSize:
     def test_constructs_without_sector_field(self) -> None:
-        ps = PositionSize(quantity=100.0, dollar_value=15_000.0, premium_at_risk=None)
+        ps = PositionSize(quantity=100.0, dollar_value=money(15_000.0), premium_at_risk=None)
         # Parent decision (B): no sector field on canonical PositionSize.
         assert not hasattr(ps, "sector")
 
     def test_premium_at_risk_optional(self) -> None:
-        ps = PositionSize(quantity=10.0, dollar_value=1_000.0, premium_at_risk=500.0)
+        ps = PositionSize(quantity=10.0, dollar_value=money(1_000.0), premium_at_risk=money(500.0))
         assert ps.premium_at_risk == 500.0
 
 
@@ -277,26 +278,28 @@ class TestTarget:
     def test_absolute_price_requires_price(self) -> None:
         with pytest.raises(ValidationError):
             Target(target_type="absolute_price", order_type="limit")
-        Target(target_type="absolute_price", price=170.0, order_type="limit")
+        Target(target_type="absolute_price", price=price(170.0), order_type="limit")
 
     def test_pl_percentage_requires_pct_and_price(self) -> None:
         with pytest.raises(ValidationError):
-            Target(target_type="pl_percentage", price=170.0, order_type="limit")
+            Target(target_type="pl_percentage", price=price(170.0), order_type="limit")
         with pytest.raises(ValidationError):
             Target(target_type="pl_percentage", pl_percentage=80.0, order_type="limit")
         Target(
             target_type="pl_percentage",
             pl_percentage=80.0,
-            price=170.0,
+            price=price(170.0),
             order_type="limit",
         )
 
     def test_pl_dollar_requires_dollar_and_price(self) -> None:
         with pytest.raises(ValidationError):
-            Target(target_type="pl_dollar", price=170.0, order_type="limit")
+            Target(target_type="pl_dollar", price=price(170.0), order_type="limit")
         with pytest.raises(ValidationError):
-            Target(target_type="pl_dollar", pl_dollar=500.0, order_type="limit")
-        Target(target_type="pl_dollar", pl_dollar=500.0, price=170.0, order_type="limit")
+            Target(target_type="pl_dollar", pl_dollar=money(500.0), order_type="limit")
+        Target(
+            target_type="pl_dollar", pl_dollar=money(500.0), price=price(170.0), order_type="limit"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +314,7 @@ class TestInvalidationLegs:
                 type="price",
                 is_hard=False,  # type: ignore[arg-type]
                 condition=PriceCondition(
-                    underlying_trigger="AAPL", comparator="<=", trigger_price=140.0
+                    underlying_trigger="AAPL", comparator="<=", trigger_price=price(140.0)
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             )
@@ -401,7 +404,7 @@ class TestCloseCommand:
             position_id=PositionId("pos-1"),
             quantity="all",
             order_type="limit",
-            limit_price=170.0,
+            limit_price=price(170.0),
             close_rationale_type="target_reached",
         )
 
@@ -478,7 +481,7 @@ class TestAdjustCommand:
             position_id=PositionId("pos-1"),
             adjustment_rationale="x",
             new_target_level=NewTargetLevel(
-                target_type="absolute_price", price=170.0, order_type="limit"
+                target_type="absolute_price", price=price(170.0), order_type="limit"
             ),
         )
         AdjustCommand(
@@ -518,7 +521,7 @@ class TestAddCommand:
                 command_type="add",
                 position_id=PositionId("pos-1"),
                 additional_quantity=10.0,
-                additional_dollar_value=1500.0,
+                additional_dollar_value=money(1500.0),
                 entry_order=_entry_order_market(),
                 thesis_addition_component=_thesis_component("target_rationale"),
             )
@@ -526,7 +529,9 @@ class TestAddCommand:
     def test_bracket_adjustment_requires_at_least_one_field(self) -> None:
         with pytest.raises(ValidationError):
             BracketAdjustment()
-        BracketAdjustment(new_stop_level=NewStopLevel(trigger_price=130.0, order_type="market"))
+        BracketAdjustment(
+            new_stop_level=NewStopLevel(trigger_price=price(130.0), order_type="market")
+        )
 
 
 # ---------------------------------------------------------------------------

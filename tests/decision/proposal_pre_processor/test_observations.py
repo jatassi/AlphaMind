@@ -13,6 +13,7 @@ import pytest
 from alphamind._kernel.ids import (
     Symbol,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.decision.analyst.models import (
     EntryOrder,
     GuardrailValidationResult,
@@ -88,16 +89,20 @@ def _make_recommendation(**overrides: Any) -> Recommendation:
         "underlying": "NVDA",
         "sector": "semis",
         "conviction_level": 4,
-        "entry_order": EntryOrder(type="limit", limit_price=842.50),
-        "position_size": PositionSize(quantity=4, dollar_value=3370.0, pct_of_portfolio=3.37),
-        "target": Target(target_type="absolute_price", price=890.0, dollar_pl_target=190.0),
+        "entry_order": EntryOrder(type="limit", limit_price=price(842.50)),
+        "position_size": PositionSize(
+            quantity=4, dollar_value=money(3370.0), pct_of_portfolio=3.37
+        ),
+        "target": Target(
+            target_type="absolute_price", price=price(890.0), dollar_pl_target=money(190.0)
+        ),
         "invalidation_legs": (
             InvalidationLeg(
                 leg_id="INV-1",
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=820.0
+                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=price(820.0)
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             ),
@@ -148,8 +153,8 @@ def _make_close_assessment(**overrides: Any) -> PositionAssessment:
             close_rationale_type="thesis_invalidated",
         ),
         "exposure_impact": ExposureImpact(
-            sector_delta_adjusted_change=-3000.0,
-            net_directional_impact=-3000.0,
+            sector_delta_adjusted_change=signed_money(-3000.0),
+            net_directional_impact=signed_money(-3000.0),
         ),
         "status_rationale": "thesis intact",
         "action_rationale": "closing position",
@@ -173,8 +178,8 @@ def _make_reduce_assessment(**overrides: Any) -> PositionAssessment:
             order_type="market",
         ),
         "exposure_impact": ExposureImpact(
-            sector_delta_adjusted_change=-1500.0,
-            net_directional_impact=-1500.0,
+            sector_delta_adjusted_change=signed_money(-1500.0),
+            net_directional_impact=signed_money(-1500.0),
         ),
         "reduce_rationale": "trimming exposure",
         "status_rationale": "thesis intact",
@@ -428,7 +433,9 @@ def test_compute_book_health_summary_all_recommended_actions() -> None:
         ),
         checked_at=_NOW,
     )
-    exposure = ExposureImpact(sector_delta_adjusted_change=1000.0, net_directional_impact=1000.0)
+    exposure = ExposureImpact(
+        sector_delta_adjusted_change=money(1000.0), net_directional_impact=money(1000.0)
+    )
 
     assessments = (
         _make_position_assessment(assessment_id="SA-1", recommended_action="hold"),
@@ -440,7 +447,7 @@ def test_compute_book_health_summary_all_recommended_actions() -> None:
             action_parameters=AdjustBracketParameters(
                 action="adjust-bracket",
                 new_stop_level=BracketAdjustNewStopLevel(
-                    trigger_price=800.0,
+                    trigger_price=price(800.0),
                     order_type="market",
                 ),
             ),
@@ -452,7 +459,7 @@ def test_compute_book_health_summary_all_recommended_actions() -> None:
             action_parameters=AddParameters(
                 action="add",
                 additional_quantity=2.0,
-                additional_dollar_value=500.0,
+                additional_dollar_value=money(500.0),
                 entry_order=StrategistEntryOrder(type="market"),
             ),
             exposure_impact=exposure,

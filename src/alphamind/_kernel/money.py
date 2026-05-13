@@ -34,14 +34,15 @@ Money = NewType("Money", Decimal)
 Price = NewType("Price", Decimal)
 
 
-def money(value: str | int | Decimal) -> Money:
+def money(value: str | int | float | Decimal) -> Money:
     """Construct a non-negative :class:`Money` value, parsing at the boundary.
 
     Accepts the broker-string shape (``"100.50"``), integer shape (``100``),
-    or an already-converted :class:`Decimal`. Raises :class:`ValueError` for
-    inputs Decimal cannot parse and for negative values; use
-    :func:`signed_money` for amounts that may be negative (e.g., realized
-    losses, debit balances).
+    float shape (``100.5`` — converted via ``str`` to avoid binary-float
+    drift), or an already-converted :class:`Decimal`. Raises
+    :class:`ValueError` for inputs Decimal cannot parse and for negative
+    values; use :func:`signed_money` for amounts that may be negative (e.g.,
+    realized losses, debit balances).
     """
     decimal_value = _to_decimal(value, label="money")
     if decimal_value < 0:
@@ -50,13 +51,14 @@ def money(value: str | int | Decimal) -> Money:
     return Money(decimal_value)
 
 
-def price(value: str | int | Decimal) -> Price:
+def price(value: str | int | float | Decimal) -> Price:
     """Construct a strictly positive :class:`Price` value.
 
     Prices are always > 0 by definition (a zero or negative price is a
     pricing error upstream, not a valid value to thread through downstream
-    arithmetic). Raises :class:`ValueError` for parse errors and for
-    values <= 0.
+    arithmetic). Accepts float input (converted via ``str`` to avoid
+    binary-float drift). Raises :class:`ValueError` for parse errors and
+    for values <= 0.
     """
     decimal_value = _to_decimal(value, label="price")
     if decimal_value <= 0:
@@ -65,25 +67,37 @@ def price(value: str | int | Decimal) -> Price:
     return Price(decimal_value)
 
 
-def signed_money(value: str | int | Decimal) -> Money:
+def signed_money(value: str | int | float | Decimal) -> Money:
     """Construct a :class:`Money` value permitting negative amounts.
 
     Used for monetary fields that legitimately carry a sign (realized P&L,
-    debit balances, cash-flow deltas). Raises :class:`ValueError` only for
-    parse errors.
+    debit balances, cash-flow deltas). Accepts float input (converted via
+    ``str`` to avoid binary-float drift). Raises :class:`ValueError` only
+    for parse errors.
     """
     return Money(_to_decimal(value, label="signed_money"))
 
 
-def _to_decimal(value: str | int | Decimal, *, label: str) -> Decimal:
+def _to_decimal(value: str | int | float | Decimal, *, label: str) -> Decimal:
     """Normalize the constructor input to :class:`Decimal`.
 
+    Floats are converted via ``str`` to preserve the literal the developer
+    typed (``str(0.1) == "0.1"``), avoiding the binary-float drift that
+    ``Decimal(0.1)`` produces (``Decimal('0.1000000000000000055511...')``).
     Wraps :class:`decimal.InvalidOperation` (the underlying parse failure)
     in a :class:`ValueError` carrying the constructor label so the error
     message points at the boundary that rejected the value.
     """
     if isinstance(value, Decimal):
         return value
+    if isinstance(value, float):
+        # Convert via str to avoid binary-float drift
+        # (Decimal(0.1) == Decimal('0.1000000000000000055511151231257827021181583404541015625')).
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, ValueError) as exc:
+            msg = f"{label} value cannot be parsed as Decimal: {value!r}"
+            raise ValueError(msg) from exc
     try:
         return Decimal(value)
     except (InvalidOperation, ValueError, TypeError) as exc:

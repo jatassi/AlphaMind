@@ -61,6 +61,38 @@ def test_money_accepts_int_and_decimal_inputs() -> None:
     assert money(Decimal("99.99")) == Decimal("99.99")
 
 
+def test_money_accepts_float_input_without_binary_drift() -> None:
+    """``money`` accepts float input and converts via ``str`` to preserve intent.
+
+    ``Decimal(0.1)`` produces
+    ``Decimal('0.1000000000000000055511151231257827021181583404541015625')``
+    because ``0.1`` cannot be represented exactly in IEEE 754. Routing
+    through ``str`` (``str(0.1) == "0.1"``) preserves the literal the
+    developer typed. Pinning this invariant catches a regression that
+    drops the ``str()`` step.
+    """
+    from alphamind._kernel.money import money
+
+    assert money(0.1) + money(0.2) == money("0.3")
+    assert money(123.45) == money("123.45")
+
+
+def test_price_accepts_float_input_without_binary_drift() -> None:
+    """``price`` accepts float input via the same str-conversion path."""
+    from alphamind._kernel.money import price
+
+    assert price(0.1) + price(0.2) == price("0.3")
+    assert price(123.45) == price("123.45")
+
+
+def test_signed_money_accepts_float_input_without_binary_drift() -> None:
+    """``signed_money`` accepts float input (including negative) via str conversion."""
+    from alphamind._kernel.money import signed_money
+
+    assert signed_money(0.1) + signed_money(0.2) == signed_money("0.3")
+    assert signed_money(-123.45) == signed_money("-123.45")
+
+
 def test_price_accepts_positive_input() -> None:
     from decimal import Decimal
 

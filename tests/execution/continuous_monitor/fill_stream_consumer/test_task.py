@@ -38,6 +38,7 @@ from alpaca.trading.models import Order, TradeUpdate
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from alphamind._kernel.money import money, price
 from alphamind.config.models.continuous_monitor import ContinuousMonitorConfig
 from alphamind.execution.broker_adapter import OrderSnapshot
 from alphamind.execution.continuous_monitor.fill_stream_consumer import (
@@ -152,7 +153,7 @@ def _order_snapshot(
         filled_at=fa,
         canceled_at=None,
         expired_at=None,
-        filled_avg_price=filled_avg_price,
+        filled_avg_price=price(filled_avg_price),
         replaced_by=None,
         replaces=None,
         legs=None,
@@ -654,12 +655,12 @@ async def _seed_prior_fill(
         fill_id="prior-fill-1",
         order_id="order-1",
         fill_timestamp=fill_timestamp,
-        fill_price=100.0,
+        fill_price=price(100.0),
         fill_quantity=1.0,
         remaining_quantity_after=0.0,
         order_status_after=OrderStatus.FILLED,
         slippage_usd=None,
-        fees_usd=0.0,
+        fees_usd=money(0.0),
         execution_venue=None,
         gateway_reference="alp-prior",
         persistence_timestamp=fill_timestamp,

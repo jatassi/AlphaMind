@@ -24,6 +24,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.broker_adapter.queries import PositionSnapshot
 from alphamind.execution.state_persistence.invocation_context.context import (
@@ -528,12 +529,12 @@ def _equity_snapshot(symbol: str, qty: float, avg_entry_price: float) -> Positio
         symbol=symbol,
         asset_class="us_equity",
         qty=qty,
-        avg_entry_price=avg_entry_price,
-        market_value=qty * avg_entry_price,
-        cost_basis=qty * avg_entry_price,
-        unrealized_pl=0.0,
+        avg_entry_price=price(avg_entry_price),
+        market_value=money(qty * avg_entry_price),
+        cost_basis=money(qty * avg_entry_price),
+        unrealized_pl=money(0.0),
         unrealized_plpc=0.0,
-        current_price=avg_entry_price,
+        current_price=price(avg_entry_price),
         side="long",
     )
 
@@ -543,12 +544,12 @@ def _option_snapshot(symbol: str, qty: float, avg_entry_price: float) -> Positio
         symbol=symbol,
         asset_class="us_option",
         qty=qty,
-        avg_entry_price=avg_entry_price,
-        market_value=qty * avg_entry_price * 100.0,
-        cost_basis=qty * avg_entry_price * 100.0,
-        unrealized_pl=0.0,
+        avg_entry_price=price(avg_entry_price),
+        market_value=money(qty * avg_entry_price * 100.0),
+        cost_basis=money(qty * avg_entry_price * 100.0),
+        unrealized_pl=money(0.0),
         unrealized_plpc=0.0,
-        current_price=avg_entry_price,
+        current_price=price(avg_entry_price),
         side="long",
     )
 

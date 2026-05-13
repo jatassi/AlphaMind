@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 import yaml
 
+from alphamind._kernel.money import money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -293,15 +294,20 @@ def _retrieval_store() -> RetrievalStore:
 
 def _make_pnl() -> PortfolioPnL:
     return PortfolioPnL(
-        total_unrealized_pnl_usd=0.0,
+        total_unrealized_pnl_usd=money(0.0),
         total_unrealized_pnl_pct_of_portfolio=0.0,
-        daily_realized_pnl_usd=0.0,
-        daily_total_pnl_usd=0.0,
-        cumulative_realized_pnl_usd=0.0,
-        rolling_realized_pnl={"1d": 0.0, "3d": 0.0, "5d": 0.0, "20d": 0.0},
+        daily_realized_pnl_usd=money(0.0),
+        daily_total_pnl_usd=money(0.0),
+        cumulative_realized_pnl_usd=money(0.0),
+        rolling_realized_pnl={
+            "1d": money(0.0),
+            "3d": money(0.0),
+            "5d": money(0.0),
+            "20d": money(0.0),
+        },
         win_rate_pct=0.0,
-        average_win_size_usd=0.0,
-        average_loss_size_usd=0.0,
+        average_win_size_usd=money(0.0),
+        average_loss_size_usd=money(0.0),
         profit_factor=0.0,
     )
 
@@ -322,8 +328,8 @@ def _make_drawdown() -> DrawdownState:
 
 def _make_directional() -> DirectionalExposure:
     return DirectionalExposure(
-        total_long_delta_adjusted_usd=0.0,
-        total_short_delta_adjusted_usd=0.0,
+        total_long_delta_adjusted_usd=money(0.0),
+        total_short_delta_adjusted_usd=money(0.0),
         net_directional_pct_of_portfolio=0.0,
         gross_pct_of_portfolio=0.0,
     )

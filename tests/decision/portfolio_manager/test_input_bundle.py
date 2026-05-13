@@ -12,6 +12,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -275,15 +276,20 @@ def _make_risk_budget() -> RiskBudgetConsumption:
 
 def _make_pnl() -> PortfolioPnL:
     return PortfolioPnL(
-        total_unrealized_pnl_usd=8200.0,
+        total_unrealized_pnl_usd=money(8200.0),
         total_unrealized_pnl_pct_of_portfolio=0.82,
-        daily_realized_pnl_usd=300.0,
-        daily_total_pnl_usd=1200.0,
-        cumulative_realized_pnl_usd=10000.0,
-        rolling_realized_pnl={"1d": 300.0, "3d": 600.0, "5d": 1200.0, "20d": 3000.0},
+        daily_realized_pnl_usd=money(300.0),
+        daily_total_pnl_usd=money(1200.0),
+        cumulative_realized_pnl_usd=money(10000.0),
+        rolling_realized_pnl={
+            "1d": money(300.0),
+            "3d": money(600.0),
+            "5d": money(1200.0),
+            "20d": money(3000.0),
+        },
         win_rate_pct=55.0,
-        average_win_size_usd=200.0,
-        average_loss_size_usd=150.0,
+        average_win_size_usd=money(200.0),
+        average_loss_size_usd=money(150.0),
         profit_factor=1.4,
     )
 
@@ -304,8 +310,8 @@ def _make_drawdown() -> DrawdownState:
 
 def _make_directional() -> DirectionalExposure:
     return DirectionalExposure(
-        total_long_delta_adjusted_usd=420_000.0,
-        total_short_delta_adjusted_usd=0.0,
+        total_long_delta_adjusted_usd=money(420_000.0),
+        total_short_delta_adjusted_usd=money(0.0),
         net_directional_pct_of_portfolio=42.0,
         gross_pct_of_portfolio=78.0,
     )

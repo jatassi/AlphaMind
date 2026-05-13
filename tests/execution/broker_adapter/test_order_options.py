@@ -30,6 +30,7 @@ from alpaca.trading.requests import (
 from alphamind._kernel.ids import (
     PositionId,
 )
+from alphamind._kernel.money import money, price
 from alphamind.commands.command_models import (
     AddCommand,
     BracketOrderParameters,
@@ -104,7 +105,7 @@ def _option_instrument(
     return OptionInstrument(
         asset_type="option",
         underlying=underlying,
-        strike=strike,
+        strike=price(strike),
         expiration=expiration,
         contract_type=contract_type,  # type: ignore[arg-type]
         direction=direction,  # type: ignore[arg-type]
@@ -137,7 +138,7 @@ def _hard_price_leg(*, trigger_price: float = 750.0) -> PriceLeg:
         condition=PriceCondition(
             underlying_trigger="NVDA",
             comparator="<=",
-            trigger_price=trigger_price,
+            trigger_price=price(trigger_price),
         ),
         order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
     )
@@ -168,13 +169,13 @@ def _open_options_command(
         instrument=instrument or _option_instrument(),
         entry_order=EntryOrder(
             type=entry_type,  # type: ignore[arg-type]
-            limit_price=limit_price,
-            stop_price=stop_price,
+            limit_price=None if limit_price is None else price(limit_price),
+            stop_price=None if stop_price is None else price(stop_price),
         ),
-        position_size=PositionSize(quantity=quantity, dollar_value=10_000.0),
+        position_size=PositionSize(quantity=quantity, dollar_value=money(10_000.0)),
         target=Target(
             target_type="absolute_price",
-            price=950.0,
+            price=price(950.0),
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",
@@ -196,11 +197,11 @@ def _add_options_command(
         command_type="add",
         position_id=PositionId("POS-1"),
         additional_quantity=quantity,
-        additional_dollar_value=5_000.0,
+        additional_dollar_value=money(5_000.0),
         entry_order=EntryOrder(
             type=entry_type,  # type: ignore[arg-type]
-            limit_price=limit_price,
-            stop_price=stop_price,
+            limit_price=None if limit_price is None else price(limit_price),
+            stop_price=None if stop_price is None else price(stop_price),
         ),
         thesis_addition_component=ThesisComponent(
             component_type="entry_rationale",
@@ -223,7 +224,7 @@ def _close_options_command(
         position_id=PositionId("POS-1"),
         quantity=quantity,  # type: ignore[arg-type]
         order_type=order_type,  # type: ignore[arg-type]
-        limit_price=limit_price,
+        limit_price=None if limit_price is None else price(limit_price),
         close_rationale_type="target_reached",
     )
 
@@ -448,10 +449,10 @@ async def test_submit_options_open_always_simple_regardless_of_bracket_shape() -
         command_type="open",
         instrument=_option_instrument(),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-        position_size=PositionSize(quantity=5.0, dollar_value=10_000.0),
+        position_size=PositionSize(quantity=5.0, dollar_value=money(10_000.0)),
         target=Target(
             target_type="absolute_price",
-            price=950.0,
+            price=price(950.0),
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",
@@ -746,10 +747,10 @@ async def test_submit_options_open_with_equity_instrument_raises_type_error() ->
         command_type="open",
         instrument=_equity_instrument(),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-        position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+        position_size=PositionSize(quantity=10.0, dollar_value=money(10_000.0)),
         target=Target(
             target_type="absolute_price",
-            price=950.0,
+            price=price(950.0),
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",

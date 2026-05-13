@@ -15,6 +15,7 @@ from typing import Any
 from alphamind._kernel.ids import (
     PositionId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.decision.strategist.models import (
@@ -175,7 +176,8 @@ class TestActionParametersMatch:
                 order_type="market",
             ),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim to cure breach.",
         )
@@ -207,7 +209,8 @@ class TestActionParametersMatch:
                 order_type="market",
             ),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim to cure breach.",
         )
@@ -372,7 +375,8 @@ class TestRemedyFlagBreachPairing:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim.",
             remedy_flag="BREACH-2",
@@ -404,7 +408,8 @@ class TestRemedyFlagBreachPairing:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim.",
             remedy_flag="BREACH-1",
@@ -438,7 +443,8 @@ class TestRemedyFlagBreachPairing:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim.",
             remedy_flag="BREACH-1",
@@ -475,7 +481,8 @@ class TestAddressedUncuredDisjoint:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim.",
             remedy_flag="BREACH-1",
@@ -511,7 +518,8 @@ class TestAddressedUncuredDisjoint:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim.",
             remedy_flag="BREACH-1",
@@ -668,7 +676,8 @@ class TestLayer3PositionAssessmentReferences:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim per [SA-FIN-99].",
         )
@@ -689,11 +698,11 @@ class TestLayer3PositionAssessmentReferences:
             action_parameters=AddParameters(
                 action="add",
                 additional_quantity=1.0,
-                additional_dollar_value=100.0,
+                additional_dollar_value=money(100.0),
                 entry_order=EntryOrder(type="market"),
             ),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=1.0, net_directional_impact=1.0
+                sector_delta_adjusted_change=money(1.0), net_directional_impact=money(1.0)
             ),
             guardrail_validation_result=_make_guardrail_result(),
             add_conviction_justification="Strengthening absent at entry per [AR-99].",
@@ -714,7 +723,9 @@ class TestLayer3PositionAssessmentReferences:
             recommended_action="adjust-bracket",
             action_parameters=AdjustBracketParameters(
                 action="adjust-bracket",
-                new_stop_level=BracketAdjustNewStopLevel(trigger_price=820.0, order_type="market"),
+                new_stop_level=BracketAdjustNewStopLevel(
+                    trigger_price=price(820.0), order_type="market"
+                ),
             ),
             adjustment_rationale="Tighten stop per [CR-99].",
         )
@@ -734,7 +745,8 @@ class TestLayer3PositionAssessmentReferences:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim.",
             remedy_flag="BREACH-1",
@@ -945,7 +957,8 @@ class TestSchemaValidHappyPath:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=2.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.35, net_directional_impact=-1.35
+                sector_delta_adjusted_change=signed_money(-1.35),
+                net_directional_impact=signed_money(-1.35),
             ),
             reduce_rationale="Trim per [SA-TECH-2].",
             remedy_flag="BREACH-1",
@@ -1019,7 +1032,8 @@ class TestSyntheticFailScenarios:
             recommended_action="reduce",
             action_parameters=ReduceParameters(action="reduce", quantity=1.0, order_type="market"),
             exposure_impact=ExposureImpact(
-                sector_delta_adjusted_change=-1.0, net_directional_impact=-1.0
+                sector_delta_adjusted_change=signed_money(-1.0),
+                net_directional_impact=signed_money(-1.0),
             ),
             reduce_rationale="Trim.",
             remedy_flag="BREACH-99",

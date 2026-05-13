@@ -49,6 +49,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -459,12 +460,12 @@ def _unprocessed_fill() -> FillRecord:
         fill_id="fill-six-1",
         order_id="ord-entry-six",
         fill_timestamp=_NOW - timedelta(minutes=10),
-        fill_price=150.0,
+        fill_price=price(150.0),
         fill_quantity=10.0,
         remaining_quantity_after=0.0,
         order_status_after=OrderStatus.FILLED,
-        slippage_usd=0.0,
-        fees_usd=0.0,
+        slippage_usd=signed_money(0.0),
+        fees_usd=money(0.0),
         execution_venue="NASDAQ",
         gateway_reference="alp-fill-six-1",
         persistence_timestamp=_NOW - timedelta(minutes=9),
@@ -645,10 +646,10 @@ def _open_envelope(envelope_id: str = "ENV-REC-7") -> PMEnvelope:
                 command_type="open",
                 instrument=EquityInstrument(asset_type="equity", ticker="NVDA", direction="long"),
                 entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-                position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+                position_size=PositionSize(quantity=10.0, dollar_value=money(10_000.0)),
                 target=Target(
                     target_type="absolute_price",
-                    price=950.0,
+                    price=price(950.0),
                     pl_percentage=None,
                     pl_dollar=None,
                     order_type="limit",
@@ -660,7 +661,7 @@ def _open_envelope(envelope_id: str = "ENV-REC-7") -> PMEnvelope:
                         condition=PriceCondition(
                             underlying_trigger="NVDA",
                             comparator="<=",
-                            trigger_price=750.0,
+                            trigger_price=price(750.0),
                         ),
                         order_parameters=BracketOrderParameters(
                             order_type="market", limit_price=None

@@ -36,6 +36,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import price
 from alphamind.commands.command_models import (
     BracketOrderParameters,
     CloseCommand,
@@ -1494,7 +1495,9 @@ def _adjust_stop_command(position_id: str) -> Any:
         command_type="adjust",
         position_id=PositionId(position_id),
         adjustment_rationale="Tighten stop.",
-        new_stop_level=NewStopLevel(trigger_price=145.0, order_type="stop", limit_price=None),
+        new_stop_level=NewStopLevel(
+            trigger_price=price(145.0), order_type="stop", limit_price=None
+        ),
         new_target_level=None,
         new_time_expiration=None,
         new_event_invalidation=None,
@@ -1511,7 +1514,7 @@ def _adjust_target_command(position_id: str) -> Any:
         position_id=PositionId(position_id),
         adjustment_rationale="Raise target.",
         new_stop_level=None,
-        new_target_level=NewTargetLevel(price=210.0, order_type="limit"),
+        new_target_level=NewTargetLevel(price=price(210.0), order_type="limit"),
         new_time_expiration=None,
         new_event_invalidation=None,
         thesis_component_updates=None,

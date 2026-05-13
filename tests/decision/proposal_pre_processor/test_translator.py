@@ -17,6 +17,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.decision.analyst.models import (
     EntryOrder,
     GuardrailValidationResult,
@@ -128,14 +129,14 @@ def _invalidation_leg() -> InvalidationLeg:
         type="price",
         is_hard=True,
         condition=PriceCondition(
-            underlying_trigger=Symbol("AAPL"), comparator="<=", trigger_price=140.0
+            underlying_trigger=Symbol("AAPL"), comparator="<=", trigger_price=price(140.0)
         ),
         order_parameters=OrderParameters(order_type="market"),
     )
 
 
 def _target() -> Target:
-    return Target(target_type="absolute_price", price=200.0, dollar_pl_target=5000.0)
+    return Target(target_type="absolute_price", price=price(200.0), dollar_pl_target=money(5000.0))
 
 
 def _position_size(
@@ -145,9 +146,9 @@ def _position_size(
 ) -> PositionSize:
     return PositionSize(
         quantity=quantity,
-        dollar_value=dollar_value,
+        dollar_value=money(dollar_value),
         pct_of_portfolio=15.0,
-        premium_at_risk=premium_at_risk,
+        premium_at_risk=None if premium_at_risk is None else money(premium_at_risk),
     )
 
 
@@ -231,7 +232,7 @@ def _option_recommendation(
         instrument=InstrumentOption(
             asset_type="option",
             underlying=Symbol(underlying),
-            strike=strike,
+            strike=price(strike),
             expiration=_EXP,
             contract_type=contract_type,  # type: ignore[arg-type]
             direction=direction,  # type: ignore[arg-type]
@@ -271,14 +272,14 @@ def _strategy_recommendation(
             underlying=Symbol(underlying),
             legs=(
                 StrategyLeg(
-                    strike=150.0,
+                    strike=price(150.0),
                     expiration=_EXP,
                     contract_type="call",
                     direction="long",
                     quantity_ratio=1,
                 ),
                 StrategyLeg(
-                    strike=160.0,
+                    strike=price(160.0),
                     expiration=_EXP,
                     contract_type="call",
                     direction="short",
@@ -422,7 +423,10 @@ def test_market_order_does_not_reserve_capital() -> None:
 
 
 def _exposure_impact() -> ExposureImpact:
-    return ExposureImpact(sector_delta_adjusted_change=-5000.0, net_directional_impact=-5000.0)
+    return ExposureImpact(
+        sector_delta_adjusted_change=signed_money(-5000.0),
+        net_directional_impact=signed_money(-5000.0),
+    )
 
 
 def _strategist_guardrail() -> StrategistGuardrailResult:
@@ -498,11 +502,11 @@ def _add_assessment(
         action_parameters=AddParameters(
             action="add",
             additional_quantity=additional_quantity,
-            additional_dollar_value=additional_dollar_value,
+            additional_dollar_value=money(additional_dollar_value),
             entry_order=StrategistEntryOrder(type="market"),
         ),
         exposure_impact=ExposureImpact(
-            sector_delta_adjusted_change=7500.0, net_directional_impact=7500.0
+            sector_delta_adjusted_change=money(7500.0), net_directional_impact=money(7500.0)
         ),
         guardrail_validation_result=_strategist_guardrail(),
         add_conviction_justification="Strong conviction",
@@ -526,7 +530,7 @@ def _adjust_bracket_assessment(
         action_parameters=AdjustBracketParameters(
             action="adjust-bracket",
             new_stop_level=BracketAdjustNewStopLevel(
-                trigger_price=140.0,
+                trigger_price=price(140.0),
                 order_type="market",
             ),
         ),

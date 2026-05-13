@@ -21,6 +21,7 @@ from alphamind._kernel.ids import (
     OrderId,
     PositionId,
 )
+from alphamind._kernel.money import money, price
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -289,10 +290,10 @@ def _open_command(
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker=underlying, direction="long"),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-        position_size=PositionSize(quantity=quantity, dollar_value=dollar_value),
+        position_size=PositionSize(quantity=quantity, dollar_value=money(dollar_value)),
         target=Target(
             target_type="absolute_price",
-            price=950.0,
+            price=price(950.0),
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",
@@ -304,7 +305,7 @@ def _open_command(
                 condition=PriceCondition(
                     underlying_trigger=underlying,
                     comparator="<=",
-                    trigger_price=750.0,
+                    trigger_price=price(750.0),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),
@@ -330,7 +331,7 @@ def _add_command(position_id: str = "POS-NVDA-001") -> AddCommand:
         command_type="add",
         position_id=PositionId(position_id),
         additional_quantity=5.0,
-        additional_dollar_value=5_000.0,
+        additional_dollar_value=money(5_000.0),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
         thesis_addition_component=OMSThesisComponent(
             component_type="entry_rationale",

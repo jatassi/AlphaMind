@@ -299,7 +299,7 @@ class TestGetAccount:
         result = qs.get_account()
 
         with pytest.raises((TypeError, ValidationError)):
-            result.cash = 0.0
+            result.cash = money(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -1176,7 +1176,7 @@ class TestGetOptionContracts:
         (snap,) = qs.get_option_contracts(underlying="NVDA", expiration=date(2026, 6, 19))
 
         with pytest.raises((TypeError, ValidationError)):
-            snap.strike = 200.0
+            snap.strike = price(200.0)
 
     def test_paginates_through_next_page_token(self) -> None:
         """Heavily-listed underlyings (SPY/QQQ) routinely surface > 100

@@ -35,6 +35,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price, signed_money
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.constants import LISTED_OPTION_CONTRACT_MULTIPLIER
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
@@ -772,12 +773,12 @@ def _make_unprocessed_fill(
         fill_id=fill_id,
         order_id=order_id,
         fill_timestamp=ts,
-        fill_price=fill_price,
+        fill_price=price(fill_price),
         fill_quantity=fill_quantity,
         remaining_quantity_after=remaining_quantity_after,
         order_status_after=order_status_after,
-        slippage_usd=slippage_usd,
-        fees_usd=fees_usd,
+        slippage_usd=None if slippage_usd is None else signed_money(slippage_usd),
+        fees_usd=money(fees_usd),
         execution_venue="OPRA",
         gateway_reference=f"alp-{fill_id}",
         persistence_timestamp=ts + timedelta(seconds=1),
@@ -1009,13 +1010,13 @@ async def test_all_legs_filled_atomic_open_with_signed_net_cost_basis(
         ("leg-short-call", 3.50),
         ("leg-long-call", 1.50),
     )
-    for idx, (leg_order_id, price) in enumerate(fill_specs):
+    for idx, (leg_order_id, leg_price) in enumerate(fill_specs):
         await _append_fill(
             factory,
             _make_unprocessed_fill(
                 fill_id=f"fill-{leg_order_id}",
                 order_id=leg_order_id,
-                fill_price=price,
+                fill_price=leg_price,
                 fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
             ),
         )
@@ -1143,14 +1144,16 @@ async def test_long_call_spread_has_positive_net_debit(
     await _seed_drawdown_state(factory)
 
     # Long call @ $5.00, short call @ $2.00. Net debit = (5.00 - 2.00) * 2 * 100 = $600.
-    for idx, (leg_id, price) in enumerate((("leg-long-lower", 5.00), ("leg-short-upper", 2.00))):
+    for idx, (leg_id, leg_price) in enumerate(
+        (("leg-long-lower", 5.00), ("leg-short-upper", 2.00))
+    ):
         await _append_fill(
             factory,
             _make_unprocessed_fill(
                 fill_id=f"fill-{leg_id}",
                 order_id=leg_id,
                 fill_quantity=2.0,
-                fill_price=price,
+                fill_price=leg_price,
                 fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
             ),
         )
@@ -1240,13 +1243,15 @@ async def test_short_put_spread_has_negative_net_credit(
     await _seed_drawdown_state(factory)
 
     # Short put @ $4.00, long put @ $1.50. Net credit = (4.00 - 1.50) * 1 * 100 = $250.
-    for idx, (leg_id, price) in enumerate((("leg-short-higher", 4.00), ("leg-long-lower", 1.50))):
+    for idx, (leg_id, leg_price) in enumerate(
+        (("leg-short-higher", 4.00), ("leg-long-lower", 1.50))
+    ):
         await _append_fill(
             factory,
             _make_unprocessed_fill(
                 fill_id=f"fill-{leg_id}",
                 order_id=leg_id,
-                fill_price=price,
+                fill_price=leg_price,
                 fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
             ),
         )
@@ -1303,7 +1308,7 @@ async def test_staggered_legs_only_open_at_last_filled_event(
     await _seed_drawdown_state(factory)
 
     # T1 — 3 of 4 legs fill.
-    for idx, (leg_id, price) in enumerate(
+    for idx, (leg_id, leg_price) in enumerate(
         (
             ("leg-short-put", 4.20),
             ("leg-long-put", 1.80),
@@ -1315,7 +1320,7 @@ async def test_staggered_legs_only_open_at_last_filled_event(
             _make_unprocessed_fill(
                 fill_id=f"fill-t1-{leg_id}",
                 order_id=leg_id,
-                fill_price=price,
+                fill_price=leg_price,
                 fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
             ),
         )
@@ -1535,13 +1540,13 @@ async def test_cancel_mid_fill_writes_bracket_incomplete_warning(
     await _set_order_status(factory, "leg-long-call", OrderStatus.CANCELLED)
 
     # Per-leg fills for the 2 legs that did fill before cancel.
-    for idx, (leg_id, price) in enumerate((("leg-short-put", 4.20), ("leg-long-put", 1.80))):
+    for idx, (leg_id, leg_price) in enumerate((("leg-short-put", 4.20), ("leg-long-put", 1.80))):
         await _append_fill(
             factory,
             _make_unprocessed_fill(
                 fill_id=f"fill-{leg_id}",
                 order_id=leg_id,
-                fill_price=price,
+                fill_price=leg_price,
                 fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
             ),
         )
@@ -1682,7 +1687,7 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
     # short leg bought back at 3.00 (entry was 2.00, -1.00/contract). Realised
     # P/L = long(+2 * 2 contracts * multiplier 100 * sign +1) +
     # short(+1 * 2 contracts * multiplier 100 * sign -1) = +400 - 200 = +200.
-    for idx, (leg_id, price) in enumerate(
+    for idx, (leg_id, leg_price) in enumerate(
         (("close-leg-long-lower", 7.00), ("close-leg-short-upper", 3.00))
     ):
         await _append_fill(
@@ -1691,7 +1696,7 @@ async def test_strategy_close_transitions_open_to_closed_with_net_realized_pnl(
                 fill_id=f"fill-{leg_id}",
                 order_id=leg_id,
                 fill_quantity=2.0,
-                fill_price=price,
+                fill_price=leg_price,
                 fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
             ),
         )
@@ -1829,7 +1834,7 @@ async def test_strategy_add_recomputes_average_cost_basis(
     await _seed_drawdown_state(factory)
 
     # ADD fills: long @ $6.00, short @ $2.50 (different premium → weighted avg shift).
-    for idx, (leg_id, price) in enumerate(
+    for idx, (leg_id, leg_price) in enumerate(
         (("add-leg-long-lower", 6.00), ("add-leg-short-upper", 2.50))
     ):
         await _append_fill(
@@ -1838,7 +1843,7 @@ async def test_strategy_add_recomputes_average_cost_basis(
                 fill_id=f"fill-{leg_id}",
                 order_id=leg_id,
                 fill_quantity=2.0,
-                fill_price=price,
+                fill_price=leg_price,
                 fill_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=idx),
             ),
         )

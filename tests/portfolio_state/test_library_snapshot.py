@@ -16,6 +16,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -99,8 +100,8 @@ def _make_pydantic_snapshot(
     """Build a minimal PortfolioStateSnapshot for testing."""
     if directional_exposure is None:
         directional_exposure = DirectionalExposure(
-            total_long_delta_adjusted_usd=0.0,
-            total_short_delta_adjusted_usd=0.0,
+            total_long_delta_adjusted_usd=money(0.0),
+            total_short_delta_adjusted_usd=money(0.0),
             net_directional_pct_of_portfolio=0.0,
             gross_pct_of_portfolio=0.0,
         )
@@ -140,12 +141,17 @@ def _make_pydantic_snapshot(
         )
 
     pnl = PortfolioPnL(
-        total_unrealized_pnl_usd=0.0,
+        total_unrealized_pnl_usd=money(0.0),
         total_unrealized_pnl_pct_of_portfolio=0.0,
-        daily_realized_pnl_usd=0.0,
-        daily_total_pnl_usd=0.0,
-        cumulative_realized_pnl_usd=0.0,
-        rolling_realized_pnl={"1d": 0.0, "3d": 0.0, "5d": 0.0, "20d": 0.0},
+        daily_realized_pnl_usd=money(0.0),
+        daily_total_pnl_usd=money(0.0),
+        cumulative_realized_pnl_usd=money(0.0),
+        rolling_realized_pnl={
+            "1d": money(0.0),
+            "3d": money(0.0),
+            "5d": money(0.0),
+            "20d": money(0.0),
+        },
         win_rate_pct=None,
         average_win_size_usd=None,
         average_loss_size_usd=None,
@@ -440,16 +446,16 @@ def test_sector_exposure_pct_gross() -> None:
     sector_entries = [
         SectorExposureEntry(
             sector="tech",
-            long_delta_adjusted_usd=8_000.0,
-            short_delta_adjusted_usd=0.0,
+            long_delta_adjusted_usd=money(8_000.0),
+            short_delta_adjusted_usd=money(0.0),
             long_pct_of_portfolio=8.0,
             short_pct_of_portfolio=0.0,
             long_short_ratio=None,
         ),
         SectorExposureEntry(
             sector="energy",
-            long_delta_adjusted_usd=0.0,
-            short_delta_adjusted_usd=3_000.0,
+            long_delta_adjusted_usd=money(0.0),
+            short_delta_adjusted_usd=money(3_000.0),
             long_pct_of_portfolio=0.0,
             short_pct_of_portfolio=3.0,
             long_short_ratio=None,
@@ -471,8 +477,8 @@ def test_net_long_pct_net_short_pct() -> None:
     """AC: net_long_pct and net_short_pct non-negative; difference = directional_net."""
     # net short scenario: net_directional = -12.0
     dir_exp = DirectionalExposure(
-        total_long_delta_adjusted_usd=5_000.0,
-        total_short_delta_adjusted_usd=17_000.0,
+        total_long_delta_adjusted_usd=money(5_000.0),
+        total_short_delta_adjusted_usd=money(17_000.0),
         net_directional_pct_of_portfolio=-12.0,
         gross_pct_of_portfolio=22.0,
     )
@@ -486,8 +492,8 @@ def test_net_long_pct_net_short_pct() -> None:
 
     # net long scenario
     dir_exp_long = DirectionalExposure(
-        total_long_delta_adjusted_usd=15_000.0,
-        total_short_delta_adjusted_usd=3_000.0,
+        total_long_delta_adjusted_usd=money(15_000.0),
+        total_short_delta_adjusted_usd=money(3_000.0),
         net_directional_pct_of_portfolio=12.0,
         gross_pct_of_portfolio=18.0,
     )
@@ -507,8 +513,8 @@ def test_net_long_pct_net_short_pct() -> None:
 def test_gross_pct_passthrough() -> None:
     """AC: gross_pct = directional_exposure.gross_pct_of_portfolio."""
     dir_exp = DirectionalExposure(
-        total_long_delta_adjusted_usd=20_000.0,
-        total_short_delta_adjusted_usd=5_000.0,
+        total_long_delta_adjusted_usd=money(20_000.0),
+        total_short_delta_adjusted_usd=money(5_000.0),
         net_directional_pct_of_portfolio=15.0,
         gross_pct_of_portfolio=25.0,
     )
@@ -747,16 +753,16 @@ def test_total_short_pct_and_single_short_max_pct() -> None:
     sector_entries = [
         SectorExposureEntry(
             sector="energy",
-            long_delta_adjusted_usd=0.0,
-            short_delta_adjusted_usd=5_500.0,
+            long_delta_adjusted_usd=money(0.0),
+            short_delta_adjusted_usd=money(5_500.0),
             long_pct_of_portfolio=0.0,
             short_pct_of_portfolio=5.5,
             long_short_ratio=None,
         ),
         SectorExposureEntry(
             sector="financials",
-            long_delta_adjusted_usd=0.0,
-            short_delta_adjusted_usd=5_000.0,
+            long_delta_adjusted_usd=money(0.0),
+            short_delta_adjusted_usd=money(5_000.0),
             long_pct_of_portfolio=0.0,
             short_pct_of_portfolio=2.0,
             long_short_ratio=None,
@@ -959,32 +965,32 @@ def test_full_normal_scenario() -> None:
         regt_excess_lifetime_usd=0.0,
     )
     dir_exp = DirectionalExposure(
-        total_long_delta_adjusted_usd=18_200.0,
-        total_short_delta_adjusted_usd=5_500.0,
+        total_long_delta_adjusted_usd=money(18_200.0),
+        total_short_delta_adjusted_usd=money(5_500.0),
         net_directional_pct_of_portfolio=12.7,
         gross_pct_of_portfolio=23.7,
     )
     sector_entries = [
         SectorExposureEntry(
             sector="tech",
-            long_delta_adjusted_usd=17_500.0,
-            short_delta_adjusted_usd=0.0,
+            long_delta_adjusted_usd=money(17_500.0),
+            short_delta_adjusted_usd=money(0.0),
             long_pct_of_portfolio=18.45,
             short_pct_of_portfolio=0.0,
             long_short_ratio=None,
         ),
         SectorExposureEntry(
             sector="energy",
-            long_delta_adjusted_usd=0.0,
-            short_delta_adjusted_usd=5_500.0,
+            long_delta_adjusted_usd=money(0.0),
+            short_delta_adjusted_usd=money(5_500.0),
             long_pct_of_portfolio=0.0,
             short_pct_of_portfolio=5.79,
             long_short_ratio=None,
         ),
         SectorExposureEntry(
             sector="semis",
-            long_delta_adjusted_usd=700.0,
-            short_delta_adjusted_usd=0.0,
+            long_delta_adjusted_usd=money(700.0),
+            short_delta_adjusted_usd=money(0.0),
             long_pct_of_portfolio=0.74,
             short_pct_of_portfolio=0.0,
             long_short_ratio=None,

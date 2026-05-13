@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 from alphamind._kernel.ids import (
     Symbol,
 )
+from alphamind._kernel.money import Price, money, price, signed_money
 from alphamind.execution.state_persistence.invocation_context.records import (
     InvocationRecord,
     ProcessLifetimeRecord,
@@ -175,7 +176,7 @@ def _fill_record(
     order_id: str = "ord-1",
     fill_timestamp: datetime = FILL_AT,
     fill_quantity: float = 5.0,
-    fill_price: float = 150.25,
+    fill_price: Price | None = None,
     processing_status: FillProcessingStatus = FillProcessingStatus.UNPROCESSED,
     processing_invocation_id: str | None = None,
     processing_timestamp: datetime | None = None,
@@ -183,6 +184,8 @@ def _fill_record(
     live_execution_estimate: LiveExecutionEstimate | None = None,
     persistence_timestamp: datetime = PERSISTED_AT,
 ) -> FillRecord:
+    if fill_price is None:
+        fill_price = price(150.25)
     return FillRecord(
         fill_id=fill_id,
         order_id=order_id,
@@ -191,8 +194,8 @@ def _fill_record(
         fill_quantity=fill_quantity,
         remaining_quantity_after=10.0 - fill_quantity,
         order_status_after=OrderStatus.PARTIALLY_FILLED,
-        slippage_usd=0.05,
-        fees_usd=0.10,
+        slippage_usd=signed_money(0.05),
+        fees_usd=money(0.10),
         execution_venue="NASDAQ",
         gateway_reference="alp-1",
         persistence_timestamp=persistence_timestamp,
@@ -296,13 +299,13 @@ class TestFillRecordRoundTrip:
 
     def test_processed_fill_round_trips_with_attribution(self, session: Session) -> None:
         attribution = RegTMarginAttribution(
-            regt_margin_before=10000.0,
-            regt_margin_after=11500.0,
-            regt_marginal_consumption=1500.0,
-            pm_equivalent_before=8000.0,
-            pm_equivalent_after=9000.0,
-            pm_marginal_consumption=1000.0,
-            regt_excess_over_pm=500.0,
+            regt_margin_before=signed_money(10000.0),
+            regt_margin_after=signed_money(11500.0),
+            regt_marginal_consumption=signed_money(1500.0),
+            pm_equivalent_before=signed_money(8000.0),
+            pm_equivalent_after=signed_money(9000.0),
+            pm_marginal_consumption=signed_money(1000.0),
+            regt_excess_over_pm=signed_money(500.0),
             pm_model_version="ibkr_mirror_v1_2025Q3",
         )
         record = _fill_record(

@@ -18,6 +18,7 @@ from alphamind._kernel.ids import (
     InvocationId,
     Symbol,
 )
+from alphamind._kernel.money import money, price
 from alphamind.decision.analyst.models import (
     AnalystOutput,
     EntryOrder,
@@ -221,16 +222,20 @@ def _make_recommendation(**overrides: Any) -> Recommendation:
         "underlying": "NVDA",
         "sector": "semis",
         "conviction_level": 4,
-        "entry_order": EntryOrder(type="limit", limit_price=842.50),
-        "position_size": PositionSize(quantity=4, dollar_value=3370.0, pct_of_portfolio=3.37),
-        "target": Target(target_type="absolute_price", price=890.0, dollar_pl_target=190.0),
+        "entry_order": EntryOrder(type="limit", limit_price=price(842.50)),
+        "position_size": PositionSize(
+            quantity=4, dollar_value=money(3370.0), pct_of_portfolio=3.37
+        ),
+        "target": Target(
+            target_type="absolute_price", price=price(890.0), dollar_pl_target=money(190.0)
+        ),
         "invalidation_legs": (
             InvalidationLeg(
                 leg_id="INV-1",
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=820.0
+                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=price(820.0)
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             ),
@@ -446,17 +451,17 @@ class TestEntryOrderInvariant:
             EntryOrder(type="limit")
 
     def test_limit_with_limit_price_accepted(self) -> None:
-        eo = EntryOrder(type="limit", limit_price=100.0)
+        eo = EntryOrder(type="limit", limit_price=price(100.0))
         assert eo.limit_price == 100.0
 
     def test_stop_limit_requires_both_prices(self) -> None:
         with pytest.raises(ValidationError, match=r"(?i)stop_price|limit_price"):
-            EntryOrder(type="stop_limit", limit_price=100.0)
+            EntryOrder(type="stop_limit", limit_price=price(100.0))
         with pytest.raises(ValidationError, match=r"(?i)limit_price|stop_price"):
-            EntryOrder(type="stop_limit", stop_price=99.0)
+            EntryOrder(type="stop_limit", stop_price=price(99.0))
 
     def test_stop_limit_with_both_prices_accepted(self) -> None:
-        eo = EntryOrder(type="stop_limit", limit_price=100.0, stop_price=99.0)
+        eo = EntryOrder(type="stop_limit", limit_price=price(100.0), stop_price=price(99.0))
         assert eo.limit_price == 100.0
         assert eo.stop_price == 99.0
 
@@ -468,33 +473,33 @@ class TestEntryOrderInvariant:
 
 class TestTargetInvariant:
     def test_absolute_price_no_extras_required(self) -> None:
-        t = Target(target_type="absolute_price", price=890.0, dollar_pl_target=190.0)
+        t = Target(target_type="absolute_price", price=price(890.0), dollar_pl_target=money(190.0))
         assert t.pl_percentage is None
         assert t.pl_dollar is None
 
     def test_pl_percentage_requires_pct(self) -> None:
         with pytest.raises(ValidationError, match=r"(?i)pl_percentage"):
-            Target(target_type="pl_percentage", price=890.0, dollar_pl_target=190.0)
+            Target(target_type="pl_percentage", price=price(890.0), dollar_pl_target=money(190.0))
 
     def test_pl_percentage_with_pct_accepted(self) -> None:
         t = Target(
             target_type="pl_percentage",
-            price=890.0,
-            dollar_pl_target=190.0,
+            price=price(890.0),
+            dollar_pl_target=money(190.0),
             pl_percentage=80.0,
         )
         assert t.pl_percentage == 80.0
 
     def test_pl_dollar_requires_dollar(self) -> None:
         with pytest.raises(ValidationError, match=r"(?i)pl_dollar"):
-            Target(target_type="pl_dollar", price=890.0, dollar_pl_target=190.0)
+            Target(target_type="pl_dollar", price=price(890.0), dollar_pl_target=money(190.0))
 
     def test_pl_dollar_with_dollar_accepted(self) -> None:
         t = Target(
             target_type="pl_dollar",
-            price=890.0,
-            dollar_pl_target=190.0,
-            pl_dollar=190.0,
+            price=price(890.0),
+            dollar_pl_target=money(190.0),
+            pl_dollar=money(190.0),
         )
         assert t.pl_dollar == 190.0
 
@@ -512,7 +517,7 @@ class TestInvalidationLegInvariant:
                 type="price",
                 is_hard=False,
                 condition=PriceCondition(
-                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=820.0
+                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=price(820.0)
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             )
@@ -524,7 +529,7 @@ class TestInvalidationLegInvariant:
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=820.0
+                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=price(820.0)
                 ),
                 order_parameters=None,
             )
@@ -535,7 +540,7 @@ class TestInvalidationLegInvariant:
             type="price",
             is_hard=True,
             condition=PriceCondition(
-                underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=820.0
+                underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=price(820.0)
             ),
             order_parameters=OrderParameters(order_type="market"),
         )
@@ -685,7 +690,7 @@ class TestInstrumentUnion:
             instrument=InstrumentOption(
                 asset_type="option",
                 underlying=Symbol("NVDA"),
-                strike=850.0,
+                strike=price(850.0),
                 expiration=date(2026, 5, 17),
                 contract_type="call",
                 direction="long",
@@ -697,14 +702,14 @@ class TestInstrumentUnion:
     def test_strategy_dispatches(self) -> None:
         legs = (
             StrategyLeg(
-                strike=850.0,
+                strike=price(850.0),
                 expiration=date(2026, 5, 17),
                 contract_type="call",
                 direction="long",
                 quantity_ratio=1,
             ),
             StrategyLeg(
-                strike=900.0,
+                strike=price(900.0),
                 expiration=date(2026, 5, 17),
                 contract_type="call",
                 direction="short",
@@ -730,7 +735,7 @@ class TestInstrumentUnion:
                 underlying=Symbol("NVDA"),
                 legs=(
                     StrategyLeg(
-                        strike=850.0,
+                        strike=price(850.0),
                         expiration=date(2026, 5, 17),
                         contract_type="call",
                         direction="long",

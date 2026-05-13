@@ -16,6 +16,7 @@ from alphamind._kernel.ids import (
     InvocationId,
     Symbol,
 )
+from alphamind._kernel.money import money, price
 from alphamind.analysis.synthesizer.models import BriefSource
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.decision.analyst.models import (
@@ -93,16 +94,20 @@ def _make_recommendation(**overrides: Any) -> Recommendation:
         "underlying": "NVDA",
         "sector": "semis",
         "conviction_level": 4,
-        "entry_order": EntryOrder(type="limit", limit_price=842.50),
-        "position_size": PositionSize(quantity=4, dollar_value=3370.0, pct_of_portfolio=3.37),
-        "target": Target(target_type="absolute_price", price=890.0, dollar_pl_target=190.0),
+        "entry_order": EntryOrder(type="limit", limit_price=price(842.50)),
+        "position_size": PositionSize(
+            quantity=4, dollar_value=money(3370.0), pct_of_portfolio=3.37
+        ),
+        "target": Target(
+            target_type="absolute_price", price=price(890.0), dollar_pl_target=money(190.0)
+        ),
         "invalidation_legs": (
             InvalidationLeg(
                 leg_id="INV-1",
                 type="price",
                 is_hard=True,
                 condition=PriceCondition(
-                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=820.0
+                    underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=price(820.0)
                 ),
                 order_parameters=OrderParameters(order_type="market"),
             ),
@@ -194,7 +199,9 @@ class TestLegIdPairing:
                     type="price",
                     is_hard=True,
                     condition=PriceCondition(
-                        underlying_trigger=Symbol("NVDA"), comparator="<=", trigger_price=820.0
+                        underlying_trigger=Symbol("NVDA"),
+                        comparator="<=",
+                        trigger_price=price(820.0),
                     ),
                     order_parameters=OrderParameters(order_type="market"),
                 ),
@@ -248,14 +255,17 @@ class TestUnderlyingMatchesInstrument:
             instrument=InstrumentOption(
                 asset_type="option",
                 underlying=Symbol("AMD"),
-                strike=180.0,
+                strike=price(180.0),
                 expiration=date(2026, 5, 16),
                 contract_type="call",
                 direction="long",
             ),
             underlying="NVDA",
             position_size=PositionSize(
-                quantity=4, dollar_value=3370.0, pct_of_portfolio=3.37, premium_at_risk=2000.0
+                quantity=4,
+                dollar_value=money(3370.0),
+                pct_of_portfolio=3.37,
+                premium_at_risk=money(2000.0),
             ),
         )
         output = _make_output(recommendations=(rec,))
@@ -276,14 +286,14 @@ class TestUnderlyingMatchesInstrument:
                 underlying=Symbol("NVDA"),
                 legs=(
                     StrategyLeg(
-                        strike=820.0,
+                        strike=price(820.0),
                         expiration=date(2026, 5, 16),
                         contract_type="call",
                         direction="long",
                         quantity_ratio=1,
                     ),
                     StrategyLeg(
-                        strike=860.0,
+                        strike=price(860.0),
                         expiration=date(2026, 5, 16),
                         contract_type="call",
                         direction="short",
@@ -293,7 +303,10 @@ class TestUnderlyingMatchesInstrument:
             ),
             underlying="NVDA",
             position_size=PositionSize(
-                quantity=4, dollar_value=3370.0, pct_of_portfolio=3.37, premium_at_risk=1500.0
+                quantity=4,
+                dollar_value=money(3370.0),
+                pct_of_portfolio=3.37,
+                premium_at_risk=money(1500.0),
             ),
         )
         output = _make_output(recommendations=(rec,))
@@ -417,14 +430,17 @@ class TestAssetTypePermitted:
             instrument=InstrumentOption(
                 asset_type="option",
                 underlying=Symbol("NVDA"),
-                strike=820.0,
+                strike=price(820.0),
                 expiration=date(2026, 5, 16),
                 contract_type="call",
                 direction="long",
             ),
             underlying="NVDA",
             position_size=PositionSize(
-                quantity=1, dollar_value=2000.0, pct_of_portfolio=2.0, premium_at_risk=2000.0
+                quantity=1,
+                dollar_value=money(2000.0),
+                pct_of_portfolio=2.0,
+                premium_at_risk=money(2000.0),
             ),
             guardrail_validation_result=_make_guardrail_result(
                 overall="FAIL",
@@ -447,14 +463,17 @@ class TestAssetTypePermitted:
             instrument=InstrumentOption(
                 asset_type="option",
                 underlying=Symbol("NVDA"),
-                strike=820.0,
+                strike=price(820.0),
                 expiration=date(2026, 5, 16),
                 contract_type="call",
                 direction="long",
             ),
             underlying="NVDA",
             position_size=PositionSize(
-                quantity=1, dollar_value=2000.0, pct_of_portfolio=2.0, premium_at_risk=2000.0
+                quantity=1,
+                dollar_value=money(2000.0),
+                pct_of_portfolio=2.0,
+                premium_at_risk=money(2000.0),
             ),
         )
         output = _make_output(recommendations=(rec,))
@@ -592,7 +611,9 @@ class TestConvictionBandWarn:
         """conviction 4 (band 2.0-4.0%) but pct=5.5% emits the rule warning."""
         rec = _make_recommendation(
             conviction_level=4,
-            position_size=PositionSize(quantity=10, dollar_value=5500.0, pct_of_portfolio=5.5),
+            position_size=PositionSize(
+                quantity=10, dollar_value=money(5500.0), pct_of_portfolio=5.5
+            ),
         )
         output = _make_output(recommendations=(rec,))
         result = validate_analyst_output(
@@ -608,7 +629,9 @@ class TestConvictionBandWarn:
     def test_size_inside_band_no_warning(self) -> None:
         rec = _make_recommendation(
             conviction_level=4,
-            position_size=PositionSize(quantity=4, dollar_value=3370.0, pct_of_portfolio=3.37),
+            position_size=PositionSize(
+                quantity=4, dollar_value=money(3370.0), pct_of_portfolio=3.37
+            ),
         )
         output = _make_output(recommendations=(rec,))
         result = validate_analyst_output(
@@ -623,7 +646,7 @@ class TestConvictionBandWarn:
         """Below the band still emits the warning."""
         rec = _make_recommendation(
             conviction_level=4,
-            position_size=PositionSize(quantity=1, dollar_value=500.0, pct_of_portfolio=0.5),
+            position_size=PositionSize(quantity=1, dollar_value=money(500.0), pct_of_portfolio=0.5),
         )
         output = _make_output(recommendations=(rec,))
         result = validate_analyst_output(
@@ -638,7 +661,9 @@ class TestConvictionBandWarn:
         """Passing conviction_bands overrides DEFAULT_CONVICTION_BANDS."""
         rec = _make_recommendation(
             conviction_level=4,
-            position_size=PositionSize(quantity=4, dollar_value=3370.0, pct_of_portfolio=3.37),
+            position_size=PositionSize(
+                quantity=4, dollar_value=money(3370.0), pct_of_portfolio=3.37
+            ),
         )
         output = _make_output(recommendations=(rec,))
         # Tightened band: 4 = (1.0, 2.0); pct=3.37 sits outside.

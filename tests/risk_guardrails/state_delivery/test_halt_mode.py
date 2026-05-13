@@ -16,6 +16,7 @@ from alphamind._kernel.ids import (
     PositionId,
     Symbol,
 )
+from alphamind._kernel.money import money, signed_money
 from alphamind._kernel.regime import (
     DrawdownTier,
     RegimeLabel,
@@ -251,12 +252,17 @@ def _make_drawdown(
 
 def _make_pnl(*, daily_total_pnl_usd: float = -12_500.0) -> PortfolioPnL:
     return PortfolioPnL(
-        total_unrealized_pnl_usd=-10_000.0,
+        total_unrealized_pnl_usd=signed_money(-10_000.0),
         total_unrealized_pnl_pct_of_portfolio=-2.0,
-        daily_realized_pnl_usd=-2_500.0,
-        daily_total_pnl_usd=daily_total_pnl_usd,
-        cumulative_realized_pnl_usd=20_000.0,
-        rolling_realized_pnl={"1d": -2_500.0, "3d": -1_500.0, "5d": 0.0, "20d": 8_000.0},
+        daily_realized_pnl_usd=signed_money(-2_500.0),
+        daily_total_pnl_usd=signed_money(daily_total_pnl_usd),
+        cumulative_realized_pnl_usd=money(20_000.0),
+        rolling_realized_pnl={
+            "1d": signed_money(-2_500.0),
+            "3d": signed_money(-1_500.0),
+            "5d": money(0.0),
+            "20d": money(8_000.0),
+        },
         win_rate_pct=None,
         average_win_size_usd=None,
         average_loss_size_usd=None,
@@ -266,8 +272,8 @@ def _make_pnl(*, daily_total_pnl_usd: float = -12_500.0) -> PortfolioPnL:
 
 def _make_directional() -> DirectionalExposure:
     return DirectionalExposure(
-        total_long_delta_adjusted_usd=210_000.0,
-        total_short_delta_adjusted_usd=50_000.0,
+        total_long_delta_adjusted_usd=money(210_000.0),
+        total_short_delta_adjusted_usd=money(50_000.0),
         net_directional_pct_of_portfolio=32.0,
         gross_pct_of_portfolio=78.0,
     )

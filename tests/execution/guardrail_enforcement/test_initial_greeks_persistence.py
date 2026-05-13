@@ -56,6 +56,7 @@ from alphamind._kernel.ids import (
     InvocationId,
     RecommendationId,
 )
+from alphamind._kernel.money import money, price
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -365,16 +366,16 @@ def _open_options_command() -> OpenCommand:
         instrument=OptionInstrument(
             asset_type="option",
             underlying=_TICKER,
-            strike=_STRIKE,
+            strike=price(_STRIKE),
             expiration=_EXPIRATION_STR,
             contract_type="call",
             direction="long",
         ),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-        position_size=PositionSize(quantity=1.0, dollar_value=1_000.0),
+        position_size=PositionSize(quantity=1.0, dollar_value=money(1_000.0)),
         target=Target(
             target_type="absolute_price",
-            price=120.0,
+            price=price(120.0),
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",
@@ -386,7 +387,7 @@ def _open_options_command() -> OpenCommand:
                 condition=PriceCondition(
                     underlying_trigger=_TICKER,
                     comparator="<=",
-                    trigger_price=80.0,
+                    trigger_price=price(80.0),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),
