@@ -32,6 +32,7 @@ ALP-459 (this story) tightens the scaffolding with five additional contracts:
 from __future__ import annotations
 
 import configparser
+import fcntl
 import re
 import subprocess
 import tomllib
@@ -42,6 +43,32 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# Cross-process advisory lock file used to serialise the two tests that
+# call ``uv run lint-imports`` against a possibly-mutated source tree.
+# Under pytest-xdist, each worker is its own process — without the lock,
+# the synthetic-violation test can mutate ``alphamind.decision`` while a
+# different worker is running ``lint-imports`` to assert the codebase is
+# clean. The lock file lives under the worktree's ``.pytest_cache``
+# directory so it survives across tests but is wiped between full runs.
+_LINT_IMPORTS_LOCK = PROJECT_ROOT / ".pytest_cache" / "lint-imports.lock"
+
+
+@contextmanager
+def _lint_imports_lock() -> Iterator[None]:
+    """Acquire an exclusive cross-worker lock around a ``lint-imports`` run.
+
+    Uses POSIX ``flock``; macOS and Linux (the supported developer/CI
+    platforms) both implement it. The lock file is created lazily.
+    """
+    _LINT_IMPORTS_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    with _LINT_IMPORTS_LOCK.open("a") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
 
 # Audit-finding labels (L1, L6, L9, L10, ...). Comments are lowered before
 # matching, so the pattern uses lowercase ``l``.
@@ -158,15 +185,20 @@ def test_lint_imports_passes_against_current_codebase() -> None:
     This is the load-bearing assertion of the story: the scaffolded
     contracts must encode rules that are *already* satisfied. Tightening
     happens in ALP-459 once the cycle-fix stories land.
+
+    Serialised via ``_lint_imports_lock`` so a parallel xdist worker
+    running the synthetic-violation test cannot transiently break the
+    codebase while this test is asserting it's clean.
     """
-    result = subprocess.run(
-        ["uv", "run", "lint-imports"],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=600,
-    )
+    with _lint_imports_lock():
+        result = subprocess.run(
+            ["uv", "run", "lint-imports"],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=600,
+        )
     assert result.returncode == 0, (
         f"`uv run lint-imports` exited {result.returncode} against the current codebase.\n"
         f"stdout:\n{result.stdout}\n"
@@ -502,7 +534,10 @@ def test_synthetic_violation_is_caught_by_lint_imports() -> None:
     assert target.exists(), f"expected synthetic-violation target {target} to exist"
 
     violation_line = "from alphamind.execution.oms import command_ids  # noqa"
-    with _temporary_synthetic_violation(target, violation_line):
+    # The mutation+lint window is held exclusive against every other
+    # worker so the parallel "codebase is clean" test cannot observe
+    # the transient broken state.
+    with _lint_imports_lock(), _temporary_synthetic_violation(target, violation_line):
         result = subprocess.run(
             ["uv", "run", "lint-imports"],
             cwd=PROJECT_ROOT,
