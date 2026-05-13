@@ -42,7 +42,7 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -691,8 +691,8 @@ def _load_prior_active_risk_parameters(snapshot_path: str) -> ActiveRiskParamete
 def _make_repository_providers(
     active_risk_parameters: ActiveRiskParameterSet,
 ) -> tuple[
-    Callable[[], Awaitable[ActiveRiskParameterSet]],
-    Callable[[str], Awaitable[ActiveRiskParameterSet]],
+    Callable[[], ActiveRiskParameterSet],
+    Callable[[str], ActiveRiskParameterSet],
 ]:
     """Build the two closure-providers ``SqlPortfolioStateRepository`` consumes.
 
@@ -702,17 +702,15 @@ def _make_repository_providers(
     that was active at that point. When the snapshot file is missing on disk
     (first-ever invocation, archive relocation), the prior provider falls
     back to the current set so the snapshot assembler stays operational.
+
+    Both closures are synchronous per ALP-454 Pre-resolved decision (C):
+    the SQL repository surface is sync, so its provider seam is too.
     """
 
-    # ``async def`` without ``await`` here is intentional: both closures
-    # satisfy the ``Callable[[...], Awaitable[ActiveRiskParameterSet]]``
-    # Protocol that ``SqlPortfolioStateRepository`` awaits at every
-    # ``get_active_risk_parameters`` / ``get_prior_invocation_context``
-    # call (see ``state_persistence/repository/sql_repository.py``).
-    async def _active_provider() -> ActiveRiskParameterSet:
+    def _active_provider() -> ActiveRiskParameterSet:
         return active_risk_parameters
 
-    async def _prior_provider(snapshot_path: str) -> ActiveRiskParameterSet:
+    def _prior_provider(snapshot_path: str) -> ActiveRiskParameterSet:
         try:
             return _load_prior_active_risk_parameters(snapshot_path)
         except FileNotFoundError:
@@ -897,7 +895,7 @@ async def run_invocation(
     # Step 4 — Between-phase snapshot read. Fresh sessions via the
     # repository factory now correctly see the committed Phase 1 state.
     sector_resolver = _build_sector_resolver(pipeline_config.resolved)
-    assembled, snapshot_repository = await _assemble_phase1_snapshot(
+    assembled, snapshot_repository = _assemble_phase1_snapshot(
         session_factory=session_factory,
         invocation_id=invocation_id,
         state_persistence_config=state_persistence_config,
@@ -973,7 +971,7 @@ async def run_invocation(
     )
 
 
-async def _assemble_phase1_snapshot(
+def _assemble_phase1_snapshot(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     invocation_id: str,
@@ -1011,7 +1009,7 @@ async def _assemble_phase1_snapshot(
     # guarantees the snapshot reflects post-Phase-1 reality even when the
     # orchestrator's logical ``now`` predates Phase 1's actual completion
     # (the common case under test fixtures with a frozen ``now``).
-    assembled = await assemble_snapshot(
+    assembled = assemble_snapshot(
         repository=repository,
         price_provider=price_provider,
         sector_resolver=adapt_ticker_sector_resolver(sector_resolver),

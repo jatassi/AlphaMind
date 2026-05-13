@@ -386,18 +386,12 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     # Repository for the breach loop's ``get_drawdown_state`` read. The
     # monitor runs across invocations; the bootstrap-style providers below
     # are unused by ``get_drawdown_state`` (singleton-table read) but are
-    # required by the factory's signature.
-    #
-    # ``async def`` without ``await`` here is intentional: both closures
-    # satisfy the ``Callable[[...], Awaitable[ActiveRiskParameterSet]]``
-    # Protocol the repository factory expects. Production callers reach
-    # these via ``make_active_risk_parameters_provider`` /
-    # ``production_substrate._provider`` rather than through this bootstrap.
-    async def _bootstrap_active_provider() -> ActiveRiskParameterSet:
+    # required by the factory's signature. Synchronous per ALP-454 (C).
+    def _bootstrap_active_provider() -> ActiveRiskParameterSet:
         msg = "active_risk_parameters_provider invoked from the breach loop path"
         raise RuntimeError(msg)
 
-    async def _bootstrap_prior_provider(_path: str) -> ActiveRiskParameterSet:
+    def _bootstrap_prior_provider(_path: str) -> ActiveRiskParameterSet:
         msg = "prior_active_risk_parameters_provider invoked from the breach loop path"
         raise RuntimeError(msg)
 

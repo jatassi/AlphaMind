@@ -19,24 +19,33 @@ Snapshot isolation enforcement: ``get_current_invocation_metadata``
 raises :class:`RepositoryConsistencyError` when the bound invocation row
 shows ``phase1_completed_at IS NULL`` — covering the happy path required
 by this story; story 07 + 08 verify the full six-step ordering.
+
+ALP-454 Pre-resolved decision (C): per the audit, the Protocol surface
+is synchronous (SQLite is the persistence engine; aiosqlite already
+serialises through a single worker thread). This implementation derives
+a sync ``sessionmaker`` from the supplied ``async_sessionmaker``'s
+engine URL (stripping ``+aiosqlite`` to get the sync ``sqlite`` driver)
+so callers can keep their existing async-engine wiring for writes while
+the repository reads block synchronously. WAL mode permits the
+concurrent reader. The provider callables are likewise sync.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, create_engine, event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.regt_margin_attribution.aggregates import RegTExcessAggregates
 from alphamind.execution.state_persistence.config import StatePersistenceConfig
-from alphamind.execution.state_persistence.repository.activity_log_queries import (
-    read_intra_invocation_changelog,
-    read_position_modification_trail,
-    read_recent_pm_decision_log,
+from alphamind.execution.state_persistence.invocation_context.activity_log import (
+    activity_log_entry_from_row,
 )
+from alphamind.execution.state_persistence.tables.activity_log import ActivityLogRow
 from alphamind.execution.state_persistence.tables.bracket_legs import BracketLegRow
 from alphamind.execution.state_persistence.tables.brackets import BracketRow
 from alphamind.execution.state_persistence.tables.brackets_codec import (
@@ -80,6 +89,7 @@ from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
 from alphamind.portfolio_state.aggregates.thesis_quality import ThesisQualityAggregate
+from alphamind.portfolio_state.events.activity_log import EventType
 from alphamind.portfolio_state.records.activity_log import ActivityLogEntry
 from alphamind.portfolio_state.records.cash import CashLedger
 from alphamind.portfolio_state.records.orders import (
@@ -103,7 +113,46 @@ from alphamind.portfolio_state.repository import (
     RepositoryConsistencyError,
 )
 
+# NOTE: the activity_log query helpers in ``activity_log_queries`` still take
+# the async session because their other consumer (``config_change.py``) runs
+# inside the Phase 1 ``InvocationContext`` write transaction. The SQL repo
+# inlines sync equivalents of those queries on its own session below.
+
 _PENDING_ORDER_STATUSES = (OrderStatus.PENDING.value, OrderStatus.PARTIALLY_FILLED.value)
+
+
+def _apply_pragmas(dbapi_connection: object, _connection_record: object) -> None:
+    """Mirror :func:`alphamind.persistence.session._apply_pragmas`.
+
+    Each fresh DBAPI connection opened by the sync engine applies the same
+    four pragmas the async engine applies. Duplicated here rather than
+    imported because ``persistence.session`` lives below the execution layer
+    in the import-linter contract.
+    """
+    cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA busy_timeout=60000")
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
+
+
+def _build_sync_session_factory(
+    async_session_factory: async_sessionmaker[AsyncSession],
+) -> sessionmaker[Session]:
+    """Build a sync ``sessionmaker`` from the async session factory's engine URL.
+
+    Strips the ``+aiosqlite`` async driver suffix off the URL so the resulting
+    engine uses sync ``sqlite``. The underlying SQLite file is shared with the
+    async engine; WAL mode permits the concurrent reader. Pragmas mirror
+    :func:`alphamind.persistence.session.make_engine`.
+    """
+    async_engine = async_session_factory.kw["bind"]
+    url = async_engine.url
+    sync_url = url.set(drivername=url.drivername.replace("+aiosqlite", ""))
+    sync_engine = create_engine(sync_url)
+    event.listen(sync_engine, "connect", _apply_pragmas)
+    return sessionmaker(bind=sync_engine, expire_on_commit=False)
 
 
 def _empty_thesis_quality_aggregate(now: datetime) -> ThesisQualityAggregate:
@@ -132,9 +181,10 @@ def _empty_thesis_quality_aggregate(now: datetime) -> ThesisQualityAggregate:
 class SqlPortfolioStateRepository:
     """SQLAlchemy-backed implementation of ``PortfolioStateRepository``.
 
-    Reads each Protocol method via a fresh ``AsyncSession`` from the supplied
-    factory; the assembler reads each method exactly once per snapshot, so
-    no in-repo caching is needed.
+    Reads each Protocol method via a fresh sync ``Session`` derived from
+    the supplied async session factory's underlying engine; the assembler
+    reads each method exactly once per snapshot, so no in-repo caching is
+    needed.
 
     Tier 3 strategy per :issue:`ALP-119` Pre-resolved decision (D):
 
@@ -158,11 +208,16 @@ class SqlPortfolioStateRepository:
         *,
         session_factory: async_sessionmaker[AsyncSession],
         invocation_id: str,
-        active_risk_parameters_provider: Callable[[], Awaitable[ActiveRiskParameterSet]],
-        prior_active_risk_parameters_provider: Callable[[str], Awaitable[ActiveRiskParameterSet]],
+        active_risk_parameters_provider: Callable[[], ActiveRiskParameterSet],
+        prior_active_risk_parameters_provider: Callable[[str], ActiveRiskParameterSet],
         config: StatePersistenceConfig,
     ) -> None:
-        self._session_factory = session_factory
+        # Build a sync ``sessionmaker`` from the async session factory's engine
+        # URL. The async sessionmaker is preserved as a parameter so existing
+        # upstream wiring (which threads ``async_sessionmaker[AsyncSession]``
+        # through phase2_dispatch, invocation_context, etc.) stays unchanged.
+        # ALP-454 (C).
+        self._sync_session_factory = _build_sync_session_factory(session_factory)
         self._invocation_id = invocation_id
         self._active_risk_parameters_provider = active_risk_parameters_provider
         self._prior_active_risk_parameters_provider = prior_active_risk_parameters_provider
@@ -172,31 +227,31 @@ class SqlPortfolioStateRepository:
     # Tier 1 — direct table reads
     # ------------------------------------------------------------------
 
-    async def get_open_positions(self) -> tuple[PositionRecord, ...]:
-        async with self._session_factory() as session:
+    def get_open_positions(self) -> tuple[PositionRecord, ...]:
+        with self._sync_session_factory() as session:
             stmt = (
                 select(PositionRow)
                 .where(PositionRow.status == PositionStatus.OPEN.value)
                 .order_by(PositionRow.position_id.asc())
             )
-            result = await session.execute(stmt)
+            result = session.execute(stmt)
             return tuple(position_row_to_record(row) for row in result.scalars())
 
-    async def get_pending_positions(self) -> tuple[PositionRecord, ...]:
-        async with self._session_factory() as session:
+    def get_pending_positions(self) -> tuple[PositionRecord, ...]:
+        with self._sync_session_factory() as session:
             stmt = (
                 select(PositionRow)
                 .where(PositionRow.status == PositionStatus.PENDING.value)
                 .order_by(PositionRow.position_id.asc())
             )
-            result = await session.execute(stmt)
+            result = session.execute(stmt)
             return tuple(position_row_to_record(row) for row in result.scalars())
 
-    async def get_active_theses(self) -> tuple[ThesisRecord, ...]:
-        async with self._session_factory() as session:
-            return await self._read_theses_by_status(session, ThesisRecordStatus.ACTIVE)
+    def get_active_theses(self) -> tuple[ThesisRecord, ...]:
+        with self._sync_session_factory() as session:
+            return self._read_theses_by_status(session, ThesisRecordStatus.ACTIVE)
 
-    async def get_recent_thesis_resolutions(
+    def get_recent_thesis_resolutions(
         self, *, lookback_trading_days: int
     ) -> tuple[RecentThesisResolution, ...]:
         # ``lookback_trading_days`` is accepted for Protocol parity; the
@@ -205,13 +260,13 @@ class SqlPortfolioStateRepository:
         # bounded by Phase 1 retention so returning all resolved theses
         # is correct for the v1 snapshot.
         del lookback_trading_days
-        async with self._session_factory() as session:
-            resolved = await self._read_theses_by_status(session, ThesisRecordStatus.RESOLVED)
+        with self._sync_session_factory() as session:
+            resolved = self._read_theses_by_status(session, ThesisRecordStatus.RESOLVED)
             return tuple(self._to_recent_resolution(t) for t in resolved)
 
-    async def get_cash_ledger(self) -> CashLedger:
-        async with self._session_factory() as session:
-            row = await session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+    def get_cash_ledger(self) -> CashLedger:
+        with self._sync_session_factory() as session:
+            row = session.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
             if row is None:
                 msg = "cash_ledger singleton row is missing — run Phase 1 to seed it"
                 raise RepositoryConsistencyError(msg)
@@ -228,7 +283,7 @@ class SqlPortfolioStateRepository:
                 regt_excess_lifetime_usd=0.0,
             )
 
-    async def get_regt_excess_aggregates(self, now: datetime) -> RegTExcessAggregates:
+    def get_regt_excess_aggregates(self, now: datetime) -> RegTExcessAggregates:
         """Sum ``regt_excess_over_pm`` across fill-record metadata.
 
         Three calendar-day-anchored windows in one round trip:
@@ -277,36 +332,36 @@ class SqlPortfolioStateRepository:
             FillRecordRow.processing_status == FillProcessingStatus.PROCESSED.value,
             FillRecordRow.regt_attribution_json.is_not(None),
         )
-        async with self._session_factory() as session:
-            row = (await session.execute(stmt)).one()
+        with self._sync_session_factory() as session:
+            row = session.execute(stmt).one()
         return RegTExcessAggregates(
             trailing_30d_usd=float(row[0]),
             trailing_90d_usd=float(row[1]),
             lifetime_usd=float(row[2]),
         )
 
-    async def get_pending_orders(self) -> tuple[OrderRecord, ...]:
-        async with self._session_factory() as session:
+    def get_pending_orders(self) -> tuple[OrderRecord, ...]:
+        with self._sync_session_factory() as session:
             stmt = (
                 select(OrderRow)
                 .where(OrderRow.status.in_(_PENDING_ORDER_STATUSES))
                 .order_by(OrderRow.submission_timestamp.asc(), OrderRow.order_id.asc())
             )
-            result = await session.execute(stmt)
+            result = session.execute(stmt)
             return tuple(order_row_to_record(row) for row in result.scalars())
 
-    async def get_brackets_for_positions(
+    def get_brackets_for_positions(
         self, *, position_ids: tuple[str, ...]
     ) -> tuple[BracketRecord, ...]:
         if not position_ids:
             return ()
-        async with self._session_factory() as session:
+        with self._sync_session_factory() as session:
             bracket_stmt = (
                 select(BracketRow)
                 .where(BracketRow.position_id.in_(position_ids))
                 .order_by(BracketRow.bracket_id.asc())
             )
-            bracket_rows = list((await session.execute(bracket_stmt)).scalars())
+            bracket_rows = list(session.execute(bracket_stmt).scalars())
             if not bracket_rows:
                 return ()
             bracket_ids = [b.bracket_id for b in bracket_rows]
@@ -316,7 +371,7 @@ class SqlPortfolioStateRepository:
                 .order_by(BracketLegRow.bracket_id.asc(), BracketLegRow.leg_index.asc())
             )
             legs_by_bracket: dict[str, list[BracketLegRow]] = {bid: [] for bid in bracket_ids}
-            for leg in (await session.execute(leg_stmt)).scalars():
+            for leg in session.execute(leg_stmt).scalars():
                 legs_by_bracket[leg.bracket_id].append(leg)
         return tuple(
             bracket_rows_to_record(b, tuple(legs_by_bracket[b.bracket_id])) for b in bracket_rows
@@ -326,32 +381,64 @@ class SqlPortfolioStateRepository:
     # Tier 2 — activity log + invocations
     # ------------------------------------------------------------------
 
-    async def get_intra_invocation_changelog(
-        self, *, invocation_id: str
-    ) -> tuple[ActivityLogEntry, ...]:
-        async with self._session_factory() as session:
-            return await read_intra_invocation_changelog(session, invocation_id)
+    def get_intra_invocation_changelog(self, *, invocation_id: str) -> tuple[ActivityLogEntry, ...]:
+        with self._sync_session_factory() as session:
+            stmt = (
+                select(ActivityLogRow)
+                .where(ActivityLogRow.invocation_id == invocation_id)
+                .order_by(ActivityLogRow.entry_at.asc(), ActivityLogRow.entry_id.asc())
+            )
+            return tuple(
+                activity_log_entry_from_row(row) for row in session.execute(stmt).scalars()
+            )
 
-    async def get_recent_pm_decision_log(
+    def get_recent_pm_decision_log(
         self, *, sliding_window_invocations: int
     ) -> tuple[ActivityLogEntry, ...]:
-        async with self._session_factory() as session:
-            return await read_recent_pm_decision_log(session, sliding_window_invocations)
+        recent_invocations_subq = (
+            select(InvocationRow.invocation_id)
+            .order_by(InvocationRow.start_at.desc())
+            .limit(sliding_window_invocations)
+            .subquery()
+        )
+        stmt = (
+            select(ActivityLogRow)
+            .where(
+                ActivityLogRow.event_type == EventType.PM_DECISION.value,
+                ActivityLogRow.invocation_id.in_(select(recent_invocations_subq.c.invocation_id)),
+            )
+            .order_by(ActivityLogRow.entry_at.asc(), ActivityLogRow.entry_id.asc())
+        )
+        with self._sync_session_factory() as session:
+            return tuple(
+                activity_log_entry_from_row(row) for row in session.execute(stmt).scalars()
+            )
 
-    async def get_position_modification_trail(
+    def get_position_modification_trail(
         self, *, position_ids: tuple[str, ...]
     ) -> dict[str, tuple[ActivityLogEntry, ...]]:
         if not position_ids:
             return {}
-        async with self._session_factory() as session:
-            trail = await read_position_modification_trail(session, list(position_ids))
+        stmt = (
+            select(ActivityLogRow)
+            .where(ActivityLogRow.position_id.in_(position_ids))
+            .order_by(ActivityLogRow.entry_at.asc(), ActivityLogRow.entry_id.asc())
+        )
+        grouped: dict[str, list[ActivityLogEntry]] = {pid: [] for pid in position_ids}
+        with self._sync_session_factory() as session:
+            for row in session.execute(stmt).scalars():
+                # row.position_id is non-None because the WHERE clause filtered
+                # to the supplied list — narrow for the type checker.
+                pid = row.position_id
+                assert pid is not None
+                grouped[pid].append(activity_log_entry_from_row(row))
         # Match the StubPortfolioStateRepository contract: omit position_ids
         # whose trail is empty so consumers iterate only the populated keys.
-        return {pid: entries for pid, entries in trail.items() if entries}
+        return {pid: tuple(entries) for pid, entries in grouped.items() if entries}
 
-    async def get_current_invocation_metadata(self) -> CurrentInvocationMetadata:
-        async with self._session_factory() as session:
-            row = await session.get(InvocationRow, self._invocation_id)
+    def get_current_invocation_metadata(self) -> CurrentInvocationMetadata:
+        with self._sync_session_factory() as session:
+            row = session.get(InvocationRow, self._invocation_id)
             if row is None:
                 msg = (
                     f"invocations row {self._invocation_id!r} is missing — "
@@ -377,8 +464,8 @@ class SqlPortfolioStateRepository:
                 pipeline_invocation_started_at=None,
             )
 
-    async def get_prior_invocation_context(self) -> PriorInvocationContext:
-        async with self._session_factory() as session:
+    def get_prior_invocation_context(self) -> PriorInvocationContext:
+        with self._sync_session_factory() as session:
             stmt = (
                 select(InvocationRow)
                 .where(
@@ -393,7 +480,7 @@ class SqlPortfolioStateRepository:
                 .order_by(InvocationRow.start_at.desc())
                 .limit(1)
             )
-            row = (await session.execute(stmt)).scalar_one_or_none()
+            row = session.execute(stmt).scalar_one_or_none()
 
         if row is None:
             return PriorInvocationContext(
@@ -402,7 +489,7 @@ class SqlPortfolioStateRepository:
                 prior_phase1_committed_at=None,
             )
 
-        prior_params = await self._prior_active_risk_parameters_provider(
+        prior_params = self._prior_active_risk_parameters_provider(
             row.resolved_config_snapshot_path
         )
         prior_phase1_at = (
@@ -420,9 +507,9 @@ class SqlPortfolioStateRepository:
     # Tier 3 — derived/aggregate
     # ------------------------------------------------------------------
 
-    async def get_drawdown_state(self) -> DrawdownState:
-        async with self._session_factory() as session:
-            row = await session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)
+    def get_drawdown_state(self) -> DrawdownState:
+        with self._sync_session_factory() as session:
+            row = session.get(DrawdownStateRow, DRAWDOWN_STATE_SINGLETON_ID)
             if row is None:
                 msg = "drawdown_state singleton row is missing — run Phase 1 to seed it"
                 raise RepositoryConsistencyError(msg)
@@ -438,21 +525,21 @@ class SqlPortfolioStateRepository:
                 cumulative_tier=None,
             )
 
-    async def get_portfolio_pnl_inputs(self) -> PortfolioPnLInputs:
-        async with self._session_factory() as session:
+    def get_portfolio_pnl_inputs(self) -> PortfolioPnLInputs:
+        with self._sync_session_factory() as session:
             stmt = select(PositionRow.realized_pnl_to_date_usd).where(
                 PositionRow.status == PositionStatus.CLOSED.value
             )
-            realized_pnls = (await session.execute(stmt)).scalars().all()
+            realized_pnls = session.execute(stmt).scalars().all()
         return _aggregate_pnl_inputs(realized_pnls)
 
-    async def get_thesis_quality_aggregates(self) -> ThesisQualityAggregate:
+    def get_thesis_quality_aggregates(self) -> ThesisQualityAggregate:
         return _empty_thesis_quality_aggregate(datetime.now(UTC))
 
-    async def get_active_risk_parameters(self) -> ActiveRiskParameterSet:
-        return await self._active_risk_parameters_provider()
+    def get_active_risk_parameters(self) -> ActiveRiskParameterSet:
+        return self._active_risk_parameters_provider()
 
-    async def get_risk_budget_consumption(self) -> RiskBudgetConsumption:
+    def get_risk_budget_consumption(self) -> RiskBudgetConsumption:
         # Zero-valued passthrough; the assembler computes actual consumption
         # by combining position + cash + active_risk_parameters in story 07.
         return RiskBudgetConsumption(entries=())
@@ -461,21 +548,21 @@ class SqlPortfolioStateRepository:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _read_theses_by_status(
-        self, session: AsyncSession, status: ThesisRecordStatus
+    def _read_theses_by_status(
+        self, session: Session, status: ThesisRecordStatus
     ) -> tuple[ThesisRecord, ...]:
         thesis_stmt = (
             select(ThesisRow)
             .where(ThesisRow.status == status.value)
             .order_by(ThesisRow.thesis_id.asc())
         )
-        thesis_rows = list((await session.execute(thesis_stmt)).scalars())
+        thesis_rows = list(session.execute(thesis_stmt).scalars())
         if not thesis_rows:
             return ()
         thesis_ids = [t.thesis_id for t in thesis_rows]
         comp_stmt = select(ThesisComponentRow).where(ThesisComponentRow.thesis_id.in_(thesis_ids))
         components_by_thesis: dict[str, list[ThesisComponentRow]] = {tid: [] for tid in thesis_ids}
-        for comp in (await session.execute(comp_stmt)).scalars():
+        for comp in session.execute(comp_stmt).scalars():
             components_by_thesis[comp.thesis_id].append(comp)
         return tuple(
             thesis_rows_to_record(t, tuple(components_by_thesis[t.thesis_id])) for t in thesis_rows

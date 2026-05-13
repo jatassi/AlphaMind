@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 
 import pytest
@@ -550,100 +549,100 @@ def test_stub_isinstance_protocol() -> None:
 
 def test_stub_get_open_positions() -> None:
     stub = _make_stub_with_position("pos-1")
-    result = asyncio.run(stub.get_open_positions())
+    result = stub.get_open_positions()
     assert len(result) == 1
     assert result[0].position_id == "pos-1"
 
 
 def test_stub_get_pending_positions() -> None:
     stub = _make_stub_with_position("pos-1")
-    result = asyncio.run(stub.get_pending_positions())
+    result = stub.get_pending_positions()
     assert len(result) == 1
 
 
 def test_stub_get_drawdown_state() -> None:
     stub = StubPortfolioStateRepository(_make_fixture())
-    result = asyncio.run(stub.get_drawdown_state())
+    result = stub.get_drawdown_state()
     assert result.current_drawdown_pct == 0.0
 
 
 def test_stub_get_portfolio_pnl_inputs() -> None:
     stub = StubPortfolioStateRepository(_make_fixture())
-    result = asyncio.run(stub.get_portfolio_pnl_inputs())
+    result = stub.get_portfolio_pnl_inputs()
     assert result.win_rate_pct == 60.0
 
 
 def test_stub_get_active_theses() -> None:
     stub = StubPortfolioStateRepository(_make_fixture())
-    result = asyncio.run(stub.get_active_theses())
+    result = stub.get_active_theses()
     assert result == ()
 
 
 def test_stub_get_recent_thesis_resolutions() -> None:
     stub = StubPortfolioStateRepository(_make_fixture())
     # stub ignores lookback_trading_days
-    result = asyncio.run(stub.get_recent_thesis_resolutions(lookback_trading_days=5))
+    result = stub.get_recent_thesis_resolutions(lookback_trading_days=5)
     assert result == ()
 
 
 def test_stub_get_recent_thesis_resolutions_ignores_parameter() -> None:
     stub = StubPortfolioStateRepository(_make_fixture())
-    r1 = asyncio.run(stub.get_recent_thesis_resolutions(lookback_trading_days=1))
-    r2 = asyncio.run(stub.get_recent_thesis_resolutions(lookback_trading_days=999))
+    r1 = stub.get_recent_thesis_resolutions(lookback_trading_days=1)
+    r2 = stub.get_recent_thesis_resolutions(lookback_trading_days=999)
     assert r1 == r2
 
 
 def test_stub_get_cash_ledger() -> None:
     stub = StubPortfolioStateRepository(_make_fixture())
-    result = asyncio.run(stub.get_cash_ledger())
+    result = stub.get_cash_ledger()
     assert result.current_cash_usd == 10000.0
 
 
 def test_stub_get_pending_orders() -> None:
     stub = StubPortfolioStateRepository(_make_fixture())
-    result = asyncio.run(stub.get_pending_orders())
+    result = stub.get_pending_orders()
     assert result == ()
 
 
 def test_stub_get_risk_budget_consumption() -> None:
     stub = StubPortfolioStateRepository(_make_fixture())
-    result = asyncio.run(stub.get_risk_budget_consumption())
+    result = stub.get_risk_budget_consumption()
     assert result.entries == ()
 
 
 def test_stub_get_active_risk_parameters() -> None:
     stub = StubPortfolioStateRepository(_make_fixture())
-    result = asyncio.run(stub.get_active_risk_parameters())
+    result = stub.get_active_risk_parameters()
     assert result.regime_label == RegimeLabel.NORMAL
 
 
 def test_stub_get_intra_invocation_changelog() -> None:
     stub = _make_stub_with_position("pos-1")
-    result = asyncio.run(stub.get_intra_invocation_changelog(invocation_id="any-id"))
+    result = stub.get_intra_invocation_changelog(invocation_id="any-id")
     assert len(result) == 1
 
 
 def test_stub_get_recent_pm_decision_log() -> None:
     stub = _make_stub_with_position("pos-1")
-    result = asyncio.run(stub.get_recent_pm_decision_log(sliding_window_invocations=3))
+    result = stub.get_recent_pm_decision_log(sliding_window_invocations=3)
     assert len(result) == 1
 
 
 def test_stub_get_thesis_quality_aggregates() -> None:
     stub = StubPortfolioStateRepository(_make_fixture())
-    result = asyncio.run(stub.get_thesis_quality_aggregates())
+    result = stub.get_thesis_quality_aggregates()
     assert result.resolution_counts_by_window == ()
 
 
 def test_stub_get_current_invocation_metadata() -> None:
     stub = StubPortfolioStateRepository(_make_fixture())
-    result = asyncio.run(stub.get_current_invocation_metadata())
+    result = stub.get_current_invocation_metadata()
     assert result.invocation_id == "inv-001"
 
 
 def test_stub_get_prior_invocation_context() -> None:
     stub = StubPortfolioStateRepository(_make_fixture())
-    result = asyncio.run(stub.get_prior_invocation_context())
+    result = stub.get_prior_invocation_context()
     assert result.prior_invocation_id is None
 
 
@@ -654,17 +653,13 @@ def test_stub_get_prior_invocation_context() -> None:
 
 def test_get_position_modification_trail_all_unknown_returns_empty() -> None:
     stub = _make_stub_with_position("pos-known")
-    result = asyncio.run(
-        stub.get_position_modification_trail(position_ids=("pos-unknown-1", "pos-unknown-2"))
-    )
+    result = stub.get_position_modification_trail(position_ids=("pos-unknown-1", "pos-unknown-2"))
     assert result == {}
 
 
 def test_get_position_modification_trail_mixed_returns_known_subset() -> None:
     stub = _make_stub_with_position("pos-known")
-    result = asyncio.run(
-        stub.get_position_modification_trail(position_ids=("pos-known", "pos-unknown"))
-    )
+    result = stub.get_position_modification_trail(position_ids=("pos-known", "pos-unknown"))
     assert set(result.keys()) == {"pos-known"}
     assert len(result["pos-known"]) == 1
 
@@ -676,18 +671,18 @@ def test_get_position_modification_trail_mixed_returns_known_subset() -> None:
 
 def test_get_brackets_for_positions_empty_tuple_returns_empty() -> None:
     stub = _make_stub_with_position("pos-1")
-    result = asyncio.run(stub.get_brackets_for_positions(position_ids=()))
+    result = stub.get_brackets_for_positions(position_ids=())
     assert result == ()
 
 
 def test_get_brackets_for_positions_matching_position_id() -> None:
     stub = _make_stub_with_position("pos-1")
-    result = asyncio.run(stub.get_brackets_for_positions(position_ids=("pos-1",)))
+    result = stub.get_brackets_for_positions(position_ids=("pos-1",))
     assert len(result) == 1
     assert result[0].position_id == "pos-1"
 
 
 def test_get_brackets_for_positions_non_matching_position_id() -> None:
     stub = _make_stub_with_position("pos-1")
-    result = asyncio.run(stub.get_brackets_for_positions(position_ids=("pos-other",)))
+    result = stub.get_brackets_for_positions(position_ids=("pos-other",))
     assert result == ()

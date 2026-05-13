@@ -600,16 +600,16 @@ def _active_risk_parameters() -> ActiveRiskParameterSet:
     )
 
 
-async def _build_repo(
+def _build_repo(
     factory: async_sessionmaker[AsyncSession],
     invocation_id: str,
 ) -> PortfolioStateRepository:
     arp = _active_risk_parameters()
 
-    async def _provider() -> ActiveRiskParameterSet:
+    def _provider() -> ActiveRiskParameterSet:
         return arp
 
-    async def _prior_provider(_: str) -> ActiveRiskParameterSet:
+    def _prior_provider(_: str) -> ActiveRiskParameterSet:
         return arp
 
     return build_sql_portfolio_state_repository(
@@ -727,9 +727,9 @@ async def test_six_step_snapshot_isolation_contract(
     assert summary.fills_processed == 1
 
     # ---- Snapshot read after Phase 1 -------------------------------------
-    repo = await _build_repo(factory, invocation_id=_INV_ID)
-    open_after_phase1 = await repo.get_open_positions()
-    pending_after_phase1 = await repo.get_pending_positions()
+    repo = _build_repo(factory, invocation_id=_INV_ID)
+    open_after_phase1 = repo.get_open_positions()
+    pending_after_phase1 = repo.get_pending_positions()
     assert {p.position_id for p in open_after_phase1} == {"pos-six"}
     # Phase 2 hasn't run; no other PENDING positions exist yet.
     assert pending_after_phase1 == ()
@@ -752,9 +752,9 @@ async def test_six_step_snapshot_isolation_contract(
         await session2.close()
 
     # ---- Snapshot read after Phase 2 -------------------------------------
-    repo_after_phase2 = await _build_repo(factory, invocation_id=_INV_ID)
-    open_after_phase2 = await repo_after_phase2.get_open_positions()
-    pending_after_phase2 = await repo_after_phase2.get_pending_positions()
+    repo_after_phase2 = _build_repo(factory, invocation_id=_INV_ID)
+    open_after_phase2 = repo_after_phase2.get_open_positions()
+    pending_after_phase2 = repo_after_phase2.get_pending_positions()
     # Phase 1's OPEN position still surfaces.
     assert {p.position_id for p in open_after_phase2} == {"pos-six"}
     # Phase 2 introduced exactly one new PENDING position (the NVDA OPEN).

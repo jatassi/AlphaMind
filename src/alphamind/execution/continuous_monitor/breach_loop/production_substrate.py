@@ -425,14 +425,10 @@ def make_snapshot_provider(
         invocation_id = _BOOTSTRAP_SENTINEL if row is None else row[0]
         active = await _load_active_risk_parameters_from_row(row, fallback=bootstrap_parameters)
 
-        # ``async def`` without ``await`` is intentional: both closures
-        # satisfy the ``Callable[[...], Awaitable[ActiveRiskParameterSet]]``
-        # Protocol the repository factory awaits — the closed-over
-        # ``active`` is the per-tick bootstrapped parameter set.
-        async def _active_provider() -> ActiveRiskParameterSet:
+        def _active_provider() -> ActiveRiskParameterSet:
             return active
 
-        async def _prior_provider(_snapshot_path: str) -> ActiveRiskParameterSet:
+        def _prior_provider(_snapshot_path: str) -> ActiveRiskParameterSet:
             return active
 
         repository = build_sql_portfolio_state_repository(
@@ -443,7 +439,7 @@ def make_snapshot_provider(
             config=state_persistence_config,
         )
         price_provider = _build_price_provider(underlying_cache, as_of=now())
-        assembled = await assemble_snapshot(
+        assembled = assemble_snapshot(
             repository=repository,
             price_provider=price_provider,
             sector_resolver=position_sector_resolver,

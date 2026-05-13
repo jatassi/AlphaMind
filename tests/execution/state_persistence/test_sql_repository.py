@@ -868,7 +868,7 @@ async def _seed_order_cluster(
 # ---------------------------------------------------------------------------
 
 
-async def _build_repo(
+def _build_repo(
     factory: async_sessionmaker[AsyncSession],
     *,
     invocation_id: str = _INV_ID,
@@ -882,12 +882,12 @@ async def _build_repo(
         else _make_active_risk_parameters()
     )
 
-    async def _provider() -> ActiveRiskParameterSet:
+    def _provider() -> ActiveRiskParameterSet:
         return arp
 
     path_map = prior_active_risk_parameters_for_path or {}
 
-    async def _prior_provider(snapshot_path: str) -> ActiveRiskParameterSet:
+    def _prior_provider(snapshot_path: str) -> ActiveRiskParameterSet:
         return path_map[snapshot_path]
 
     return build_sql_portfolio_state_repository(
@@ -921,8 +921,8 @@ async def test_get_open_positions_returns_only_open_status(
     await _seed_position(factory, pending_pos)
     await _seed_position(factory, closed_pos)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_open_positions()
+    repo = _build_repo(factory)
+    result = repo.get_open_positions()
 
     assert len(result) == 1
     assert result[0].position_id == "pos-open"
@@ -939,8 +939,8 @@ async def test_get_pending_positions_returns_only_pending_status(
     await _seed_position(factory, open_pos)
     await _seed_position(factory, pending_pos)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_pending_positions()
+    repo = _build_repo(factory)
+    result = repo.get_pending_positions()
 
     assert len(result) == 1
     assert result[0].position_id == "pos-pending"
@@ -964,8 +964,8 @@ async def test_get_active_theses_returns_active_with_components(
     await _seed_thesis_with_stub_position(factory, active)
     await _seed_thesis_with_stub_position(factory, resolved)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_active_theses()
+    repo = _build_repo(factory)
+    result = repo.get_active_theses()
 
     assert len(result) == 1
     assert result[0].thesis_id == "thesis-active"
@@ -990,8 +990,8 @@ async def test_get_recent_thesis_resolutions_projects_resolved(
     await _seed_thesis_with_stub_position(factory, active)
     await _seed_thesis_with_stub_position(factory, resolved)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_recent_thesis_resolutions(lookback_trading_days=5)
+    repo = _build_repo(factory)
+    result = repo.get_recent_thesis_resolutions(lookback_trading_days=5)
 
     assert len(result) == 1
     assert result[0].thesis_id == "thesis-resolved"
@@ -1017,8 +1017,8 @@ async def test_get_cash_ledger_returns_singleton(
     seeded = _make_cash_ledger()
     await _seed_cash_ledger(factory, seeded)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_cash_ledger()
+    repo = _build_repo(factory)
+    result = repo.get_cash_ledger()
 
     assert result.current_cash_usd == seeded.current_cash_usd
     assert result.settled_cash_usd == seeded.settled_cash_usd
@@ -1031,9 +1031,9 @@ async def test_get_cash_ledger_missing_singleton_raises_consistency_error(
     _, factory = db
     await _seed_minimal_invocation(factory)
 
-    repo = await _build_repo(factory)
+    repo = _build_repo(factory)
     with pytest.raises(RepositoryConsistencyError):
-        await repo.get_cash_ledger()
+        repo.get_cash_ledger()
 
 
 async def test_get_regt_excess_aggregates_rejects_naive_datetime(
@@ -1048,10 +1048,10 @@ async def test_get_regt_excess_aggregates_rejects_naive_datetime(
     _, factory = db
     await _seed_minimal_invocation(factory)
 
-    repo = await _build_repo(factory)
+    repo = _build_repo(factory)
     naive_now = datetime(2026, 5, 8, 12, 0, 0)  # noqa: DTZ001 — deliberate; exercises the guard
     with pytest.raises(ValueError, match="timezone-aware"):
-        await repo.get_regt_excess_aggregates(naive_now)
+        repo.get_regt_excess_aggregates(naive_now)
 
 
 async def test_get_regt_excess_aggregates_empty_table_returns_zeros(
@@ -1060,8 +1060,8 @@ async def test_get_regt_excess_aggregates_empty_table_returns_zeros(
     _, factory = db
     await _seed_minimal_invocation(factory)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_regt_excess_aggregates(_NOW)
+    repo = _build_repo(factory)
+    result = repo.get_regt_excess_aggregates(_NOW)
 
     assert result == RegTExcessAggregates(
         trailing_30d_usd=0.0,
@@ -1082,8 +1082,8 @@ async def test_get_regt_excess_aggregates_null_attribution_contributes_zero(
     )
     await _seed_fill_records(factory, fill_no_attribution)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_regt_excess_aggregates(_NOW)
+    repo = _build_repo(factory)
+    result = repo.get_regt_excess_aggregates(_NOW)
 
     assert result == RegTExcessAggregates(
         trailing_30d_usd=0.0,
@@ -1108,8 +1108,8 @@ async def test_get_regt_excess_aggregates_unprocessed_fill_excluded(
     )
     await _seed_fill_records(factory, unprocessed)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_regt_excess_aggregates(_NOW)
+    repo = _build_repo(factory)
+    result = repo.get_regt_excess_aggregates(_NOW)
 
     assert result == RegTExcessAggregates(
         trailing_30d_usd=0.0,
@@ -1144,8 +1144,8 @@ async def test_get_regt_excess_aggregates_trailing_windows_calendar_days(
     )
     await _seed_fill_records(factory, fill_recent, fill_outside_30, fill_outside_90)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_regt_excess_aggregates(_NOW)
+    repo = _build_repo(factory)
+    result = repo.get_regt_excess_aggregates(_NOW)
 
     # 30d: only fill-1d.
     # 90d: fill-1d + fill-31d.
@@ -1172,8 +1172,8 @@ async def test_get_regt_excess_aggregates_sums_regt_excess_over_pm(
     )
     await _seed_fill_records(factory, *fills)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_regt_excess_aggregates(_NOW)
+    repo = _build_repo(factory)
+    result = repo.get_regt_excess_aggregates(_NOW)
 
     expected_sum = sum(seeded_excesses)
     assert result.trailing_30d_usd == pytest.approx(expected_sum, abs=1e-9)
@@ -1192,8 +1192,8 @@ async def test_get_pending_orders_returns_pending_and_partially_filled(
     cancelled = _make_pending_order(order_id="ord-cancelled", status=OrderStatus.CANCELLED)
     await _seed_order_cluster(factory, pending, partially, filled, cancelled)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_pending_orders()
+    repo = _build_repo(factory)
+    result = repo.get_pending_orders()
 
     assert {o.order_id for o in result} == {"ord-pending", "ord-partial"}
 
@@ -1208,8 +1208,8 @@ async def test_get_brackets_for_positions_returns_bracket_with_legs(
     await _seed_bracket_cluster(factory, bracket)
     await _seed_bracket_cluster(factory, other)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_brackets_for_positions(position_ids=("pos-1",))
+    repo = _build_repo(factory)
+    result = repo.get_brackets_for_positions(position_ids=("pos-1",))
 
     assert len(result) == 1
     assert result[0].bracket_id == "brk-1"
@@ -1225,8 +1225,8 @@ async def test_get_brackets_for_positions_empty_input_returns_empty(
     bracket = _make_bracket_record()
     await _seed_bracket_cluster(factory, bracket)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_brackets_for_positions(position_ids=())
+    repo = _build_repo(factory)
+    result = repo.get_brackets_for_positions(position_ids=())
 
     assert result == ()
 
@@ -1250,8 +1250,8 @@ async def test_get_intra_invocation_changelog_filters_by_invocation_id(
     await _seed_activity_log_entry(factory, entry_current)
     await _seed_activity_log_entry(factory, entry_prior)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_intra_invocation_changelog(invocation_id=_INV_ID)
+    repo = _build_repo(factory)
+    result = repo.get_intra_invocation_changelog(invocation_id=_INV_ID)
 
     assert {e.entry_id for e in result} == {"entry-current"}
 
@@ -1273,8 +1273,8 @@ async def test_get_recent_pm_decision_log_returns_pm_decisions_in_window(
     await _seed_activity_log_entry(factory, pm_prior)
     await _seed_activity_log_entry(factory, non_pm)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_recent_pm_decision_log(sliding_window_invocations=5)
+    repo = _build_repo(factory)
+    result = repo.get_recent_pm_decision_log(sliding_window_invocations=5)
 
     assert {e.entry_id for e in result} == {"pm-current", "pm-prior"}
 
@@ -1290,8 +1290,8 @@ async def test_get_position_modification_trail_groups_by_position(
     await _seed_activity_log_entry(factory, e1)
     await _seed_activity_log_entry(factory, e2)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_position_modification_trail(position_ids=("pos-1", "pos-unknown"))
+    repo = _build_repo(factory)
+    result = repo.get_position_modification_trail(position_ids=("pos-1", "pos-unknown"))
 
     assert set(result.keys()) == {"pos-1"}
     assert len(result["pos-1"]) == 1
@@ -1304,8 +1304,8 @@ async def test_get_position_modification_trail_empty_input_returns_empty(
     _, factory = db
     await _seed_minimal_invocation(factory)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_position_modification_trail(position_ids=())
+    repo = _build_repo(factory)
+    result = repo.get_position_modification_trail(position_ids=())
 
     assert result == {}
 
@@ -1321,8 +1321,8 @@ async def test_get_current_invocation_metadata_returns_committed_metadata(
     _, factory = db
     await _seed_minimal_invocation(factory)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_current_invocation_metadata()
+    repo = _build_repo(factory)
+    result = repo.get_current_invocation_metadata()
 
     assert result.invocation_id == _INV_ID
     assert result.phase1_committed_at == _PHASE1_AT
@@ -1344,9 +1344,9 @@ async def test_get_current_invocation_metadata_phase1_uncommitted_raises(
         factory, invocation=_make_invocation_record(phase1_completed_at=None)
     )
 
-    repo = await _build_repo(factory)
+    repo = _build_repo(factory)
     with pytest.raises(RepositoryConsistencyError):
-        await repo.get_current_invocation_metadata()
+        repo.get_current_invocation_metadata()
 
 
 async def test_get_current_invocation_metadata_missing_row_raises(
@@ -1358,9 +1358,9 @@ async def test_get_current_invocation_metadata_missing_row_raises(
         sess.add(process_lifetime_record_to_row(_make_process_lifetime()))
         await sess.commit()
 
-    repo = await _build_repo(factory)
+    repo = _build_repo(factory)
     with pytest.raises(RepositoryConsistencyError):
-        await repo.get_current_invocation_metadata()
+        repo.get_current_invocation_metadata()
 
 
 async def test_get_prior_invocation_context_first_invocation_returns_none(
@@ -1369,8 +1369,8 @@ async def test_get_prior_invocation_context_first_invocation_returns_none(
     _, factory = db
     await _seed_minimal_invocation(factory)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_prior_invocation_context()
+    repo = _build_repo(factory)
+    result = repo.get_prior_invocation_context()
 
     assert result.prior_invocation_id is None
     assert result.prior_active_risk_parameters is None
@@ -1391,11 +1391,11 @@ async def test_get_prior_invocation_context_returns_most_recent_prior(
     await _seed_minimal_invocation_extra(factory, _make_invocation_record())
 
     prior_params = _make_active_risk_parameters(rule_value=900.0)
-    repo = await _build_repo(
+    repo = _build_repo(
         factory,
         prior_active_risk_parameters_for_path={prior_path: prior_params},
     )
-    result = await repo.get_prior_invocation_context()
+    result = repo.get_prior_invocation_context()
 
     assert result.prior_invocation_id == _PRIOR_INV_ID
     assert result.prior_active_risk_parameters == prior_params
@@ -1415,8 +1415,8 @@ async def test_get_drawdown_state_returns_singleton(
     seeded = _make_drawdown_state()
     await _seed_drawdown_state(factory, seeded)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_drawdown_state()
+    repo = _build_repo(factory)
+    result = repo.get_drawdown_state()
 
     assert result.equity_high_water_mark_usd == seeded.equity_high_water_mark_usd
     assert result.current_drawdown_pct == seeded.current_drawdown_pct
@@ -1430,9 +1430,9 @@ async def test_get_drawdown_state_missing_singleton_raises(
     _, factory = db
     await _seed_minimal_invocation(factory)
 
-    repo = await _build_repo(factory)
+    repo = _build_repo(factory)
     with pytest.raises(RepositoryConsistencyError):
-        await repo.get_drawdown_state()
+        repo.get_drawdown_state()
 
 
 async def test_get_portfolio_pnl_inputs_aggregates_realized_over_closed(
@@ -1463,8 +1463,8 @@ async def test_get_portfolio_pnl_inputs_aggregates_realized_over_closed(
         factory, _make_open_position(position_id="open-1", status=PositionStatus.OPEN)
     )
 
-    repo = await _build_repo(factory)
-    result = await repo.get_portfolio_pnl_inputs()
+    repo = _build_repo(factory)
+    result = repo.get_portfolio_pnl_inputs()
 
     assert result.cumulative_realized_pnl_usd == 150.0
     assert result.win_rate_pct is None
@@ -1477,8 +1477,8 @@ async def test_get_thesis_quality_aggregates_returns_empty_default(
     _, factory = db
     await _seed_minimal_invocation(factory)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_thesis_quality_aggregates()
+    repo = _build_repo(factory)
+    result = repo.get_thesis_quality_aggregates()
 
     assert result.resolution_counts_by_window == ()
     assert result.signal_hit_rates == ()
@@ -1493,12 +1493,12 @@ async def test_get_active_risk_parameters_invokes_provider_once(
 
     invocation_count = 0
 
-    async def _provider() -> ActiveRiskParameterSet:
+    def _provider() -> ActiveRiskParameterSet:
         nonlocal invocation_count
         invocation_count += 1
         return _make_active_risk_parameters(rule_value=2000.0)
 
-    async def _prior_provider(snapshot_path: str) -> ActiveRiskParameterSet:
+    def _prior_provider(snapshot_path: str) -> ActiveRiskParameterSet:
         return _make_active_risk_parameters()
 
     repo = build_sql_portfolio_state_repository(
@@ -1508,7 +1508,7 @@ async def test_get_active_risk_parameters_invokes_provider_once(
         prior_active_risk_parameters_provider=_prior_provider,
         config=_make_state_persistence_config(),
     )
-    result = await repo.get_active_risk_parameters()
+    result = repo.get_active_risk_parameters()
 
     assert invocation_count == 1
     assert result.entries[0].value == 2000.0
@@ -1520,8 +1520,8 @@ async def test_get_risk_budget_consumption_returns_empty_passthrough(
     _, factory = db
     await _seed_minimal_invocation(factory)
 
-    repo = await _build_repo(factory)
-    result = await repo.get_risk_budget_consumption()
+    repo = _build_repo(factory)
+    result = repo.get_risk_budget_consumption()
 
     assert result.entries == ()
 
@@ -1537,7 +1537,7 @@ async def test_repository_isinstance_portfolio_state_repository(
     _, factory = db
     await _seed_minimal_invocation(factory)
 
-    repo = await _build_repo(factory)
+    repo = _build_repo(factory)
     assert isinstance(repo, PortfolioStateRepository)
 
 
@@ -1636,19 +1636,19 @@ async def test_parity_with_stub_over_same_state(
     _, factory = db
     fx = _ParityFixture()
     await _seed_parity_fixture(factory, fx)
-    sql_repo = await _build_repo(factory)
+    sql_repo = _build_repo(factory)
 
     # Stub side — mirror the SQL state. Tier-3 derived values are read from
     # the SQL repo so the comparison is one-shot (no clock-induced drift on
     # the placeholder thesis-quality aggregate's ``as_of_timestamp``).
-    sql_drawdown = await sql_repo.get_drawdown_state()
-    sql_cash = await sql_repo.get_cash_ledger()
-    pnl_inputs = await sql_repo.get_portfolio_pnl_inputs()
-    tqa = await sql_repo.get_thesis_quality_aggregates()
-    arp = await sql_repo.get_active_risk_parameters()
-    rb = await sql_repo.get_risk_budget_consumption()
-    current_meta = await sql_repo.get_current_invocation_metadata()
-    prior_ctx = await sql_repo.get_prior_invocation_context()
+    sql_drawdown = sql_repo.get_drawdown_state()
+    sql_cash = sql_repo.get_cash_ledger()
+    pnl_inputs = sql_repo.get_portfolio_pnl_inputs()
+    tqa = sql_repo.get_thesis_quality_aggregates()
+    arp = sql_repo.get_active_risk_parameters()
+    rb = sql_repo.get_risk_budget_consumption()
+    current_meta = sql_repo.get_current_invocation_metadata()
+    prior_ctx = sql_repo.get_prior_invocation_context()
 
     fixture = RepositoryFixture(
         open_positions=(fx.open_pos,),
@@ -1672,38 +1672,36 @@ async def test_parity_with_stub_over_same_state(
     stub_repo = StubPortfolioStateRepository(fixture)
 
     # Tier 1
-    assert await sql_repo.get_open_positions() == await stub_repo.get_open_positions()
-    assert await sql_repo.get_pending_positions() == await stub_repo.get_pending_positions()
-    assert await sql_repo.get_active_theses() == await stub_repo.get_active_theses()
-    assert await sql_repo.get_cash_ledger() == await stub_repo.get_cash_ledger()
-    assert await sql_repo.get_pending_orders() == await stub_repo.get_pending_orders()
-    assert await sql_repo.get_brackets_for_positions(
+    assert sql_repo.get_open_positions() == stub_repo.get_open_positions()
+    assert sql_repo.get_pending_positions() == stub_repo.get_pending_positions()
+    assert sql_repo.get_active_theses() == stub_repo.get_active_theses()
+    assert sql_repo.get_cash_ledger() == stub_repo.get_cash_ledger()
+    assert sql_repo.get_pending_orders() == stub_repo.get_pending_orders()
+    assert sql_repo.get_brackets_for_positions(
         position_ids=("pos-1",)
-    ) == await stub_repo.get_brackets_for_positions(position_ids=("pos-1",))
+    ) == stub_repo.get_brackets_for_positions(position_ids=("pos-1",))
 
     # Tier 2
-    assert await sql_repo.get_intra_invocation_changelog(
+    assert sql_repo.get_intra_invocation_changelog(
         invocation_id=_INV_ID
-    ) == await stub_repo.get_intra_invocation_changelog(invocation_id=_INV_ID)
+    ) == stub_repo.get_intra_invocation_changelog(invocation_id=_INV_ID)
     assert {
-        e.entry_id for e in await sql_repo.get_recent_pm_decision_log(sliding_window_invocations=5)
-    } == {
-        e.entry_id for e in await stub_repo.get_recent_pm_decision_log(sliding_window_invocations=5)
-    }
-    assert await sql_repo.get_position_modification_trail(
+        e.entry_id for e in sql_repo.get_recent_pm_decision_log(sliding_window_invocations=5)
+    } == {e.entry_id for e in stub_repo.get_recent_pm_decision_log(sliding_window_invocations=5)}
+    assert sql_repo.get_position_modification_trail(
         position_ids=("pos-1",)
-    ) == await stub_repo.get_position_modification_trail(position_ids=("pos-1",))
+    ) == stub_repo.get_position_modification_trail(position_ids=("pos-1",))
 
     # Tier 3 (compare cached SQL values against stub fixture mirrors)
-    assert sql_drawdown == await stub_repo.get_drawdown_state()
-    assert pnl_inputs == await stub_repo.get_portfolio_pnl_inputs()
-    assert tqa == await stub_repo.get_thesis_quality_aggregates()
-    assert arp == await stub_repo.get_active_risk_parameters()
-    assert rb == await stub_repo.get_risk_budget_consumption()
+    assert sql_drawdown == stub_repo.get_drawdown_state()
+    assert pnl_inputs == stub_repo.get_portfolio_pnl_inputs()
+    assert tqa == stub_repo.get_thesis_quality_aggregates()
+    assert arp == stub_repo.get_active_risk_parameters()
+    assert rb == stub_repo.get_risk_budget_consumption()
 
     # Invocation scaffolding
-    assert current_meta == await stub_repo.get_current_invocation_metadata()
-    assert prior_ctx == await stub_repo.get_prior_invocation_context()
+    assert current_meta == stub_repo.get_current_invocation_metadata()
+    assert prior_ctx == stub_repo.get_prior_invocation_context()
 
 
 # ---------------------------------------------------------------------------
@@ -1767,7 +1765,7 @@ async def test_assemble_snapshot_against_sql_repo_produces_populated_snapshot(
     await _seed_cash_ledger(factory)
     await _seed_drawdown_state(factory)
 
-    repo = await _build_repo(factory)
+    repo = _build_repo(factory)
 
     config = PortfolioStateConfig.model_validate(
         {
@@ -1790,7 +1788,7 @@ async def test_assemble_snapshot_against_sql_repo_produces_populated_snapshot(
     def _sector_resolver(_pos: PositionRecord) -> str | None:
         return "Tech"
 
-    assembled = await assemble_snapshot(
+    assembled = assemble_snapshot(
         repository=repo,
         price_provider=price_provider,
         sector_resolver=_sector_resolver,

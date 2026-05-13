@@ -414,7 +414,7 @@ async def run_phase_3_repository_provider(db_path: Path) -> PhaseResult:
     result = _phase_3_enforcement_result()
     provider = make_active_risk_parameters_provider(result)
 
-    async def _prior_provider(_path: str) -> ActiveRiskParameterSet:
+    def _prior_provider(_path: str) -> ActiveRiskParameterSet:
         return _baseline_normal_parameters()
 
     engine, factory = _open_async_factory(db_path)
@@ -426,7 +426,7 @@ async def run_phase_3_repository_provider(db_path: Path) -> PhaseResult:
             prior_active_risk_parameters_provider=_prior_provider,
             config=_state_persistence_config(),
         )
-        yielded = await repository.get_active_risk_parameters()
+        yielded = repository.get_active_risk_parameters()
     finally:
         await engine.dispose()
 
@@ -639,7 +639,7 @@ async def run_phase_4_assembler_integration(db_path: Path) -> PhaseResult:
     result = _phase_3_enforcement_result()
     provider = make_active_risk_parameters_provider(result)
 
-    async def _prior_provider(_path: str) -> ActiveRiskParameterSet:
+    def _prior_provider(_path: str) -> ActiveRiskParameterSet:
         # The SQL repository only consults this provider when an earlier
         # invocation row exists. With Phase 4's single seeded invocation, the
         # prior-context branch returns prior_active_risk_parameters=None and
@@ -687,7 +687,7 @@ async def run_phase_4_assembler_integration(db_path: Path) -> PhaseResult:
             return None
 
         try:
-            assembled = await assemble_snapshot(
+            assembled = assemble_snapshot(
                 repository=repository,
                 price_provider=price_provider,
                 sector_resolver=_sector_resolver,

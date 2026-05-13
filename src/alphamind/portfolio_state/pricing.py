@@ -42,9 +42,14 @@ class UnknownTickerError(ValueError):
 
 @runtime_checkable
 class CurrentPriceProvider(Protocol):
-    """Read-only protocol for fetching current prices."""
+    """Read-only protocol for fetching current prices.
 
-    async def get_quote(
+    Methods are synchronous per ALP-454 Pre-resolved decision (C); the
+    in-process providers (cache lookups, fixture stubs) carry no real
+    I/O. Revisit when a true remote pricing service lands.
+    """
+
+    def get_quote(
         self,
         ticker: str,
         *,
@@ -58,7 +63,7 @@ class CurrentPriceProvider(Protocol):
         """
         ...
 
-    async def get_quotes(
+    def get_quotes(
         self,
         tickers: tuple[str, ...],
         *,
@@ -90,7 +95,7 @@ class StubCurrentPriceProvider:
         is_stale = age > freshness_threshold_seconds
         return quote.model_copy(update={"is_stale": is_stale})
 
-    async def get_quote(
+    def get_quote(
         self,
         ticker: str,
         *,
@@ -100,7 +105,7 @@ class StubCurrentPriceProvider:
             raise UnknownTickerError(ticker)
         return self._recompute(self._quotes[ticker], freshness_threshold_seconds)
 
-    async def get_quotes(
+    def get_quotes(
         self,
         tickers: tuple[str, ...],
         *,

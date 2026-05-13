@@ -4,9 +4,12 @@ Story 03 (ALP-357) ships the four ``activity_log`` query helpers. Story 06
 (ALP-364) ships :class:`SqlPortfolioStateRepository` and the
 ``build_sql_portfolio_state_repository`` factory — the production-grade
 implementation of :class:`PortfolioStateRepository`.
+
+ALP-454 Pre-resolved decision (C): the Protocol surface is synchronous;
+the provider callables passed into the factory are likewise sync.
 """
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -28,8 +31,8 @@ def build_sql_portfolio_state_repository(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     invocation_id: str,
-    active_risk_parameters_provider: Callable[[], Awaitable[ActiveRiskParameterSet]],
-    prior_active_risk_parameters_provider: Callable[[str], Awaitable[ActiveRiskParameterSet]],
+    active_risk_parameters_provider: Callable[[], ActiveRiskParameterSet],
+    prior_active_risk_parameters_provider: Callable[[str], ActiveRiskParameterSet],
     config: StatePersistenceConfig,
 ) -> PortfolioStateRepository:
     """Construct a production ``SqlPortfolioStateRepository`` conforming to the Protocol.

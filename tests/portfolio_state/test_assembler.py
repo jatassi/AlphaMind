@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
@@ -586,8 +585,15 @@ def _ticker_sector_resolver(
     return _resolve
 
 
-def _run[T](coro: Coroutine[object, object, T]) -> T:
-    return asyncio.run(coro)
+def _run[T](value: T) -> T:
+    """Identity passthrough kept for call-site stability across the ALP-468 sync strip.
+
+    Before the strip, callers wrapped ``_run(assemble_snapshot(...))`` to drive
+    the assembler's coroutine via ``asyncio.run``. The assembler is sync now;
+    the helper now just returns the value unchanged so the call sites remain
+    grep-stable. Inline at next refactor pass.
+    """
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -598,77 +604,75 @@ def _run[T](coro: Coroutine[object, object, T]) -> T:
 class _FailingRepository:
     """Raises RepositoryReadError on every method call."""
 
-    async def get_open_positions(self) -> tuple[PositionRecord, ...]:
+    def get_open_positions(self) -> tuple[PositionRecord, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_pending_positions(self) -> tuple[PositionRecord, ...]:
+    def get_pending_positions(self) -> tuple[PositionRecord, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_drawdown_state(self) -> DrawdownState:
+    def get_drawdown_state(self) -> DrawdownState:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_portfolio_pnl_inputs(self) -> PortfolioPnLInputs:
+    def get_portfolio_pnl_inputs(self) -> PortfolioPnLInputs:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_active_theses(self) -> tuple[ThesisRecord, ...]:
+    def get_active_theses(self) -> tuple[ThesisRecord, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_recent_thesis_resolutions(
+    def get_recent_thesis_resolutions(
         self, *, lookback_trading_days: int
     ) -> tuple[RecentThesisResolution, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_cash_ledger(self) -> CashLedger:
+    def get_cash_ledger(self) -> CashLedger:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_regt_excess_aggregates(self, now: datetime) -> RegTExcessAggregates:
+    def get_regt_excess_aggregates(self, now: datetime) -> RegTExcessAggregates:
         del now
         raise RepositoryReadError("simulated read failure")
 
-    async def get_pending_orders(self) -> tuple[OrderRecord, ...]:
+    def get_pending_orders(self) -> tuple[OrderRecord, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_risk_budget_consumption(self) -> RiskBudgetConsumption:
+    def get_risk_budget_consumption(self) -> RiskBudgetConsumption:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_active_risk_parameters(self) -> ActiveRiskParameterSet:
+    def get_active_risk_parameters(self) -> ActiveRiskParameterSet:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_intra_invocation_changelog(
-        self, *, invocation_id: str
-    ) -> tuple[ActivityLogEntry, ...]:
+    def get_intra_invocation_changelog(self, *, invocation_id: str) -> tuple[ActivityLogEntry, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_recent_pm_decision_log(
+    def get_recent_pm_decision_log(
         self, *, sliding_window_invocations: int
     ) -> tuple[ActivityLogEntry, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_position_modification_trail(
+    def get_position_modification_trail(
         self, *, position_ids: tuple[str, ...]
     ) -> dict[str, tuple[ActivityLogEntry, ...]]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_thesis_quality_aggregates(self) -> ThesisQualityAggregate:
+    def get_thesis_quality_aggregates(self) -> ThesisQualityAggregate:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_brackets_for_positions(
+    def get_brackets_for_positions(
         self, *, position_ids: tuple[str, ...]
     ) -> tuple[BracketRecord, ...]:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_current_invocation_metadata(self) -> CurrentInvocationMetadata:
+    def get_current_invocation_metadata(self) -> CurrentInvocationMetadata:
         raise RepositoryReadError("simulated read failure")
 
-    async def get_prior_invocation_context(self) -> PriorInvocationContext:
+    def get_prior_invocation_context(self) -> PriorInvocationContext:
         raise RepositoryReadError("simulated read failure")
 
 
 class _ConsistencyErrorRepository(_FailingRepository):
-    async def get_current_invocation_metadata(self) -> CurrentInvocationMetadata:
+    def get_current_invocation_metadata(self) -> CurrentInvocationMetadata:
         raise RepositoryConsistencyError("isolation violation")
 
-    async def get_prior_invocation_context(self) -> PriorInvocationContext:
+    def get_prior_invocation_context(self) -> PriorInvocationContext:
         raise RepositoryConsistencyError("isolation violation")
 
 
@@ -706,14 +710,38 @@ def test_empty_portfolio_returns_valid_snapshot() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 2: assemble_snapshot signature — async, keyword-only
+# Test 2: assemble_snapshot signature — sync, keyword-only
 # ---------------------------------------------------------------------------
 
 
-def test_assemble_snapshot_is_async() -> None:
+def test_assemble_snapshot_is_sync() -> None:
+    """Per ALP-468: ``assemble_snapshot`` is synchronous after the strip.
+
+    Calling it without ``await`` returns an ``AssembledSnapshot`` directly,
+    not a coroutine. Guards against accidental re-introduction of ``async``.
+    """
     import inspect
 
-    assert inspect.iscoroutinefunction(assemble_snapshot)
+    assert not inspect.iscoroutinefunction(assemble_snapshot)
+
+
+def test_assemble_snapshot_call_returns_assembled_snapshot_not_coroutine() -> None:
+    """Smoke check: a stub-fixture invocation yields a value, not a coroutine."""
+    from alphamind.portfolio_state.freshness import AssembledSnapshot
+    from alphamind.portfolio_state.repository import StubPortfolioStateRepository
+
+    repo = StubPortfolioStateRepository(_make_fixture())
+    provider = StubCurrentPriceProvider({}, _NOW)
+    result = assemble_snapshot(
+        repository=repo,
+        price_provider=provider,
+        sector_resolver=_null_sector_resolver,
+        config=_make_config(),
+        now=_NOW,
+    )
+    # Direct equality against AssembledSnapshot (sync return) — would fail if
+    # ``assemble_snapshot`` were async and returned a coroutine.
+    assert isinstance(result, AssembledSnapshot)
 
 
 # ---------------------------------------------------------------------------

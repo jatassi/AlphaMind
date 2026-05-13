@@ -865,10 +865,10 @@ class TestRunInvocationSnapshotWiring:
 
         assemble_count = 0
 
-        async def _counting_assemble(*args: Any, **kwargs: Any) -> Any:
+        def _counting_assemble(*args: Any, **kwargs: Any) -> Any:
             nonlocal assemble_count
             assemble_count += 1
-            return await assemble_snapshot(*args, **kwargs)
+            return assemble_snapshot(*args, **kwargs)
 
         monkeypatch.setattr(module, "assemble_snapshot", _counting_assemble)
 
@@ -1021,7 +1021,7 @@ class TestPriorProviderRehydratesFromPriorInvocation:
         )
 
         _, prior_provider = _make_repository_providers(current_set)
-        prior_set = await prior_provider(str(prior_snapshot_path))
+        prior_set = prior_provider(str(prior_snapshot_path))
 
         # The prior provider must return the snapshot-derived set, NOT a copy
         # of the current set.
@@ -1058,7 +1058,7 @@ class TestPriorProviderRehydratesFromPriorInvocation:
 
         _, prior_provider = _make_repository_providers(current_set)
         missing_path = str(tmp_path / "definitely_not_on_disk.json")
-        result = await prior_provider(missing_path)
+        result = prior_provider(missing_path)
 
         assert result is current_set
 
@@ -1086,7 +1086,7 @@ class TestPriorProviderRehydratesFromPriorInvocation:
         _, prior_provider = _make_repository_providers(current_set)
 
         with pytest.raises(json.JSONDecodeError):
-            await prior_provider(str(corrupt_path))
+            prior_provider(str(corrupt_path))
 
 
 def _stub_only_llm_and_broker(

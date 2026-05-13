@@ -1212,7 +1212,7 @@ async def _run_assembler_for_aggregates(
     )
     provider = make_active_risk_parameters_provider(phase1_result)
 
-    async def _prior_provider(_path: str) -> ActiveRiskParameterSet:
+    def _prior_provider(_path: str) -> ActiveRiskParameterSet:
         return parameters
 
     repo = build_sql_portfolio_state_repository(
@@ -1241,7 +1241,7 @@ async def _run_assembler_for_aggregates(
     def _sector_resolver(_pos: PositionRecord) -> str | None:
         return "tech"
 
-    assembled = await assemble_snapshot(
+    assembled = assemble_snapshot(
         repository=repo,
         price_provider=price_provider,
         sector_resolver=_sector_resolver,

@@ -130,62 +130,68 @@ class PriorInvocationContext(BaseModel):
 
 @runtime_checkable
 class PortfolioStateRepository(Protocol):
-    """Read-only view of all OMS state categories needed for snapshot assembly."""
+    """Read-only view of all OMS state categories needed for snapshot assembly.
+
+    All methods are synchronous: SQLite is the persistence engine and the
+    Protocol carries no real I/O concurrency. Per ALP-454 Pre-resolved
+    decision (C), the async colouring was stripped; revisit if/when
+    Postgres lands.
+    """
 
     # Category 1 — Position inventory
-    async def get_open_positions(self) -> tuple[PositionRecord, ...]: ...
+    def get_open_positions(self) -> tuple[PositionRecord, ...]: ...
 
-    async def get_pending_positions(self) -> tuple[PositionRecord, ...]: ...
+    def get_pending_positions(self) -> tuple[PositionRecord, ...]: ...
 
     # Category 2c — Drawdown
-    async def get_drawdown_state(self) -> DrawdownState: ...
+    def get_drawdown_state(self) -> DrawdownState: ...
 
     # Category 2 rollup helper
-    async def get_portfolio_pnl_inputs(self) -> PortfolioPnLInputs: ...
+    def get_portfolio_pnl_inputs(self) -> PortfolioPnLInputs: ...
 
     # Category 3 — Thesis registry
-    async def get_active_theses(self) -> tuple[ThesisRecord, ...]: ...
+    def get_active_theses(self) -> tuple[ThesisRecord, ...]: ...
 
-    async def get_recent_thesis_resolutions(
+    def get_recent_thesis_resolutions(
         self, *, lookback_trading_days: int
     ) -> tuple[RecentThesisResolution, ...]: ...
 
     # Category 4 — Capital and capacity
-    async def get_cash_ledger(self) -> CashLedger: ...
+    def get_cash_ledger(self) -> CashLedger: ...
 
-    async def get_regt_excess_aggregates(self, now: datetime) -> RegTExcessAggregates: ...
+    def get_regt_excess_aggregates(self, now: datetime) -> RegTExcessAggregates: ...
 
-    async def get_pending_orders(self) -> tuple[OrderRecord, ...]: ...
+    def get_pending_orders(self) -> tuple[OrderRecord, ...]: ...
 
-    async def get_risk_budget_consumption(self) -> RiskBudgetConsumption: ...
+    def get_risk_budget_consumption(self) -> RiskBudgetConsumption: ...
 
-    async def get_active_risk_parameters(self) -> ActiveRiskParameterSet: ...
+    def get_active_risk_parameters(self) -> ActiveRiskParameterSet: ...
 
     # Category 5 — Activity log
-    async def get_intra_invocation_changelog(
+    def get_intra_invocation_changelog(
         self, *, invocation_id: str
     ) -> tuple[ActivityLogEntry, ...]: ...
 
-    async def get_recent_pm_decision_log(
+    def get_recent_pm_decision_log(
         self, *, sliding_window_invocations: int
     ) -> tuple[ActivityLogEntry, ...]: ...
 
-    async def get_position_modification_trail(
+    def get_position_modification_trail(
         self, *, position_ids: tuple[str, ...]
     ) -> dict[str, tuple[ActivityLogEntry, ...]]: ...
 
     # Category 6 — Thesis quality
-    async def get_thesis_quality_aggregates(self) -> ThesisQualityAggregate: ...
+    def get_thesis_quality_aggregates(self) -> ThesisQualityAggregate: ...
 
     # Brackets
-    async def get_brackets_for_positions(
+    def get_brackets_for_positions(
         self, *, position_ids: tuple[str, ...]
     ) -> tuple[BracketRecord, ...]: ...
 
     # Invocation scaffolding
-    async def get_current_invocation_metadata(self) -> CurrentInvocationMetadata: ...
+    def get_current_invocation_metadata(self) -> CurrentInvocationMetadata: ...
 
-    async def get_prior_invocation_context(self) -> PriorInvocationContext: ...
+    def get_prior_invocation_context(self) -> PriorInvocationContext: ...
 
 
 # ---------------------------------------------------------------------------
@@ -233,71 +239,69 @@ class StubPortfolioStateRepository:
     def __init__(self, fixture: RepositoryFixture) -> None:
         self._fixture = fixture
 
-    async def get_open_positions(self) -> tuple[PositionRecord, ...]:
+    def get_open_positions(self) -> tuple[PositionRecord, ...]:
         return self._fixture.open_positions
 
-    async def get_pending_positions(self) -> tuple[PositionRecord, ...]:
+    def get_pending_positions(self) -> tuple[PositionRecord, ...]:
         return self._fixture.pending_positions
 
-    async def get_drawdown_state(self) -> DrawdownState:
+    def get_drawdown_state(self) -> DrawdownState:
         return self._fixture.drawdown_state
 
-    async def get_portfolio_pnl_inputs(self) -> PortfolioPnLInputs:
+    def get_portfolio_pnl_inputs(self) -> PortfolioPnLInputs:
         return self._fixture.portfolio_pnl_inputs
 
-    async def get_active_theses(self) -> tuple[ThesisRecord, ...]:
+    def get_active_theses(self) -> tuple[ThesisRecord, ...]:
         return self._fixture.active_theses
 
-    async def get_recent_thesis_resolutions(
+    def get_recent_thesis_resolutions(
         self, *, lookback_trading_days: int
     ) -> tuple[RecentThesisResolution, ...]:
         del lookback_trading_days
         return self._fixture.recent_thesis_resolutions
 
-    async def get_cash_ledger(self) -> CashLedger:
+    def get_cash_ledger(self) -> CashLedger:
         return self._fixture.cash_ledger
 
-    async def get_regt_excess_aggregates(self, now: datetime) -> RegTExcessAggregates:
+    def get_regt_excess_aggregates(self, now: datetime) -> RegTExcessAggregates:
         del now
         return self._fixture.regt_excess_aggregates
 
-    async def get_pending_orders(self) -> tuple[OrderRecord, ...]:
+    def get_pending_orders(self) -> tuple[OrderRecord, ...]:
         return self._fixture.pending_orders
 
-    async def get_risk_budget_consumption(self) -> RiskBudgetConsumption:
+    def get_risk_budget_consumption(self) -> RiskBudgetConsumption:
         return self._fixture.risk_budget
 
-    async def get_active_risk_parameters(self) -> ActiveRiskParameterSet:
+    def get_active_risk_parameters(self) -> ActiveRiskParameterSet:
         return self._fixture.active_risk_parameters
 
-    async def get_intra_invocation_changelog(
-        self, *, invocation_id: str
-    ) -> tuple[ActivityLogEntry, ...]:
+    def get_intra_invocation_changelog(self, *, invocation_id: str) -> tuple[ActivityLogEntry, ...]:
         del invocation_id
         return self._fixture.intra_invocation_changelog
 
-    async def get_recent_pm_decision_log(
+    def get_recent_pm_decision_log(
         self, *, sliding_window_invocations: int
     ) -> tuple[ActivityLogEntry, ...]:
         del sliding_window_invocations
         return self._fixture.recent_pm_decision_log
 
-    async def get_position_modification_trail(
+    def get_position_modification_trail(
         self, *, position_ids: tuple[str, ...]
     ) -> dict[str, tuple[ActivityLogEntry, ...]]:
         trail = self._fixture.position_modification_trail
         return {pid: trail[pid] for pid in position_ids if pid in trail}
 
-    async def get_thesis_quality_aggregates(self) -> ThesisQualityAggregate:
+    def get_thesis_quality_aggregates(self) -> ThesisQualityAggregate:
         return self._fixture.thesis_quality_aggregates
 
-    async def get_brackets_for_positions(
+    def get_brackets_for_positions(
         self, *, position_ids: tuple[str, ...]
     ) -> tuple[BracketRecord, ...]:
         return tuple(b for b in self._fixture.brackets if b.position_id in position_ids)
 
-    async def get_current_invocation_metadata(self) -> CurrentInvocationMetadata:
+    def get_current_invocation_metadata(self) -> CurrentInvocationMetadata:
         return self._fixture.current_invocation_metadata
 
-    async def get_prior_invocation_context(self) -> PriorInvocationContext:
+    def get_prior_invocation_context(self) -> PriorInvocationContext:
         return self._fixture.prior_invocation_context

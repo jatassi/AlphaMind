@@ -114,56 +114,49 @@ def _make_stub(
     return stub, now
 
 
-@pytest.mark.asyncio
-async def test_get_quote_fresh_returns_is_stale_false() -> None:
+def test_get_quote_fresh_returns_is_stale_false() -> None:
     stub, _ = _make_stub(age_seconds=30.0)
-    result = await stub.get_quote("AAPL", freshness_threshold_seconds=60.0)
+    result = stub.get_quote("AAPL", freshness_threshold_seconds=60.0)
     assert result.is_stale is False
 
 
-@pytest.mark.asyncio
-async def test_get_quote_stale_returns_is_stale_true() -> None:
+def test_get_quote_stale_returns_is_stale_true() -> None:
     stub, _ = _make_stub(age_seconds=120.0)
-    result = await stub.get_quote("AAPL", freshness_threshold_seconds=60.0)
+    result = stub.get_quote("AAPL", freshness_threshold_seconds=60.0)
     assert result.is_stale is True
 
 
-@pytest.mark.asyncio
-async def test_get_quote_unknown_ticker_raises() -> None:
+def test_get_quote_unknown_ticker_raises() -> None:
     stub, _ = _make_stub()
     with pytest.raises(UnknownTickerError):
-        await stub.get_quote("UNKNOWN", freshness_threshold_seconds=60.0)
+        stub.get_quote("UNKNOWN", freshness_threshold_seconds=60.0)
 
 
-@pytest.mark.asyncio
-async def test_get_quote_does_not_mutate_backing_dict() -> None:
+def test_get_quote_does_not_mutate_backing_dict() -> None:
     now = datetime.now(UTC)
     as_of = now - timedelta(seconds=120.0)
     original_quote = _quote(ticker="AAPL", as_of=as_of, is_stale=False)
     quotes: dict[str, PriceQuote] = {"AAPL": original_quote}
     stub = StubCurrentPriceProvider(quotes=quotes, now=now)
-    result = await stub.get_quote("AAPL", freshness_threshold_seconds=60.0)
+    result = stub.get_quote("AAPL", freshness_threshold_seconds=60.0)
     assert result.is_stale is True
     assert quotes["AAPL"].is_stale is False
 
 
-@pytest.mark.asyncio
-async def test_get_quotes_omits_unknown_tickers() -> None:
+def test_get_quotes_omits_unknown_tickers() -> None:
     stub, _ = _make_stub(ticker="AAPL")
-    result = await stub.get_quotes(("AAPL", "UNKNOWN"), freshness_threshold_seconds=60.0)
+    result = stub.get_quotes(("AAPL", "UNKNOWN"), freshness_threshold_seconds=60.0)
     assert "AAPL" in result
     assert "UNKNOWN" not in result
 
 
-@pytest.mark.asyncio
-async def test_get_quotes_does_not_raise_for_unknown() -> None:
+def test_get_quotes_does_not_raise_for_unknown() -> None:
     stub, _ = _make_stub(ticker="AAPL")
-    result = await stub.get_quotes(("UNKNOWN1", "UNKNOWN2"), freshness_threshold_seconds=60.0)
+    result = stub.get_quotes(("UNKNOWN1", "UNKNOWN2"), freshness_threshold_seconds=60.0)
     assert result == {}
 
 
-@pytest.mark.asyncio
-async def test_get_quotes_returns_staleness_per_ticker() -> None:
+def test_get_quotes_returns_staleness_per_ticker() -> None:
     now = datetime.now(UTC)
     fresh_as_of = now - timedelta(seconds=10.0)
     stale_as_of = now - timedelta(seconds=200.0)
@@ -172,7 +165,7 @@ async def test_get_quotes_returns_staleness_per_ticker() -> None:
         "STALE": _quote(ticker="STALE", as_of=stale_as_of),
     }
     stub = StubCurrentPriceProvider(quotes=quotes, now=now)
-    result = await stub.get_quotes(("FRESH", "STALE"), freshness_threshold_seconds=60.0)
+    result = stub.get_quotes(("FRESH", "STALE"), freshness_threshold_seconds=60.0)
     assert result["FRESH"].is_stale is False
     assert result["STALE"].is_stale is True
 

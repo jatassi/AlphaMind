@@ -277,7 +277,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
     # The provider is awaited inline below so the same closure shape that
     # ``SqlPortfolioStateRepository`` consumes also feeds the snapshot
     # override — one canonical construction path.
-    phase1_regime, phase1_drawdown, phase1_tiers = await build_phase1_enforcement_inputs(
+    phase1_regime, phase1_drawdown, phase1_tiers = build_phase1_enforcement_inputs(
         repository=repository,
         regime_output=regime_output,
         progressive_tiers=progressive_tiers,
@@ -288,7 +288,7 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
         progressive_tiers=phase1_tiers,
     )
     active_risk_parameters_provider = make_active_risk_parameters_provider(phase1_result)
-    composed_active_risk_parameters = await active_risk_parameters_provider()
+    composed_active_risk_parameters = active_risk_parameters_provider()
 
     # 3. Pre-built snapshot threaded from the orchestrator. Re-write the
     # snapshot's ``active_risk_parameters`` with the composed Phase 1

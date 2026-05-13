@@ -72,13 +72,19 @@ class SynthesizerView(BaseModel):
 
 @runtime_checkable
 class SynthesizerPortfolioStateReader(Protocol):
-    """Three-tool surface the synthesizer reads from portfolio state."""
+    """Three-tool surface the synthesizer reads from portfolio state.
 
-    async def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]: ...
+    Methods are synchronous per ALP-454 Pre-resolved decision (C); the
+    Claude SDK ``@tool`` wrappers that adapt these methods stay ``async``
+    because the SDK contract demands async, but the reader interface
+    itself is sync.
+    """
 
-    async def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]: ...
+    def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]: ...
 
-    async def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot: ...
+    def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]: ...
+
+    def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot: ...
 
 
 # ---------------------------------------------------------------------------
@@ -200,11 +206,11 @@ class SnapshotBackedSynthesizerReader:
     ) -> None:
         self._view = project_synthesizer_view(snapshot, sector_resolver=sector_resolver)
 
-    async def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]:
+    def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]:
         return self._view.positions
 
-    async def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]:
+    def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]:
         return self._view.theses
 
-    async def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot:
+    def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot:
         return self._view.exposure

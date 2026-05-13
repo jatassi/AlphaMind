@@ -1404,7 +1404,7 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
         phase_1_result = _phase_f_phase_1_enforcement_result()
         provider = make_active_risk_parameters_provider(phase_1_result)
 
-        async def _prior_provider(_path: str) -> Any:
+        def _prior_provider(_path: str) -> Any:
             return _phase_f_active_risk_parameters()
 
         committed_repo = build_sql_portfolio_state_repository(
@@ -1452,7 +1452,7 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
             return "tech"
 
         try:
-            assembled = await assemble_snapshot(
+            assembled = assemble_snapshot(
                 repository=committed_repo,
                 price_provider=price_provider,
                 sector_resolver=_sector_resolver,
@@ -1493,7 +1493,7 @@ async def run_phase_f_repository_read_parity(db_path: Path) -> PhaseResult:
             config=_state_persistence_config(),
         )
         try:
-            await uncommitted_repo.get_current_invocation_metadata()
+            uncommitted_repo.get_current_invocation_metadata()
         except RepositoryConsistencyError:
             pass
         else:

@@ -457,13 +457,13 @@ class _FixturePortfolioReader:
             gross_exposure_pct=6.5,
         )
 
-    async def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]:
+    def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]:
         return self._positions
 
-    async def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]:
+    def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]:
         return self._theses
 
-    async def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot:
+    def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot:
         return self._exposure
 
 

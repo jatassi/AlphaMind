@@ -66,15 +66,15 @@ class _StubReader:
         self.theses_calls = 0
         self.exposure_calls = 0
 
-    async def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]:
+    def get_positions_summary(self) -> tuple[SynthesizerPositionSummary, ...]:
         self.positions_calls += 1
         return self._positions
 
-    async def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]:
+    def get_active_theses_summary(self) -> tuple[SynthesizerThesisSummary, ...]:
         self.theses_calls += 1
         return self._theses
 
-    async def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot:
+    def get_exposure_snapshot(self) -> SynthesizerExposureSnapshot:
         self.exposure_calls += 1
         return self._exposure
 
@@ -232,9 +232,12 @@ async def test_empty_state_handlers_return_graceful_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_handlers_use_async_reader_methods() -> None:
-    """Each handler invocation calls the reader's corresponding async method
-    exactly once and awaits its return."""
+async def test_handlers_use_reader_methods() -> None:
+    """Each handler invocation calls the reader's corresponding method exactly once.
+
+    Per ALP-468 the reader surface is sync; the SDK ``@tool`` wrappers stay
+    ``async`` (Claude Agent SDK contract) but no longer ``await`` the reader.
+    """
     reader = _StubReader()
     mcp_servers, _ = build_portfolio_state_mcp_server(reader)
     server = mcp_servers["alphamind_synthesizer_portfolio"]["instance"]

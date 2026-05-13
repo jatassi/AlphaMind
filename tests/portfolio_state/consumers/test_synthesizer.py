@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -844,27 +843,27 @@ class TestSnapshotBackedSynthesizerReader:
     def test_get_positions_summary(self) -> None:
         snapshot = _make_snapshot()
         reader = SnapshotBackedSynthesizerReader(snapshot, _simple_sector_resolver())
-        result = asyncio.run(reader.get_positions_summary())
+        result = reader.get_positions_summary()
         assert len(result) == 3
 
     def test_get_active_theses_summary(self) -> None:
         snapshot = _make_snapshot()
         reader = SnapshotBackedSynthesizerReader(snapshot, _simple_sector_resolver())
-        result = asyncio.run(reader.get_active_theses_summary())
+        result = reader.get_active_theses_summary()
         assert len(result) == 1
 
     def test_get_exposure_snapshot(self) -> None:
         snapshot = _make_snapshot()
         reader = SnapshotBackedSynthesizerReader(snapshot, _simple_sector_resolver())
-        result = asyncio.run(reader.get_exposure_snapshot())
+        result = reader.get_exposure_snapshot()
         assert isinstance(result, SynthesizerExposureSnapshot)
         assert result.net_directional_pct == 30.0
 
     def test_empty_snapshot_returns_empty_tuples(self) -> None:
         reader = SnapshotBackedSynthesizerReader(_make_empty_snapshot(), _simple_sector_resolver())
-        positions = asyncio.run(reader.get_positions_summary())
-        theses = asyncio.run(reader.get_active_theses_summary())
-        exposure = asyncio.run(reader.get_exposure_snapshot())
+        positions = reader.get_positions_summary()
+        theses = reader.get_active_theses_summary()
+        exposure = reader.get_exposure_snapshot()
         assert positions == ()
         assert theses == ()
         assert exposure.sector_exposure_pct == {}

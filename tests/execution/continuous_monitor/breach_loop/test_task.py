@@ -268,16 +268,16 @@ class _StubRepository:
         self._index = 0
         self._active_risk_parameters = active_risk_parameters
 
-    async def get_drawdown_state(self) -> DrawdownState:
+    def get_drawdown_state(self) -> DrawdownState:
         idx = min(self._index, len(self._drawdowns) - 1)
         state = self._drawdowns[idx]
         self._index += 1
         return state
 
-    async def get_open_positions(self) -> tuple[Any, ...]:
+    def get_open_positions(self) -> tuple[Any, ...]:
         return ()
 
-    async def get_active_risk_parameters(self) -> ActiveRiskParameterSet:
+    def get_active_risk_parameters(self) -> ActiveRiskParameterSet:
         return self._active_risk_parameters
 
 

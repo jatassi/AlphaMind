@@ -1024,7 +1024,7 @@ async def _run_pipeline(
     price_provider = StubCurrentPriceProvider(quotes, _AS_OF)
     library_config = build_fixture_library_config()
 
-    assembled = await assemble_snapshot(
+    assembled = assemble_snapshot(
         repository=repository,
         price_provider=price_provider,
         sector_resolver=adapt_ticker_sector_resolver(_sector_resolver),

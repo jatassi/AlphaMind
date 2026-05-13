@@ -81,7 +81,7 @@ _NOW = _AS_OF
 _TIMESTAMP = _AS_OF
 
 
-async def _pipeline_inputs_from_fixture(
+def _pipeline_inputs_from_fixture(
     fixture: Any,
     quotes: dict[str, PriceQuote],
     config: Any,
@@ -149,7 +149,7 @@ async def _pipeline_inputs_from_fixture(
 
     repository = StubPortfolioStateRepository(fixture)
     price_provider = StubCurrentPriceProvider(quotes, now)
-    assembled = await assemble_snapshot(
+    assembled = assemble_snapshot(
         repository=repository,
         price_provider=price_provider,
         sector_resolver=adapt_ticker_sector_resolver(_sector_resolver),
@@ -255,7 +255,7 @@ def _build_regime_output(parameters: Any) -> Any:
     )
 
 
-async def _make_minimal_inputs() -> dict[str, Any]:
+def _make_minimal_inputs() -> dict[str, Any]:
     """Return a fixture-tuple dict ready for ``run_decision_pipeline``.
 
     Uses the empty-portfolio repository fixture (zero positions, $100k cash)
@@ -265,7 +265,7 @@ async def _make_minimal_inputs() -> dict[str, Any]:
     from tests.portfolio_state._fixtures import build_minimal_snapshot_inputs
 
     fixture, quotes, _, config, now = build_minimal_snapshot_inputs()
-    return await _pipeline_inputs_from_fixture(
+    return _pipeline_inputs_from_fixture(
         fixture,
         quotes,
         config,
@@ -587,7 +587,7 @@ def _drive(**overrides: Any) -> Any:
     from alphamind.pipeline.decision import run_decision_pipeline
 
     async def _go() -> Any:
-        kwargs = await _make_minimal_inputs()
+        kwargs = _make_minimal_inputs()
         kwargs.update(overrides)
         return await run_decision_pipeline(**kwargs)
 
@@ -961,7 +961,7 @@ def test_strategist_and_pm_receive_lookups_keyed_to_assembled_prices(
         from alphamind.pipeline.decision import run_decision_pipeline
 
         fixture, quotes, _, config, now = build_multi_position_snapshot_inputs()
-        inputs = await _pipeline_inputs_from_fixture(
+        inputs = _pipeline_inputs_from_fixture(
             fixture,
             quotes,
             config,
