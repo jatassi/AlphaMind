@@ -237,7 +237,7 @@ async def _writeback_open(
 
     await _reserve_capital(handle, amount_usd=command.position_size.dollar_value)
 
-    await _emit_order_submitted(
+    _emit_order_submitted(
         handle,
         order=entry_order,
         position_id=ids["position_id"],
@@ -245,7 +245,7 @@ async def _writeback_open(
         timestamp=timestamp,
         pm_command_id=result.command_id,
     )
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.THESIS_CREATED,
         order_id=None,
@@ -257,7 +257,7 @@ async def _writeback_open(
             summary=thesis.summary,
         ),
     )
-    await _emit_capital_reserved(
+    _emit_capital_reserved(
         handle,
         order_id=ids["entry_order_id"],
         position_id=ids["position_id"],

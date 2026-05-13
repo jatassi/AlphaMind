@@ -71,7 +71,7 @@ class _StateInconsistencyError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-async def _emit(
+def _emit(
     handle: InvocationHandle,
     *,
     event_type: EventType,
@@ -95,7 +95,7 @@ async def _emit(
         source=source,
         detail=detail,
     )
-    await append_activity_log_entry(handle, entry)
+    append_activity_log_entry(handle, entry)
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ async def _cancel_bracket_for_corporate_action(
     bracket_row.status = BracketStatus.DISSOLVED.value
     bracket_row.corporate_action_cancellation_reason = cancellation_reason
     leg_ids = await _bracket_leg_order_ids(handle, bracket_id)
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.BRACKET_CANCELLED_CORPORATE_ACTION,
         order_id=None,
@@ -183,7 +183,7 @@ async def _emit_corporate_action_applied(
     pre_basis: float,
     post_basis: float,
 ) -> None:
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.CORPORATE_ACTION_APPLIED,
         order_id=None,
@@ -251,7 +251,7 @@ async def _apply_signed_cash_movement(
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
     new_balance_money = signed_money(cash_row.current_cash_usd)
     if signed_cash_impact_usd >= 0:
-        await _emit(
+        _emit(
             handle,
             event_type=EventType.CASH_CREDITED,
             order_id=None,
@@ -265,7 +265,7 @@ async def _apply_signed_cash_movement(
             ),
         )
     else:
-        await _emit(
+        _emit(
             handle,
             event_type=EventType.CASH_DEBITED,
             order_id=None,

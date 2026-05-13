@@ -139,7 +139,7 @@ async def _writeback_close(
     }
     if extra_metadata:
         rationale_metadata.update(extra_metadata)
-    await _emit_order_submitted(
+    _emit_order_submitted(
         handle,
         order=close_order,
         position_id=command.position_id,

@@ -367,11 +367,64 @@ def test_one_sector_failure_propagates() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_two_sector_failures_propagate_via_exception_group_unwrap() -> None:
+    """Two sectors fail simultaneously → orchestrator surfaces one failure
+    (the first child of the underlying ``BaseExceptionGroup``) so callers
+    see the same exception type they'd see with a single failure.
+
+    Guards the TaskGroup migration: ``asyncio.TaskGroup`` always raises
+    ``BaseExceptionGroup``; without explicit unwrapping the caller would
+    suddenly receive a group container instead of a ``HarnessFailure``.
+    """
+    first_failure = MalformedOutputFailure(
+        "first parse failed",
+        agent_name=AgentName.tech_semis_researcher.value,
+        invocation_id=_INVOCATION_ID,
+    )
+    second_failure = MalformedOutputFailure(
+        "second parse failed",
+        agent_name=AgentName.financials_researcher.value,
+        invocation_id=_INVOCATION_ID,
+    )
+
+    async def _runner(
+        sector: Sector,
+        invocation_id: str,
+        as_of: datetime,
+        distillation_output_text: str,
+        **_kw: Any,
+    ) -> DomainResearcherResult:
+        # Yield so both runners start before either raises.
+        await asyncio.sleep(0)
+        if sector is Sector.TECH_SEMIS:
+            raise first_failure
+        if sector is Sector.FINANCIALS:
+            raise second_failure
+        return _make_runner_result(sector)
+
+    with pytest.raises(MalformedOutputFailure) as exc_info:
+        asyncio.run(
+            _run_domain_researchers(
+                invocation_id=_INVOCATION_ID,
+                as_of=_AS_OF,
+                distillation_outputs=_make_distillation_outputs(),
+                agents_config=_make_agents_registry(),
+                sectors_config=_make_sectors_registry(),
+                runner_fn=_runner,
+            )
+        )
+    # The surfaced exception must be one of the original failures, not a
+    # synthetic wrapper. The original ``__cause__`` chain may carry the
+    # ``BaseExceptionGroup`` for diagnostic preservation, but the leaf must
+    # be the canonical ``HarnessFailure`` subclass.
+    assert exc_info.value in (first_failure, second_failure)
+
+
 def test_one_sector_failure_does_not_block_on_in_flight_coroutines() -> None:
     """When one sector raises, the orchestrator does not hang waiting on the
-    other two — ``asyncio.gather(..., return_exceptions=False)`` cancels in-flight
-    coroutines as soon as one raises, so the remaining work either completes
-    quickly (already returned) or is cancelled."""
+    other two — TaskGroup cancels in-flight coroutines as soon as one raises,
+    so the remaining work either completes quickly (already returned) or is
+    cancelled."""
 
     started: dict[Sector, bool] = {}
 

@@ -785,6 +785,43 @@ def test_synthesizer_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None
     assert exc_info.value is failure
 
 
+def test_parallel_stage_double_failure_propagates_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Domain + qualitative both fail simultaneously → pipeline surfaces
+    a single ``SDKFailure`` (the first child of the underlying
+    ``BaseExceptionGroup``) rather than the group container.
+
+    Guards the TaskGroup migration: ``asyncio.TaskGroup`` always raises
+    ``BaseExceptionGroup``; without explicit unwrapping the caller would
+    suddenly receive a group container instead of an ``SDKFailure``.
+    """
+    log = _CallLog()
+    domain_failure = SDKFailure(
+        "domain stub failure",
+        agent_name=AgentName.tech_semis_researcher.value,
+        invocation_id=_INVOCATION_ID,
+    )
+    qualitative_failure = SDKFailure(
+        "qualitative stub failure",
+        agent_name=AgentName.qualitative_researcher.value,
+        invocation_id=_INVOCATION_ID,
+    )
+    _patch_runners(
+        monkeypatch,
+        log=log,
+        domain_raises=domain_failure,
+        qualitative_raises=qualitative_failure,
+    )
+    with pytest.raises(SDKFailure) as exc_info:
+        _drive()
+    assert exc_info.value in (domain_failure, qualitative_failure)
+    # Adaptive + synthesizer must NOT have run; the orchestrator aborted at
+    # the parallel stage.
+    assert "adaptive" not in log.order
+    assert "synthesizer" not in log.order
+
+
 # ---------------------------------------------------------------------------
 # Argument plumbing — qualitative + adaptive timing args
 # ---------------------------------------------------------------------------

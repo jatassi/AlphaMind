@@ -102,7 +102,7 @@ async def _writeback_add(
         alpaca_order_id_override=submitted_alpaca_order_id,
     )
     handle.session.add(order_record_to_row(add_order))
-    await _emit_order_submitted(
+    _emit_order_submitted(
         handle,
         order=add_order,
         position_id=command.position_id,
@@ -115,7 +115,7 @@ async def _writeback_add(
         component_id = _new_component_id(position.thesis_id, result.command_id)
         wire_component_type = command.thesis_addition_component.component_type
         component_type = _OMS_COMPONENT_TYPE_TO_PERSISTED[wire_component_type]
-        await _emit(
+        _emit(
             handle,
             event_type=EventType.THESIS_COMPONENT_ADDED,
             order_id=None,
@@ -129,7 +129,7 @@ async def _writeback_add(
         )
 
     await _reserve_capital(handle, amount_usd=command.additional_dollar_value)
-    await _emit_capital_reserved(
+    _emit_capital_reserved(
         handle,
         order_id=add_order_id,
         position_id=command.position_id,
@@ -172,7 +172,7 @@ async def _apply_bracket_adjustment(
         ),
     )
     for cancelled_order in cancelled:
-        await _emit_order_cancelled(
+        _emit_order_cancelled(
             handle,
             order=cancelled_order,
             position_id=position.position_id,
@@ -194,7 +194,7 @@ async def _apply_bracket_adjustment(
     new_order_label = new_order.order_id if new_order is not None else "<no_order>"
     if new_order is not None:
         handle.session.add(order_record_to_row(new_order))
-        await _emit_order_submitted(
+        _emit_order_submitted(
             handle,
             order=new_order,
             position_id=position.position_id,
@@ -211,7 +211,7 @@ async def _apply_bracket_adjustment(
         pm_command_id=pm_command_id,
         rationale="ADD bracket_adjustment",
     )
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.BRACKET_MODIFIED,
         order_id=None,

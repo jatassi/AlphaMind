@@ -130,7 +130,7 @@ async def persist_envelope_parse_failure(
         validation_error_repr=failed_entry.validation_error_repr,
         raw_args_json=json.dumps(failed_entry.raw_args),
     )
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.ENVELOPE_PARSE_FAILED,
         order_id=None,
@@ -182,7 +182,7 @@ async def persist_envelope_rejection(
         blocking_criteria=tuple(e.criterion for e in errors if e.criterion is not None),
         validation_errors_json=json.dumps([e.model_dump(mode="json") for e in errors]),
     )
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.ENVELOPE_REJECTED,
         order_id=None,
@@ -260,7 +260,7 @@ async def persist_command_abandoned(
         failure_reason=failure_reason,
         retry_attempt_count=retry_attempt_count,
     )
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.COMMAND_ABANDONED,
         order_id=None,
@@ -337,7 +337,7 @@ async def _emit_pm_decision(
         resulting_command_ids=command_ids,
         verdict=_VERDICT_TO_PM_VERDICT[envelope.verdict],
     )
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.PM_DECISION,
         order_id=None,

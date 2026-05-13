@@ -324,6 +324,15 @@ async def subscribe_trade_updates(
         await queue.put(update)
 
     stream.subscribe_trade_updates(_handler)
+    # ``asyncio.TaskGroup`` is incompatible with async-generator cleanup:
+    # ``gen.aclose()`` injects ``GeneratorExit`` into the body, which a
+    # surrounding ``async with TaskGroup()`` re-raises as
+    # ``BaseExceptionGroup`` from ``__aexit__`` rather than propagating
+    # cleanly. The bare :func:`asyncio.create_task` lets us manage the
+    # background task's lifecycle through the generator's ``try/finally``
+    # and suppress its cleanup-time exceptions so the consumer observes
+    # only its own failures (translation errors or ``CancelledError``);
+    # the monitor's run-loop owns reconnect on websocket failure.
     run_task = asyncio.create_task(stream._run_forever())
 
     try:
@@ -333,10 +342,5 @@ async def subscribe_trade_updates(
                 yield report
     finally:
         run_task.cancel()
-        # Cleanup-time exceptions on the background ``stream._run_forever()``
-        # task are suppressed so the consumer observes the originating failure
-        # (translation error or its own ``CancelledError``) rather than this
-        # secondary. The monitor's run-loop owns reconnect on websocket
-        # failure; that's not the primitive's concern.
         with contextlib.suppress(asyncio.CancelledError, Exception):
             await run_task

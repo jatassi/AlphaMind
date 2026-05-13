@@ -87,7 +87,7 @@ def activity_log_entry_from_row(row: ActivityLogRow) -> ActivityLogEntry:
     )
 
 
-async def append_activity_log_entry(
+def append_activity_log_entry(
     handle: InvocationHandle,
     entry: ActivityLogEntry,
 ) -> None:
@@ -97,6 +97,12 @@ async def append_activity_log_entry(
     refuses cross-invocation appends. The row is added to the session but
     NOT committed; the surrounding ``InvocationContext`` commits on clean
     exit and rolls back on exception.
+
+    Synchronous because the only DB interaction is ``session.add()`` — the
+    SQLAlchemy ``AsyncSession`` exposes ``add`` as a sync method (the
+    queue-up happens in-memory; the actual SQL emission is deferred to the
+    transaction commit). Keeping the function ``async`` would force every
+    caller to ``await`` a never-suspending coroutine.
     """
     if entry.invocation_id != handle.invocation_id:
         msg = (

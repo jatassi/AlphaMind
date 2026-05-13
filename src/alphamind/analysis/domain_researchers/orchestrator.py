@@ -1,17 +1,18 @@
 """Parallel domain-researcher orchestrator — story 11 (ALP-190).
 
-Fans out three per-sector runner calls under
-``asyncio.gather(..., return_exceptions=False)``, propagates the first
-:class:`HarnessFailure` under fail-closed semantics
+Fans out three per-sector runner calls under :class:`asyncio.TaskGroup`,
+propagates the first :class:`HarnessFailure` under fail-closed semantics
 (``llm-agent-failure-handling.md`` § "fail closed, not open"), and
 aggregates the three :class:`DomainResearcherResult`s into a single
 :class:`DomainResearchersOutput` value object the synthesizer consumes
 downstream.
 
-The choice of ``return_exceptions=False`` is intentional: the alternative
-permits a partial-result code path, which the fail-closed runtime policy
-forbids. Documenting the choice here prevents a future "improve robustness"
-refactor from flipping it.
+``asyncio.TaskGroup`` is the structured-concurrency replacement for
+``asyncio.gather``: the first task that raises cancels every sibling and
+the group exits via ``BaseExceptionGroup``. The orchestrator unwraps the
+group to surface the first child unchanged so callers still see the same
+``HarnessFailure`` subclass they did under the prior gather call — the
+fail-closed contract is preserved (no partial result code path).
 
 The volatility regime label is not forwarded as a separate argument — it is
 already embedded in each ``SectorOutput.text`` slice as a UNIVERSAL_BROADCAST
@@ -42,9 +43,8 @@ __all__ = [
     "run_domain_researchers",
 ]
 
-# Deterministic sector roster — fixes the dispatch order so the
-# positional unpack of ``asyncio.gather``'s result lines up with the
-# DomainResearchersOutput fields.
+# Deterministic sector roster — fixes the dispatch order so positional
+# task lookups line up with the DomainResearchersOutput fields.
 _SECTOR_ROSTER: tuple[Sector, ...] = (Sector.TECH_SEMIS, Sector.FINANCIALS, Sector.ENERGY)
 
 
@@ -91,14 +91,16 @@ async def _run_domain_researchers(
     Production callers go through :func:`run_domain_researchers`, which
     binds ``runner_fn = run_domain_researcher``.
 
-    Per the fail-closed policy, ``asyncio.gather(..., return_exceptions=False)``
-    cancels in-flight coroutines as soon as one raises and re-raises the
-    first exception. The orchestrator does NOT swallow it and does NOT
-    return a partial result.
+    Per the fail-closed policy, :class:`asyncio.TaskGroup` cancels every
+    sibling task as soon as one raises and re-raises the failures inside a
+    ``BaseExceptionGroup``. The orchestrator unwraps the first child so
+    callers see the original :class:`HarnessFailure` subclass — it does
+    NOT swallow the failure and does NOT return a partial result.
     """
     sector_outputs = distillation_outputs.sector_outputs
-    coroutines = [
-        runner_fn(
+
+    async def _run_one(sector: Sector) -> DomainResearcherResult:
+        return await runner_fn(
             sector,
             invocation_id,
             as_of,
@@ -108,12 +110,24 @@ async def _run_domain_researchers(
             sectors_config=sectors_config,
             archive_root=archive_root,
         )
-        for sector in _SECTOR_ROSTER
-    ]
-    # ``asyncio.gather`` preserves argument order, so positional indexing
-    # into ``results`` lines up with ``_SECTOR_ROSTER`` directly.
-    results = await asyncio.gather(*coroutines, return_exceptions=False)
-    tech_semis_result, financials_result, energy_result = results
+
+    try:
+        async with asyncio.TaskGroup() as tg:
+            tasks: dict[Sector, asyncio.Task[DomainResearcherResult]] = {
+                sector: tg.create_task(_run_one(sector)) for sector in _SECTOR_ROSTER
+            }
+    except BaseExceptionGroup as eg:
+        # Preserve the prior ``asyncio.gather`` API: callers see the
+        # first failure unchanged. The group is attached as ``__cause__``
+        # via ``raise ... from eg`` so diagnostics still surface every
+        # concurrent failure.
+        first = eg.exceptions[0]
+        raise first from eg
+
+    tech_semis_result = tasks[Sector.TECH_SEMIS].result()
+    financials_result = tasks[Sector.FINANCIALS].result()
+    energy_result = tasks[Sector.ENERGY].result()
+    results = (tech_semis_result, financials_result, energy_result)
     return DomainResearchersOutput(
         invocation_id=invocation_id,
         as_of=as_of,

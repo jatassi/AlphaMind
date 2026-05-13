@@ -234,7 +234,7 @@ async def _evaluate_bracket_legs(  # noqa: PLR0913 — fans out the cycle's per-
         key = (bracket.bracket_id, leg.leg_id)
         if key in fired_legs:
             continue
-        if not await _leg_should_fire(
+        if not _leg_should_fire(
             position=position,
             leg=leg,
             spot=spot,
@@ -259,7 +259,7 @@ async def _evaluate_bracket_legs(  # noqa: PLR0913 — fans out the cycle's per-
         )
 
 
-async def _leg_should_fire(
+def _leg_should_fire(
     *,
     position: PositionRecord,
     leg: BracketLeg,

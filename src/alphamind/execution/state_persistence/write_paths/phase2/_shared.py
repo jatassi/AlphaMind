@@ -281,7 +281,7 @@ async def _reserve_capital(handle: InvocationHandle, *, amount_usd: Money) -> No
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
 
 
-async def _emit_capital_reserved(
+def _emit_capital_reserved(
     handle: InvocationHandle,
     *,
     order_id: str,
@@ -290,7 +290,7 @@ async def _emit_capital_reserved(
     amount_usd: Money,
     timestamp: datetime,
 ) -> None:
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.CAPITAL_RESERVED,
         order_id=order_id,
@@ -318,7 +318,7 @@ async def _release_capital(
     # legacy max-zero floor).
     cash_row.reserved_capital_usd = signed_money(cash_row.reserved_capital_usd - amount_usd)
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.CAPITAL_RELEASED,
         order_id=order_id,
@@ -434,7 +434,7 @@ async def _append_bracket_modification(
     ).decode()
 
 
-async def _emit_order_submitted(
+def _emit_order_submitted(
     handle: InvocationHandle,
     *,
     order: OrderRecord,
@@ -459,7 +459,7 @@ async def _emit_order_submitted(
         parameters["stop_trigger_price"] = order.price_parameters.stop_trigger_price
     if extra_parameters:
         parameters.update(extra_parameters)
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.ORDER_SUBMITTED,
         order_id=order.order_id,
@@ -474,7 +474,7 @@ async def _emit_order_submitted(
     )
 
 
-async def _emit_order_cancelled(
+def _emit_order_cancelled(
     handle: InvocationHandle,
     *,
     order: OrderRecord,
@@ -483,7 +483,7 @@ async def _emit_order_cancelled(
     cancel_reason: str,
     timestamp: datetime,
 ) -> None:
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.ORDER_CANCELLED,
         order_id=order.order_id,
@@ -497,7 +497,7 @@ async def _emit_order_cancelled(
     )
 
 
-async def _emit(
+def _emit(
     handle: InvocationHandle,
     *,
     event_type: EventType,
@@ -520,4 +520,4 @@ async def _emit(
         source=source,
         detail=detail,
     )
-    await append_activity_log_entry(handle, entry)
+    append_activity_log_entry(handle, entry)

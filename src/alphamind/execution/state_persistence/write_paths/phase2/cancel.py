@@ -63,7 +63,7 @@ async def _writeback_cancel(
     target_row.status = OrderStatus.CANCELLED.value
     target_row.last_update_timestamp = timestamp.isoformat()
 
-    await _emit_order_cancelled(
+    _emit_order_cancelled(
         handle,
         order=target,
         position_id=target.position_id,
@@ -106,7 +106,7 @@ async def _writeback_cancel(
     )
     leg_order_ids = tuple(o.order_id for o in cancelled_legs)
     bracket_row.status = BracketStatus.DISSOLVED.value
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.BRACKET_DISSOLVED,
         order_id=None,
@@ -155,7 +155,7 @@ async def _resolve_thesis_cancelled(
     thesis_row.status = ThesisRecordStatus.CANCELLED.value
     thesis_row.resolution_timestamp = timestamp.isoformat().replace("+00:00", "Z")
     thesis_row.resolution_category = "CANCELLED_NEVER_ENTERED"
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.THESIS_RESOLVED,
         order_id=None,

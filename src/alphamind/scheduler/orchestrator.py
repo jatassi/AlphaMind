@@ -704,6 +704,11 @@ def _make_repository_providers(
     back to the current set so the snapshot assembler stays operational.
     """
 
+    # ``async def`` without ``await`` here is intentional: both closures
+    # satisfy the ``Callable[[...], Awaitable[ActiveRiskParameterSet]]``
+    # Protocol that ``SqlPortfolioStateRepository`` awaits at every
+    # ``get_active_risk_parameters`` / ``get_prior_invocation_context``
+    # call (see ``state_persistence/repository/sql_repository.py``).
     async def _active_provider() -> ActiveRiskParameterSet:
         return active_risk_parameters
 

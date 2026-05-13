@@ -1387,7 +1387,7 @@ async def _emit_capital_release(
 ) -> None:
     """Buy-side fills release the per-order capital reservation made by Phase 2."""
     amount = _fill_consideration_usd(order, fill)
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.CAPITAL_RELEASED,
         order_id=order.order_id,
@@ -1415,7 +1415,7 @@ async def _emit_fill_activity_log_entries(
     pos_id = position_after.position_id
     thesis_id = position_after.thesis_id
 
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.ORDER_FILLED,
         order_id=order.order_id,
@@ -1438,7 +1438,7 @@ async def _emit_fill_activity_log_entries(
         PositionStatus.PENDING,
         PositionStatus.OPEN,
     ):
-        await _emit(
+        _emit(
             handle,
             event_type=EventType.POSITION_OPENED,
             order_id=order.order_id,
@@ -1458,7 +1458,7 @@ async def _emit_fill_activity_log_entries(
         )
 
     if bracket_status_change == BracketStatus.ACTIVE and bracket_id is not None:
-        await _emit(
+        _emit(
             handle,
             event_type=EventType.BRACKET_ACTIVATED,
             order_id=None,
@@ -1479,7 +1479,7 @@ async def _emit_fill_activity_log_entries(
         partial_pnl = (position_after.realized_pnl_to_date_usd or 0.0) - (
             position_before.realized_pnl_to_date_usd or 0.0
         )
-        await _emit(
+        _emit(
             handle,
             event_type=EventType.POSITION_REDUCED,
             order_id=order.order_id,
@@ -1497,7 +1497,7 @@ async def _emit_fill_activity_log_entries(
         PositionStatus.OPEN,
         PositionStatus.CLOSED,
     ):
-        await _emit(
+        _emit(
             handle,
             event_type=EventType.POSITION_CLOSED,
             order_id=order.order_id,
@@ -1513,7 +1513,7 @@ async def _emit_fill_activity_log_entries(
         )
 
     if bracket_status_change == BracketStatus.DISSOLVED and bracket_id is not None:
-        await _emit(
+        _emit(
             handle,
             event_type=EventType.BRACKET_DISSOLVED,
             order_id=None,
@@ -1526,7 +1526,7 @@ async def _emit_fill_activity_log_entries(
         )
 
     if outcome.strategy_incomplete_legs:
-        await _emit(
+        _emit(
             handle,
             event_type=EventType.BRACKET_INCOMPLETE_WARNING,
             order_id=None,
@@ -1543,7 +1543,7 @@ async def _emit_fill_activity_log_entries(
         )
 
     if thesis_resolved and thesis_id is not None:
-        await _emit(
+        _emit(
             handle,
             event_type=EventType.THESIS_RESOLVED,
             order_id=None,
@@ -1558,7 +1558,7 @@ async def _emit_fill_activity_log_entries(
 
     new_balance = await _current_cash_balance(handle)
     if direction_is_buy:
-        await _emit(
+        _emit(
             handle,
             event_type=EventType.CASH_DEBITED,
             order_id=order.order_id,
@@ -1572,7 +1572,7 @@ async def _emit_fill_activity_log_entries(
             ),
         )
     else:
-        await _emit(
+        _emit(
             handle,
             event_type=EventType.CASH_CREDITED,
             order_id=order.order_id,
@@ -1593,7 +1593,7 @@ async def _current_cash_balance(handle: InvocationHandle) -> float:
     return float((await _read_cash_row_or_raise(handle)).current_cash_usd)
 
 
-async def _emit(
+def _emit(
     handle: InvocationHandle,
     *,
     event_type: EventType,
@@ -1617,7 +1617,7 @@ async def _emit(
         source=source,
         detail=detail,
     )
-    await append_activity_log_entry(handle, entry)
+    append_activity_log_entry(handle, entry)
 
 
 def _ticker_of(position: PositionRecord) -> str:

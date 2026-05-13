@@ -425,6 +425,10 @@ def make_snapshot_provider(
         invocation_id = _BOOTSTRAP_SENTINEL if row is None else row[0]
         active = await _load_active_risk_parameters_from_row(row, fallback=bootstrap_parameters)
 
+        # ``async def`` without ``await`` is intentional: both closures
+        # satisfy the ``Callable[[...], Awaitable[ActiveRiskParameterSet]]``
+        # Protocol the repository factory awaits — the closed-over
+        # ``active`` is the per-tick bootstrapped parameter set.
         async def _active_provider() -> ActiveRiskParameterSet:
             return active
 

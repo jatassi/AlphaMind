@@ -600,7 +600,7 @@ class TestActivityLogCodecRoundTrip:
 
         async with InvocationContext(session_factory=factory, record=record) as handle:
             for entry in entries:
-                await append_activity_log_entry(handle, entry)
+                append_activity_log_entry(handle, entry)
 
         # Read back every entry and verify field-for-field equivalence.
         async with factory() as sess:
@@ -687,7 +687,7 @@ class TestActivityLogCodecRoundTrip:
 
         async with InvocationContext(session_factory=factory, record=record) as handle:
             for entry in entries:
-                await append_activity_log_entry(handle, entry)
+                append_activity_log_entry(handle, entry)
 
         async with factory() as sess:
             rehydrated = await read_intra_invocation_changelog(sess, record.invocation_id)
@@ -722,7 +722,7 @@ class TestAppendActivityLogEntry:
                 position_id="pos-1",
             )
             with pytest.raises(ValueError, match="invocation_id"):
-                await append_activity_log_entry(handle, wrong_entry)
+                append_activity_log_entry(handle, wrong_entry)
 
     async def test_emission_rolls_back_when_context_raises(
         self,
@@ -743,7 +743,7 @@ class TestAppendActivityLogEntry:
                     timestamp=_T0,
                     position_id="pos-1",
                 )
-                await append_activity_log_entry(handle, entry)
+                append_activity_log_entry(handle, entry)
                 raise _BoomError("simulated downstream failure")
 
         # Neither the parent invocation row nor the activity_log entry persisted.
@@ -790,10 +790,10 @@ class TestReadIntraInvocationChangelog:
 
         async with InvocationContext(session_factory=factory, record=rec_a) as h:
             # Insert late then early — the read API must order by entry_at.
-            await append_activity_log_entry(h, e_a_late)
-            await append_activity_log_entry(h, e_a_early)
+            append_activity_log_entry(h, e_a_late)
+            append_activity_log_entry(h, e_a_early)
         async with InvocationContext(session_factory=factory, record=rec_b) as h:
-            await append_activity_log_entry(h, e_b)
+            append_activity_log_entry(h, e_b)
 
         async with factory() as sess:
             rows = await read_intra_invocation_changelog(sess, "inv-a")
@@ -827,7 +827,7 @@ class TestReadRecentPmDecisionLog:
         ]
         for i, rec in enumerate(records):
             async with InvocationContext(session_factory=factory, record=rec) as h:
-                await append_activity_log_entry(
+                append_activity_log_entry(
                     h,
                     _pm_decision_entry(
                         entry_id=f"pm-{i}",
@@ -838,7 +838,7 @@ class TestReadRecentPmDecisionLog:
                 )
                 if i == 1:
                     # Non-PM entry mingled in — must NOT appear in the result.
-                    await append_activity_log_entry(
+                    append_activity_log_entry(
                         h,
                         _position_opened_entry(
                             entry_id="entry-non-pm",
@@ -864,7 +864,7 @@ class TestReadRecentPmDecisionLog:
         _, factory = async_engine_and_factory
         rec = _make_invocation_record()
         async with InvocationContext(session_factory=factory, record=rec) as h:
-            await append_activity_log_entry(
+            append_activity_log_entry(
                 h,
                 _pm_decision_entry(
                     entry_id="pm-only",
@@ -920,7 +920,7 @@ class TestReadPositionModificationTrail:
 
         async with InvocationContext(session_factory=factory, record=rec) as h:
             for entry in (e1, e2, e3, e_b, e_other):
-                await append_activity_log_entry(h, entry)
+                append_activity_log_entry(h, entry)
 
         async with factory() as sess:
             trail = await read_position_modification_trail(sess, ["pos-A", "pos-B"])
@@ -1002,10 +1002,10 @@ class TestReadMostRecentConfigChangeNewHash:
         )
 
         async with InvocationContext(session_factory=factory, record=rec0) as h:
-            await append_activity_log_entry(h, first)
+            append_activity_log_entry(h, first)
         async with InvocationContext(session_factory=factory, record=rec1) as h:
-            await append_activity_log_entry(h, second)
-            await append_activity_log_entry(h, unrelated)
+            append_activity_log_entry(h, second)
+            append_activity_log_entry(h, unrelated)
 
         async with factory() as sess:
             new_hash = await read_most_recent_config_change_new_hash(
@@ -1041,7 +1041,7 @@ class TestReadMostRecentConfigChangeNewHash:
 
         async with InvocationContext(session_factory=factory, record=rec) as h:
             # Earliest matching entry (will be shadowed by the later one).
-            await append_activity_log_entry(
+            append_activity_log_entry(
                 h,
                 _entry(
                     entry_id="cfg-target-early",
@@ -1061,7 +1061,7 @@ class TestReadMostRecentConfigChangeNewHash:
             )
             # 100 unrelated entries with a different config_file.
             for i in range(100):
-                await append_activity_log_entry(
+                append_activity_log_entry(
                     h,
                     _entry(
                         entry_id=f"cfg-other-{i:03d}",
@@ -1080,7 +1080,7 @@ class TestReadMostRecentConfigChangeNewHash:
                     ),
                 )
             # Most-recent matching entry — the one the query should return.
-            await append_activity_log_entry(
+            append_activity_log_entry(
                 h,
                 _entry(
                     entry_id="cfg-target-late",

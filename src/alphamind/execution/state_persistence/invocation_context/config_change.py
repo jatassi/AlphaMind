@@ -69,5 +69,5 @@ async def emit_distillation_config_change_entry(
     )
     if entry is None:
         return None
-    await append_activity_log_entry(handle, entry)
+    append_activity_log_entry(handle, entry)
     return entry

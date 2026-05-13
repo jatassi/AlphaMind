@@ -30,6 +30,10 @@ def make_active_risk_parameters_provider(
     the same parameter set.
     """
 
+    # ``async def`` without ``await`` is intentional: the closure satisfies
+    # the ``Callable[[], Awaitable[ActiveRiskParameterSet]]`` Protocol that
+    # ``SqlPortfolioStateRepository`` awaits at every
+    # ``get_active_risk_parameters`` call.
     async def _provider() -> ActiveRiskParameterSet:
         return result.active_risk_parameters
 

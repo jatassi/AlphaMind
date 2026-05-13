@@ -114,7 +114,7 @@ async def handle_cash_merger(
         )
         raise ValueError(msg)
     exit_price_value = activity.signed_cash_impact_usd / pre_qty
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.POSITION_CLOSED,
         order_id=None,

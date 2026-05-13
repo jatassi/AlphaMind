@@ -117,7 +117,7 @@ async def _writeback_adjust(
         ),
     )
     for cancelled in cancelled_orders:
-        await _emit_order_cancelled(
+        _emit_order_cancelled(
             handle,
             order=cancelled,
             position_id=command.position_id,
@@ -137,7 +137,7 @@ async def _writeback_adjust(
     if new_protective is not None:
         new_order_id = new_protective.order_id
         handle.session.add(order_record_to_row(new_protective))
-        await _emit_order_submitted(
+        _emit_order_submitted(
             handle,
             order=new_protective,
             position_id=command.position_id,
@@ -159,7 +159,7 @@ async def _writeback_adjust(
         pm_command_id=result.command_id,
         rationale=command.adjustment_rationale,
     )
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.BRACKET_MODIFIED,
         order_id=None,
@@ -178,7 +178,7 @@ async def _writeback_adjust(
     if command.thesis_component_updates is not None and position.thesis_id is not None:
         for wc in command.thesis_component_updates:
             component_type = _OMS_COMPONENT_TYPE_TO_PERSISTED[wc.component_type]
-            await _emit(
+            _emit(
                 handle,
                 event_type=EventType.THESIS_COMPONENT_UPDATED,
                 order_id=None,

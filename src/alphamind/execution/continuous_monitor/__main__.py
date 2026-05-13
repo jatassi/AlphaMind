@@ -336,6 +336,9 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
         for entry in entries:
             await _single_entry_emitter(entry)
 
+    # ``async def`` without ``await`` is intentional: satisfies the
+    # ``DeferralSink = Callable[[DeferralEvent], Awaitable[None]]``
+    # Protocol the cascade dispatcher awaits at each deferral.
     async def _log_deferral(event: DeferralEvent) -> None:
         log.info(
             "engine envelope deferred to PM: rule=%s position=%s session=%s "
@@ -384,6 +387,12 @@ def _register_breach_loop(  # noqa: PLR0913 — composition root; each parameter
     # monitor runs across invocations; the bootstrap-style providers below
     # are unused by ``get_drawdown_state`` (singleton-table read) but are
     # required by the factory's signature.
+    #
+    # ``async def`` without ``await`` here is intentional: both closures
+    # satisfy the ``Callable[[...], Awaitable[ActiveRiskParameterSet]]``
+    # Protocol the repository factory expects. Production callers reach
+    # these via ``make_active_risk_parameters_provider`` /
+    # ``production_substrate._provider`` rather than through this bootstrap.
     async def _bootstrap_active_provider() -> ActiveRiskParameterSet:
         msg = "active_risk_parameters_provider invoked from the breach loop path"
         raise RuntimeError(msg)

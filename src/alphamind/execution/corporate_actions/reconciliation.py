@@ -274,7 +274,7 @@ async def _emit_alert(
             delta_description=delta_description,
         ),
     )
-    await append_activity_log_entry(handle, entry)
+    append_activity_log_entry(handle, entry)
 
 
 async def _read_live_position_rows(handle: InvocationHandle) -> list[PositionRow]:

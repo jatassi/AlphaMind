@@ -213,7 +213,7 @@ async def handle_spin_off(
         post_basis=post_basis,
     )
     await _cancel_bracket_for_corporate_action(handle, parent.bracket_id, activity)
-    await _emit(
+    _emit(
         handle,
         event_type=EventType.POSITION_OPENED,
         order_id=None,
