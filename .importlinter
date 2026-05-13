@@ -3,26 +3,34 @@ root_package = alphamind
 include_external_packages = True
 
 # ---------------------------------------------------------------------------
-# Lenient import-linter scaffolding (ALP-455).
+# Import-linter contracts.
 #
-# The contracts below encode layer rules that *already hold* against the
-# codebase at the time of authoring. Story ALP-459 ("Tighten import-linter")
-# extends this scaffolding once the cycle-fix stories (ALP-456: _kernel
-# extraction, ALP-457: commands/ kernel + decision <-> execution split,
-# ALP-458: punch-list items 2 and 4) have eliminated the upward imports.
+# Foundation scaffolding installed by ALP-455:
+#   - ``composition-root-layering`` (layered): scheduler/pipeline above the
+#     domain packages.
+#   - ``distillation-no-sqlalchemy`` (forbidden): distillation must not
+#     import sqlalchemy directly or indirectly. ``ignore_imports`` entries
+#     each cite the punch-list item that retires them.
+#
+# Tightening introduced by ALP-459 (this file):
+#   - ``kernel-leaf`` / ``commands-leaf`` (forbidden): pin the kernel and
+#     commands packages as leaves with no upward dependencies.
+#   - ``distillation-not-persistence-models`` (layered): distillation sits
+#     above persistence.models; the forbidden shape would carry 23
+#     ``ignore_imports`` entries, so this is authored as a Layered
+#     contract — the reverse direction (currently 0 chains) is the rule
+#     actually enforced.
+#   - ``decision-not-execution`` / ``portfolio_state-not-risk_guardrails``
+#     (forbidden): enforce purity across these two layer boundaries with
+#     architecturally-coherent ``ignore_imports`` exceptions for the
+#     composition root and boundary translator that legitimately cross
+#     each boundary. See contract-level comments for the architectural
+#     rationale and the follow-up issue scheduled to retire each block.
 #
 # Layer-ordering convention (per the import-linter ``layers`` contract):
 # layers are listed from highest to lowest. Higher layers may import lower
 # layers; lower may not import higher. A literal ``A : B`` in a layer entry
 # means A and B are non-independent siblings — they may import each other.
-#
-# The story-specified target layering — boundaries (config/persistence/
-# data_sources) above the numerical core (distillation) above the LLM
-# tier (analysis/decision) above the egress tier (execution) — has 192
-# upward-import edges today, none of them gratuitous. Encoding it now
-# under ``ignore_imports`` would convert a structural goal into a
-# kept-in-sync exception list; ALP-459 introduces it as the codebase
-# converges on it.
 # ---------------------------------------------------------------------------
 
 # Composition-root rule: only the orchestration entry points (``scheduler``
@@ -119,3 +127,124 @@ ignore_imports =
     alphamind.distillation.regime -> alphamind.persistence.models
     alphamind.distillation.replay_harness.engine -> alphamind.persistence.models
     alphamind.distillation.sector_assembly -> alphamind.persistence.models
+
+# ---------------------------------------------------------------------------
+# ALP-459 contracts.
+# ---------------------------------------------------------------------------
+
+# Leaf contract: ``alphamind._kernel`` carries the shared primitives that
+# every domain layer depends on, so it must not import any sibling
+# top-level alphamind package. Forbidden modules are enumerated explicitly
+# rather than collapsing to ``alphamind`` because grimp raises
+# ``ValueError: Modules have shared descendants`` when a source and a
+# forbidden module are ancestor/descendant.
+[importlinter:contract:kernel-leaf]
+name = _kernel is a leaf — no upward dependencies on sibling packages
+type = forbidden
+source_modules =
+    alphamind._kernel
+forbidden_modules =
+    alphamind.analysis
+    alphamind.collector
+    alphamind.command_center
+    alphamind.commands
+    alphamind.config
+    alphamind.data_sources
+    alphamind.decision
+    alphamind.distillation
+    alphamind.execution
+    alphamind.feedback_loop
+    alphamind.persistence
+    alphamind.pipeline
+    alphamind.portfolio_state
+    alphamind.risk_guardrails
+    alphamind.scheduler
+    alphamind.scripts
+
+# Leaf contract: ``alphamind.commands`` is the engine/PM envelope vocabulary
+# extracted in ALP-458. It may import ``alphamind._kernel`` but no other
+# sibling — ``commands`` is intended to be a typed value-object package
+# that the rest of the system consumes downward.
+[importlinter:contract:commands-leaf]
+name = commands is a leaf — may only import _kernel
+type = forbidden
+source_modules =
+    alphamind.commands
+forbidden_modules =
+    alphamind.analysis
+    alphamind.collector
+    alphamind.command_center
+    alphamind.config
+    alphamind.data_sources
+    alphamind.decision
+    alphamind.distillation
+    alphamind.execution
+    alphamind.feedback_loop
+    alphamind.persistence
+    alphamind.pipeline
+    alphamind.portfolio_state
+    alphamind.risk_guardrails
+    alphamind.scheduler
+    alphamind.scripts
+
+# Layered contract: ``alphamind.distillation`` sits above
+# ``alphamind.persistence.models``. The forbidden shape that would
+# directly ban ``distillation -> persistence.models`` carries 23
+# ``ignore_imports`` entries today — a textbook story-spec scenario
+# where the layered form is preferred. The reverse direction
+# (``persistence.models -> distillation``) is currently 0 chains and is
+# what the contract enforces: persistence.models never reaches up into
+# the compute core. The 23 distillation-side imports are kept on file
+# in ``distillation-no-sqlalchemy``'s indirect ``ignore_imports`` block
+# and disappear when punch-list #9 (ALP-467) splits the assemble.py
+# files into loaders/compute.
+[importlinter:contract:distillation-not-persistence-models]
+name = distillation sits above persistence.models
+type = layers
+layers =
+    alphamind.distillation
+    alphamind.persistence.models
+
+# Architectural exception: ``submit_envelope.py`` is the PM MCP composition
+# root (python-architecture skill §C4). Composition roots legitimately
+# wire concrete implementations across layers; this is the wiring layer.
+# The contract still enforces purity on every other ``decision/*`` module.
+# See ALP-482 for the audit of whether this file should hoist to a
+# top-level ``composition_roots/`` package post-ALP-464 (06b).
+[importlinter:contract:decision-not-execution]
+name = decision/ has no upward imports of execution/
+type = forbidden
+source_modules =
+    alphamind.decision
+forbidden_modules =
+    alphamind.execution
+ignore_imports =
+    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.broker_adapter
+    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.broker_adapter.errors
+    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.broker_adapter.order_modify
+    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.broker_adapter.order_options
+    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.oms.broker_dispatch
+    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.oms.command_ids
+    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.state_persistence.config
+    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.state_persistence.tables.orders
+    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.state_persistence.tables.positions
+    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.state_persistence.tables.positions_codec
+    alphamind.decision.portfolio_manager.submit_envelope -> alphamind.execution.state_persistence.write_paths.phase2
+
+# Architectural exception: ``library_snapshot.py`` is a Pydantic->dataclass
+# translator at the portfolio_state / risk_guardrails boundary
+# (python-architecture skill §B3). Boundary translators that bridge
+# feature shapes are a recognised exception; the contract enforces
+# purity on every other ``portfolio_state/*`` module. The file is
+# slated for relocation to ``risk_guardrails/`` (consumer side) in
+# ALP-483; this ``ignore_imports`` block retires when that lands.
+[importlinter:contract:portfolio_state-not-risk_guardrails]
+name = portfolio_state/ has no upward imports of risk_guardrails/
+type = forbidden
+source_modules =
+    alphamind.portfolio_state
+forbidden_modules =
+    alphamind.risk_guardrails
+ignore_imports =
+    alphamind.portfolio_state.library_snapshot -> alphamind.risk_guardrails.guardrail_evaluation
+    alphamind.portfolio_state.library_snapshot -> alphamind.risk_guardrails.guardrail_evaluation.types
