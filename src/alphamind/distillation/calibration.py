@@ -31,14 +31,17 @@ cannot drift.
 from __future__ import annotations
 
 import statistics
-from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from alphamind._kernel.calibration import CALIBRATION_STATE_VALUES, CalibrationState
+from alphamind.distillation._calibration_core import (
+    CalibratedValue,
+    decide_calibration_state,
+    tag_with_fallback,
+)
 from alphamind.persistence.models import (
     DistillationEventHistory,
     DistillationTickerBaseline,
@@ -79,102 +82,13 @@ the prior is discoverable and self-documenting.
 
 
 # ---------------------------------------------------------------------------
-# Per-output value + tag wrapper
+# Per-output value + tag wrapper + boundary helper
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class CalibratedValue:
-    """A computed value paired with its calibration tag.
-
-    Every per-category distillation computation returns one of these so the
-    persistence layer and the analysis layer downstream can act on the tag
-    uniformly.
-
-    ``bootstrap_reason`` is ``None`` when ``state`` is :attr:`CalibrationState.CALIBRATED`
-    and a compact ``"<missing_input>: <observed> < <required>"`` string when
-    ``state`` is :attr:`CalibrationState.BOOTSTRAP` or
-    :attr:`CalibrationState.UNAVAILABLE`. The shape is machine-readable so a
-    domain researcher can surface the missing input by name in their
-    ``Signal quality`` line.
-    """
-
-    value: Any
-    state: CalibrationState
-    bootstrap_reason: str | None
-
-
-# ---------------------------------------------------------------------------
-# Boundary helper
-# ---------------------------------------------------------------------------
-
-
-def decide_calibration_state(*, observed_n: int, required_n: int) -> CalibrationState:
-    """Return :attr:`CalibrationState.CALIBRATED` when ``observed_n >= required_n``.
-
-    Otherwise return :attr:`CalibrationState.BOOTSTRAP`. The framework never
-    infers :attr:`CalibrationState.UNAVAILABLE` from low counts —
-    that state is only produced via :func:`tag_with_fallback` when the
-    cross-sectional fallback itself returns ``None`` (i.e. the pool is also
-    empty during pre-bootstrap deployment).
-    """
-    if observed_n >= required_n:
-        return CalibrationState.CALIBRATED
-    return CalibrationState.BOOTSTRAP
-
-
-# ---------------------------------------------------------------------------
-# Higher-order helper that ties the three states together
-# ---------------------------------------------------------------------------
-
-
-def tag_with_fallback(
-    *,
-    observed_n: int,
-    required_n: int,
-    input_name: str,
-    computed_value: Any,
-    fallback: Callable[[], Any],
-) -> CalibratedValue:
-    """Decide the calibration state and wrap the result.
-
-    Three branches:
-
-    - ``observed_n >= required_n`` — return
-      :class:`CalibratedValue` with ``computed_value`` and
-      :attr:`CalibrationState.CALIBRATED`. The fallback is not invoked.
-    - ``observed_n < required_n`` and ``fallback()`` returns a value —
-      return :class:`CalibratedValue` with the fallback value and
-      :attr:`CalibrationState.BOOTSTRAP`. ``bootstrap_reason`` carries
-      ``"<input_name>: <observed_n> < <required_n>"`` so a downstream
-      consumer can surface the missing input by name.
-    - ``observed_n < required_n`` and ``fallback()`` returns ``None`` —
-      the cross-sectional pool is itself empty (pre-bootstrap deployment).
-      Return :class:`CalibratedValue` with ``value=None`` and
-      :attr:`CalibrationState.UNAVAILABLE`. ``bootstrap_reason`` notes
-      the pool was empty so domain researchers can omit the block rather
-      than emit a misleading zero.
-    """
-    state = decide_calibration_state(observed_n=observed_n, required_n=required_n)
-    if state is CalibrationState.CALIBRATED:
-        return CalibratedValue(
-            value=computed_value,
-            state=CalibrationState.CALIBRATED,
-            bootstrap_reason=None,
-        )
-    reason = f"{input_name}: {observed_n} < {required_n}"
-    fallback_value = fallback()
-    if fallback_value is None:
-        return CalibratedValue(
-            value=None,
-            state=CalibrationState.UNAVAILABLE,
-            bootstrap_reason=f"{reason} (cross-sectional pool empty)",
-        )
-    return CalibratedValue(
-        value=fallback_value,
-        state=CalibrationState.BOOTSTRAP,
-        bootstrap_reason=reason,
-    )
+#
+# :class:`CalibratedValue`, :func:`decide_calibration_state` and
+# :func:`tag_with_fallback` live in :mod:`._calibration_core` (pure module,
+# no sqlalchemy edges). They are re-exported here for backward
+# compatibility — every existing import site continues to work.
 
 
 # ---------------------------------------------------------------------------

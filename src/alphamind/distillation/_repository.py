@@ -1,0 +1,192 @@
+"""DistillationRepository(Protocol) — pilot for the compute/load boundary split.
+
+Story ALP-467 introduces this Protocol as the seam between the IO shell
+(``q*/<sub>_loaders.py``) and the pure compute cores (``q*/<sub>_compute.py``).
+Concrete impl lives in :mod:`alphamind.distillation._repository_sql` and
+closes over a SQLAlchemy ``Session``; pure-compute tests substitute an
+in-memory stub.
+
+The Protocol surface is **pilot-scoped**: it lists only the read methods the
+piloted modules (q1 + q3/flow_classification) consume. Audit pre-resolved
+decision (E) — "Repository Protocol propagation: pilot only" — explicitly
+defers broader propagation to follow-up issues so this file is not a full
+distillation read surface. Methods accrete here as compute modules surface
+new read needs.
+
+The frozen-dataclass row types below mirror the persistence ORM shape but
+carry only the fields the compute layer reads. Computing over these
+hand-loaded rows is what makes a pure-compute unit test possible without
+spinning up SQLite.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Protocol
+
+# ---------------------------------------------------------------------------
+# Frozen-dataclass row types — compute-facing projections of ORM rows
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class DailyBarRow:
+    """One row from ``ohlcv_bars`` for the daily timeframe."""
+
+    ticker: str
+    period_start: str
+    adj_open: float
+    adj_high: float
+    adj_low: float
+    adj_close: float
+    adj_volume: int
+
+
+@dataclass(frozen=True, slots=True)
+class SectorClassificationRow:
+    """One row from ``sector_classification`` projected to the fields compute reads."""
+
+    ticker: str
+    alphamind_sector: str
+    sector_etf: str
+
+
+@dataclass(frozen=True, slots=True)
+class TickerBaselineRow:
+    """One row from ``distillation_ticker_baseline`` projected for compute."""
+
+    ticker: str
+    baseline_kind: str
+    as_of: str
+    mean: float
+    stdev: float
+    n_observations: int
+    window_days: int
+    calibration_state: str
+
+
+@dataclass(frozen=True, slots=True)
+class GapEventCounts:
+    """Resolved-event totals for the gap-fill probability fallback chain.
+
+    ``resolved`` counts events whose ``outcome`` is not the pending sentinel
+    at or before ``as_of``; ``filled`` is the subset whose outcome is
+    ``"filled"``. The compute step turns these into a per-ticker rate or a
+    sector-pooled fallback rate.
+    """
+
+    resolved: int
+    filled: int
+
+
+@dataclass(frozen=True, slots=True)
+class OptionsContractRow:
+    """One row from ``options_contracts``; q3 flow-classification consumer."""
+
+    contract_ticker: str
+    underlying_ticker: str
+    contract_type: str  # "call" | "put"
+
+
+@dataclass(frozen=True, slots=True)
+class OptionsContractSnapshotRow:
+    """One row from ``options_contract_snapshots``; q3 flow-classification consumer."""
+
+    contract_ticker: str
+    snapshot_ts: str
+    volume_today: int | None
+    open_interest: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class TickerADVRow:
+    """Per-ticker ADV projection; q3 put-flow-intent classification consumer."""
+
+    ticker: str
+    avg_daily_volume_shares: float | None
+
+
+# ---------------------------------------------------------------------------
+# Protocol surface — read-only, structural typing
+# ---------------------------------------------------------------------------
+
+
+class DistillationRepository(Protocol):
+    """Read seam between the IO shell and the pure compute cores.
+
+    Methods are pilot-scoped (q1 + q3.flow_classification). Each call returns
+    a frozen-dataclass projection of the underlying ORM row, never the ORM
+    object itself — this keeps the compute consumer free of SQLAlchemy edges
+    that the import-linter enforces.
+    """
+
+    # --- q1 universe / sector ---------------------------------------------
+
+    def load_default_ticker_scope(self) -> tuple[str, ...]:
+        """Default ticker scope: tickers in audience-covered alphamind_sectors."""
+        ...
+
+    def load_sector_classifications(
+        self, *, tickers: Sequence[str]
+    ) -> dict[str, SectorClassificationRow]:
+        """Return ``{ticker: row}`` for the requested tickers."""
+        ...
+
+    # --- q1 bars / baselines ----------------------------------------------
+
+    def load_daily_bars(self, *, ticker: str, as_of: str, days: int) -> tuple[DailyBarRow, ...]:
+        """Daily bars in chronological order; tail-slice when ``days`` < total."""
+        ...
+
+    def load_latest_baseline(
+        self, *, ticker: str, kind: str, as_of: str
+    ) -> TickerBaselineRow | None:
+        """Most recent ``distillation_ticker_baseline`` row at-or-before ``as_of``."""
+        ...
+
+    # --- q1 gap history ---------------------------------------------------
+
+    def load_gap_fill_event_counts(self, *, ticker: str, as_of: str) -> GapEventCounts:
+        """Per-ticker resolved/filled event counts at-or-before ``as_of``."""
+        ...
+
+    def load_sector_pooled_gap_fill_counts(self, *, sector: str, as_of: str) -> GapEventCounts:
+        """Sector-pooled resolved/filled event counts."""
+        ...
+
+    # --- q3 flow classification -------------------------------------------
+
+    def load_options_contracts_for_underlying(
+        self, *, underlying: str
+    ) -> tuple[OptionsContractRow, ...]:
+        """All option contracts on ``underlying`` ordered by contract_ticker."""
+        ...
+
+    def load_latest_options_snapshot_at(
+        self, *, contract_ticker: str, as_of: str
+    ) -> OptionsContractSnapshotRow | None:
+        """Snapshot at exactly ``as_of`` for ``contract_ticker``."""
+        ...
+
+    def load_prior_options_snapshot(
+        self, *, contract_ticker: str, as_of: str
+    ) -> OptionsContractSnapshotRow | None:
+        """Most recent snapshot strictly before ``as_of``."""
+        ...
+
+    def load_ticker_adv(self, *, ticker: str) -> TickerADVRow | None:
+        """Per-ticker average-daily-volume projection."""
+        ...
+
+
+__all__ = [
+    "DailyBarRow",
+    "DistillationRepository",
+    "GapEventCounts",
+    "OptionsContractRow",
+    "OptionsContractSnapshotRow",
+    "SectorClassificationRow",
+    "TickerADVRow",
+    "TickerBaselineRow",
+]

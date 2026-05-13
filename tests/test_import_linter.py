@@ -471,28 +471,41 @@ def test_portfolio_state_not_risk_guardrails_with_boundary_translator_exception(
 
 
 def test_distillation_no_sqlalchemy_ignore_imports_unchanged() -> None:
-    """The existing ``distillation-no-sqlalchemy`` punch-list ignore_imports are
-    preserved.
+    """The ``distillation-no-sqlalchemy`` punch-list ignore_imports baseline holds.
 
-    Punch-list items #9 (ALP-467) and #22 (ALP-473) are still pending, so
-    every entry below must remain until those stories land. Regression
-    guard: a future story tightening this contract by accident would drop
-    entries here and silently re-introduce all 47 violations (24 direct
-    sqlalchemy imports + 22 indirect via persistence.models + 1 indirect
-    via data_sources._common).
+    ALP-467 piloted the compute/load boundary split for q1 and a single q3
+    sub-module. The pilot does NOT retire the legacy ignores wholesale —
+    every assemble/loader that still issues SQL keeps its entry. The pilot
+    DOES introduce new IO-shell modules (``_repository_sql``, ``q1.gap_loaders``)
+    that intentionally keep sqlalchemy; those new entries are accepted as part
+    of this story.
+
+    Post-ALP-467 baseline:
+    - 26 direct sqlalchemy ignores (the original 22 still-impure modules +
+      ALP-467 pilot shims/shells: ``_repository_sql``, ``q1.gap``,
+      ``q1.gap_loaders``, ``q3.flow_classification``).
+    - 22 indirect ignores (19 original persistence.models edges still in
+      place + 2 ALP-467 pilot shells reaching persistence.models +
+      1 q7.correlation_regime_change reaching data_sources._common).
+
+    Regression guard: a future story tightening this contract by accident
+    would drop entries here and silently re-introduce violations. Punch-list
+    items #9 (continued q-* propagation past the pilot) and #22 (ALP-473)
+    are still pending, so the remaining entries must hold until those land.
     """
     parser = _parse_importlinter_config()
     section = _contract_section(parser, "distillation-no-sqlalchemy")
     ignored = _split_module_list(section["ignore_imports"])
     direct = [e for e in ignored if e.endswith("-> sqlalchemy")]
     indirect = [e for e in ignored if not e.endswith("-> sqlalchemy")]
-    assert len(direct) == 24, (
-        f"direct sqlalchemy ignore_imports count drifted: expected 24, got {len(direct)}.\n"
+    assert len(direct) == 26, (
+        f"direct sqlalchemy ignore_imports count drifted: expected 26, got {len(direct)}.\n"
         f"entries:\n  " + "\n  ".join(direct)
     )
-    assert len(indirect) == 23, (
-        f"indirect ignore_imports count drifted: expected 23 (22 via "
-        f"persistence.models + 1 via data_sources._common), got {len(indirect)}.\n"
+    assert len(indirect) == 22, (
+        f"indirect ignore_imports count drifted: expected 22 (19 original via "
+        f"persistence.models + 2 ALP-467 pilot via persistence.models + 1 via "
+        f"data_sources._common), got {len(indirect)}.\n"
         f"entries:\n  " + "\n  ".join(indirect)
     )
 

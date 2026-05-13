@@ -16,7 +16,7 @@ section "Anomaly detections".
 
 from __future__ import annotations
 
-from alphamind.distillation.calibration import CalibrationState
+from alphamind.distillation._calibration_core import CalibrationState
 from alphamind.distillation.output import AnomalyFlag, AnomalySeverity
 
 

@@ -1,9 +1,16 @@
-"""Q1 top-level assembly entry point — story 12 follow-up.
+"""Q1 top-level assembly entry point — refactored for the compute/load split.
 
-Closes the ``q1`` row of
-:data:`alphamind.distillation.orchestrator._PHASE_2_PLACEHOLDER_GAPS` by
-exposing the function the orchestrator's Phase-2 dispatcher calls in place
-of ``_placeholder_blocks("q1")``.
+ALP-467 split this module into:
+
+* :func:`assemble_q1_blocks_from_inputs` — pure compute over a frozen
+  :class:`Q1Inputs` (see :mod:`alphamind.distillation.q1._loaders`).
+* :func:`assemble_q1_blocks` — thin session-accepting shim that wraps the
+  session in a :class:`SqlDistillationRepository`, calls
+  :func:`load_q1_inputs`, and delegates to the pure compute.
+
+The pure entry point is what the orchestrator's Phase 2 calls under
+``asyncio.TaskGroup`` + ``asyncio.to_thread``; no shared mutable session
+means q1 cannot conflict with another category's session flushes.
 
 Design summary:
 
@@ -13,19 +20,14 @@ Design summary:
   :class:`OutputAudience` mapping pinned in
   :mod:`alphamind.distillation.q1.output_blocks`.
 - For each (sector_audience x indicator_group) pair, build a per-ticker
-  payload by calling the existing per-indicator-group compute functions in
-  :mod:`alphamind.distillation.q1` and wrap the result via
-  :func:`build_q1_block`.
+  payload by calling the existing per-indicator-group compute functions
+  and wrap the result via :func:`build_q1_block`.
 - Run the price-volume anomaly detections off the same per-ticker bar
   series; surface them as separate ``q1.volume_anomaly`` /
   ``q1.price_move_anomaly`` blocks (one per sector_audience and detection
   kind, with a ``per_ticker`` payload entry per firing ticker) so the
   orchestrator's downstream aggregation sees them via the standard
   per-block interface.
-
-The function defers heavy DB scans to the per-indicator helpers and reads
-baseline state directly from ``distillation_ticker_baseline`` (story 07's
-refresh primitive populates the rows in Phase 1, before Phase 2 runs).
 """
 
 from __future__ import annotations
@@ -33,25 +35,41 @@ from __future__ import annotations
 import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from alphamind.config.models.distillation import DistillationConfig
-from alphamind.distillation.calibration import CalibrationState
+from alphamind.distillation._calibration_core import CalibrationState
+from alphamind.distillation._repository import (
+    DailyBarRow,
+    SectorClassificationRow,
+    TickerBaselineRow,
+)
+from alphamind.distillation._repository_sql import SqlDistillationRepository
 from alphamind.distillation.normalization import compute_atr
 from alphamind.distillation.output import AnomalyFlag, OutputAudience, OutputBlock
+from alphamind.distillation.q1._loaders import (
+    GapFillHistoryEntry,
+    Q1Inputs,
+    load_q1_inputs,
+)
+from alphamind.distillation.q1._loaders import (
+    cumulative_return as _cumulative_return,
+)
 from alphamind.distillation.q1.anomalies import (
     detect_price_move_anomaly,
     detect_volume_anomaly,
 )
 from alphamind.distillation.q1.divergence import detect_rsi_divergences
-from alphamind.distillation.q1.gap import (
+from alphamind.distillation.q1.gap_compute import (
+    GapFillEventHistory as _GapFillEventHistory,
+)
+from alphamind.distillation.q1.gap_compute import (
     TrendDirection,
     analyze_gap,
-    resolve_gap_fill_probability,
+    compute_gap_fill_probability,
 )
 from alphamind.distillation.q1.indicators import (
     classify_atr_regime,
@@ -88,23 +106,10 @@ from alphamind.distillation.q1.volume_profile import (
     PriceLevelVolume,
     compute_volume_profile,
 )
-from alphamind.persistence.models import (
-    AssetUniverse,
-    DistillationTickerBaseline,
-    OhlcvBars,
-    SectorClassification,
-)
 
 # ---------------------------------------------------------------------------
 # Block-id namespace for the anomaly outputs
 # ---------------------------------------------------------------------------
-#
-# The six "indicator group" block_ids in :mod:`output_blocks` cover the
-# documented per-group payloads. The two anomaly detections produce their
-# own dedicated block_ids per the story-08a anomaly contract (one
-# ``AnomalyFlag`` per detection on the corresponding ``OutputBlock``).
-# Carrying them as separate blocks lets the orchestrator aggregation
-# (story 10) collect them via the standard ``anomaly_flags`` channel.
 
 BLOCK_ID_VOLUME_ANOMALY: str = "q1.volume_anomaly"
 """Block id for the per-sector volume-anomaly rollup."""
@@ -116,85 +121,29 @@ BLOCK_ID_PRICE_MOVE_ANOMALY: str = "q1.price_move_anomaly"
 # ---------------------------------------------------------------------------
 # Window / period constants — algorithmic conventions, not Class A thresholds
 # ---------------------------------------------------------------------------
-#
-# Each constant below is a math constant of its underlying indicator (RSI
-# 14 / Stochastic 14-3-3 / Bollinger 20-2 / Keltner 20-2 / MACD 12-26-9 /
-# ADX 14) per ``docs/design/01-data-layer/external/quantitative.md`` § 1c.
-# They are NOT Class A thresholds — the no-magic-numbers audit's allowlist
-# covers the per-indicator literals where they live in ``q1/indicators.py``;
-# here we compute the values via arithmetic from the audit-pervasive
-# base ``1`` so the literal values never appear verbatim in source.
 
 _BASE_ONE: int = 1
 
 _RSI_PERIOD: int = (_BASE_ONE + _BASE_ONE) * 7
-"""Wilder RSI conventional period (14)."""
-
 _STOCHASTIC_K_PERIOD: int = (_BASE_ONE + _BASE_ONE) * 7
-"""Stochastic %K conventional period (14)."""
-
 _STOCHASTIC_D_PERIOD: int = _BASE_ONE + _BASE_ONE + _BASE_ONE
-"""Stochastic %D smoothing period (3)."""
-
 _STOCHASTIC_SMOOTH_K: int = _BASE_ONE + _BASE_ONE + _BASE_ONE
-"""Stochastic %K smoothing period (3)."""
-
 _BOLLINGER_PERIOD: int = (_BASE_ONE + _BASE_ONE + _BASE_ONE + _BASE_ONE) * (
     _BASE_ONE + _BASE_ONE + _BASE_ONE + _BASE_ONE + _BASE_ONE
 )
-"""Bollinger SMA conventional period (20)."""
-
 _BOLLINGER_NUM_STD: float = float(_BASE_ONE + _BASE_ONE)
-"""Bollinger conventional band-width multiplier (2-sigma)."""
-
 _KELTNER_PERIOD: int = _BOLLINGER_PERIOD
-"""Keltner conventional period (matches Bollinger SMA period)."""
-
 _KELTNER_ATR_MULTIPLE: float = _BOLLINGER_NUM_STD
-"""Keltner conventional ATR-band multiplier (2 * ATR)."""
-
 _MACD_FAST_PERIOD: int = (_BASE_ONE + _BASE_ONE + _BASE_ONE) * 4
-"""MACD conventional fast EMA period (12)."""
-
 _MACD_SLOW_PERIOD: int = (_BASE_ONE + _BASE_ONE) * 13
-"""MACD conventional slow EMA period (26)."""
-
 _MACD_SIGNAL_PERIOD: int = _BASE_ONE * 9
-"""MACD conventional signal-line EMA period (9)."""
-
 _ADX_PERIOD: int = _RSI_PERIOD
-"""Wilder ADX conventional period (14)."""
-
 _ATR_PERIOD: int = _RSI_PERIOD
-"""Wilder ATR conventional period (14)."""
-
 _RELATIVE_PERFORMANCE_SHORT_DAYS: int = _BASE_ONE * (4 + _BASE_ONE)
-"""Short window for relative-performance calc — quantitative.md § 1e (5 days)."""
-
 _RELATIVE_PERFORMANCE_LONG_DAYS: int = _BOLLINGER_PERIOD
-"""Long window for relative-performance calc — quantitative.md § 1e (20 days)."""
-
 _FIFTY_TWO_WEEK_DAYS: int = (_BASE_ONE + _BASE_ONE) * 126
-"""Trading days in 52 weeks (252)."""
-
 _VOLUME_PROFILE_WINDOW_DAYS: int = _RELATIVE_PERFORMANCE_SHORT_DAYS
-"""Trailing-session count for the volume-profile pool — story-08a § Notes (5)."""
-
 _EMA_PAIR_LONG_PERIOD: int = (4 + _BASE_ONE) * 40
-"""Conventional EMA-pair long period (200).
-
-Mirrors the value pinned in :data:`alphamind.distillation.q1.indicators._EMA_PAIR_PERIODS`;
-expressed via arithmetic so the literal does not appear in source.
-"""
-
-_BAR_LOAD_LOOKBACK_DAYS: int = _FIFTY_TWO_WEEK_DAYS + _BOLLINGER_PERIOD * (4 + _BASE_ONE) - 52
-"""Per-ticker lookback for bar loads (300).
-
-Covers the 200-bar EMA seed plus a margin so the 252-bar 52-week percentile
-also has a full pool. ``300`` is the loaded floor — bars beyond this point
-do not contribute to any Q1 indicator and are skipped to keep the per-call
-cost bounded.
-"""
 
 
 # ---------------------------------------------------------------------------
@@ -202,83 +151,20 @@ cost bounded.
 # ---------------------------------------------------------------------------
 
 
-def _format_iso_utc(dt: datetime) -> str:
-    """Render ``dt`` as an ISO 8601 UTC string with ``Z`` suffix.
+_RETURN_MIN_LEN: int = _BASE_ONE + _BASE_ONE
 
-    Mirrors the orchestrator's ``_format_as_of`` convention so the timestamps
-    embedded in :class:`OutputBlock` payloads diff cleanly across runs.
+
+def _baseline_calibration_state(baseline: TickerBaselineRow | None) -> CalibrationState:
+    """Map an on-disk ``calibration_state`` text to the enum.
+
+    Returns BOOTSTRAP when no baseline row exists.
     """
-    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _resolve_default_ticker_scope(session: Session) -> tuple[str, ...]:
-    """Default ticker scope: every ticker classified into one of the three audiences.
-
-    Reads ``asset_universe`` joined to ``sector_classification`` per the
-    storage spec; the join restricts the scope to the four
-    ``alphamind_sector`` values that map to a sector audience.
-    """
-    rows = session.execute(
-        select(AssetUniverse.ticker)
-        .join(SectorClassification, SectorClassification.ticker == AssetUniverse.ticker)
-        .where(SectorClassification.alphamind_sector.in_(tuple(AUDIENCE_BY_SECTOR.keys())))
-        .order_by(AssetUniverse.ticker)
-    ).all()
-    return tuple(row[0] for row in rows)
-
-
-def _load_sector_per_ticker(
-    session: Session, *, tickers: Sequence[str]
-) -> dict[str, tuple[str, str]]:
-    """Return ``{ticker: (alphamind_sector, sector_etf)}`` for ``tickers``.
-
-    Tickers without a ``sector_classification`` row are omitted — they do
-    not belong to any sector audience and thus do not contribute to a Q1
-    block.
-    """
-    if not tickers:
-        return {}
-    rows = session.execute(
-        select(
-            SectorClassification.ticker,
-            SectorClassification.alphamind_sector,
-            SectorClassification.sector_etf,
-        ).where(SectorClassification.ticker.in_(tuple(tickers)))
-    ).all()
-    return {ticker: (alphamind_sector, sector_etf) for ticker, alphamind_sector, sector_etf in rows}
-
-
-def _group_tickers_by_audience(
-    sector_per_ticker: Mapping[str, tuple[str, str]],
-) -> dict[OutputAudience, list[str]]:
-    """Bucket tickers by their resolved sector audience.
-
-    Tickers in :data:`AUDIENCE_BY_SECTOR` map deterministically onto one
-    of the three audiences pinned in
-    :data:`alphamind.distillation.sector_assembly.DOMAIN_RESEARCHER_BY_AUDIENCE`.
-    Returned mapping keeps only audiences with at least one ticker; the
-    caller iterates the resulting keys deterministically by sorting on the
-    audience value.
-    """
-    grouped: dict[OutputAudience, list[str]] = {}
-    for ticker, (alphamind_sector, _etf) in sector_per_ticker.items():
-        if alphamind_sector not in AUDIENCE_BY_SECTOR:
-            continue
-        audience = audience_for_sector(alphamind_sector)
-        grouped.setdefault(audience, []).append(ticker)
-    for tickers in grouped.values():
-        tickers.sort()
-    return grouped
+    if baseline is None:
+        return CalibrationState.BOOTSTRAP
+    return CalibrationState(baseline.calibration_state)
 
 
 def _audience_to_alphamind_sector(audience: OutputAudience) -> str:
-    """Return one ``alphamind_sector`` value valid for ``audience``.
-
-    The :func:`build_q1_block` helper accepts a single ``alphamind_sector``
-    string per call (it then resolves the audience). For the tech_semis
-    audience either ``tech`` or ``semis`` produces the same audience, so
-    we pass ``tech`` deterministically.
-    """
     if audience is OutputAudience.SECTOR_TECH_SEMIS:
         return "tech"
     if audience is OutputAudience.SECTOR_FINANCIALS:
@@ -288,87 +174,19 @@ def _audience_to_alphamind_sector(audience: OutputAudience) -> str:
     raise ValueError(f"Unsupported audience: {audience!r}")
 
 
-def _load_daily_bars(
-    session: Session,
-    *,
-    ticker: str,
-    as_of: datetime,
-    days: int,
-) -> list[OhlcvBars]:
-    """Return the ``days``-most-recent daily OHLCV bars for ``ticker`` at-or-before ``as_of``.
-
-    Bars are returned in chronological (ascending ``period_start``) order.
-    Ticker series shorter than the requested window come back as a shorter
-    list — callers that need a minimum length check the length explicitly.
-    """
-    as_of_iso = _format_iso_utc(as_of)
-    stmt = (
-        select(OhlcvBars)
-        .where(
-            OhlcvBars.ticker == ticker,
-            OhlcvBars.timeframe == "1d",
-            OhlcvBars.period_start <= as_of_iso,
-        )
-        .order_by(OhlcvBars.period_start.desc())
-        .limit(days)
-    )
-    rows = list(session.execute(stmt).scalars().all())
-    rows.reverse()
-    return rows
-
-
-def _load_latest_baseline(
-    session: Session,
-    *,
-    ticker: str,
-    kind: str,
-    as_of: datetime,
-) -> DistillationTickerBaseline | None:
-    """Return the most recent ``distillation_ticker_baseline`` row at-or-before ``as_of``."""
-    as_of_iso = _format_iso_utc(as_of)
-    stmt = (
-        select(DistillationTickerBaseline)
-        .where(
-            DistillationTickerBaseline.ticker == ticker,
-            DistillationTickerBaseline.baseline_kind == kind,
-            DistillationTickerBaseline.as_of <= as_of_iso,
-        )
-        .order_by(DistillationTickerBaseline.as_of.desc())
-        .limit(1)
-    )
-    return session.execute(stmt).scalar_one_or_none()
-
-
-def _baseline_calibration_state(baseline: DistillationTickerBaseline | None) -> CalibrationState:
-    """Map the on-disk ``calibration_state`` text to the :class:`CalibrationState` enum.
-
-    Returns :attr:`CalibrationState.BOOTSTRAP` when no baseline row exists —
-    no per-ticker history has been observed yet.
-    """
-    if baseline is None:
-        return CalibrationState.BOOTSTRAP
-    return CalibrationState(baseline.calibration_state)
-
-
-# Sentinel for "two entries needed" — the smallest series for which a
-# return can be computed has a head and a tail.
-_RETURN_MIN_LEN: int = _BASE_ONE + _BASE_ONE
-
-
-def _cumulative_return(closes: Sequence[float]) -> float:
-    """Return cumulative return between the first and last close.
-
-    Returns 0.0 when the series has fewer than two entries — degenerate
-    input has no return to report; the relative-performance computation
-    handles this by treating the absence as a zero excess.
-    """
-    if len(closes) < _RETURN_MIN_LEN:
-        return 0.0
-    first = closes[0]
-    last = closes[-1]
-    if first == 0.0:
-        return 0.0
-    return (last - first) / first
+def _group_tickers_by_audience(
+    sector_per_ticker: Mapping[str, SectorClassificationRow],
+) -> dict[OutputAudience, list[str]]:
+    """Bucket tickers by their resolved sector audience."""
+    grouped: dict[OutputAudience, list[str]] = {}
+    for ticker, row in sector_per_ticker.items():
+        if row.alphamind_sector not in AUDIENCE_BY_SECTOR:
+            continue
+        audience = audience_for_sector(row.alphamind_sector)
+        grouped.setdefault(audience, []).append(ticker)
+    for tickers in grouped.values():
+        tickers.sort()
+    return grouped
 
 
 # ---------------------------------------------------------------------------
@@ -377,23 +195,15 @@ def _cumulative_return(closes: Sequence[float]) -> float:
 
 
 def _compute_technicals_per_ticker(
-    bars_by_ticker: Mapping[str, Sequence[OhlcvBars]],
+    bars_by_ticker: Mapping[str, Sequence[DailyBarRow]],
 ) -> dict[str, dict[str, Any]]:
-    """Compute the per-ticker technicals payload for every ticker with sufficient bars.
-
-    Tickers with fewer than the longest-window minimum bars (50 bars for
-    the EMA 50 component, plus ATR seeding) are omitted — the per-block
-    convention is "include only what we can compute"; the caller's per-block
-    calibration tag carries the bootstrap status separately.
-    """
+    """Compute the per-ticker technicals payload for every ticker with sufficient bars."""
     out: dict[str, dict[str, Any]] = {}
     for ticker in sorted(bars_by_ticker):
         bars = bars_by_ticker[ticker]
         closes = [b.adj_close for b in bars]
         highs = [b.adj_high for b in bars]
         lows = [b.adj_low for b in bars]
-        # Minimum bars is the slow EMA + signal period for MACD; the other
-        # components share or undercut this.
         if len(closes) < _MACD_SLOW_PERIOD + _MACD_SIGNAL_PERIOD:
             continue
         rsi = compute_rsi(closes, period=_RSI_PERIOD)
@@ -437,15 +247,9 @@ def _compute_technicals_per_ticker(
 
 
 def _compute_volume_profile_per_ticker(
-    bars_by_ticker: Mapping[str, Sequence[OhlcvBars]],
+    bars_by_ticker: Mapping[str, Sequence[DailyBarRow]],
 ) -> dict[str, dict[str, Any]]:
-    """Per-ticker volume profile keyed off the trailing pool of daily bars.
-
-    Each daily bar contributes one ``PriceLevelVolume`` keyed at the bar's
-    ``adj_close`` — a deliberately simple aggregation that is sufficient
-    for an end-of-day distillation and avoids requiring intra-day volume
-    histograms the storage schema does not yet carry.
-    """
+    """Per-ticker volume profile keyed off the trailing pool of daily bars."""
     out: dict[str, dict[str, Any]] = {}
     for ticker in sorted(bars_by_ticker):
         bars = bars_by_ticker[ticker]
@@ -466,24 +270,19 @@ def _compute_volume_profile_per_ticker(
 
 
 def _compute_gap_per_ticker(
-    session: Session,
     *,
-    bars_by_ticker: Mapping[str, Sequence[OhlcvBars]],
-    sector_per_ticker: Mapping[str, tuple[str, str]],
-    as_of: datetime,
+    bars_by_ticker: Mapping[str, Sequence[DailyBarRow]],
+    sector_per_ticker: Mapping[str, SectorClassificationRow],
+    gap_fill_history: Mapping[str, GapFillHistoryEntry],
     gap_fill_min_events: int,
 ) -> tuple[dict[str, dict[str, Any]], CalibrationState, str | None]:
     """Per-ticker gap-analysis payload plus block-level calibration tag.
 
-    The block tag is the most-bootstrap-flavored state across every
-    ticker's gap-fill probability lookup — a single ticker on the
-    sector-pooled fallback flips the whole block to BOOTSTRAP per the
-    framework contract (story 04 § Calibration scoping).
+    Pure compute over pre-loaded bars + gap-fill counts.
     """
     out: dict[str, dict[str, Any]] = {}
     block_state = CalibrationState.CALIBRATED
     block_reason: str | None = None
-    as_of_iso = _format_iso_utc(as_of)
     for ticker in sorted(bars_by_ticker):
         bars = bars_by_ticker[ticker]
         if len(bars) < _ATR_PERIOD + _BASE_ONE:
@@ -491,7 +290,6 @@ def _compute_gap_per_ticker(
         sector_info = sector_per_ticker.get(ticker)
         if sector_info is None:
             continue
-        alphamind_sector = sector_info[0]
         prior_bar = bars[-_RETURN_MIN_LEN]
         today_bar = bars[-_BASE_ONE]
         atr_14 = compute_atr(
@@ -502,8 +300,6 @@ def _compute_gap_per_ticker(
         )
         if atr_14 <= 0:
             continue
-        # Trend direction proxy from prior-vs-today close — direction-agnostic
-        # threshold ``>0`` / ``<0`` keeps the gap classification simple.
         trend_direction: TrendDirection
         if today_bar.adj_close > prior_bar.adj_close:
             trend_direction = "up"
@@ -519,11 +315,16 @@ def _compute_gap_per_ticker(
             atr_14d=float(atr_14),
             trend_direction=trend_direction,
         )
-        fill = resolve_gap_fill_probability(
-            session,
-            ticker=ticker,
-            sector=alphamind_sector,
-            as_of=as_of_iso,
+        history_entry = gap_fill_history.get(ticker)
+        if history_entry is None:
+            continue
+        fill = compute_gap_fill_probability(
+            history=_GapFillEventHistory(
+                ticker_resolved=history_entry.ticker_counts.resolved,
+                ticker_filled=history_entry.ticker_counts.filled,
+                sector_resolved=history_entry.sector_counts.resolved,
+                sector_filled=history_entry.sector_counts.filled,
+            ),
             min_events=gap_fill_min_events,
         )
         if fill.state is CalibrationState.BOOTSTRAP and block_state is CalibrationState.CALIBRATED:
@@ -547,31 +348,7 @@ def _compute_gap_per_ticker(
     return out, block_state, block_reason
 
 
-def _load_window_returns(
-    session: Session, *, ticker: str, as_of: datetime
-) -> tuple[float, float] | None:
-    """Return the (5d, 20d) cumulative returns for ``ticker`` at ``as_of``.
-
-    Returns ``None`` when the bar series is shorter than the long window
-    plus the seed bar — the caller substitutes a fallback or omits the
-    ticker entirely.
-    """
-    bars = _load_daily_bars(
-        session,
-        ticker=ticker,
-        as_of=as_of,
-        days=_RELATIVE_PERFORMANCE_LONG_DAYS + _BASE_ONE,
-    )
-    if len(bars) < _RELATIVE_PERFORMANCE_LONG_DAYS + _BASE_ONE:
-        return None
-    closes = [b.adj_close for b in bars]
-    return (
-        _cumulative_return(closes[-_RELATIVE_PERFORMANCE_SHORT_DAYS - _BASE_ONE :]),
-        _cumulative_return(closes[-_RELATIVE_PERFORMANCE_LONG_DAYS - _BASE_ONE :]),
-    )
-
-
-def _ticker_window_returns(bars: Sequence[OhlcvBars]) -> tuple[float, float]:
+def _ticker_window_returns(bars: Sequence[DailyBarRow]) -> tuple[float, float]:
     """Return the (5d, 20d) cumulative returns for an in-memory bar series."""
     closes = [b.adj_close for b in bars]
     return (
@@ -581,30 +358,16 @@ def _ticker_window_returns(bars: Sequence[OhlcvBars]) -> tuple[float, float]:
 
 
 def _compute_relative_performance_per_ticker(
-    session: Session,
     *,
-    bars_by_ticker: Mapping[str, Sequence[OhlcvBars]],
-    sector_per_ticker: Mapping[str, tuple[str, str]],
-    as_of: datetime,
+    bars_by_ticker: Mapping[str, Sequence[DailyBarRow]],
+    sector_per_ticker: Mapping[str, SectorClassificationRow],
+    spy_window_returns: tuple[float, float] | None,
+    sector_etf_window_returns: Mapping[str, tuple[float, float] | None],
 ) -> dict[str, dict[str, Any]]:
-    """Per-ticker relative-performance payload keyed off SPY + sector ETF.
-
-    Tickers whose sector ETF is not present in ``ohlcv_bars`` (or whose
-    own series is too short to support both windows) are omitted.
-    """
-    spy_returns = _load_window_returns(session, ticker="SPY", as_of=as_of)
-    if spy_returns is None:
+    """Per-ticker relative-performance payload keyed off SPY + sector ETF."""
+    if spy_window_returns is None:
         return {}
-    spy_5d, spy_20d = spy_returns
-
-    sector_etf_cache: dict[str, tuple[float, float] | None] = {}
-
-    def _etf_returns(etf_ticker: str) -> tuple[float, float] | None:
-        if etf_ticker not in sector_etf_cache:
-            sector_etf_cache[etf_ticker] = _load_window_returns(
-                session, ticker=etf_ticker, as_of=as_of
-            )
-        return sector_etf_cache[etf_ticker]
+    spy_5d, spy_20d = spy_window_returns
 
     out: dict[str, dict[str, Any]] = {}
     for ticker in sorted(bars_by_ticker):
@@ -612,7 +375,7 @@ def _compute_relative_performance_per_ticker(
         sector_info = sector_per_ticker.get(ticker)
         if len(bars) < _RELATIVE_PERFORMANCE_LONG_DAYS + _BASE_ONE or sector_info is None:
             continue
-        etf_ret = _etf_returns(sector_info[1])
+        etf_ret = sector_etf_window_returns.get(sector_info.sector_etf)
         if etf_ret is None:
             continue
         ticker_5d, ticker_20d = _ticker_window_returns(bars)
@@ -638,7 +401,7 @@ def _compute_relative_performance_per_ticker(
 def _annotate_intra_sector_rank(
     out: dict[str, dict[str, Any]],
     *,
-    bars_by_ticker: Mapping[str, Sequence[OhlcvBars]],
+    bars_by_ticker: Mapping[str, Sequence[DailyBarRow]],
 ) -> None:
     """Attach the intra-sector percentile and quartile label to each entry."""
     if not out:
@@ -669,12 +432,7 @@ class _EmaSummary:
 
 
 def _summarize_ema_pairs(closes: Sequence[float], atr: float) -> _EmaSummary:
-    """Return EMA-pair fields plus a bootstrap reason when the series is too short.
-
-    A series shorter than the 200-bar EMA seed produces zero placeholders
-    and a bootstrap reason; the caller propagates that reason into the
-    block-level tag.
-    """
+    """Return EMA-pair fields plus a bootstrap reason when the series is too short."""
     try:
         ema_pairs = compute_ema_pairs(list(closes))
     except ValueError:
@@ -699,16 +457,11 @@ def _summarize_ema_pairs(closes: Sequence[float], atr: float) -> _EmaSummary:
 
 
 def _classify_volatility_regime_from_closes(closes: Sequence[float]) -> str:
-    """Compute the rolling Bollinger band width and classify the volatility regime.
-
-    Returns ``transitional`` when there are fewer than two band-width
-    observations — a degenerate baseline cannot classify the regime.
-    """
+    """Compute the rolling Bollinger band width and classify the volatility regime."""
     bb_widths: list[float] = []
     for end in range(_BOLLINGER_PERIOD, len(closes) + 1):
         window = closes[end - _BOLLINGER_PERIOD : end]
         stdev = statistics.pstdev(window)
-        # Bollinger band width = upper-band - lower-band = 2 * num_std * stdev.
         bb_widths.append(float(_RETURN_MIN_LEN) * _BOLLINGER_NUM_STD * stdev)
     if len(bb_widths) < _RETURN_MIN_LEN:
         return "transitional"
@@ -723,13 +476,9 @@ def _atr_regime_label_and_tag(
     *,
     ticker: str,
     atr: float,
-    atr_baseline: DistillationTickerBaseline | None,
+    atr_baseline: TickerBaselineRow | None,
 ) -> tuple[str, CalibrationState, str | None]:
-    """Return ``(atr_regime_label, calibration_state, bootstrap_reason)``.
-
-    The label collapses to ``neutral`` when the baseline is missing or
-    BOOTSTRAP; the calibration tag captures whichever applies.
-    """
+    """Return ``(atr_regime_label, calibration_state, bootstrap_reason)``."""
     if atr_baseline is None:
         return "neutral", CalibrationState.BOOTSTRAP, f"atr_baseline missing for {ticker}"
     state = _baseline_calibration_state(atr_baseline)
@@ -747,15 +496,10 @@ def _atr_regime_label_and_tag(
 def _trend_state_payload_for_ticker(
     *,
     ticker: str,
-    bars: Sequence[OhlcvBars],
-    atr_baseline: DistillationTickerBaseline | None,
+    bars: Sequence[DailyBarRow],
+    atr_baseline: TickerBaselineRow | None,
 ) -> tuple[dict[str, Any], CalibrationState, str | None] | None:
-    """Per-ticker trend-state payload + per-ticker calibration-state tag.
-
-    Returns ``None`` when the bar series is too short for the ADX seed
-    plus the seed-bar (the block excludes that ticker rather than emitting
-    a degenerate value).
-    """
+    """Per-ticker trend-state payload + per-ticker calibration-state tag."""
     closes = [b.adj_close for b in bars]
     highs = [b.adj_high for b in bars]
     lows = [b.adj_low for b in bars]
@@ -792,9 +536,6 @@ def _trend_state_payload_for_ticker(
         "volatility_regime": vol_regime,
         "atr_regime": atr_regime_label,
     }
-    # The ticker-level state collapses BOOTSTRAP from either the EMA
-    # short-series fallback or the ATR baseline tag; CALIBRATED only when
-    # both are CALIBRATED.
     if ema.bootstrap_reason is not None or atr_state is CalibrationState.BOOTSTRAP:
         return (
             payload,
@@ -806,15 +547,10 @@ def _trend_state_payload_for_ticker(
 
 def _compute_trend_state_per_ticker(
     *,
-    bars_by_ticker: Mapping[str, Sequence[OhlcvBars]],
-    baselines_atr: Mapping[str, DistillationTickerBaseline | None],
+    bars_by_ticker: Mapping[str, Sequence[DailyBarRow]],
+    baselines_atr: Mapping[str, TickerBaselineRow | None],
 ) -> tuple[dict[str, dict[str, Any]], CalibrationState, str | None]:
-    """Per-ticker trend-state payload keyed off EMA pairs and the ATR-baseline tag.
-
-    The block-level calibration tag reflects the per-ticker ATR baseline
-    state — a baseline below ``atr_baseline_days`` of observations flips
-    the block to BOOTSTRAP per story 04's tag-with-fallback framework.
-    """
+    """Per-ticker trend-state payload keyed off EMA pairs and the ATR-baseline tag."""
     out: dict[str, dict[str, Any]] = {}
     block_state = CalibrationState.CALIBRATED
     block_reason: str | None = None
@@ -838,15 +574,9 @@ def _compute_trend_state_per_ticker(
 
 
 def _compute_divergence_per_ticker(
-    bars_by_ticker: Mapping[str, Sequence[OhlcvBars]],
+    bars_by_ticker: Mapping[str, Sequence[DailyBarRow]],
 ) -> dict[str, dict[str, Any]]:
-    """Per-ticker RSI divergence flags across the documented timeframe pairs.
-
-    The fixture-only daily bar series can yield a single timeframe; the
-    helper short-circuits to an empty payload for tickers that only have
-    daily bars (the multi-timeframe set is the one used in production but
-    the storage schema's daily-only path is the common case in unit tests).
-    """
+    """Per-ticker RSI divergence flags across the documented timeframe pairs."""
     out: dict[str, dict[str, Any]] = {}
     for ticker in sorted(bars_by_ticker):
         bars = bars_by_ticker[ticker]
@@ -854,9 +584,6 @@ def _compute_divergence_per_ticker(
         if len(closes) < _RSI_PERIOD + 1:
             continue
         rsi = compute_rsi(closes, period=_RSI_PERIOD)
-        # With only daily bars in the fixture there is nothing to compare
-        # against; emit the daily reading and an empty pair list so the
-        # divergence detector's contract is honored.
         flags = detect_rsi_divergences({"1d": rsi})
         out[ticker] = {
             "rsi_1d": float(rsi.value),
@@ -879,12 +606,7 @@ def _compute_divergence_per_ticker(
 
 @dataclass(frozen=True, slots=True)
 class _AnomalyDetectionAccumulator:
-    """Per-detection accumulator for the anomaly assembly.
-
-    Keeps the per-ticker payload mapping, the firing flags, and the
-    block-level calibration tag in one carrier so the per-ticker loop
-    body has fewer in-flight names.
-    """
+    """Per-detection accumulator for the anomaly assembly."""
 
     per_ticker: dict[str, dict[str, Any]]
     flags: list[AnomalyFlag]
@@ -902,7 +624,7 @@ def _new_accumulator() -> _AnomalyDetectionAccumulator:
 
 
 def _bootstrap_reason_for_baseline(
-    baseline: DistillationTickerBaseline | None,
+    baseline: TickerBaselineRow | None,
     *,
     kind: str,
 ) -> str:
@@ -917,7 +639,7 @@ def _record_volume_anomaly(
     *,
     ticker: str,
     today_volume: float,
-    baseline: DistillationTickerBaseline,
+    baseline: TickerBaselineRow,
     baseline_state: CalibrationState,
     sigma_threshold: float,
 ) -> _AnomalyDetectionAccumulator:
@@ -958,17 +680,12 @@ def _record_price_move_anomaly(
     acc: _AnomalyDetectionAccumulator,
     *,
     ticker: str,
-    bars: Sequence[OhlcvBars],
-    baseline: DistillationTickerBaseline | None,
+    bars: Sequence[DailyBarRow],
+    baseline: TickerBaselineRow | None,
     fallback_state: CalibrationState,
     atr_multiple_threshold: float,
 ) -> _AnomalyDetectionAccumulator:
-    """Run the price-move anomaly detection and fold the result into ``acc``.
-
-    The price-move calibration state follows the ATR baseline tag; when
-    the ATR baseline is missing, the fallback comes from the volume
-    baseline state.
-    """
+    """Run the price-move anomaly detection and fold the result into ``acc``."""
     atr = compute_atr(
         [b.adj_high for b in bars],
         [b.adj_low for b in bars],
@@ -1030,19 +747,12 @@ def _build_anomaly_block(
 def _assemble_anomaly_blocks(
     *,
     audience: OutputAudience,
-    bars_by_ticker: Mapping[str, Sequence[OhlcvBars]],
-    baselines_by_ticker: Mapping[str, DistillationTickerBaseline | None],
+    bars_by_ticker: Mapping[str, Sequence[DailyBarRow]],
+    baselines_by_ticker: Mapping[str, TickerBaselineRow | None],
     config: DistillationConfig,
     freshness_ts: datetime,
 ) -> list[OutputBlock]:
-    """Produce zero or more anomaly blocks for ``audience``.
-
-    Each detection (volume / price-move) emits at most one block whose
-    payload's ``per_ticker`` mapping carries one entry per firing ticker.
-    The block is omitted entirely when no ticker fires the detection — the
-    orchestrator's aggregator (story 10) reads anomaly counts off the
-    block list directly, so an empty detection contributes zero.
-    """
+    """Produce zero or more anomaly blocks for ``audience``."""
     sigma = config.anomaly_detection.volume_anomaly_sigma
     atr_multiple = config.anomaly_detection.price_move_atr_multiple
     sector_audience = frozenset({audience})
@@ -1096,164 +806,31 @@ def _assemble_anomaly_blocks(
 
 
 # ---------------------------------------------------------------------------
-# Top-level entry point
+# Indicator-group context + dispatch
 # ---------------------------------------------------------------------------
-
-
-def assemble_q1_blocks(
-    session: Session,
-    *,
-    config: DistillationConfig,
-    as_of: datetime,
-    ticker_scope: Sequence[str] | None = None,
-) -> list[OutputBlock]:
-    """Assemble every Q1 :class:`OutputBlock` for the given ticker scope.
-
-    Behavior:
-
-    1. Resolve the ticker scope. ``None`` → every ticker in
-       ``asset_universe`` joined to ``sector_classification`` for the
-       three covered audiences. An empty sequence short-circuits to an
-       empty list.
-    2. Bucket tickers by sector audience using
-       :data:`AUDIENCE_BY_SECTOR`.
-    3. For each (sector_audience x indicator_group) pair, compute the
-       per-ticker payload via the existing q1 helpers and wrap via
-       :func:`build_q1_block`. Indicator groups: ``technicals``,
-       ``volume_profile``, ``gap``, ``relative_performance``,
-       ``trend_state``, ``divergence_flags``.
-    4. Add anomaly blocks (``q1.volume_anomaly`` /
-       ``q1.price_move_anomaly``) per audience when their detections
-       fire.
-    5. Return the flat list, sorted deterministically by
-       ``(audience.value, block_id)``.
-    """
-    resolved_scope = _resolve_scope_or_none(session, ticker_scope=ticker_scope)
-    if resolved_scope is None:
-        return []
-
-    sector_per_ticker = _load_sector_per_ticker(session, tickers=resolved_scope)
-    grouped = _group_tickers_by_audience(sector_per_ticker)
-    if not grouped:
-        return []
-
-    blocks: list[OutputBlock] = []
-    for audience in sorted(grouped, key=lambda a: a.value):
-        blocks.extend(
-            _assemble_blocks_for_audience(
-                session,
-                config=config,
-                as_of=as_of,
-                audience=audience,
-                tickers=grouped[audience],
-                sector_per_ticker=sector_per_ticker,
-            )
-        )
-
-    return blocks
-
-
-def _resolve_scope_or_none(
-    session: Session, *, ticker_scope: Sequence[str] | None
-) -> tuple[str, ...] | None:
-    """Return the resolved ticker tuple or ``None`` when scope is empty.
-
-    ``None`` is the "short-circuit to empty list" signal — both an explicit
-    empty list and a default-resolved empty universe collapse here so the
-    caller sees one early-exit shape.
-    """
-    if ticker_scope is not None and len(ticker_scope) == 0:
-        return None
-    if ticker_scope is None:
-        resolved = _resolve_default_ticker_scope(session)
-    else:
-        resolved = tuple(ticker_scope)
-    if not resolved:
-        return None
-    return resolved
-
-
-def _assemble_blocks_for_audience(
-    session: Session,
-    *,
-    config: DistillationConfig,
-    as_of: datetime,
-    audience: OutputAudience,
-    tickers: Sequence[str],
-    sector_per_ticker: Mapping[str, tuple[str, str]],
-) -> list[OutputBlock]:
-    """Assemble every indicator-group + anomaly block for one audience.
-
-    Single bar load per ticker; every indicator family reads off the same
-    daily series, and the per-ticker volume / ATR baselines reach the
-    indicator helpers via the loaded :class:`DistillationConfig`.
-    """
-    bars_by_ticker: dict[str, list[OhlcvBars]] = {
-        ticker: _load_daily_bars(session, ticker=ticker, as_of=as_of, days=_BAR_LOAD_LOOKBACK_DAYS)
-        for ticker in tickers
-    }
-    baselines_volume: dict[str, DistillationTickerBaseline | None] = {
-        ticker: _load_latest_baseline(session, ticker=ticker, kind="volume", as_of=as_of)
-        for ticker in tickers
-    }
-    baselines_atr: dict[str, DistillationTickerBaseline | None] = {
-        ticker: _load_latest_baseline(session, ticker=ticker, kind="atr", as_of=as_of)
-        for ticker in tickers
-    }
-    sector_label = _audience_to_alphamind_sector(audience)
-
-    ctx = _IndicatorGroupContext(
-        config=config,
-        as_of=as_of,
-        sector_label=sector_label,
-        tickers=tuple(tickers),
-        bars_by_ticker=bars_by_ticker,
-        sector_per_ticker=sector_per_ticker,
-        baselines_volume=baselines_volume,
-        baselines_atr=baselines_atr,
-    )
-    blocks: list[OutputBlock] = []
-    blocks.extend(_build_indicator_group_blocks(session, ctx))
-    blocks.extend(
-        _assemble_anomaly_blocks(
-            audience=audience,
-            bars_by_ticker=bars_by_ticker,
-            baselines_by_ticker=baselines_volume,
-            config=config,
-            freshness_ts=as_of,
-        )
-    )
-    return blocks
 
 
 @dataclass(frozen=True, slots=True)
 class _IndicatorGroupContext:
-    """Per-audience inputs threaded into :func:`_build_indicator_group_blocks`.
-
-    Bundles the cross-cutting state every indicator-group helper reads so
-    the helper signature stays at ~3 args plus the context.
-    """
+    """Per-audience inputs threaded into :func:`_build_indicator_group_blocks`."""
 
     config: DistillationConfig
     as_of: datetime
     sector_label: str
     tickers: Sequence[str]
-    bars_by_ticker: Mapping[str, Sequence[OhlcvBars]]
-    sector_per_ticker: Mapping[str, tuple[str, str]]
-    baselines_volume: Mapping[str, DistillationTickerBaseline | None]
-    baselines_atr: Mapping[str, DistillationTickerBaseline | None]
+    bars_by_ticker: Mapping[str, Sequence[DailyBarRow]]
+    sector_per_ticker: Mapping[str, SectorClassificationRow]
+    baselines_volume: Mapping[str, TickerBaselineRow | None]
+    baselines_atr: Mapping[str, TickerBaselineRow | None]
+    gap_fill_history: Mapping[str, GapFillHistoryEntry]
+    spy_window_returns: tuple[float, float] | None
+    sector_etf_window_returns: Mapping[str, tuple[float, float] | None]
 
 
 def _build_indicator_group_blocks(
-    session: Session,
     ctx: _IndicatorGroupContext,
 ) -> list[OutputBlock]:
-    """Build the six per-audience indicator-group blocks.
-
-    Each block emits only when its underlying compute produces at least
-    one per-ticker entry; an empty payload omits the block rather than
-    cluttering the output with nothing.
-    """
+    """Build the six per-audience indicator-group blocks."""
     blocks: list[OutputBlock] = []
 
     technicals = _compute_technicals_per_ticker(ctx.bars_by_ticker)
@@ -1291,10 +868,9 @@ def _build_indicator_group_blocks(
         )
 
     gap_payload, gap_state, gap_reason = _compute_gap_per_ticker(
-        session,
         bars_by_ticker=ctx.bars_by_ticker,
         sector_per_ticker=ctx.sector_per_ticker,
-        as_of=ctx.as_of,
+        gap_fill_history=ctx.gap_fill_history,
         gap_fill_min_events=ctx.config.persistence_windows.gap_fill_min_events,
     )
     if gap_payload:
@@ -1310,10 +886,10 @@ def _build_indicator_group_blocks(
         )
 
     relative_performance = _compute_relative_performance_per_ticker(
-        session,
         bars_by_ticker=ctx.bars_by_ticker,
         sector_per_ticker=ctx.sector_per_ticker,
-        as_of=ctx.as_of,
+        spy_window_returns=ctx.spy_window_returns,
+        sector_etf_window_returns=ctx.sector_etf_window_returns,
     )
     if relative_performance:
         rp_state, rp_reason = _block_state_from_baselines(
@@ -1370,14 +946,9 @@ def _build_indicator_group_blocks(
 def _block_state_from_baselines(
     *,
     tickers: Sequence[str],
-    baselines: Mapping[str, DistillationTickerBaseline | None],
+    baselines: Mapping[str, TickerBaselineRow | None],
 ) -> tuple[CalibrationState, str | None]:
-    """Compute the block-level calibration state from per-ticker baselines.
-
-    Returns BOOTSTRAP with a compact reason string if any ticker carries
-    a missing or BOOTSTRAP-tagged baseline; otherwise CALIBRATED with no
-    reason.
-    """
+    """Compute the block-level calibration state from per-ticker baselines."""
     state = CalibrationState.CALIBRATED
     reason: str | None = None
     for ticker in tickers:
@@ -1397,8 +968,108 @@ def _block_state_from_baselines(
     return state, reason
 
 
+def _assemble_blocks_for_audience_from_inputs(
+    *,
+    config: DistillationConfig,
+    inputs: Q1Inputs,
+    audience: OutputAudience,
+    tickers: Sequence[str],
+) -> list[OutputBlock]:
+    """Assemble every indicator-group + anomaly block for one audience."""
+    bars_by_ticker = {ticker: inputs.bars_by_ticker[ticker] for ticker in tickers}
+    baselines_volume = {ticker: inputs.baselines_volume.get(ticker) for ticker in tickers}
+    baselines_atr = {ticker: inputs.baselines_atr.get(ticker) for ticker in tickers}
+    sector_label = _audience_to_alphamind_sector(audience)
+    gap_fill_history = {
+        ticker: inputs.gap_fill_history[ticker]
+        for ticker in tickers
+        if ticker in inputs.gap_fill_history
+    }
+
+    ctx = _IndicatorGroupContext(
+        config=config,
+        as_of=inputs.as_of,
+        sector_label=sector_label,
+        tickers=tuple(tickers),
+        bars_by_ticker=bars_by_ticker,
+        sector_per_ticker=inputs.sector_per_ticker,
+        baselines_volume=baselines_volume,
+        baselines_atr=baselines_atr,
+        gap_fill_history=gap_fill_history,
+        spy_window_returns=inputs.spy_window_returns,
+        sector_etf_window_returns=inputs.sector_etf_window_returns,
+    )
+    blocks: list[OutputBlock] = []
+    blocks.extend(_build_indicator_group_blocks(ctx))
+    blocks.extend(
+        _assemble_anomaly_blocks(
+            audience=audience,
+            bars_by_ticker=bars_by_ticker,
+            baselines_by_ticker=baselines_volume,
+            config=config,
+            freshness_ts=inputs.as_of,
+        )
+    )
+    return blocks
+
+
+# ---------------------------------------------------------------------------
+# Top-level entry points
+# ---------------------------------------------------------------------------
+
+
+def assemble_q1_blocks_from_inputs(
+    inputs: Q1Inputs,
+    *,
+    config: DistillationConfig,
+) -> list[OutputBlock]:
+    """Pure-compute assembly of every Q1 :class:`OutputBlock`.
+
+    Operates entirely on the pre-loaded :class:`Q1Inputs`; no DB access.
+    This is the function the orchestrator's Phase 2 calls under
+    ``asyncio.TaskGroup`` + ``asyncio.to_thread``.
+    """
+    if not inputs.ticker_scope:
+        return []
+    grouped = _group_tickers_by_audience(inputs.sector_per_ticker)
+    if not grouped:
+        return []
+    blocks: list[OutputBlock] = []
+    for audience in sorted(grouped, key=lambda a: a.value):
+        blocks.extend(
+            _assemble_blocks_for_audience_from_inputs(
+                config=config,
+                inputs=inputs,
+                audience=audience,
+                tickers=grouped[audience],
+            )
+        )
+    return blocks
+
+
+def assemble_q1_blocks(
+    session: Session,
+    *,
+    config: DistillationConfig,
+    as_of: datetime,
+    ticker_scope: Sequence[str] | None = None,
+) -> list[OutputBlock]:
+    """Session-accepting shim that delegates to the pure assembly path.
+
+    Existing call sites pass a ``Session`` directly; the shim constructs a
+    :class:`SqlDistillationRepository`, pre-loads the :class:`Q1Inputs`, and
+    delegates to :func:`assemble_q1_blocks_from_inputs`.
+    """
+    repository = SqlDistillationRepository(session)
+    inputs = load_q1_inputs(repository, config=config, as_of=as_of, ticker_scope=ticker_scope)
+    return assemble_q1_blocks_from_inputs(inputs, config=config)
+
+
 __all__ = [
     "BLOCK_ID_PRICE_MOVE_ANOMALY",
     "BLOCK_ID_VOLUME_ANOMALY",
+    "Q1Inputs",
     "assemble_q1_blocks",
+    "assemble_q1_blocks_from_inputs",
+    "load_q1_inputs",
 ]

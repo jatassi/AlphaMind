@@ -23,7 +23,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from alphamind.distillation.calibration import CalibrationState
+from alphamind.distillation._calibration_core import CalibrationState
 
 
 class OutputAudience(StrEnum):

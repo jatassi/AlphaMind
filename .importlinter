@@ -69,20 +69,22 @@ source_modules =
 forbidden_modules =
     sqlalchemy
 ignore_imports =
-    # Punch-list #9: each direct sqlalchemy import disappears when the
+    # Punch-list #9 (ALP-467): each direct sqlalchemy import disappears when the
     # corresponding assemble.py splits into loaders.py (keeps sqlalchemy)
-    # and compute.py (loses sqlalchemy). Until then, record the violation.
+    # and compute.py (loses sqlalchemy). The ALP-467 pilot retires the
+    # gap.py and flow_classification.py entries (they delegate to
+    # compute/loaders submodules now) plus adds entries for the new
+    # ``_repository_sql.py`` (concrete SQL impl — keeps sqlalchemy) and the
+    # ``q*/<sub>_loaders.py`` shells (which intentionally keep sqlalchemy).
     alphamind.distillation.baselines -> sqlalchemy
     alphamind.distillation.calibration -> sqlalchemy
     alphamind.distillation.contract_scope -> sqlalchemy
     alphamind.distillation.orchestrator -> sqlalchemy
     alphamind.distillation.q12_corporate_actions -> sqlalchemy
     alphamind.distillation.q1.assemble -> sqlalchemy
-    alphamind.distillation.q1.gap -> sqlalchemy
     alphamind.distillation.q3.anomalies -> sqlalchemy
     alphamind.distillation.q3.assemble -> sqlalchemy
     alphamind.distillation.q3.atm_iv_baseline -> sqlalchemy
-    alphamind.distillation.q3.flow_classification -> sqlalchemy
     alphamind.distillation.q6_macro -> sqlalchemy
     alphamind.distillation.q7._helpers -> sqlalchemy
     alphamind.distillation.q7.assemble -> sqlalchemy
@@ -96,6 +98,17 @@ ignore_imports =
     alphamind.distillation.regime -> sqlalchemy
     alphamind.distillation.replay_harness.engine -> sqlalchemy
     alphamind.distillation.sector_assembly -> sqlalchemy
+    # ALP-467 piloted modules — IO shells / orchestration shims keep sqlalchemy
+    # because they construct the production repository or own session-bound
+    # writes. The corresponding pure compute cores are q1/gap_compute and
+    # q3/flow_classification_compute; both are pinned ORM-free by the new
+    # ``distillation-compute-no-sqlalchemy`` contract below. The
+    # ``flow_classification_loaders`` module is itself ORM-free — it
+    # consumes the Protocol only.
+    alphamind.distillation._repository_sql -> sqlalchemy
+    alphamind.distillation.q1.gap -> sqlalchemy
+    alphamind.distillation.q1.gap_loaders -> sqlalchemy
+    alphamind.distillation.q3.flow_classification -> sqlalchemy
     # Indirect via data_sources._common (punch-list #22 — split
     # data_sources/_common into focused modules; the shared HTTP/retry
     # primitives the q7 module wants will live in _common/retry.py and
@@ -110,12 +123,9 @@ ignore_imports =
     alphamind.distillation.contract_scope -> alphamind.persistence.models
     alphamind.distillation.orchestrator -> alphamind.persistence.models
     alphamind.distillation.q12_corporate_actions -> alphamind.persistence.models
-    alphamind.distillation.q1.assemble -> alphamind.persistence.models
-    alphamind.distillation.q1.gap -> alphamind.persistence.models
     alphamind.distillation.q3.anomalies -> alphamind.persistence.models
     alphamind.distillation.q3.assemble -> alphamind.persistence.models
     alphamind.distillation.q3.atm_iv_baseline -> alphamind.persistence.models
-    alphamind.distillation.q3.flow_classification -> alphamind.persistence.models
     alphamind.distillation.q6_macro -> alphamind.persistence.models
     alphamind.distillation.q7._helpers -> alphamind.persistence.models
     alphamind.distillation.q7.assemble -> alphamind.persistence.models
@@ -127,6 +137,37 @@ ignore_imports =
     alphamind.distillation.regime -> alphamind.persistence.models
     alphamind.distillation.replay_harness.engine -> alphamind.persistence.models
     alphamind.distillation.sector_assembly -> alphamind.persistence.models
+    # ALP-467 piloted modules — IO shells reach persistence.models for ORM
+    # queries / writes. The pure-compute cores have no such edges; the
+    # orchestration shims (q1.gap, q3.flow_classification) only import the
+    # sqlalchemy ``Session`` type so persistence.models is reached only via
+    # the SqlDistillationRepository and the gap_loaders write path.
+    alphamind.distillation._repository_sql -> alphamind.persistence.models
+    alphamind.distillation.q1.gap_loaders -> alphamind.persistence.models
+
+# Forbidden contract (ALP-467 pilot): pure-compute cores split out by the
+# distillation compute/load boundary pilot must never import sqlalchemy.
+# This is the architectural seam that lets Phase 2 of the orchestrator run
+# ``asyncio.TaskGroup``-parallel over ``asyncio.to_thread(compute_*)`` calls
+# — no shared mutable session means no "Session is already flushing"
+# InvalidRequestError. Compute modules expand here as further sub-modules
+# split out per the multi-quarter propagation tracked as ALP-467
+# follow-ups (q6 / q7 / qualitative / remaining q3 categories).
+[importlinter:contract:distillation-compute-no-sqlalchemy]
+name = Distillation compute cores have no sqlalchemy imports
+type = forbidden
+source_modules =
+    alphamind.distillation.q1.anomalies_compute
+    alphamind.distillation.q1.divergence_compute
+    alphamind.distillation.q1.gap_compute
+    alphamind.distillation.q1.indicators_compute
+    alphamind.distillation.q1.relative_performance_compute
+    alphamind.distillation.q1.trend_state_compute
+    alphamind.distillation.q1.volume_profile_compute
+    alphamind.distillation.q3.flow_classification_compute
+forbidden_modules =
+    sqlalchemy
+    alphamind.persistence.models
 
 # ---------------------------------------------------------------------------
 # ALP-459 contracts.
