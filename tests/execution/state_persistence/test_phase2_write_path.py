@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -1011,7 +1012,8 @@ async def test_open_command_persists_real_position_size_and_capital_reservation(
     capital_rows = [r for r in rows if r.event_type == EventType.CAPITAL_RESERVED.value]
     assert len(capital_rows) == 1
     detail = json.loads(capital_rows[0].detail_json)
-    assert detail["amount_usd"] == pytest.approx(cmd.position_size.dollar_value)
+    # ALP-463: ``amount_usd`` is stored as the Decimal-exact string repr.
+    assert Decimal(detail["amount_usd"]) == Decimal(str(cmd.position_size.dollar_value))
 
 
 async def test_persist_envelope_outcome_stamps_phase2_completion_on_invocation_row(

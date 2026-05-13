@@ -251,10 +251,10 @@ def _rationale_for_closure(
     method = detail.exit_method.value
     exit_price = detail.exit_price
     pnl = detail.realized_pnl_usd
-    exit_price_str = f"${exit_price:.2f}" if exit_price > 0.0 else "—"
+    exit_price_str = f"${float(exit_price):.2f}" if exit_price > 0 else "—"
     parts = [f"{origin}: exit_method={method}", f"exit_price={exit_price_str}"]
-    if pnl != 0.0:
-        parts.append(f"realized P/L=${pnl:.2f}")
+    if pnl != 0:
+        parts.append(f"realized P/L=${float(pnl):.2f}")
     if entry.order_id is not None:
         parts.append(f"order_id={entry.order_id}")
     return "; ".join(parts)

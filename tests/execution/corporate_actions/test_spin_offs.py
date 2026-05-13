@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -754,12 +755,15 @@ async def test_spin_off_emits_parent_corporate_action_applied(
         applied = [r for r in log_rows if r.event_type == EventType.CORPORATE_ACTION_APPLIED.value]
         assert len(applied) == 1
         assert applied[0].position_id == "pos-parent"
-        detail = CorporateActionAppliedDetail.model_validate_json(applied[0].detail_json)
+        from alphamind.portfolio_state.events.codec import decode_detail
+
+        detail = decode_detail(applied[0].detail_json, CorporateActionAppliedDetail)
+        assert isinstance(detail, CorporateActionAppliedDetail)
         assert detail.action_type == CorporateActionType.SPIN_OFF
         assert detail.pre_action_quantity == pytest.approx(100.0)
         assert detail.post_action_quantity == pytest.approx(100.0)
-        assert detail.pre_action_cost_basis == pytest.approx(200.0)
-        assert detail.post_action_cost_basis == pytest.approx(160.0)
+        assert detail.pre_action_cost_basis == Decimal("200.0")
+        assert detail.post_action_cost_basis == Decimal("160.0")
 
 
 async def test_spin_off_cancels_parent_bracket(
@@ -852,14 +856,17 @@ async def test_spin_off_emits_position_opened_for_child(
         )
         opened = [r for r in log_rows if r.event_type == EventType.POSITION_OPENED.value]
         assert len(opened) == 1
-        detail = PositionOpenedDetail.model_validate_json(opened[0].detail_json)
+        from alphamind.portfolio_state.events.codec import decode_detail
+
+        detail = decode_detail(opened[0].detail_json, PositionOpenedDetail)
+        assert isinstance(detail, PositionOpenedDetail)
         assert detail.mechanism == PositionOpenMechanism.SPIN_OFF_FROM_PARENT
         assert detail.parent_position_id == "pos-parent"
         assert detail.thesis_id is None
         assert detail.bracket_id is None
         assert detail.ticker == "CHILD"
         assert detail.direction == Direction.LONG.value
-        assert detail.fill_price == pytest.approx(40.0)
+        assert detail.fill_price == Decimal("40.0")
         assert detail.quantity == pytest.approx(50.0)
 
 

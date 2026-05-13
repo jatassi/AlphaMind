@@ -8,13 +8,16 @@ to rehydrate rows back into typed entries.
 ``append_activity_log_entry`` joins the ``InvocationContext`` substrate
 from story 02b: it adds the row to the open async session; the
 surrounding context commits on clean exit and rolls back on exception.
+
+ALP-463: detail payloads switched from Pydantic models to frozen dataclasses;
+the codec now uses ``encode_detail`` / ``decode_detail`` from
+``portfolio_state.events.codec`` which preserves ``Money`` / ``Price``
+precision exactly (Decimal-as-text round-trip mirroring 05b's ``DecimalText``).
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-
-from pydantic import BaseModel
 
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationHandle,
@@ -26,6 +29,8 @@ from alphamind.portfolio_state.events.activity_log import (
     ActivityLogEntry,
     EventSource,
     EventType,
+    decode_detail,
+    encode_detail,
 )
 
 
@@ -42,8 +47,8 @@ def _entry_at_from_iso(text: str) -> datetime:
 def activity_log_entry_to_row(entry: ActivityLogEntry) -> ActivityLogRow:
     """Build an ``ActivityLogRow`` from a typed entry.
 
-    Uses the per-event-type detail class' ``model_dump_json()`` so any
-    rehydration via the matching detail class is faithful.
+    Serializes the per-event-type detail dataclass via ``encode_detail`` so
+    ``Money``/``Price`` fields land in storage as Decimal-exact strings.
     """
     return ActivityLogRow(
         entry_id=entry.entry_id,
@@ -55,23 +60,19 @@ def activity_log_entry_to_row(entry: ActivityLogEntry) -> ActivityLogRow:
         order_id=entry.order_id,
         thesis_id=entry.thesis_id,
         source=entry.source.value,
-        detail_json=entry.detail.model_dump_json(),
+        detail_json=encode_detail(entry.detail),
     )
 
 
 def activity_log_entry_from_row(row: ActivityLogRow) -> ActivityLogEntry:
     """Rehydrate a row into a typed ``ActivityLogEntry``.
 
-    The detail payload is parsed through the per-event-type detail class
-    looked up via ``EVENT_TYPE_TO_DETAIL_CLASS`` — discriminated dispatch
-    on ``event_type``.
+    The detail payload is decoded through the per-event-type detail class
+    looked up via ``EVENT_TYPE_TO_DETAIL_CLASS`` — discriminated dispatch on
+    ``event_type``.
     """
     event_type = EventType(row.event_type)
-    # The catalog dict is typed ``dict[EventType, type]`` (i.e. any class)
-    # in the source-of-truth module; every value is in fact a Pydantic
-    # ``BaseModel`` subclass, so we narrow at the use site rather than
-    # editing the source-of-truth annotation.
-    detail_cls: type[BaseModel] = EVENT_TYPE_TO_DETAIL_CLASS[event_type]
+    detail_cls = EVENT_TYPE_TO_DETAIL_CLASS[event_type]
     return ActivityLogEntry(
         entry_id=row.entry_id,
         invocation_id=row.invocation_id,
@@ -82,7 +83,7 @@ def activity_log_entry_from_row(row: ActivityLogRow) -> ActivityLogEntry:
         order_id=row.order_id,
         thesis_id=row.thesis_id,
         source=EventSource(row.source),
-        detail=detail_cls.model_validate_json(row.detail_json),
+        detail=decode_detail(row.detail_json, detail_cls),
     )
 
 

@@ -290,8 +290,6 @@ async def _emit_capital_reserved(
     amount_usd: Money,
     timestamp: datetime,
 ) -> None:
-    # ALP-462: Money → float at the activity-log boundary; 06a migrates the
-    # activity-log payload classes to Money, at which point the cast retires.
     await _emit(
         handle,
         event_type=EventType.CAPITAL_RESERVED,
@@ -299,7 +297,9 @@ async def _emit_capital_reserved(
         position_id=position_id,
         thesis_id=thesis_id,
         timestamp=timestamp,
-        detail=CapitalReservedDetail(order_id=order_id, amount_usd=float(amount_usd)),
+        # ALP-463 — activity-log detail classes now carry ``Money`` directly;
+        # pass through without a float round-trip.
+        detail=CapitalReservedDetail(order_id=order_id, amount_usd=amount_usd),
     )
 
 
@@ -315,7 +315,7 @@ async def _release_capital(
     cash_row = await _read_cash_row(handle)
     # signed_money admits the negative case so over-release surfaces in the
     # running balance instead of being silently clamped (05b retired the
-    # legacy max-zero floor). ALP-462 Money → float at the log boundary.
+    # legacy max-zero floor).
     cash_row.reserved_capital_usd = signed_money(cash_row.reserved_capital_usd - amount_usd)
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
     await _emit(
@@ -325,7 +325,8 @@ async def _release_capital(
         position_id=position_id,
         thesis_id=thesis_id,
         timestamp=timestamp,
-        detail=CapitalReleasedDetail(order_id=order_id, amount_usd=float(amount_usd)),
+        # ALP-463 — see ``_emit_capital_reserved`` for the Money-direct migration.
+        detail=CapitalReleasedDetail(order_id=order_id, amount_usd=amount_usd),
     )
 
 

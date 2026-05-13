@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from alphamind._kernel.money import price
 from alphamind.config.models.distillation import (
     AnomalyDetection,
     DistillationConfig,
@@ -50,7 +51,7 @@ def _pos_detail() -> PositionOpenedDetail:
     return PositionOpenedDetail(
         ticker="AAPL",
         direction="LONG",
-        fill_price=150.0,
+        fill_price=price("150.0"),
         quantity=100.0,
         thesis_id=None,
         bracket_id=None,

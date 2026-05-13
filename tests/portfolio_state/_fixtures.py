@@ -15,6 +15,7 @@ from alphamind._kernel.ids import (
     OrderId,
     Symbol,
 )
+from alphamind._kernel.money import price
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -434,19 +435,17 @@ def _make_pm_decision_log_entry(
         resulting_command_ids=(),
         verdict=PMVerdict.APPROVE,
     )
-    return ActivityLogEntry.model_validate(
-        {
-            "entry_id": entry_id,
-            "invocation_id": invocation_id,
-            "timestamp": timestamp,
-            "event_type": EventType.PM_DECISION,
-            "event_group": EventGroup.PM_DECISION,
-            "position_id": position_id,
-            "order_id": None,
-            "thesis_id": None,
-            "source": EventSource.COMMAND_EXECUTOR,
-            "detail": detail,
-        }
+    return ActivityLogEntry(
+        entry_id=entry_id,
+        invocation_id=invocation_id,
+        timestamp=timestamp,
+        event_type=EventType.PM_DECISION,
+        event_group=EventGroup.PM_DECISION,
+        position_id=position_id,
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.COMMAND_EXECUTOR,
+        detail=detail,
     )
 
 
@@ -460,26 +459,24 @@ def _make_position_opened_entry(
     detail = PositionOpenedDetail(
         ticker=ticker,
         direction="LONG",
-        fill_price=500.0,
+        fill_price=price("500.0"),
         quantity=100.0,
         thesis_id=None,
         bracket_id=None,
         mechanism=PositionOpenMechanism.ORDER_FILL,
         parent_position_id=None,
     )
-    return ActivityLogEntry.model_validate(
-        {
-            "entry_id": entry_id,
-            "invocation_id": invocation_id,
-            "timestamp": timestamp,
-            "event_type": EventType.POSITION_OPENED,
-            "event_group": EventGroup.POSITION_LIFECYCLE,
-            "position_id": position_id,
-            "order_id": None,
-            "thesis_id": None,
-            "source": EventSource.FILL_PROCESSOR,
-            "detail": detail,
-        }
+    return ActivityLogEntry(
+        entry_id=entry_id,
+        invocation_id=invocation_id,
+        timestamp=timestamp,
+        event_type=EventType.POSITION_OPENED,
+        event_group=EventGroup.POSITION_LIFECYCLE,
+        position_id=position_id,
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.FILL_PROCESSOR,
+        detail=detail,
     )
 
 

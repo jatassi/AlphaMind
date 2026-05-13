@@ -913,8 +913,8 @@ def _engine_close_entry(
         source=EventSource.GUARDRAIL_LAYER,
         detail=PositionClosedDetail(
             exit_method=PositionExitMethod.STOP_TRIGGERED,
-            exit_price=120.0,
-            realized_pnl_usd=realized_pnl_usd,
+            exit_price=money("120.0"),
+            realized_pnl_usd=signed_money(realized_pnl_usd),
             thesis_resolution_category="position_level_max_loss",
         ),
     )
@@ -938,7 +938,7 @@ def _engine_reduce_entry(
         source=EventSource.GUARDRAIL_LAYER,
         detail=PositionReducedDetail(
             reduced_quantity=20.0,
-            partial_realized_pnl_usd=-100.0,
+            partial_realized_pnl_usd=signed_money("-100.0"),
             close_rationale_classification="single_short_size_limit",
         ),
     )

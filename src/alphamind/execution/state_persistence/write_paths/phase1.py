@@ -21,6 +21,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
     TradeAccountSnapshot,
@@ -1393,8 +1394,7 @@ async def _emit_capital_release(
         position_id=order.position_id,
         thesis_id=order.originating_thesis_id,
         timestamp=fill.fill_timestamp,
-        # ALP-462 — Decimal → float at the activity-log boundary (06a migrates).
-        detail=CapitalReleasedDetail(order_id=order.order_id, amount_usd=float(amount)),
+        detail=CapitalReleasedDetail(order_id=order.order_id, amount_usd=money(amount)),
     )
 
 
@@ -1422,12 +1422,15 @@ async def _emit_fill_activity_log_entries(
         position_id=pos_id,
         thesis_id=thesis_id,
         timestamp=fill.fill_timestamp,
-        # ALP-462 — Price/Money → float at the activity-log boundary.
         detail=OrderFilledDetail(
-            fill_price=float(fill.fill_price),
+            fill_price=price(fill.fill_price),
             fill_quantity=fill.fill_quantity,
-            slippage=float(fill.slippage_usd) if fill.slippage_usd is not None else 0.0,
-            fees=max(float(fill.fees_usd), 0.0),
+            slippage=(
+                signed_money(fill.slippage_usd)
+                if fill.slippage_usd is not None
+                else signed_money(0)
+            ),
+            fees=money(max(float(fill.fees_usd), 0.0)),
         ),
     )
 
@@ -1445,7 +1448,7 @@ async def _emit_fill_activity_log_entries(
             detail=PositionOpenedDetail(
                 ticker=_ticker_of(position_after),
                 direction=position_after.direction.value,
-                fill_price=float(fill.fill_price),
+                fill_price=price(fill.fill_price),
                 quantity=fill.fill_quantity,
                 thesis_id=thesis_id,
                 bracket_id=bracket_id,
@@ -1485,7 +1488,7 @@ async def _emit_fill_activity_log_entries(
             timestamp=fill.fill_timestamp,
             detail=PositionReducedDetail(
                 reduced_quantity=fill.fill_quantity,
-                partial_realized_pnl_usd=partial_pnl,
+                partial_realized_pnl_usd=signed_money(partial_pnl),
                 close_rationale_classification="",
             ),
         )
@@ -1503,9 +1506,8 @@ async def _emit_fill_activity_log_entries(
             timestamp=fill.fill_timestamp,
             detail=PositionClosedDetail(
                 exit_method=PositionExitMethod.PM_DECISION,
-                # ALP-462 — Price → float at the activity-log boundary.
-                exit_price=float(fill.fill_price),
-                realized_pnl_usd=position_after.realized_pnl_to_date_usd or 0.0,
+                exit_price=money(fill.fill_price),
+                realized_pnl_usd=signed_money(position_after.realized_pnl_to_date_usd or 0.0),
                 thesis_resolution_category="",
             ),
         )
@@ -1563,11 +1565,10 @@ async def _emit_fill_activity_log_entries(
             position_id=pos_id,
             thesis_id=thesis_id,
             timestamp=fill.fill_timestamp,
-            # ALP-462 — Decimal → float at the activity-log boundary (06a migrates).
             detail=CashDebitedDetail(
-                amount_usd=float(abs(cash_delta_usd)),
+                amount_usd=money(abs(cash_delta_usd)),
                 reason=CashDebitReason.ENTRY_FILL,
-                new_balance_usd=new_balance,
+                new_balance_usd=signed_money(new_balance),
             ),
         )
     else:
@@ -1579,9 +1580,9 @@ async def _emit_fill_activity_log_entries(
             thesis_id=thesis_id,
             timestamp=fill.fill_timestamp,
             detail=CashCreditedDetail(
-                amount_usd=float(abs(cash_delta_usd)),
+                amount_usd=money(abs(cash_delta_usd)),
                 reason=CashCreditReason.EXIT_FILL,
-                new_balance_usd=new_balance,
+                new_balance_usd=signed_money(new_balance),
             ),
         )
 

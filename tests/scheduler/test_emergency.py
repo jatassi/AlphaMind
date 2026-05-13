@@ -49,6 +49,7 @@ from alphamind.portfolio_state.events.activity_log import (
     EventGroup,
     EventSource,
     EventType,
+    encode_detail,
 )
 from alphamind.scheduler.emergency import run_emergency_receiver_task
 from alphamind.scheduler.orchestrator import InvocationSummary
@@ -141,7 +142,7 @@ def _make_emergency_activity_log_row(
         order_id=None,
         thesis_id=None,
         source=EventSource.GUARDRAIL_LAYER.value,
-        detail_json=detail.model_dump_json(),
+        detail_json=encode_detail(detail),
     )
 
 

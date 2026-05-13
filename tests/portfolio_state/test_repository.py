@@ -387,26 +387,24 @@ def _make_position_record(position_id: str) -> PositionRecord:
 
 
 def _make_activity_log_entry(entry_id: str, position_id: str | None = None) -> ActivityLogEntry:
-    return ActivityLogEntry.model_validate(
-        {
-            "entry_id": entry_id,
-            "invocation_id": "inv-001",
-            "timestamp": _NOW_UTC,
-            "event_type": EventType.PM_DECISION,
-            "event_group": EventGroup.PM_DECISION,
-            "position_id": position_id,
-            "order_id": None,
-            "thesis_id": None,
-            "source": EventSource.COMMAND_EXECUTOR,
-            "detail": PMDecisionDetail(
-                envelope_id="env-1",
-                source_provenance_json={},
-                evaluation_json={},
-                modifications_json=[],
-                resulting_command_ids=(),
-                verdict=PMVerdict.APPROVE,
-            ),
-        }
+    return ActivityLogEntry(
+        entry_id=entry_id,
+        invocation_id="inv-001",
+        timestamp=_NOW_UTC,
+        event_type=EventType.PM_DECISION,
+        event_group=EventGroup.PM_DECISION,
+        position_id=position_id,
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.COMMAND_EXECUTOR,
+        detail=PMDecisionDetail(
+            envelope_id="env-1",
+            source_provenance_json={},
+            evaluation_json={},
+            modifications_json=[],
+            resulting_command_ids=(),
+            verdict=PMVerdict.APPROVE,
+        ),
     )
 
 

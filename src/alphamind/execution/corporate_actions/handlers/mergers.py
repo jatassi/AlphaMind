@@ -18,6 +18,7 @@ dedup ledger row through ``mark_ca_activity_processed``.
 
 from __future__ import annotations
 
+from alphamind._kernel.money import money, signed_money
 from alphamind.execution.broker_adapter.queries import PositionSnapshot
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationHandle,
@@ -106,7 +107,13 @@ async def handle_cash_merger(
         position_id=activity.position_id,
     )
 
-    exit_price = activity.signed_cash_impact_usd / pre_qty if pre_qty else 0.0
+    if not pre_qty:
+        msg = (
+            "cash-merger handler invoked with pre_qty == 0; cannot emit "
+            "POSITION_CLOSED with a meaningful exit_price"
+        )
+        raise ValueError(msg)
+    exit_price_value = activity.signed_cash_impact_usd / pre_qty
     await _emit(
         handle,
         event_type=EventType.POSITION_CLOSED,
@@ -116,8 +123,8 @@ async def handle_cash_merger(
         timestamp=activity.transaction_time,
         detail=PositionClosedDetail(
             exit_method=PositionExitMethod.CORPORATE_ACTION_CASH_MERGER,
-            exit_price=exit_price,
-            realized_pnl_usd=updated.realized_pnl_to_date_usd or 0.0,
+            exit_price=money(exit_price_value),
+            realized_pnl_usd=signed_money(updated.realized_pnl_to_date_usd or 0.0),
             thesis_resolution_category="corporate_action_cash_merger",
         ),
     )

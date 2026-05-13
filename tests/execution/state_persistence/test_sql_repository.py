@@ -494,26 +494,24 @@ def _make_pm_decision_entry(
     position_id: str | None = None,
     timestamp: datetime | None = None,
 ) -> ActivityLogEntry:
-    return ActivityLogEntry.model_validate(
-        {
-            "entry_id": entry_id,
-            "invocation_id": invocation_id,
-            "timestamp": timestamp or _NOW,
-            "event_type": EventType.PM_DECISION,
-            "event_group": EventGroup.PM_DECISION,
-            "position_id": position_id,
-            "order_id": None,
-            "thesis_id": None,
-            "source": EventSource.COMMAND_EXECUTOR,
-            "detail": PMDecisionDetail(
-                envelope_id="env-1",
-                source_provenance_json={},
-                evaluation_json={},
-                modifications_json=[],
-                resulting_command_ids=(),
-                verdict=PMVerdict.APPROVE,
-            ),
-        }
+    return ActivityLogEntry(
+        entry_id=entry_id,
+        invocation_id=invocation_id,
+        timestamp=timestamp or _NOW,
+        event_type=EventType.PM_DECISION,
+        event_group=EventGroup.PM_DECISION,
+        position_id=position_id,
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.COMMAND_EXECUTOR,
+        detail=PMDecisionDetail(
+            envelope_id="env-1",
+            source_provenance_json={},
+            evaluation_json={},
+            modifications_json=[],
+            resulting_command_ids=(),
+            verdict=PMVerdict.APPROVE,
+        ),
     )
 
 
@@ -524,28 +522,26 @@ def _make_position_opened_entry(
     invocation_id: str = _INV_ID,
     timestamp: datetime | None = None,
 ) -> ActivityLogEntry:
-    return ActivityLogEntry.model_validate(
-        {
-            "entry_id": entry_id,
-            "invocation_id": invocation_id,
-            "timestamp": timestamp or _NOW,
-            "event_type": EventType.POSITION_OPENED,
-            "event_group": EventGroup.POSITION_LIFECYCLE,
-            "position_id": position_id,
-            "order_id": None,
-            "thesis_id": None,
-            "source": EventSource.FILL_PROCESSOR,
-            "detail": PositionOpenedDetail(
-                ticker="AAPL",
-                direction="LONG",
-                fill_price=150.0,
-                quantity=10.0,
-                thesis_id=None,
-                bracket_id=None,
-                mechanism=PositionOpenMechanism.ORDER_FILL,
-                parent_position_id=None,
-            ),
-        }
+    return ActivityLogEntry(
+        entry_id=entry_id,
+        invocation_id=invocation_id,
+        timestamp=timestamp or _NOW,
+        event_type=EventType.POSITION_OPENED,
+        event_group=EventGroup.POSITION_LIFECYCLE,
+        position_id=position_id,
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.FILL_PROCESSOR,
+        detail=PositionOpenedDetail(
+            ticker="AAPL",
+            direction="LONG",
+            fill_price=price("150.0"),
+            quantity=10.0,
+            thesis_id=None,
+            bracket_id=None,
+            mechanism=PositionOpenMechanism.ORDER_FILL,
+            parent_position_id=None,
+        ),
     )
 
 

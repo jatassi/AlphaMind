@@ -18,6 +18,7 @@ from typing import Final
 
 from sqlalchemy import select
 
+from alphamind._kernel.money import money, signed_money
 from alphamind.execution.state_persistence.invocation_context.activity_log import (
     append_activity_log_entry,
 )
@@ -197,9 +198,9 @@ async def _emit_corporate_action_applied(
             ratio_or_amount=activity.ratio_or_amount,
             pre_action_quantity=pre_qty,
             post_action_quantity=post_qty,
-            pre_action_cost_basis=pre_basis,
-            post_action_cost_basis=post_basis,
-            signed_cash_impact_usd=activity.signed_cash_impact_usd,
+            pre_action_cost_basis=money(pre_basis),
+            post_action_cost_basis=money(post_basis),
+            signed_cash_impact_usd=signed_money(activity.signed_cash_impact_usd),
             parent_position_id=None,
             resulting_position_status=position.status.value,
         ),
@@ -248,8 +249,7 @@ async def _apply_signed_cash_movement(
     # accumulator stays exact across CA-driven movements.
     cash_row.current_cash_usd = cash_row.current_cash_usd + Decimal(str(signed_cash_impact_usd))
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
-    # ALP-462 — Decimal → float at the activity-log boundary (06a migrates).
-    new_balance = float(cash_row.current_cash_usd)
+    new_balance_money = signed_money(cash_row.current_cash_usd)
     if signed_cash_impact_usd >= 0:
         await _emit(
             handle,
@@ -259,9 +259,9 @@ async def _apply_signed_cash_movement(
             thesis_id=None,
             timestamp=timestamp,
             detail=CashCreditedDetail(
-                amount_usd=abs(signed_cash_impact_usd),
+                amount_usd=money(abs(signed_cash_impact_usd)),
                 reason=CashCreditReason(reason),
-                new_balance_usd=new_balance,
+                new_balance_usd=new_balance_money,
             ),
         )
     else:
@@ -273,9 +273,9 @@ async def _apply_signed_cash_movement(
             thesis_id=None,
             timestamp=timestamp,
             detail=CashDebitedDetail(
-                amount_usd=abs(signed_cash_impact_usd),
+                amount_usd=money(abs(signed_cash_impact_usd)),
                 reason=CashDebitReason(reason),
-                new_balance_usd=new_balance,
+                new_balance_usd=new_balance_money,
             ),
         )
 

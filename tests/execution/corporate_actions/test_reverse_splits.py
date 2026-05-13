@@ -7,6 +7,7 @@ point so the test exercises both the dispatch wiring and the handler itself.
 from __future__ import annotations
 
 from datetime import timedelta
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
@@ -147,9 +148,12 @@ async def test_reverse_split_credits_fractional_cash_out_when_cash_impact_positi
         )
         cash_entries = [r for r in log_rows if r.event_type == EventType.CASH_CREDITED.value]
         assert len(cash_entries) == 1
-        detail = CashCreditedDetail.model_validate_json(cash_entries[0].detail_json)
+        from alphamind.portfolio_state.events.codec import decode_detail
+
+        detail = decode_detail(cash_entries[0].detail_json, CashCreditedDetail)
+        assert isinstance(detail, CashCreditedDetail)
         assert detail.reason == CashCreditReason.FRACTIONAL_SHARE_CASH_OUT
-        assert detail.amount_usd == pytest.approx(2.50)
+        assert detail.amount_usd == Decimal("2.50")
 
 
 async def test_reverse_split_no_cash_credit_when_impact_zero(

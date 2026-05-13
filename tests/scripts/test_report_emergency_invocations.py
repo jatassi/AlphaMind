@@ -37,6 +37,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from alphamind._kernel.money import money, signed_money
 from alphamind.execution.state_persistence.invocation_context.activity_log import (
     activity_log_entry_to_row,
 )
@@ -215,8 +216,8 @@ def _add_position_closed(
 ) -> None:
     detail = PositionClosedDetail(
         exit_method=PositionExitMethod.PM_DECISION,
-        exit_price=100.0,
-        realized_pnl_usd=-50.0,
+        exit_price=money("100.0"),
+        realized_pnl_usd=signed_money("-50.0"),
         thesis_resolution_category="risk_management",
     )
     entry = ActivityLogEntry(

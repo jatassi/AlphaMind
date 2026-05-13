@@ -35,6 +35,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -1247,13 +1248,26 @@ def _phase_3_check_activity_log(log_rows: Sequence[Any], expected_dollar: float)
 
 def _phase_3_check_capital_reserved(log_rows: Sequence[Any], expected_dollar: float) -> str | None:
     """Confirm exactly one ``capital_reserved`` row whose ``amount_usd`` matches
-    the canonical command's ``dollar_value`` — the regression-to-$1k-stub guard."""
+    the canonical command's ``dollar_value`` — the regression-to-$1k-stub guard.
+
+    ALP-463: ``amount_usd`` is stored as the Decimal-exact string repr of a
+    :class:`Money` value; compare via :class:`Decimal` so the value-equality
+    check survives the storage-format migration.
+    """
     rows = [r for r in log_rows if r.event_type == EventType.CAPITAL_RESERVED.value]
     if len(rows) != 1:
         return f"expected exactly 1 capital_reserved entry, got {len(rows)}"
     detail = json.loads(rows[0].detail_json)
     amount_usd = detail.get("amount_usd")
-    if amount_usd != expected_dollar:
+    try:
+        actual = Decimal(amount_usd)
+        expected = Decimal(str(expected_dollar))
+    except (InvalidOperation, ValueError, TypeError):
+        return (
+            f"capital_reserved.amount_usd={amount_usd!r}, expected "
+            f"{expected_dollar!r} (unparseable amount)"
+        )
+    if actual != expected:
         return (
             f"capital_reserved.amount_usd={amount_usd!r}, expected "
             f"{expected_dollar!r} (regression to retired $1k stub?)"

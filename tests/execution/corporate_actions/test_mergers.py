@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -743,8 +744,9 @@ async def test_cash_merger_equity_emits_position_closed_and_cash_credited(
         closed_detail = json.loads(closed_rows[0].detail_json)
         assert closed_detail["exit_method"] == PositionExitMethod.CORPORATE_ACTION_CASH_MERGER.value
         # Deal price per share = signed_cash_impact_usd / pre_qty = 7500 / 100 = 75.
-        assert closed_detail["exit_price"] == pytest.approx(75.0)
-        assert closed_detail["realized_pnl_usd"] == pytest.approx(2500.0)
+        # ALP-463: Money/Price fields serialize to their Decimal-exact string repr.
+        assert Decimal(closed_detail["exit_price"]) == Decimal(75)
+        assert Decimal(closed_detail["realized_pnl_usd"]) == Decimal(2500)
         # Cash merger carries a CA-specific resolution category so operators
         # can distinguish CA-driven closes from PM-driven ones in the audit.
         assert closed_detail["thesis_resolution_category"] == "corporate_action_cash_merger"
@@ -754,7 +756,7 @@ async def test_cash_merger_equity_emits_position_closed_and_cash_credited(
         assert len(credit_rows) == 1
         credit_detail = json.loads(credit_rows[0].detail_json)
         assert credit_detail["reason"] == CashCreditReason.CASH_MERGER_PROCEEDS.value
-        assert credit_detail["amount_usd"] == pytest.approx(7500.0)
+        assert Decimal(credit_detail["amount_usd"]) == Decimal(7500)
 
         # Cash ledger balance bumped by the deal proceeds.
         cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
@@ -1192,7 +1194,7 @@ async def test_stock_merger_partial_cash_credits_via_cash_credited_event(
 
         credit_detail = json.loads(credit_rows[0].detail_json)
         assert credit_detail["reason"] == CashCreditReason.CASH_MERGER_PROCEEDS.value
-        assert credit_detail["amount_usd"] == pytest.approx(1200.0)
+        assert Decimal(credit_detail["amount_usd"]) == Decimal(1200)
 
         cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
         assert cash_row is not None

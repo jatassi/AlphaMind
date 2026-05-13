@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import Session
 
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.state_persistence.invocation_context import (
     InvocationContext,
     InvocationRecord,
@@ -252,7 +253,7 @@ def _position_opened_entry(
     detail = PositionOpenedDetail(
         ticker="AAPL",
         direction="long",
-        fill_price=150.25,
+        fill_price=price("150.25"),
         quantity=100.0,
         thesis_id=thesis_id,
         bracket_id=bracket_id,
@@ -437,7 +438,10 @@ def _all_event_group_entries(invocation_id: str) -> list[ActivityLogEntry]:
             event_type=EventType.ORDER_FILLED,
             event_group=EventGroup.ORDER_LIFECYCLE,
             detail=OrderFilledDetail(
-                fill_price=150.25, fill_quantity=100.0, slippage=0.05, fees=1.25
+                fill_price=price("150.25"),
+                fill_quantity=100.0,
+                slippage=signed_money("0.05"),
+                fees=money("1.25"),
             ),
             order_id="ord-1",
             source=EventSource.FILL_PROCESSOR,
@@ -474,9 +478,9 @@ def _all_event_group_entries(invocation_id: str) -> list[ActivityLogEntry]:
             event_type=EventType.CASH_DEBITED,
             event_group=EventGroup.CASH_AND_MARGIN,
             detail=CashDebitedDetail(
-                amount_usd=15025.0,
+                amount_usd=money("15025.0"),
                 reason=CashDebitReason.ENTRY_FILL,
-                new_balance_usd=84975.0,
+                new_balance_usd=signed_money("84975.0"),
             ),
             source=EventSource.FILL_PROCESSOR,
         ),
@@ -530,9 +534,9 @@ def _all_event_group_entries(invocation_id: str) -> list[ActivityLogEntry]:
                 ratio_or_amount=2.0,
                 pre_action_quantity=100.0,
                 post_action_quantity=200.0,
-                pre_action_cost_basis=150.0,
-                post_action_cost_basis=75.0,
-                signed_cash_impact_usd=0.0,
+                pre_action_cost_basis=money("150.0"),
+                post_action_cost_basis=money("75.0"),
+                signed_cash_impact_usd=signed_money("0.0"),
                 parent_position_id=None,
                 resulting_position_status="open",
             ),

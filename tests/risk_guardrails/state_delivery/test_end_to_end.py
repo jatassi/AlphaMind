@@ -795,8 +795,8 @@ def _build_engine_action_entry() -> ActivityLogEntry:
         source=EventSource.GUARDRAIL_LAYER,
         detail=PositionClosedDetail(
             exit_method=PositionExitMethod.STOP_TRIGGERED,
-            exit_price=120.0,
-            realized_pnl_usd=-310.0,
+            exit_price=money("120.0"),
+            realized_pnl_usd=signed_money("-310.0"),
             thesis_resolution_category="position_level_max_loss",
         ),
     )

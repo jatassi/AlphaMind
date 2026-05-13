@@ -15,10 +15,10 @@ path. Adding a monitor-specific event-source value is the operator's call
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
 
 from alphamind.portfolio_state.events.activity_log import (
     EVENT_TYPE_TO_DETAIL_CLASS,
@@ -62,8 +62,8 @@ class TestGreeksRefreshFailedDetail:
             failure_reason="iv_fetch_timeout",
             prior_as_of=None,
         )
-        with pytest.raises(ValidationError):
-            detail.failure_reason = "something_else"
+        with pytest.raises(FrozenInstanceError):
+            detail.failure_reason = "something_else"  # type: ignore[misc]
 
 
 class TestGreeksRefreshFailedCatalogRegistration:
@@ -102,7 +102,7 @@ class TestActivityLogEntryAcceptsGreeksRefreshFailed:
         assert entry.event_group == EventGroup.RISK_AND_GUARDRAIL
 
     def test_entry_with_wrong_group_rejected(self) -> None:
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValueError):
             ActivityLogEntry(
                 entry_id="ent-test-002",
                 invocation_id="inv-test-002",

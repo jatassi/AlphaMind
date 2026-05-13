@@ -31,6 +31,7 @@ from alphamind.execution.state_persistence.tables.invocations import InvocationR
 from alphamind.portfolio_state.events.activity_log import (
     EmergencyInvocationRequestedDetail,
     EventType,
+    decode_detail,
 )
 from alphamind.scheduler.orchestrator import run_invocation
 from alphamind.scheduler.run_context import RunInvocationContext
@@ -176,10 +177,18 @@ async def _process_one_entry(
     surrounding poll loop continues per parent decision (H).
     """
     try:
-        detail = EmergencyInvocationRequestedDetail.model_validate_json(row.detail_json)
+        decoded = decode_detail(row.detail_json, EmergencyInvocationRequestedDetail)
     except Exception:
         log.exception("emergency entry_id=%s detail parse failed", row.entry_id)
         return
+    if not isinstance(decoded, EmergencyInvocationRequestedDetail):
+        log.error(
+            "emergency entry_id=%s decoded to unexpected type %s",
+            row.entry_id,
+            type(decoded).__name__,
+        )
+        return
+    detail = decoded
 
     if detail.trigger_type != "margin_call":
         most_recent = await _most_recent_completed_emergency_at(context.session_factory)

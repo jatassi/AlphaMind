@@ -12,6 +12,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import price
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -356,7 +357,7 @@ def _make_changelog_entry(
     detail = PositionOpenedDetail(
         ticker="AAPL",
         direction="LONG",
-        fill_price=150.0,
+        fill_price=price("150.0"),
         quantity=100.0,
         thesis_id=None,
         bracket_id=None,

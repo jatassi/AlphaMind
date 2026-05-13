@@ -42,7 +42,7 @@ from alphamind._kernel.ids import (
     ThesisId,
 )
 from alphamind._kernel.invocations import INVOCATIONS_DIRNAME
-from alphamind._kernel.money import money
+from alphamind._kernel.money import money, signed_money
 from alphamind._kernel.regime import (
     RegimeLabel,
     RegimeTransitionState,
@@ -832,8 +832,8 @@ def build_fixture_defensive_posture_view() -> tuple[
         source=EventSource.GUARDRAIL_LAYER,
         detail=PositionClosedDetail(
             exit_method=PositionExitMethod.PM_DECISION,
-            exit_price=400.0,
-            realized_pnl_usd=-80.0,
+            exit_price=money("400.0"),
+            realized_pnl_usd=signed_money("-80.0"),
             thesis_resolution_category="INVALIDATED_STOPPED_CORRECTLY",
         ),
     )

@@ -772,26 +772,24 @@ def test_multi_position_rollup() -> None:
     pos_tech_short = _make_open_equity_position("POS-TECH-S", "AMD", 5.0, 100.0, Direction.SHORT)
     pos_health = _make_open_equity_position("POS-HLTH", "JNJ", 20.0, 150.0, Direction.LONG)
 
-    modification_trail_entry = ActivityLogEntry.model_validate(
-        {
-            "entry_id": "trail-1",
-            "invocation_id": _INV_ID,
-            "timestamp": _NOW,
-            "event_type": EventType.PM_DECISION,
-            "event_group": EventGroup.PM_DECISION,
-            "position_id": "POS-TECH",
-            "order_id": None,
-            "thesis_id": None,
-            "source": EventSource.COMMAND_EXECUTOR,
-            "detail": PMDecisionDetail(
-                envelope_id="e1",
-                source_provenance_json={},
-                evaluation_json={},
-                modifications_json=[],
-                resulting_command_ids=(),
-                verdict=PMVerdict.APPROVE,
-            ),
-        }
+    modification_trail_entry = ActivityLogEntry(
+        entry_id="trail-1",
+        invocation_id=_INV_ID,
+        timestamp=_NOW,
+        event_type=EventType.PM_DECISION,
+        event_group=EventGroup.PM_DECISION,
+        position_id="POS-TECH",
+        order_id=None,
+        thesis_id=None,
+        source=EventSource.COMMAND_EXECUTOR,
+        detail=PMDecisionDetail(
+            envelope_id="e1",
+            source_provenance_json={},
+            evaluation_json={},
+            modifications_json=[],
+            resulting_command_ids=(),
+            verdict=PMVerdict.APPROVE,
+        ),
     )
 
     fixture = _make_fixture(

@@ -24,6 +24,7 @@ from __future__ import annotations
 import uuid
 
 from alphamind._kernel.ids import PositionId, Symbol
+from alphamind._kernel.money import price
 from alphamind.execution.state_persistence.invocation_context.context import (
     InvocationHandle,
 )
@@ -222,7 +223,7 @@ async def handle_spin_off(
         detail=PositionOpenedDetail(
             ticker=activity.new_ticker,
             direction=Direction.LONG.value,
-            fill_price=child_basis,
+            fill_price=price(child_basis),
             quantity=child_qty,
             thesis_id=None,
             bracket_id=None,
