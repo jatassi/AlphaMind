@@ -51,6 +51,7 @@ import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +65,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.regt_margin_attribution import (
     load_regt_margin_attribution_config,
@@ -844,16 +846,17 @@ def _sell_exit_thesis() -> ThesisRecord:
 
 
 def _buy_fill_record() -> FillRecord:
+    # ALP-462 — wrap fixture floats at the FillRecord boundary.
     return FillRecord(
         fill_id=_BUY_FILL_ID,
         order_id=_BUY_ORDER_ID,
         fill_timestamp=_NOW - timedelta(minutes=12),
-        fill_price=920.0,
+        fill_price=price("920"),
         fill_quantity=10.0,
         remaining_quantity_after=0.0,
         order_status_after=OrderStatus.FILLED,
-        slippage_usd=0.0,
-        fees_usd=0.0,
+        slippage_usd=money("0"),
+        fees_usd=money("0"),
         execution_venue="NASDAQ",
         gateway_reference=f"alp-{_BUY_FILL_ID}",
         persistence_timestamp=_NOW - timedelta(minutes=12) + timedelta(seconds=1),
@@ -870,12 +873,12 @@ def _sell_fill_record() -> FillRecord:
         fill_id=_SELL_FILL_ID,
         order_id=_SELL_ORDER_ID,
         fill_timestamp=_NOW - timedelta(minutes=6),
-        fill_price=146.0,
+        fill_price=price("146"),
         fill_quantity=10.0,
         remaining_quantity_after=0.0,
         order_status_after=OrderStatus.FILLED,
-        slippage_usd=0.0,
-        fees_usd=0.0,
+        slippage_usd=money("0"),
+        fees_usd=money("0"),
         execution_venue="NASDAQ",
         gateway_reference=f"alp-{_SELL_FILL_ID}",
         persistence_timestamp=_NOW - timedelta(minutes=6) + timedelta(seconds=1),
@@ -1296,13 +1299,21 @@ def _collect_assertion_failures(
                 f"{attr.regt_excess_over_pm} != {algebra} (tol={_TOL})"
             )
 
-    expected_sum = sum(row.attribution.regt_excess_over_pm for row in attributions)
+    # ALP-462 — ``regt_excess_over_pm`` is ``Money`` (Decimal); the aggregator
+    # trailing-window values are still float for now. Compare in Decimal space
+    # so the precision invariant holds across the Decimal sum.
+    expected_sum = sum(
+        (row.attribution.regt_excess_over_pm for row in attributions),
+        start=Decimal(0),
+    )
     for label, value in (
         ("trailing-30d", trailing_30d_usd),
         ("trailing-90d", trailing_90d_usd),
         ("lifetime", lifetime_usd),
     ):
-        if value is None or abs(value - expected_sum) <= _TOL:
+        if value is None:
+            continue
+        if abs(Decimal(str(value)) - expected_sum) <= Decimal(str(_TOL)):
             continue
         failures.append(
             f"{label} aggregate {value} does not equal sum of per-fill "

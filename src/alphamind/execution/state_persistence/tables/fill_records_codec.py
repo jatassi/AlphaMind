@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from alphamind._kernel.money import money, price, signed_money
 from alphamind.execution.state_persistence.tables.fill_records import FillRecordRow
 from alphamind.execution.state_persistence.write_paths.records import (
     FillProcessingStatus,
@@ -61,16 +62,20 @@ def record_to_row(record: FillRecord) -> FillRecordRow:
 
 def row_to_record(row: FillRecordRow) -> FillRecord:
     """Rehydrate a ``FillRecordRow`` back into the typed ``FillRecord``."""
+    # ALP-462 — the DecimalText column hands back ``Decimal``; rewrap as
+    # ``Price`` / ``Money`` (NewType aliases) at the typed-record boundary.
+    # ``signed_money`` accommodates negative slippage when the broker reports
+    # better-than-quoted fills.
     return FillRecord(
         fill_id=row.fill_id,
         order_id=row.order_id,
         fill_timestamp=datetime.fromisoformat(row.fill_timestamp),
-        fill_price=row.fill_price,
+        fill_price=price(row.fill_price),
         fill_quantity=row.fill_quantity,
         remaining_quantity_after=row.remaining_quantity_after,
         order_status_after=OrderStatus(row.order_status_after),
-        slippage_usd=row.slippage_usd,
-        fees_usd=row.fees_usd,
+        slippage_usd=signed_money(row.slippage_usd) if row.slippage_usd is not None else None,
+        fees_usd=money(row.fees_usd),
         execution_venue=row.execution_venue,
         gateway_reference=row.gateway_reference,
         persistence_timestamp=datetime.fromisoformat(row.persistence_timestamp),

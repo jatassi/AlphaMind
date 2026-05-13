@@ -828,10 +828,12 @@ def _command_to_validation_request(
     # the request as metadata-only. Real exposure projection for ADD requires
     # the position-id resolver wired through the OMS submission engine.
     action = ValidationAction.ADD if isinstance(command, AddCommand) else ValidationAction.ADJUST
+    # ALP-462 — Money → float at the ValidationSize surface (validation tool
+    # types live in guardrail_evaluation/types.py which is outside ALP-462).
     if isinstance(command, AddCommand):
         size = ValidationSize(
             quantity=int(command.additional_quantity),
-            dollar_value=command.additional_dollar_value,
+            dollar_value=float(command.additional_dollar_value),
         )
     else:
         size = ValidationSize(quantity=1, dollar_value=0.0)
@@ -865,15 +867,17 @@ def _build_constructive_request_from_open(command: OpenCommand) -> ValidationReq
         "direction": _OMS_TO_VALIDATION_DIRECTION[_instrument_direction(command.instrument)],
     }
     if isinstance(command.instrument, OptionInstrument):
-        instrument_kwargs["strike"] = command.instrument.strike
+        # ALP-462 — Price → float at the ValidationInstrument surface.
+        instrument_kwargs["strike"] = float(command.instrument.strike)
         instrument_kwargs["expiration"] = datetime.fromisoformat(
             command.instrument.expiration
         ).replace(tzinfo=UTC)
         instrument_kwargs["contract_type"] = command.instrument.contract_type
     instrument = ValidationInstrument(**instrument_kwargs)
+    # ALP-462 — Money → float at the ValidationSize surface.
     size = ValidationSize(
         quantity=int(command.position_size.quantity),
-        dollar_value=command.position_size.dollar_value,
+        dollar_value=float(command.position_size.dollar_value),
     )
     return ValidationRequest(instrument=instrument, size=size, action=ValidationAction.OPEN)
 
@@ -1306,13 +1310,17 @@ async def _add_command_context(command: AddCommand, *, invocation_handle: Any) -
         }
     if isinstance(position.details, OptionsPositionDetails):
         # Reconstruct the OptionInstrument the dispatcher needs from the
-        # persisted contract fields.
+        # persisted contract fields. ALP-462 — ``strike`` is ``Price``;
+        # ``strike_price`` is still float on legacy ``OptionsPositionDetails``
+        # (records.positions is outside ALP-462). ``price()`` wraps at the
+        # boundary so downstream consumers see Decimal-exact values.
+        from alphamind._kernel.money import price
         from alphamind.commands.command_models import OptionInstrument
 
         instrument = OptionInstrument(
             asset_type="option",
             underlying=position.details.underlying_ticker,
-            strike=position.details.strike_price,
+            strike=price(str(position.details.strike_price)),
             expiration=position.details.expiration_date.isoformat(),
             contract_type=("call" if position.details.contract_type.value == "CALL" else "put"),
             direction="long" if position.direction.value == "LONG" else "short",

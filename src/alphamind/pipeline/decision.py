@@ -41,6 +41,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from alphamind._kernel.money import money
 from alphamind.config.models.agents import AgentName, BaseAgentConfig
 from alphamind.config.models.guardrails import ProgressiveTier
 from alphamind.decision.analyst.runner import AnalystResult, run_analyst
@@ -411,8 +412,9 @@ async def run_decision_pipeline(  # noqa: PLR0913 — composition surface thread
         state_delivery_config=state_delivery_config,
         options_enabled=options_enabled,
         short_selling_enabled=short_selling_enabled,
-        total_portfolio_value_usd=library_snapshot.portfolio_value_usd,
-        available_for_new_positions_usd=available_capital_usd,
+        # ALP-462 — wrap fixture floats into ``Money`` at the PM runner boundary.
+        total_portfolio_value_usd=money(str(library_snapshot.portfolio_value_usd)),
+        available_for_new_positions_usd=money(str(available_capital_usd)),
         cross_constraint_impact=cross_constraint_impact,
         halt_state=halt_state,
         pending_orders=pydantic_snapshot.pending_orders,

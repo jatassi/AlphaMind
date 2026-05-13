@@ -56,6 +56,7 @@ from alphamind._kernel.ids import (
     PositionId,
     RecommendationId,
 )
+from alphamind._kernel.money import money, price
 from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
@@ -134,14 +135,15 @@ _NOW = datetime(2026, 5, 9, 14, 30, 0, tzinfo=UTC)
 
 
 def _open_command_variant() -> OpenCommand:
+    # ALP-462 — wrap fixture floats at the command-wire-format boundary.
     return OpenCommand(
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker=_TICKER, direction="long"),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-        position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+        position_size=PositionSize(quantity=10.0, dollar_value=money("10000")),
         target=Target(
             target_type="absolute_price",
-            price=950.0,
+            price=price("950"),
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",
@@ -153,7 +155,7 @@ def _open_command_variant() -> OpenCommand:
                 condition=PriceCondition(
                     underlying_trigger=_TICKER,
                     comparator="<=",
-                    trigger_price=750.0,
+                    trigger_price=price("750"),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),
@@ -191,7 +193,7 @@ def _close_command_variants() -> tuple[CloseCommand, ...]:
             position_id=PositionId("POS-NVDA-TARGET"),
             quantity="all",
             order_type="limit",
-            limit_price=950.0,
+            limit_price=price("950"),
             close_rationale_type="target_reached",
             invalidation_reason=None,
             risk_management_subtype=None,
@@ -227,7 +229,7 @@ def _adjust_command_variants() -> tuple[AdjustCommand, ...]:
             position_id=PositionId("POS-NVDA-A1"),
             adjustment_rationale="Tighten stop after favorable move.",
             new_stop_level=NewStopLevel(
-                trigger_price=820.0,
+                trigger_price=price("820"),
                 order_type="stop",
                 limit_price=None,
             ),
@@ -238,7 +240,7 @@ def _adjust_command_variants() -> tuple[AdjustCommand, ...]:
             adjustment_rationale="Lift target after upgrade.",
             new_target_level=NewTargetLevel(
                 target_type="absolute_price",
-                price=1000.0,
+                price=price("1000"),
                 pl_percentage=None,
                 pl_dollar=None,
                 order_type="limit",
@@ -288,7 +290,7 @@ def _add_command_variant() -> AddCommand:
         command_type="add",
         position_id=PositionId("POS-NVDA-EXISTING"),
         additional_quantity=5.0,
-        additional_dollar_value=5_000.0,
+        additional_dollar_value=money("5000"),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
         thesis_addition_component=ThesisComponent(
             component_type="entry_rationale",
@@ -299,7 +301,7 @@ def _add_command_variant() -> AddCommand:
         ),
         bracket_adjustment=BracketAdjustment(
             new_stop_level=NewStopLevel(
-                trigger_price=800.0,
+                trigger_price=price("800"),
                 order_type="stop",
                 limit_price=None,
             ),
@@ -600,11 +602,11 @@ def _phase_3_open_command() -> OpenCommand:
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
         position_size=PositionSize(
             quantity=_PHASE_3_QUANTITY,
-            dollar_value=_PHASE_3_DOLLAR_VALUE,
+            dollar_value=money(str(_PHASE_3_DOLLAR_VALUE)),
         ),
         target=Target(
             target_type="absolute_price",
-            price=950.0,
+            price=price("950"),
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",
@@ -616,7 +618,7 @@ def _phase_3_open_command() -> OpenCommand:
                 condition=PriceCondition(
                     underlying_trigger=_PHASE_3_TICKER,
                     comparator="<=",
-                    trigger_price=750.0,
+                    trigger_price=price("750"),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),

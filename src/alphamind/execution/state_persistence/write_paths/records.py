@@ -20,6 +20,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from alphamind._kernel.money import Money, Price
 from alphamind.portfolio_state.records.orders import OrderStatus
 from alphamind.portfolio_state.records.positions import LiveExecutionEstimate
 
@@ -55,18 +56,19 @@ class RegTMarginAttribution(BaseModel):
     Mirrors ``regt-margin-attribution.md § Outputs``. ``regt_excess_over_pm``
     is the headline value: the dollar cost of running on Reg T attributable
     to this fill. Cumulative aggregates are computed at delivery time by
-    summing across fill records.
+    summing across fill records. ALP-462 — USD fields are :class:`Money`
+    (Decimal-backed).
     """
 
     model_config = ConfigDict(frozen=True)
 
-    regt_margin_before: float
-    regt_margin_after: float
-    regt_marginal_consumption: float
-    pm_equivalent_before: float
-    pm_equivalent_after: float
-    pm_marginal_consumption: float
-    regt_excess_over_pm: float
+    regt_margin_before: Money
+    regt_margin_after: Money
+    regt_marginal_consumption: Money
+    pm_equivalent_before: Money
+    pm_equivalent_after: Money
+    pm_marginal_consumption: Money
+    regt_excess_over_pm: Money
     pm_model_version: str
 
 
@@ -85,12 +87,12 @@ class FillRecord(BaseModel):
     fill_id: str
     order_id: str
     fill_timestamp: datetime
-    fill_price: float
+    fill_price: Price
     fill_quantity: float
     remaining_quantity_after: float
     order_status_after: OrderStatus
-    slippage_usd: float | None
-    fees_usd: float
+    slippage_usd: Money | None
+    fees_usd: Money
     execution_venue: str | None
     gateway_reference: str | None
     persistence_timestamp: datetime

@@ -201,12 +201,17 @@ def _notional_for_recommendation(recommendation: Recommendation) -> float:
 
     For options/strategy: use premium_at_risk when set, else dollar_value.
     For equity: use dollar_value.
+
+    ALP-462 — ``position_size.dollar_value`` / ``premium_at_risk`` are
+    :class:`Money` (Decimal-backed) on the analyst boundary. Cast to ``float``
+    here at the proposal-pre-processor boundary; ``ProposedDelta.notional_usd``
+    is still float (a deferred migration outside the ALP-462 file list).
     """
     asset_type = recommendation.instrument.asset_type
     ps = recommendation.position_size
     if asset_type in ("option", "strategy") and ps.premium_at_risk is not None:
-        return ps.premium_at_risk
-    return ps.dollar_value
+        return float(ps.premium_at_risk)
+    return float(ps.dollar_value)
 
 
 def _build_option_legs_from_recommendation(
@@ -221,12 +226,15 @@ def _build_option_legs_from_recommendation(
     qty = int(recommendation.position_size.quantity)
     if isinstance(instrument, InstrumentEquity):
         return None
+    # ALP-462 — ``strike`` is ``Price`` (Decimal) on the analyst boundary;
+    # ``OptionLeg`` is in guardrail-evaluation/types.py (outside ALP-462) and
+    # still carries float. Cast at the boundary.
     if isinstance(instrument, InstrumentOption):
         leg_sign = 1 if instrument.direction == "long" else -1
         return (
             OptionLeg(
                 contract_type=_CONTRACT_TYPE_MAP[instrument.contract_type],
-                strike=instrument.strike,
+                strike=float(instrument.strike),
                 expiration=instrument.expiration,
                 quantity=leg_sign * qty,
             ),
@@ -238,7 +246,7 @@ def _build_option_legs_from_recommendation(
         legs.append(
             OptionLeg(
                 contract_type=_CONTRACT_TYPE_MAP[leg.contract_type],
-                strike=leg.strike,
+                strike=float(leg.strike),
                 expiration=leg.expiration,
                 quantity=leg_sign * leg.quantity_ratio * qty,
             )

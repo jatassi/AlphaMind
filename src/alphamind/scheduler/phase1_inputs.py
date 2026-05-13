@@ -178,8 +178,11 @@ def _build_market_inputs(
     do not consume a real surface; future stories can swap in a backed
     options-chain provider without changing this signature.
     """
+    # ALP-462 — ``pos.current_price`` is ``Price`` (Decimal) on the
+    # PositionSnapshot boundary; cast at the legacy MarketInputs surface which
+    # still uses float (risk_guardrails/guardrail_evaluation/types is outside ALP-462).
     underlying_prices: dict[str, float] = {
-        pos.symbol: pos.current_price for pos in positions if pos.current_price is not None
+        pos.symbol: float(pos.current_price) for pos in positions if pos.current_price is not None
     }
     return MarketInputs(
         underlying_prices=underlying_prices,

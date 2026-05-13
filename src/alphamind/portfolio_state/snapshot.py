@@ -7,6 +7,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from alphamind._kernel.money import Money
 from alphamind.portfolio_state.aggregates.drawdown import DrawdownState
 from alphamind.portfolio_state.aggregates.risk_budget import RiskBudgetConsumption
 from alphamind.portfolio_state.aggregates.risk_parameters import ActiveRiskParameterSet
@@ -24,42 +25,55 @@ from alphamind.portfolio_state.views.positions import PositionView
 
 
 class PortfolioPnL(BaseModel):
-    """Snapshot-time P/L rollup (raw state category 2b)."""
+    """Snapshot-time P/L rollup (raw state category 2b).
+
+    ALP-462 — USD aggregate fields carry :class:`Money` (Decimal-backed) so
+    they round-trip through the cash-ledger / activity-log Decimal-aware
+    accumulators without binary float drift. Percentage / ratio fields stay
+    ``float`` because they are derived ratios, not money preservation
+    quantities.
+    """
 
     model_config = ConfigDict(frozen=True)
 
-    total_unrealized_pnl_usd: float
+    total_unrealized_pnl_usd: Money
     total_unrealized_pnl_pct_of_portfolio: float
-    daily_realized_pnl_usd: float
-    daily_total_pnl_usd: float
-    cumulative_realized_pnl_usd: float
-    rolling_realized_pnl: dict[Literal["1d", "3d", "5d", "20d"], float]
+    daily_realized_pnl_usd: Money
+    daily_total_pnl_usd: Money
+    cumulative_realized_pnl_usd: Money
+    rolling_realized_pnl: dict[Literal["1d", "3d", "5d", "20d"], Money]
     win_rate_pct: float | None
-    average_win_size_usd: float | None
-    average_loss_size_usd: float | None
+    average_win_size_usd: Money | None
+    average_loss_size_usd: Money | None
     profit_factor: float | None
 
 
 class SectorExposureEntry(BaseModel):
-    """Per-sector long/short rollup (raw state 1b sector allocation)."""
+    """Per-sector long/short rollup (raw state 1b sector allocation).
+
+    ALP-462 — USD aggregates carry :class:`Money`; pct/ratio fields stay float.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     sector: str
-    long_delta_adjusted_usd: float
-    short_delta_adjusted_usd: float
+    long_delta_adjusted_usd: Money
+    short_delta_adjusted_usd: Money
     long_pct_of_portfolio: float
     short_pct_of_portfolio: float
     long_short_ratio: float | None
 
 
 class DirectionalExposure(BaseModel):
-    """Portfolio-level directional rollup (raw state 1b net directional and gross exposure)."""
+    """Portfolio-level directional rollup (raw state 1b net directional and gross exposure).
+
+    ALP-462 — USD aggregates carry :class:`Money`; pct fields stay float.
+    """
 
     model_config = ConfigDict(frozen=True)
 
-    total_long_delta_adjusted_usd: float
-    total_short_delta_adjusted_usd: float
+    total_long_delta_adjusted_usd: Money
+    total_short_delta_adjusted_usd: Money
     net_directional_pct_of_portfolio: float
     gross_pct_of_portfolio: Annotated[float, Field(ge=0.0)]
 

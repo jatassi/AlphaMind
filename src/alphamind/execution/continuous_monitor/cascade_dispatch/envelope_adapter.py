@@ -24,6 +24,7 @@ This module bridges the two — a thin, pure translator that:
 from __future__ import annotations
 
 from alphamind._kernel.ids import EnvelopeId, PositionId
+from alphamind._kernel.money import price
 from alphamind.commands.command_models import CloseCommand
 from alphamind.commands.engine_envelope import (
     BreachDetails as OmsBreachDetails,
@@ -74,13 +75,16 @@ def _close_command_from(command: EngineCloseCommand) -> CloseCommand:
     ``command_id`` is dropped so the OMS path derives ordinal ``0`` per
     ``oms-command-ids.md``.
     """
+    # ALP-462 — ``EngineCloseCommand.limit_price`` is still float; wrap via
+    # ``price(...)`` at the OMS CloseCommand boundary so downstream consumers
+    # see Decimal-exact values.
     return CloseCommand(
         command_id=None,
         command_type="close",
         position_id=PositionId(command.position_id),
         quantity=command.quantity_or_all,
         order_type=command.execution_method,
-        limit_price=command.limit_price,
+        limit_price=price(str(command.limit_price)) if command.limit_price is not None else None,
         close_rationale_type=command.close_rationale_type.value,
         risk_management_subtype=command.risk_management_subtype.value,
     )

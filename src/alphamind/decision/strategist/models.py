@@ -53,6 +53,7 @@ from alphamind._kernel.ids import (
 from alphamind._kernel.ids import (
     recommendation_id as _recommendation_id_constructor,
 )
+from alphamind._kernel.money import Money, Price
 from alphamind.portfolio_state.views.thesis_health import ComponentHealthEntry
 from alphamind.risk_guardrails.guardrail_evaluation import Greeks, RuleProjection
 
@@ -110,7 +111,7 @@ class CloseParameters(BaseModel):
     action: Literal["close"]
     quantity: float | Literal["all"]
     order_type: Literal["market", "limit"]
-    limit_price: float | None = Field(default=None, gt=0)
+    limit_price: Price | None = Field(default=None, gt=0)
     close_rationale_type: Literal[
         "thesis_invalidated",
         "target_reached",
@@ -140,7 +141,7 @@ class ReduceParameters(BaseModel):
     action: Literal["reduce"]
     quantity: float = Field(gt=0)
     order_type: Literal["market", "limit"]
-    limit_price: float | None = Field(default=None, gt=0)
+    limit_price: Price | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _validate_limit_price(self) -> ReduceParameters:
@@ -154,9 +155,9 @@ class BracketAdjustNewStopLevel(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    trigger_price: float = Field(gt=0)
+    trigger_price: Price = Field(gt=0)
     order_type: Literal["market", "limit", "stop", "stop_limit"]
-    limit_price: float | None = Field(default=None, gt=0)
+    limit_price: Price | None = Field(default=None, gt=0)
 
 
 class BracketAdjustNewTargetLevel(BaseModel):
@@ -164,7 +165,7 @@ class BracketAdjustNewTargetLevel(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    price: float = Field(gt=0)
+    price: Price = Field(gt=0)
     order_type: Literal["market", "limit"]
 
 
@@ -230,8 +231,8 @@ class EntryOrder(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     type: Literal["market", "limit", "stop_limit"]
-    limit_price: float | None = Field(default=None, gt=0)
-    stop_price: float | None = Field(default=None, gt=0)
+    limit_price: Price | None = Field(default=None, gt=0)
+    stop_price: Price | None = Field(default=None, gt=0)
 
 
 class AddParameters(BaseModel):
@@ -246,7 +247,7 @@ class AddParameters(BaseModel):
 
     action: Literal["add"]
     additional_quantity: float = Field(gt=0)
-    additional_dollar_value: float = Field(gt=0)
+    additional_dollar_value: Money = Field(gt=0)
     entry_order: EntryOrder
     bracket_adjustment: AdjustBracketParameters | None = None
 
@@ -268,12 +269,14 @@ class ExposureImpact(BaseModel):
     ``sector_delta_adjusted_change`` is negative for close/reduce, positive
     for add. ``net_directional_impact`` is computed from current position data
     for close/reduce and populated by the guardrail validation tool for add.
+    ALP-462 — both fields carry signed USD; surface as :class:`Money`
+    (Decimal-backed) so the LLM output round-trips without binary drift.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    sector_delta_adjusted_change: float
-    net_directional_impact: float
+    sector_delta_adjusted_change: Money
+    net_directional_impact: Money
 
 
 class GuardrailValidationResult(BaseModel):
@@ -411,8 +414,8 @@ class ModificationParameters(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    new_limit_price: float | None = Field(default=None, gt=0)
-    new_trigger_price: float | None = Field(default=None, gt=0)
+    new_limit_price: Price | None = Field(default=None, gt=0)
+    new_trigger_price: Price | None = Field(default=None, gt=0)
     new_deadline: datetime | None = None
     new_order_type: Literal["market", "limit", "stop", "stop_limit"] | None = None
 

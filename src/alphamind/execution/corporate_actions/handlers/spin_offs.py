@@ -89,7 +89,10 @@ def _require_lookup_position(
     if snapshot is None:
         msg = f"Alpaca lookup returned no {role} position for symbol={symbol!r}"
         raise ValueError(msg)
-    return snapshot.qty, snapshot.avg_entry_price
+    # ALP-462 — ``avg_entry_price`` is ``Price`` on the snapshot; cast to float
+    # because the helper's return shape and downstream PositionRecord fields
+    # still carry the legacy float surface.
+    return snapshot.qty, float(snapshot.avg_entry_price)
 
 
 def _build_spin_off_child(

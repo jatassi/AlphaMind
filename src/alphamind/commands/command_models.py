@@ -43,6 +43,7 @@ from pydantic import (
 )
 
 from alphamind._kernel.ids import CommandId, OrderId, PositionId
+from alphamind._kernel.money import Money, Price
 
 __all__ = [
     "AddCommand",
@@ -144,7 +145,7 @@ class OptionInstrument(BaseModel):
 
     asset_type: Literal["option"]
     underlying: str = Field(min_length=1)
-    strike: float = Field(gt=0)
+    strike: Price = Field(gt=0)
     expiration: str = Field(min_length=1)
     contract_type: ContractType
     direction: Direction
@@ -155,7 +156,7 @@ class StrategyLeg(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    strike: float = Field(gt=0)
+    strike: Price = Field(gt=0)
     expiration: str = Field(min_length=1)
     contract_type: ContractType
     direction: Direction
@@ -190,8 +191,8 @@ class EntryOrder(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     type: EntryOrderType
-    limit_price: float | None = Field(default=None, gt=0)
-    stop_price: float | None = Field(default=None, gt=0)
+    limit_price: Price | None = Field(default=None, gt=0)
+    stop_price: Price | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _validate_invariants(self) -> EntryOrder:
@@ -213,8 +214,8 @@ class PositionSize(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     quantity: float = Field(gt=0)
-    dollar_value: float = Field(gt=0)
-    premium_at_risk: float | None = Field(default=None, gt=0)
+    dollar_value: Money = Field(gt=0)
+    premium_at_risk: Money | None = Field(default=None, gt=0)
 
 
 class Target(BaseModel):
@@ -223,9 +224,9 @@ class Target(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     target_type: TargetType
-    price: float | None = Field(default=None, gt=0)
+    price: Price | None = Field(default=None, gt=0)
     pl_percentage: float | None = None
-    pl_dollar: float | None = None
+    pl_dollar: Money | None = None
     order_type: Literal["market", "limit"]
 
     @model_validator(mode="after")
@@ -255,7 +256,7 @@ class PriceCondition(BaseModel):
 
     underlying_trigger: str = Field(min_length=1)
     comparator: Comparator
-    trigger_price: float = Field(gt=0)
+    trigger_price: Price = Field(gt=0)
 
 
 class TimeCondition(BaseModel):
@@ -280,7 +281,7 @@ class BracketOrderParameters(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     order_type: BracketOrderType
-    limit_price: float | None = Field(default=None, gt=0)
+    limit_price: Price | None = Field(default=None, gt=0)
 
 
 class PriceLeg(BaseModel):
@@ -357,9 +358,9 @@ class NewStopLevel(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    trigger_price: float = Field(gt=0)
+    trigger_price: Price = Field(gt=0)
     order_type: BracketOrderType
-    limit_price: float | None = Field(default=None, gt=0)
+    limit_price: Price | None = Field(default=None, gt=0)
 
 
 class NewTargetLevel(BaseModel):
@@ -368,9 +369,9 @@ class NewTargetLevel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     target_type: TargetType | None = None
-    price: float | None = Field(default=None, gt=0)
+    price: Price | None = Field(default=None, gt=0)
     pl_percentage: float | None = None
-    pl_dollar: float | None = None
+    pl_dollar: Money | None = None
     order_type: Literal["market", "limit"]
 
 
@@ -458,7 +459,7 @@ class CloseCommand(BaseModel):
     position_id: PositionId = Field(min_length=1)
     quantity: float | Literal["all"]
     order_type: Literal["market", "limit"]
-    limit_price: float | None = Field(default=None, gt=0)
+    limit_price: Price | None = Field(default=None, gt=0)
     close_rationale_type: CloseRationaleType
     invalidation_reason: str | None = None
     risk_management_subtype: RiskManagementSubtype | None = None
@@ -541,7 +542,7 @@ class AddCommand(BaseModel):
     command_type: Literal["add"]
     position_id: PositionId = Field(min_length=1)
     additional_quantity: float = Field(gt=0)
-    additional_dollar_value: float = Field(gt=0)
+    additional_dollar_value: Money = Field(gt=0)
     entry_order: EntryOrder
     thesis_addition_component: ThesisComponent
     bracket_adjustment: BracketAdjustment | None = None

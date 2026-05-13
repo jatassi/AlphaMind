@@ -73,6 +73,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price
 from alphamind.commands.engine_envelope import (
     EngineEnvelope as OmsEngineEnvelope,
 )
@@ -399,16 +400,17 @@ async def run_scenario_b_fill_persists() -> ScenarioResult:
     engine, factory = _make_async_in_memory_factory()
     try:
         await _create_schema(engine)
+        # ALP-462 — wrap fixture floats at the FillRecord boundary.
         fill = FillRecord(
             fill_id="FILL-001",
             order_id="ORD-001",
             fill_timestamp=_NOW,
-            fill_price=150.0,
+            fill_price=price("150"),
             fill_quantity=10.0,
             remaining_quantity_after=0.0,
             order_status_after=PSOrderStatus.FILLED,
-            slippage_usd=0.0,
-            fees_usd=0.0,
+            slippage_usd=money("0"),
+            fees_usd=money("0"),
             execution_venue=None,
             gateway_reference=None,
             persistence_timestamp=_NOW,
@@ -504,8 +506,8 @@ def _seed_iv_quotes(position: PositionRecord, *, iv: float) -> dict[str, IVQuote
 
 async def _seed_underlying_cache(prices: Mapping[str, float]) -> UnderlyingPriceCache:
     cache = UnderlyingPriceCache()
-    for ticker, price in prices.items():
-        await cache.update(UnderlyingQuote(ticker=ticker, price=price, as_of=_NOW))
+    for ticker, quote_price in prices.items():
+        await cache.update(UnderlyingQuote(ticker=ticker, price=quote_price, as_of=_NOW))
     return cache
 
 

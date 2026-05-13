@@ -71,25 +71,32 @@ def read_venue_account_state(
     """
     snapshot = queries.get_account()
 
-    pdt_qualified = snapshot.equity >= PDT_EQUITY_THRESHOLD_USD and snapshot.pattern_day_trader
+    # ALP-462 — ``TradeAccountSnapshot`` monetary fields are ``Money`` (Decimal).
+    # ``VenueAccountState`` is outside ALP-462's file list and still carries
+    # ``float`` fields; cast at the boundary so the venue surface stays
+    # backwards-compatible while preserving Decimal precision upstream.
+    snapshot_equity_float = float(snapshot.equity)
+    pdt_qualified = (
+        snapshot_equity_float >= PDT_EQUITY_THRESHOLD_USD and snapshot.pattern_day_trader
+    )
 
-    if snapshot.equity < PDT_EQUITY_THRESHOLD_USD:
+    if snapshot_equity_float < PDT_EQUITY_THRESHOLD_USD:
         # Sub-PDT account: limited to N day trades in rolling window.
         day_trade_headroom = max(0, PDT_DAY_TRADE_LIMIT_BELOW_THRESHOLD - snapshot.daytrade_count)
     else:
         # PDT-qualified accounts have no rolling-window cap.
         day_trade_headroom = -1
 
-    tier = resolve_margin_interest_tier(snapshot.equity)
+    tier = resolve_margin_interest_tier(snapshot_equity_float)
 
     return VenueAccountState(
         fetched_at=fetched_at or datetime.now(UTC),
-        cash=snapshot.cash,
-        equity=snapshot.equity,
-        buying_power=snapshot.buying_power,
-        regt_buying_power=snapshot.regt_buying_power,
-        daytrading_buying_power=snapshot.daytrading_buying_power,
-        maintenance_margin=snapshot.maintenance_margin,
+        cash=float(snapshot.cash),
+        equity=snapshot_equity_float,
+        buying_power=float(snapshot.buying_power),
+        regt_buying_power=float(snapshot.regt_buying_power),
+        daytrading_buying_power=float(snapshot.daytrading_buying_power),
+        maintenance_margin=float(snapshot.maintenance_margin),
         daytrade_count=snapshot.daytrade_count,
         pattern_day_trader=snapshot.pattern_day_trader,
         pdt_qualified=pdt_qualified,

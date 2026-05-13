@@ -20,6 +20,7 @@ import asyncio
 import contextlib
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -343,7 +344,9 @@ class TestHappyPath:
         assert len(rows) == 1
         (row,) = rows
         assert row.order_id == "order-1"
-        assert row.fill_price == pytest.approx(189.42)
+        # ALP-462 — the fill_price column is ``Numeric`` (Decimal); compare
+        # against the canonical ``Decimal('189.42')`` representation.
+        assert row.fill_price == Decimal("189.42")
         assert row.fill_quantity == pytest.approx(1.0)
         assert row.processing_status == "unprocessed"
 

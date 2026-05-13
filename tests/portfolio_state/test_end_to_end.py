@@ -312,8 +312,15 @@ class TestSectionCAssemblerCorrectness:
         assert abs(pos.unrealized_pnl_usd - expected) < 1e-9
 
     def test_portfolio_total_unrealized_pnl_is_sum_of_positions(self) -> None:
+        # ALP-462 — ``portfolio_pnl.total_unrealized_pnl_usd`` is ``Money``
+        # (Decimal); positions still expose float ``unrealized_pnl_usd``.
+        # Compare in Decimal space.
+        from decimal import Decimal
+
         pos_pnl = sum(p.unrealized_pnl_usd for p in self._snapshot.open_positions)
-        assert abs(self._snapshot.portfolio_pnl.total_unrealized_pnl_usd - pos_pnl) < 1e-9
+        assert abs(
+            self._snapshot.portfolio_pnl.total_unrealized_pnl_usd - Decimal(str(pos_pnl))
+        ) < Decimal("1e-9")
 
     def test_position_weights_are_abs_mv_over_total(self) -> None:
         total_value = (

@@ -224,13 +224,15 @@ async def _reconcile_cash(
         return 0
     if abs(cash_row.current_cash_usd - alpaca_account.cash) <= _CASH_EPSILON:
         return 0
+    # ALP-462 — both sides are ``Decimal`` after the migration; cast to float
+    # at the activity-log boundary (06a migrates ReconciliationAlertDetail).
     await _emit_alert(
         handle,
         position_id=None,
         domain="cash",
         field_name="current_cash_usd",
-        local_value=cash_row.current_cash_usd,
-        alpaca_value=alpaca_account.cash,
+        local_value=float(cash_row.current_cash_usd),
+        alpaca_value=float(alpaca_account.cash),
         delta_description=(
             f"cash_ledger.current_cash_usd={cash_row.current_cash_usd} "
             f"vs Alpaca account.cash={alpaca_account.cash}"

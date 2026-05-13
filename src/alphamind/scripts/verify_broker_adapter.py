@@ -45,6 +45,7 @@ from alphamind._kernel.ids import (
     OccSymbol,
     PositionId,
 )
+from alphamind._kernel.money import money, price
 from alphamind.commands.command_models import (
     BracketOrderParameters,
     CloseCommand,
@@ -664,12 +665,14 @@ def _build_equity_open_command(ticker: str) -> OpenCommand:
     BRACKET shape exercises the full bracket-class translation but the entry
     fills immediately at market.
     """
+    # ALP-462 — wrap fixture floats via ``money()`` / ``price()`` at the
+    # boundary so the verify script's commands carry Decimal-exact values.
     return OpenCommand(
         command_type="open",
         instrument=EquityInstrument(asset_type="equity", ticker=ticker, direction="long"),
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=1.0, dollar_value=1.0),
-        target=Target(target_type="absolute_price", price=10_000.0, order_type="limit"),
+        position_size=PositionSize(quantity=1.0, dollar_value=money("1")),
+        target=Target(target_type="absolute_price", price=price("10000"), order_type="limit"),
         invalidation_legs=(
             PriceLeg(
                 type="price",
@@ -677,7 +680,7 @@ def _build_equity_open_command(ticker: str) -> OpenCommand:
                 condition=PriceCondition(
                     underlying_trigger=ticker,
                     comparator="<=",
-                    trigger_price=0.01,
+                    trigger_price=price("0.01"),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),
@@ -827,19 +830,20 @@ def _build_options_open_command(
     *, underlying: str, strike: float, expiration: dt.date
 ) -> OpenCommand:
     """Build a 1-contract long-call OPEN on *underlying* / *expiration*."""
+    # ALP-462 — wrap fixture floats at the boundary.
     return OpenCommand(
         command_type="open",
         instrument=OptionInstrument(
             asset_type="option",
             underlying=underlying,
-            strike=strike,
+            strike=price(str(strike)),
             expiration=expiration.isoformat(),
             contract_type="call",
             direction="long",
         ),
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=1.0, dollar_value=1.0),
-        target=Target(target_type="absolute_price", price=10_000.0, order_type="limit"),
+        position_size=PositionSize(quantity=1.0, dollar_value=money("1")),
+        target=Target(target_type="absolute_price", price=price("10000"), order_type="limit"),
         invalidation_legs=(
             PriceLeg(
                 type="price",
@@ -847,7 +851,7 @@ def _build_options_open_command(
                 condition=PriceCondition(
                     underlying_trigger=underlying,
                     comparator="<=",
-                    trigger_price=0.01,
+                    trigger_price=price("0.01"),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),
@@ -893,7 +897,9 @@ def _pick_listed_chain_for_underlying(
     for day in calendar:
         contracts = queries.get_option_contracts(underlying=underlying, expiration=day.date)
         if contracts:
-            strikes = tuple(c.strike for c in contracts)
+            # ALP-462 — ``c.strike`` is ``Price`` (Decimal); cast at the
+            # legacy script-internal float-tuple surface.
+            strikes = tuple(float(c.strike) for c in contracts)
             return day.date, strikes
     return None
 
@@ -1054,6 +1060,7 @@ def _build_mleg_open_command(
 ) -> OpenCommand:
     """Build a 1-unit long call vertical spread OPEN on *underlying*."""
     expiration_iso = expiration.isoformat()
+    # ALP-462 — wrap fixture floats at the boundary.
     return OpenCommand(
         command_type="open",
         instrument=StrategyInstrument(
@@ -1062,14 +1069,14 @@ def _build_mleg_open_command(
             underlying=underlying,
             legs=(
                 StrategyLeg(
-                    strike=long_strike,
+                    strike=price(str(long_strike)),
                     expiration=expiration_iso,
                     contract_type="call",
                     direction="long",
                     quantity_ratio=1,
                 ),
                 StrategyLeg(
-                    strike=short_strike,
+                    strike=price(str(short_strike)),
                     expiration=expiration_iso,
                     contract_type="call",
                     direction="short",
@@ -1078,8 +1085,8 @@ def _build_mleg_open_command(
             ),
         ),
         entry_order=EntryOrder(type="market"),
-        position_size=PositionSize(quantity=1.0, dollar_value=1.0),
-        target=Target(target_type="absolute_price", price=10_000.0, order_type="limit"),
+        position_size=PositionSize(quantity=1.0, dollar_value=money("1")),
+        target=Target(target_type="absolute_price", price=price("10000"), order_type="limit"),
         invalidation_legs=(
             PriceLeg(
                 type="price",
@@ -1087,7 +1094,7 @@ def _build_mleg_open_command(
                 condition=PriceCondition(
                     underlying_trigger=underlying,
                     comparator="<=",
-                    trigger_price=0.01,
+                    trigger_price=price("0.01"),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),

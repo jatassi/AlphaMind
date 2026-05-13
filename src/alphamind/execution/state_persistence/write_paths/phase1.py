@@ -17,6 +17,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from sqlalchemy import select
 
@@ -155,7 +156,7 @@ class _FillIntegrationOutcome:
     position_after: PositionRecord
     bracket_status_change: BracketStatus | None
     thesis_resolved: bool
-    cash_delta_usd: float
+    cash_delta_usd: Decimal
     direction_is_buy: bool
     strategy_incomplete_legs: tuple[str, ...] = ()
 
@@ -488,9 +489,17 @@ def _apply_fill_to_order(order: OrderRecord, fill: FillRecord) -> OrderRecord:
     new_filled = order.filled_quantity + fill.fill_quantity
     new_remaining = max(order.quantity - new_filled, 0.0)
     prior_avg = order.avg_fill_price if order.avg_fill_price is not None else 0.0
-    new_avg = (
-        (prior_avg * order.filled_quantity) + (fill.fill_price * fill.fill_quantity)
-    ) / new_filled
+    # ALP-462 — ``fill.fill_price`` is ``Price`` (Decimal); coerce the float-typed
+    # quantity through ``Decimal(str(...))`` so the weighted-avg arithmetic stays
+    # exact, then surface as float for the legacy ``avg_fill_price`` field.
+    fp_decimal = fill.fill_price
+    fq_decimal = Decimal(str(fill.fill_quantity))
+    prior_avg_decimal = Decimal(str(prior_avg))
+    filled_qty_decimal = Decimal(str(order.filled_quantity))
+    new_filled_decimal = Decimal(str(new_filled))
+    new_avg = float(
+        (prior_avg_decimal * filled_qty_decimal + fp_decimal * fq_decimal) / new_filled_decimal
+    )
     new_status = (
         OrderStatus.FILLED if new_remaining <= _QTY_EPSILON else OrderStatus.PARTIALLY_FILLED
     )
@@ -657,10 +666,15 @@ def _apply_add_fill(
 ) -> PositionRecord:
     """ADD-side fill on an OPEN position: increment quantity, recompute cost basis."""
     new_qty = details.share_count + fill.fill_quantity
-    weighted_cost = (
-        (details.average_cost_basis_per_share * details.share_count)
-        + (fill.fill_price * fill.fill_quantity)
-    ) / new_qty
+    # ALP-462 — fill_price is ``Price`` (Decimal); coerce float quantities so
+    # the weighted-cost arithmetic stays exact, then surface as float for the
+    # legacy ``average_cost_basis_per_share`` field on EquityPositionDetails.
+    fp = fill.fill_price
+    fq = Decimal(str(fill.fill_quantity))
+    prior_avg = Decimal(str(details.average_cost_basis_per_share))
+    prior_count = Decimal(str(details.share_count))
+    new_qty_decimal = Decimal(str(new_qty))
+    weighted_cost = float((prior_avg * prior_count + fp * fq) / new_qty_decimal)
     new_details = details.model_copy(
         update={"share_count": new_qty, "average_cost_basis_per_share": weighted_cost}
     )
@@ -685,9 +699,14 @@ def _apply_exit_fill(
             f"({details.share_count}) for position_id={position.position_id!r}"
         )
         raise ValueError(msg)
-    pnl_per_share = fill.fill_price - details.average_cost_basis_per_share
-    direction_sign = -1.0 if position.direction == Direction.SHORT else 1.0
-    realized_delta = pnl_per_share * fill.fill_quantity * direction_sign
+    # ALP-462 — fill_price is ``Price`` (Decimal); thread the P/L math through
+    # Decimal arithmetic, then cast back to float for the legacy fields.
+    fp = fill.fill_price
+    avg_cost = Decimal(str(details.average_cost_basis_per_share))
+    pnl_per_share = fp - avg_cost
+    direction_sign = Decimal(-1) if position.direction == Direction.SHORT else Decimal(1)
+    fq = Decimal(str(fill.fill_quantity))
+    realized_delta = float(pnl_per_share * fq * direction_sign)
     cumulative_realized = (position.realized_pnl_to_date_usd or 0.0) + realized_delta
 
     closed = abs(qty_after) < _QTY_EPSILON
@@ -740,10 +759,14 @@ def _apply_options_add_fill(
 ) -> PositionRecord:
     """ADD-side options fill on an OPEN position: increment quantity, recompute premium."""
     new_count = details.contract_count + fill.fill_quantity
-    weighted_premium = (
-        (details.premium_paid_per_contract * details.contract_count)
-        + (fill.fill_price * fill.fill_quantity)
-    ) / new_count
+    # ALP-462 — Decimal-arithmetic weighted-avg; cast back to float for the
+    # legacy ``premium_paid_per_contract`` field on OptionsPositionDetails.
+    fp = fill.fill_price
+    fq = Decimal(str(fill.fill_quantity))
+    prior_premium = Decimal(str(details.premium_paid_per_contract))
+    prior_count = Decimal(str(details.contract_count))
+    new_count_decimal = Decimal(str(new_count))
+    weighted_premium = float((prior_premium * prior_count + fp * fq) / new_count_decimal)
     new_details = details.model_copy(
         update={
             "contract_count": new_count,
@@ -777,11 +800,15 @@ def _apply_options_exit_fill(
             f"({details.contract_count}) for position_id={position.position_id!r}"
         )
         raise ValueError(msg)
-    pnl_per_contract = fill.fill_price - details.premium_paid_per_contract
-    direction_sign = -1.0 if position.direction == Direction.SHORT else 1.0
-    realized_delta = (
-        pnl_per_contract * fill.fill_quantity * details.contract_multiplier * direction_sign
-    )
+    # ALP-462 — fill_price is ``Price`` (Decimal); thread the P/L math through
+    # Decimal arithmetic, then cast back to float for the legacy field.
+    fp = fill.fill_price
+    paid_premium = Decimal(str(details.premium_paid_per_contract))
+    pnl_per_contract = fp - paid_premium
+    direction_sign = Decimal(-1) if position.direction == Direction.SHORT else Decimal(1)
+    fq = Decimal(str(fill.fill_quantity))
+    multiplier = Decimal(str(details.contract_multiplier))
+    realized_delta = float(pnl_per_contract * fq * multiplier * direction_sign)
     cumulative_realized = (position.realized_pnl_to_date_usd or 0.0) + realized_delta
 
     closed = abs(qty_after) < _QTY_EPSILON
@@ -945,11 +972,15 @@ async def _apply_strategy_close_fill(
         )
         raise ValueError(msg)
     closed_for_this_leg = abs(qty_after) < _QTY_EPSILON
-    leg_direction_sign = -1.0 if leg.direction == Direction.SHORT else 1.0
-    pnl_per_contract = fill.fill_price - leg_options.premium_paid_per_contract
-    realized_delta = (
-        pnl_per_contract * fill.fill_quantity * leg_options.contract_multiplier * leg_direction_sign
-    )
+    leg_direction_sign = Decimal(-1) if leg.direction == Direction.SHORT else Decimal(1)
+    # ALP-462 — fill_price is ``Price`` (Decimal); Decimal-thread the strategy
+    # leg P/L computation, then cast back to float for the legacy field.
+    fp = fill.fill_price
+    paid_premium = Decimal(str(leg_options.premium_paid_per_contract))
+    pnl_per_contract = fp - paid_premium
+    fq = Decimal(str(fill.fill_quantity))
+    multiplier = Decimal(str(leg_options.contract_multiplier))
+    realized_delta = float(pnl_per_contract * fq * multiplier * leg_direction_sign)
     cumulative_realized = (position.realized_pnl_to_date_usd or 0.0) + realized_delta
 
     new_options = leg.options.model_copy(
@@ -1047,10 +1078,14 @@ def _add_to_leg(
     """Increment a leg's contract_count and recompute weighted-average premium."""
     prior_count = leg.options.contract_count
     new_count = prior_count + fill.fill_quantity
-    weighted_premium = (
-        (leg.options.premium_paid_per_contract * prior_count)
-        + (fill.fill_price * fill.fill_quantity)
-    ) / new_count
+    # ALP-462 — fill_price is ``Price`` (Decimal); thread weighted-avg math
+    # through Decimal arithmetic, then cast back to float for the legacy field.
+    fp = fill.fill_price
+    fq = Decimal(str(fill.fill_quantity))
+    prior_premium = Decimal(str(leg.options.premium_paid_per_contract))
+    prior_count_decimal = Decimal(str(prior_count))
+    new_count_decimal = Decimal(str(new_count))
+    weighted_premium = float((prior_premium * prior_count_decimal + fp * fq) / new_count_decimal)
     new_options = leg.options.model_copy(
         update={
             "contract_count": new_count,
@@ -1151,12 +1186,14 @@ def _persist_position_update(row: PositionRow, position: PositionRecord) -> None
 
 
 def _position_fill_from_record(fill: FillRecord) -> PositionFill:
+    # ALP-462 — boundary cast Price/Money → float at the legacy ``PositionFill``
+    # boundary (records.positions is outside ALP-462's file list).
     return PositionFill(
         fill_timestamp=fill.fill_timestamp,
-        fill_price=fill.fill_price,
+        fill_price=float(fill.fill_price),
         fill_quantity=fill.fill_quantity,
-        slippage=fill.slippage_usd if fill.slippage_usd is not None else 0.0,
-        fees=max(fill.fees_usd, 0.0),
+        slippage=float(fill.slippage_usd) if fill.slippage_usd is not None else 0.0,
+        fees=max(float(fill.fees_usd), 0.0),
         live_execution_estimate=fill.live_execution_estimate,
     )
 
@@ -1270,7 +1307,7 @@ async def _maybe_resolve_thesis(
 
 async def _apply_cash_movement(
     handle: InvocationHandle, order: OrderRecord, fill: FillRecord
-) -> float:
+) -> Decimal:
     """Debit / credit the cash ledger by the consideration of this fill.
 
     Options consideration scales by the contract multiplier from the order's
@@ -1283,28 +1320,35 @@ async def _apply_cash_movement(
     can leave the seeded reservation smaller than the fill consideration).
 
     Returns the *signed cash delta* — positive for credits (sell-side
-    proceeds), negative for debits (buy-side consideration).
+    proceeds), negative for debits (buy-side consideration). Decimal-typed
+    so callers can thread the value into the activity-log without rounding;
+    the cash-ledger column is ``Numeric`` after the ALP-462 migration.
     """
     consideration = _fill_consideration_usd(order, fill)
-    fees = max(fill.fees_usd, 0.0)
+    fees = max(Decimal(str(fill.fees_usd)), Decimal(0))
     is_buy = order.direction in _BUY_DIRECTIONS
     delta = -(consideration + fees) if is_buy else (consideration - fees)
     cash_row = await _read_cash_row_or_raise(handle)
     cash_row.current_cash_usd = cash_row.current_cash_usd + delta
     if is_buy:
         cash_row.reserved_capital_usd = max(
-            cash_row.reserved_capital_usd - (consideration + fees), 0.0
+            cash_row.reserved_capital_usd - (consideration + fees), Decimal(0)
         )
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
     return delta
 
 
-def _fill_consideration_usd(order: OrderRecord, fill: FillRecord) -> float:
-    """USD notional moved by the fill — multiplier-scaled for options."""
-    base = fill.fill_price * fill.fill_quantity
+def _fill_consideration_usd(order: OrderRecord, fill: FillRecord) -> Decimal:
+    """USD notional moved by the fill — multiplier-scaled for options.
+
+    Decimal-typed; ``fill.fill_price`` / ``fill.fill_quantity`` are coerced
+    through ``str`` so binary-float drift on legacy float-typed fields cannot
+    enter the cash-ledger accumulator.
+    """
+    base = Decimal(str(fill.fill_price)) * Decimal(str(fill.fill_quantity))
     spec = order.instrument_spec
     if isinstance(spec, OptionsInstrumentSpec):
-        return base * spec.contract_multiplier
+        return base * Decimal(str(spec.contract_multiplier))
     return base
 
 
@@ -1349,7 +1393,8 @@ async def _emit_capital_release(
         position_id=order.position_id,
         thesis_id=order.originating_thesis_id,
         timestamp=fill.fill_timestamp,
-        detail=CapitalReleasedDetail(order_id=order.order_id, amount_usd=amount),
+        # ALP-462 — Decimal → float at the activity-log boundary (06a migrates).
+        detail=CapitalReleasedDetail(order_id=order.order_id, amount_usd=float(amount)),
     )
 
 
@@ -1377,11 +1422,12 @@ async def _emit_fill_activity_log_entries(
         position_id=pos_id,
         thesis_id=thesis_id,
         timestamp=fill.fill_timestamp,
+        # ALP-462 — Price/Money → float at the activity-log boundary.
         detail=OrderFilledDetail(
-            fill_price=fill.fill_price,
+            fill_price=float(fill.fill_price),
             fill_quantity=fill.fill_quantity,
-            slippage=fill.slippage_usd if fill.slippage_usd is not None else 0.0,
-            fees=max(fill.fees_usd, 0.0),
+            slippage=float(fill.slippage_usd) if fill.slippage_usd is not None else 0.0,
+            fees=max(float(fill.fees_usd), 0.0),
         ),
     )
 
@@ -1399,7 +1445,7 @@ async def _emit_fill_activity_log_entries(
             detail=PositionOpenedDetail(
                 ticker=_ticker_of(position_after),
                 direction=position_after.direction.value,
-                fill_price=fill.fill_price,
+                fill_price=float(fill.fill_price),
                 quantity=fill.fill_quantity,
                 thesis_id=thesis_id,
                 bracket_id=bracket_id,
@@ -1457,7 +1503,8 @@ async def _emit_fill_activity_log_entries(
             timestamp=fill.fill_timestamp,
             detail=PositionClosedDetail(
                 exit_method=PositionExitMethod.PM_DECISION,
-                exit_price=fill.fill_price,
+                # ALP-462 — Price → float at the activity-log boundary.
+                exit_price=float(fill.fill_price),
                 realized_pnl_usd=position_after.realized_pnl_to_date_usd or 0.0,
                 thesis_resolution_category="",
             ),
@@ -1516,8 +1563,9 @@ async def _emit_fill_activity_log_entries(
             position_id=pos_id,
             thesis_id=thesis_id,
             timestamp=fill.fill_timestamp,
+            # ALP-462 — Decimal → float at the activity-log boundary (06a migrates).
             detail=CashDebitedDetail(
-                amount_usd=abs(cash_delta_usd),
+                amount_usd=float(abs(cash_delta_usd)),
                 reason=CashDebitReason.ENTRY_FILL,
                 new_balance_usd=new_balance,
             ),
@@ -1531,7 +1579,7 @@ async def _emit_fill_activity_log_entries(
             thesis_id=thesis_id,
             timestamp=fill.fill_timestamp,
             detail=CashCreditedDetail(
-                amount_usd=abs(cash_delta_usd),
+                amount_usd=float(abs(cash_delta_usd)),
                 reason=CashCreditReason.EXIT_FILL,
                 new_balance_usd=new_balance,
             ),
@@ -1539,7 +1587,9 @@ async def _emit_fill_activity_log_entries(
 
 
 async def _current_cash_balance(handle: InvocationHandle) -> float:
-    return (await _read_cash_row_or_raise(handle)).current_cash_usd
+    # ALP-462 — the cash_ledger column is ``DecimalText`` (Decimal-backed); cast
+    # to float at the activity-log boundary.
+    return float((await _read_cash_row_or_raise(handle)).current_cash_usd)
 
 
 async def _emit(

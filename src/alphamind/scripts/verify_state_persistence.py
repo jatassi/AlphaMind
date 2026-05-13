@@ -45,6 +45,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price
 from alphamind._kernel.regime import RiskZone
 from alphamind.commands.command_models import (
     BracketOrderParameters,
@@ -502,16 +503,17 @@ def _drawdown_state() -> DrawdownState:
 
 
 def _unprocessed_entry_fill() -> FillRecord:
+    # ALP-462 — wrap fixture floats at the FillRecord boundary.
     return FillRecord(
         fill_id=_FILL_ID,
         order_id=_ENTRY_ORDER_ID,
         fill_timestamp=_NOW - timedelta(minutes=10),
-        fill_price=150.0,
+        fill_price=price("150"),
         fill_quantity=10.0,
         remaining_quantity_after=0.0,
         order_status_after=OrderStatus.FILLED,
-        slippage_usd=0.0,
-        fees_usd=0.0,
+        slippage_usd=money("0"),
+        fees_usd=money("0"),
         execution_venue="NASDAQ",
         gateway_reference=f"alp-{_FILL_ID}",
         persistence_timestamp=_NOW - timedelta(minutes=10) + timedelta(seconds=1),
@@ -553,10 +555,10 @@ def _phase_d_open_envelope(invocation_id: str) -> PMEnvelope:
             direction="long",
         ),
         entry_order=EntryOrder(type="market", limit_price=None, stop_price=None),
-        position_size=PositionSize(quantity=10.0, dollar_value=10_000.0),
+        position_size=PositionSize(quantity=10.0, dollar_value=money("10000")),
         target=Target(
             target_type="absolute_price",
-            price=950.0,
+            price=price("950"),
             pl_percentage=None,
             pl_dollar=None,
             order_type="limit",
@@ -568,7 +570,7 @@ def _phase_d_open_envelope(invocation_id: str) -> PMEnvelope:
                 condition=PriceCondition(
                     underlying_trigger=_PHASE_D_TICKER,
                     comparator="<=",
-                    trigger_price=750.0,
+                    trigger_price=price("750"),
                 ),
                 order_parameters=BracketOrderParameters(order_type="market", limit_price=None),
             ),

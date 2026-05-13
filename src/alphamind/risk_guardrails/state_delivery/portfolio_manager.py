@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -321,12 +322,16 @@ def _format_signed_pct(value: float) -> str:
 def _render_drawdown_context_block(
     *,
     pm_view: PortfolioManagerView,
-    total_portfolio_value_usd: float,
+    total_portfolio_value_usd: float | Decimal,
 ) -> str:
+    # ALP-462 — daily_total_pnl_usd is ``Money`` (Decimal); thread the percent
+    # computation through Decimal so the float-valued caller doesn't break.
+    pnl_usd_decimal = Decimal(str(pm_view.portfolio_pnl.daily_total_pnl_usd))
+    portfolio_decimal = (
+        Decimal(str(total_portfolio_value_usd)) if total_portfolio_value_usd else Decimal(0)
+    )
     daily_pnl_pct = (
-        (pm_view.portfolio_pnl.daily_total_pnl_usd / total_portfolio_value_usd) * 100.0
-        if total_portfolio_value_usd
-        else 0.0
+        float((pnl_usd_decimal / portfolio_decimal) * Decimal(100)) if portfolio_decimal else 0.0
     )
     daily_zone_tag = render_zone_tag(pm_view.drawdown.daily_zone)
     cumulative_zone_tag = render_zone_tag(pm_view.drawdown.cumulative_zone)

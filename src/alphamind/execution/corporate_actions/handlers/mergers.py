@@ -298,6 +298,9 @@ def _swap_for_stock_merger(
     # populates fresh values.
     stale_greeks = OptionGreeks(delta=0.0, gamma=0.0, theta=0.0, vega=0.0, refresh_failed=True)
 
+    # ALP-462 — ``snapshot.avg_entry_price`` is ``Price`` (Decimal); cast at the
+    # legacy PositionRecord boundary (records.positions is outside ALP-462).
+    new_avg_entry_price = float(snapshot.avg_entry_price)
     if isinstance(details, EquityPositionDetails):
         pre_qty = details.share_count
         pre_basis = details.average_cost_basis_per_share
@@ -305,10 +308,10 @@ def _swap_for_stock_merger(
             update={
                 "ticker": new_ticker,
                 "share_count": snapshot.qty,
-                "average_cost_basis_per_share": snapshot.avg_entry_price,
+                "average_cost_basis_per_share": new_avg_entry_price,
             }
         )
-        return pre_qty, pre_basis, snapshot.qty, snapshot.avg_entry_price, new_equity
+        return pre_qty, pre_basis, snapshot.qty, new_avg_entry_price, new_equity
     if isinstance(details, OptionsPositionDetails):
         pre_qty = details.contract_count
         pre_basis = details.premium_paid_per_contract
@@ -316,11 +319,11 @@ def _swap_for_stock_merger(
             update={
                 "underlying_ticker": new_ticker,
                 "contract_count": snapshot.qty,
-                "premium_paid_per_contract": snapshot.avg_entry_price,
+                "premium_paid_per_contract": new_avg_entry_price,
                 "greeks": stale_greeks,
             }
         )
-        return pre_qty, pre_basis, snapshot.qty, snapshot.avg_entry_price, new_options
+        return pre_qty, pre_basis, snapshot.qty, new_avg_entry_price, new_options
     if isinstance(details, StrategyPositionDetails):
         # Per-leg projection requires identifying each post-adjusted leg by its
         # OCC symbol; corporate-actions.md treats sequence-handling as an

@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import TypeAdapter
@@ -28,6 +29,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import Money, money, signed_money
 from alphamind.commands.command_models import (
     AddCommand,
     AdjustCommand,
@@ -160,6 +162,19 @@ _VERDICT_TO_PM_VERDICT: dict[str, PMVerdict] = {
     "approve_with_modification": PMVerdict.APPROVE_WITH_MODIFICATION,
     "reject": PMVerdict.REJECT,
 }
+
+
+def _price_to_float(value: Decimal | float | None) -> float | None:
+    """Convert an optional ``Price`` / ``Money`` to ``float`` for legacy records.
+
+    ALP-462's boundary types carry ``Decimal``; the internal portfolio-state
+    records (``PriceParameters``, ``CapitalReservedDetail``, ...) still expose
+    ``float``. This adapter is the one boundary cast — keeps the surface
+    surface readable and easy to retire when those records migrate too.
+    """
+    if value is None:
+        return None
+    return float(value)
 
 
 def _instrument_ticker_key(
@@ -663,7 +678,7 @@ async def _writeback_close(
 
     if command.order_type == "limit":
         order_type = OrderType.LIMIT
-        price_parameters = PriceParameters(limit_price=command.limit_price)
+        price_parameters = PriceParameters(limit_price=_price_to_float(command.limit_price))
     else:
         order_type = OrderType.MARKET
         price_parameters = PriceParameters()
@@ -854,20 +869,24 @@ def _new_stop_level_to_order_shape(
     stop: NewStopLevel,
 ) -> tuple[OrderRole, OrderType, PriceParameters]:
     if stop.order_type == "limit":
-        return OrderRole.PRICE_STOP, OrderType.LIMIT, PriceParameters(limit_price=stop.limit_price)
+        return (
+            OrderRole.PRICE_STOP,
+            OrderType.LIMIT,
+            PriceParameters(limit_price=_price_to_float(stop.limit_price)),
+        )
     if stop.order_type == "stop_limit":
         return (
             OrderRole.PRICE_STOP,
             OrderType.STOP_LIMIT,
             PriceParameters(
-                limit_price=stop.limit_price,
-                stop_trigger_price=stop.trigger_price,
+                limit_price=_price_to_float(stop.limit_price),
+                stop_trigger_price=_price_to_float(stop.trigger_price),
             ),
         )
     return (
         OrderRole.PRICE_STOP,
         OrderType.STOP,
-        PriceParameters(stop_trigger_price=stop.trigger_price),
+        PriceParameters(stop_trigger_price=_price_to_float(stop.trigger_price)),
     )
 
 
@@ -876,7 +895,11 @@ def _new_target_level_to_order_shape(
 ) -> tuple[OrderRole, OrderType, PriceParameters]:
     if tgt.order_type == "market":
         return OrderRole.TAKE_PROFIT, OrderType.MARKET, PriceParameters()
-    return OrderRole.TAKE_PROFIT, OrderType.LIMIT, PriceParameters(limit_price=tgt.price)
+    return (
+        OrderRole.TAKE_PROFIT,
+        OrderType.LIMIT,
+        PriceParameters(limit_price=_price_to_float(tgt.price)),
+    )
 
 
 def _build_replacement_protective_order(
@@ -1070,18 +1093,21 @@ async def _writeback_cancel(
         )
 
 
-def _order_notional_estimate(order: OrderRecord) -> float:
+def _order_notional_estimate(order: OrderRecord) -> Money:
     """Best-effort capital estimate for a cancelled order.
 
     Uses the order's price parameters (limit price preferred, stop trigger
-    fallback) times the remaining quantity. Falls back to ``0.0`` for market
-    orders with no parameters.
+    fallback) times the remaining quantity. Falls back to ``money("0")`` for
+    market orders with no parameters. Returns ``Money`` so callers thread the
+    Decimal-backed accumulator through ``_release_capital`` without floats.
     """
     pp = order.price_parameters
     px = pp.limit_price if pp.limit_price is not None else pp.stop_trigger_price
     if px is None:
-        return 0.0
-    return float(px) * float(order.remaining_quantity)
+        return money(0)
+    # Quantity may be float in the legacy record types; cast through ``str`` so
+    # binary drift never enters the monetary computation.
+    return money(Decimal(str(px)) * Decimal(str(order.remaining_quantity)))
 
 
 # ---------------------------------------------------------------------------
@@ -1317,9 +1343,15 @@ async def _read_cash_row(handle: InvocationHandle) -> CashLedgerRow:
     return row
 
 
-async def _reserve_capital(handle: InvocationHandle, *, amount_usd: float) -> None:
+async def _reserve_capital(handle: InvocationHandle, *, amount_usd: Money) -> None:
     cash_row = await _read_cash_row(handle)
-    cash_row.reserved_capital_usd = cash_row.reserved_capital_usd + amount_usd
+    # Decimal arithmetic preserves precision; the cast back to ``Money`` keeps
+    # the row's accumulator typed as ``Money`` rather than the bare ``Decimal``
+    # that ``+`` returns from a ``NewType`` operand. A reserve always adds a
+    # non-negative amount to a non-negative pool, so ``money()`` is the right
+    # constructor; ``_release_capital`` uses ``signed_money`` to surface any
+    # over-release as a negative running balance rather than masking it.
+    cash_row.reserved_capital_usd = money(cash_row.reserved_capital_usd + amount_usd)
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
 
 
@@ -1329,7 +1361,7 @@ async def _emit_capital_reserved(
     order_id: str,
     position_id: str | None,
     thesis_id: str | None,
-    amount_usd: float,
+    amount_usd: Money,
     timestamp: datetime,
 ) -> None:
     await _emit(
@@ -1339,7 +1371,10 @@ async def _emit_capital_reserved(
         position_id=position_id,
         thesis_id=thesis_id,
         timestamp=timestamp,
-        detail=CapitalReservedDetail(order_id=order_id, amount_usd=amount_usd),
+        # ALP-462 — Money → float at the activity-log boundary; 06a migrates
+        # the activity-log payload classes to ``Money``, at which point this
+        # cast goes away.
+        detail=CapitalReservedDetail(order_id=order_id, amount_usd=float(amount_usd)),
     )
 
 
@@ -1349,11 +1384,15 @@ async def _release_capital(
     order_id: str,
     position_id: str | None,
     thesis_id: str | None,
-    amount_usd: float,
+    amount_usd: Money,
     timestamp: datetime,
 ) -> None:
     cash_row = await _read_cash_row(handle)
-    cash_row.reserved_capital_usd = max(cash_row.reserved_capital_usd - amount_usd, 0.0)
+    # Decimal subtraction is exact — the legacy ``max(... - ..., 0.0)`` floor
+    # that the float-era code carried to mask binary drift is now unnecessary.
+    # ``signed_money`` admits the negative case so an over-release surfaces in
+    # the running balance instead of being silently clamped to zero.
+    cash_row.reserved_capital_usd = signed_money(cash_row.reserved_capital_usd - amount_usd)
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
     await _emit(
         handle,
@@ -1362,7 +1401,8 @@ async def _release_capital(
         position_id=position_id,
         thesis_id=thesis_id,
         timestamp=timestamp,
-        detail=CapitalReleasedDetail(order_id=order_id, amount_usd=amount_usd),
+        # ALP-462 — Money → float at the activity-log boundary (see _emit_capital_reserved).
+        detail=CapitalReleasedDetail(order_id=order_id, amount_usd=float(amount_usd)),
     )
 
 
@@ -1564,10 +1604,11 @@ def _entry_price_parameters(entry_order: EntryOrder) -> PriceParameters:
     if entry_order.type == "market":
         return PriceParameters()
     if entry_order.type == "limit":
-        return PriceParameters(limit_price=entry_order.limit_price)
+        return PriceParameters(limit_price=_price_to_float(entry_order.limit_price))
     # stop_limit
     return PriceParameters(
-        limit_price=entry_order.limit_price, stop_trigger_price=entry_order.stop_price
+        limit_price=_price_to_float(entry_order.limit_price),
+        stop_trigger_price=_price_to_float(entry_order.stop_price),
     )
 
 
@@ -1579,7 +1620,7 @@ def _bracket_leg_price_parameters(params: BracketOrderParameters) -> PriceParame
     legs.
     """
     if params.order_type == "limit":
-        return PriceParameters(limit_price=params.limit_price)
+        return PriceParameters(limit_price=_price_to_float(params.limit_price))
     return PriceParameters()
 
 
@@ -1639,7 +1680,7 @@ def _build_take_profit_order(  # noqa: PLR0913 — distinct identifiers + sizing
         price_parameters = PriceParameters()
     else:
         order_type = OrderType.LIMIT
-        price_parameters = PriceParameters(limit_price=target.price)
+        price_parameters = PriceParameters(limit_price=_price_to_float(target.price))
     return _build_pending_order(
         order_id=order_id,
         position_id=position_id,
@@ -1673,10 +1714,10 @@ def _build_invalidation_leg_order(  # noqa: PLR0913 — leg construction threads
     """Build the persisted protective-leg order for a price/time invalidation leg."""
     persisted_order_type = _BRACKET_ORDER_TYPE_TO_PERSISTED[wire_leg.order_parameters.order_type]
     if isinstance(wire_leg, PriceLeg):
-        trigger_price = wire_leg.condition.trigger_price
+        trigger_price = _price_to_float(wire_leg.condition.trigger_price)
         if persisted_order_type == OrderType.STOP_LIMIT:
             price_parameters = PriceParameters(
-                limit_price=wire_leg.order_parameters.limit_price,
+                limit_price=_price_to_float(wire_leg.order_parameters.limit_price),
                 stop_trigger_price=trigger_price,
             )
         else:
@@ -1841,7 +1882,8 @@ def _build_pending_position(
             raise ValueError(msg)
         details: EquityPositionDetails | OptionsPositionDetails = OptionsPositionDetails(
             underlying_ticker=Symbol(instrument.underlying),
-            strike_price=instrument.strike,
+            # ALP-462 — Price → float at the legacy OptionsPositionDetails surface.
+            strike_price=float(instrument.strike),
             expiration_date=date.fromisoformat(instrument.expiration),
             contract_type=(
                 OptionContractType.CALL
@@ -2017,7 +2059,8 @@ def _wire_leg_to_bracket_leg(
             order_id=OrderId(leg_order_id) if leg_order_id is not None else None,
             trigger=PriceTrigger(
                 underlying_ticker=Symbol(wire_leg.condition.underlying_trigger or ticker),
-                threshold_usd=wire_leg.condition.trigger_price,
+                # ALP-462 — Price → float at the legacy PriceTrigger surface.
+                threshold_usd=float(wire_leg.condition.trigger_price),
                 direction=direction,
             ),
             enforcement=BracketLegEnforcement.MECHANICAL,
@@ -2055,13 +2098,15 @@ def _target_to_bracket_leg(
 
     Long take-profit fires on price >= threshold (GTE); short on price <= (LTE).
     """
+    # ALP-462 — Price → float at the legacy PriceTrigger surface.
+    threshold_usd = float(target.price) if target.price is not None else 0.01
     return BracketLeg(
         leg_id=leg_id,
         leg_type=BracketLegType.TAKE_PROFIT,
         order_id=OrderId(target_order_id),
         trigger=PriceTrigger(
             underlying_ticker=Symbol(ticker),
-            threshold_usd=target.price if target.price is not None else 0.01,
+            threshold_usd=threshold_usd,
             direction="GTE" if direction == Direction.LONG else "LTE",
         ),
         enforcement=BracketLegEnforcement.MECHANICAL,

@@ -21,6 +21,7 @@ import hashlib
 from datetime import UTC, datetime
 from typing import Final
 
+from alphamind._kernel.money import money, price
 from alphamind.execution.broker_adapter import FillReport
 from alphamind.execution.state_persistence.write_paths.records import (
     FillProcessingStatus,
@@ -89,16 +90,20 @@ def fill_report_to_fill_record(report: FillReport) -> FillRecord | None:
         fill_quantity=report.fill_quantity,
     )
 
+    # ALP-462 — ``report.fill_price`` is still float on FillReport (broker
+    # adapter's wire shape, unchanged in this story). Wrap via ``price(...)``
+    # at the FillRecord boundary so the durability layer sees Decimal-exact
+    # values; ``fees_usd`` defaults to ``money("0")`` for the same reason.
     return FillRecord(
         fill_id=fill_id,
         order_id=order_id,
         fill_timestamp=report.fill_timestamp,
-        fill_price=report.fill_price,
+        fill_price=price(str(report.fill_price)),
         fill_quantity=report.fill_quantity,
         remaining_quantity_after=report.remaining_quantity,
         order_status_after=order_status_after,
         slippage_usd=None,
-        fees_usd=0.0,
+        fees_usd=money("0"),
         execution_venue=report.execution_venue,
         gateway_reference=alpaca_ref,
         persistence_timestamp=datetime.now(UTC),

@@ -647,16 +647,17 @@ def _adjust_to_replace_fields(command: AdjustCommand) -> ReplaceFields:
     no broker-level fields — caller should not dispatch those through the
     broker (the OMS still persists the thesis update via Phase 2).
     """
+    # ALP-462 — Price → float at the Alpaca SDK boundary (ReplaceFields still float).
     if command.new_stop_level is not None:
         stop = command.new_stop_level
         return ReplaceFields(
-            limit_price=stop.limit_price,
-            stop_price=stop.trigger_price,
+            limit_price=float(stop.limit_price) if stop.limit_price is not None else None,
+            stop_price=float(stop.trigger_price),
         )
     if command.new_target_level is not None:
         tgt = command.new_target_level
         return ReplaceFields(
-            limit_price=tgt.price if tgt.order_type == "limit" else None,
+            limit_price=float(tgt.price) if tgt.order_type == "limit" and tgt.price else None,
         )
     # time-only / event-only / thesis-only — no broker fields.
     return ReplaceFields()

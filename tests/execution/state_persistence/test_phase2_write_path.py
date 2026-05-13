@@ -1385,6 +1385,46 @@ async def test_adjust_command_dispatches_on_thesis_only(
     assert detail["rationale"] == cmd.adjustment_rationale
 
 
+async def test_reserve_capital_decimal_arithmetic_preserves_precision(
+    db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """Seven ``money("0.1")`` debits on the cash row land at exactly
+    ``Decimal("-0.7")``.
+
+    The float-era ``max(... - ..., 0.0)`` floor at line 1349 of phase2.py was
+    masking binary-rounding drift on the buying-power source of truth. With
+    Decimal arithmetic on a ``Numeric``-backed ``cash_row.reserved_capital_usd``
+    column, subtraction is exact and the floor is no longer needed. This test
+    pins the invariant directly against the migrated accumulator: seven 0.1
+    debits accumulate to -0.7 exactly, not the ``-0.7000000000000001`` a float
+    accumulator would produce. The test mutates the row directly via the same
+    ``signed_money`` cast ``_release_capital`` performs, bypassing the
+    ``CAPITAL_RELEASED`` activity-log emission so the precision check stays
+    independent of the FK-anchored event row. (ALP-462.)
+    """
+    from decimal import Decimal
+
+    from alphamind._kernel.money import money, signed_money
+
+    _, factory = db
+    await _seed_cash_ledger(factory, current_cash_usd=100_000.0, reserved_capital_usd=0.0)
+
+    async with factory() as sess:
+        cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash_row is not None
+        debit = money("0.1")
+        for _ in range(7):
+            cash_row.reserved_capital_usd = signed_money(cash_row.reserved_capital_usd - debit)
+        await sess.commit()
+
+    async with factory() as sess:
+        cash_row = await sess.get(CashLedgerRow, CASH_LEDGER_SINGLETON_ID)
+        assert cash_row is not None
+        # Decimal-exact equality, not pytest.approx; the whole point of this
+        # test is that float drift cannot survive the migration.
+        assert cash_row.reserved_capital_usd == Decimal("-0.7")
+
+
 async def test_cancel_command_releases_capital_from_order_notional(
     db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:

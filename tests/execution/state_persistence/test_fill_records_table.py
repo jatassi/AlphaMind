@@ -333,6 +333,44 @@ class TestFillRecordRoundTrip:
         assert readback is not None
         assert row_to_record(readback) == record
 
+    def test_money_fields_preserve_decimal_precision_through_codec(self, session: Session) -> None:
+        """ALP-462 — the codec layer is the durability boundary. ``Money`` and
+        ``Price`` values must round-trip exactly through SQLite's ``Numeric``
+        column type. This test pins the invariant: ``money("1234567.89")`` →
+        encode → decode → equals the original Decimal exactly.
+        """
+        from decimal import Decimal
+
+        from alphamind._kernel.money import money, price
+
+        record = _fill_record(
+            fill_price=price("1234567.89"),
+            fill_quantity=2.0,
+        ).model_copy(
+            update={
+                "fees_usd": money("0.07"),
+                "slippage_usd": money("0.123456789012"),
+            }
+        )
+        session.add(record_to_row(record))
+        session.commit()
+
+        readback = session.get(FillRecordRow, "fill-1")
+        assert readback is not None
+        rehydrated = row_to_record(readback)
+        # Decimal-exact equality — the whole point of the migration is that
+        # ``money("1234567.89")`` survives the storage round-trip without any
+        # binary-float drift sneaking into the durability layer.
+        assert rehydrated.fill_price == price("1234567.89")
+        assert rehydrated.fees_usd == money("0.07")
+        assert rehydrated.slippage_usd == money("0.123456789012")
+        # And the equality on the record itself round-trips.
+        assert rehydrated == record
+        # Sanity-check the underlying Decimal compare to confirm we didn't
+        # silently lose precision through Pydantic float coercion.
+        assert isinstance(rehydrated.fill_price, Decimal)
+        assert isinstance(rehydrated.fees_usd, Decimal)
+
 
 # ---------------------------------------------------------------------------
 # Schema shape

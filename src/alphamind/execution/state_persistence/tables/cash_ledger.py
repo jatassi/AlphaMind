@@ -20,9 +20,12 @@ formula ``compute_true_deployable_capital_usd`` uses).
 
 from __future__ import annotations
 
-from sqlalchemy import CheckConstraint, Float, Text
+from decimal import Decimal
+
+from sqlalchemy import CheckConstraint, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from alphamind.execution.state_persistence.tables._money_column import DecimalText
 from alphamind.persistence.models import Base
 
 # Singleton sentinel: every read/write targets this row. The CHECK constraint
@@ -31,16 +34,22 @@ CASH_LEDGER_SINGLETON_ID = "current"
 
 
 class CashLedgerRow(Base):
-    """Singleton row mirroring the persisted subset of ``CashLedger``."""
+    """Singleton row mirroring the persisted subset of ``CashLedger``.
+
+    ALP-462 — USD columns use :class:`DecimalText` (text-encoded ``Decimal``)
+    so the codec round-trips ``Money`` values exactly. SQLite's ``NUMERIC``
+    affinity collapses to ``REAL`` on fractional values, re-introducing
+    binary-float drift; storing the canonical Decimal repr sidesteps that.
+    """
 
     __tablename__ = "cash_ledger"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
-    current_cash_usd: Mapped[float] = mapped_column(Float, nullable=False)
-    settled_cash_usd: Mapped[float] = mapped_column(Float, nullable=False)
-    reserved_capital_usd: Mapped[float] = mapped_column(Float, nullable=False)
-    available_buying_power_usd: Mapped[float] = mapped_column(Float, nullable=False)
-    margin_held_usd: Mapped[float] = mapped_column(Float, nullable=False)
+    current_cash_usd: Mapped[Decimal] = mapped_column(DecimalText, nullable=False)
+    settled_cash_usd: Mapped[Decimal] = mapped_column(DecimalText, nullable=False)
+    reserved_capital_usd: Mapped[Decimal] = mapped_column(DecimalText, nullable=False)
+    available_buying_power_usd: Mapped[Decimal] = mapped_column(DecimalText, nullable=False)
+    margin_held_usd: Mapped[Decimal] = mapped_column(DecimalText, nullable=False)
     unsettled_proceeds_json: Mapped[str] = mapped_column(Text, nullable=False)
     last_updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 

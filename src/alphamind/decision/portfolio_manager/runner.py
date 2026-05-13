@@ -28,6 +28,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict
 
+from alphamind._kernel.money import Money
 from alphamind.analysis._shared import TokensUsed
 from alphamind.analysis.synthesizer.retrieval import RetrievalStore
 from alphamind.commands.pm_envelope import PMCompletionRecord
@@ -224,8 +225,8 @@ async def run_portfolio_manager(  # noqa: PLR0913 — signature dictated by ALP-
     state_delivery_config: StateDeliveryConfig,
     options_enabled: bool,
     short_selling_enabled: bool,
-    total_portfolio_value_usd: float,
-    available_for_new_positions_usd: float,
+    total_portfolio_value_usd: Money,
+    available_for_new_positions_usd: Money,
     cross_constraint_impact: CrossConstraintImpact,
     halt_state: HaltState | None = None,
     pending_orders: tuple[OrderRecord, ...] = (),
@@ -390,8 +391,8 @@ def _assemble_user_message(  # noqa: PLR0913 — fan-in of input-bundle assemble
     active_sectors_tuple: tuple[str, ...],
     state_delivery_config: StateDeliveryConfig,
     bundle_resolver: Callable[[PositionRecord], str | None],
-    total_portfolio_value_usd: float,
-    available_for_new_positions_usd: float,
+    total_portfolio_value_usd: Money,
+    available_for_new_positions_usd: Money,
     cross_constraint_impact: CrossConstraintImpact,
     sector_label_display: dict[str, str] | None,
     regime_transition_breaches: tuple[RegimeTransitionBreach, ...],

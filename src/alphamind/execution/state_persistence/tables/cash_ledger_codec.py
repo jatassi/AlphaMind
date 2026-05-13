@@ -76,12 +76,17 @@ def cash_ledger_record_from_row(
     derived values (cash-percent, true deployable, RegT-excess history)
     must be recomputed from current portfolio context.
     """
+    # ALP-462 — the DecimalText columns hand back ``Decimal`` values, but the
+    # typed ``CashLedger`` record (in portfolio_state.records.cash) is out of
+    # ALP-462's file list and still carries ``float`` fields. Cast at the
+    # codec boundary; Pydantic would coerce silently otherwise, and the
+    # explicit cast keeps the round-trip readable to maintainers.
     return CashLedger(
-        current_cash_usd=row.current_cash_usd,
-        settled_cash_usd=row.settled_cash_usd,
-        reserved_capital_usd=row.reserved_capital_usd,
-        available_buying_power_usd=row.available_buying_power_usd,
-        margin_held_usd=row.margin_held_usd,
+        current_cash_usd=float(row.current_cash_usd),
+        settled_cash_usd=float(row.settled_cash_usd),
+        reserved_capital_usd=float(row.reserved_capital_usd),
+        available_buying_power_usd=float(row.available_buying_power_usd),
+        margin_held_usd=float(row.margin_held_usd),
         unsettled_proceeds=_deserialize_unsettled_proceeds(row.unsettled_proceeds_json),
         cash_pct_of_portfolio=cash_pct_of_portfolio,
         true_deployable_capital_usd=true_deployable_capital_usd,

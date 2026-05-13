@@ -15,6 +15,7 @@ mutations parameterized by quantity and basis multiplicative factors.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import NamedTuple
 
 from alphamind.execution.state_persistence.invocation_context.context import (
@@ -106,10 +107,14 @@ def _project_options_from_snapshot(
             f"options/strategy CA cannot project post-adjustment state"
         )
         raise ValueError(msg)
+    # ALP-462 — ``snapshot.avg_entry_price`` is ``Price`` (Decimal); coerce the
+    # float contract multiplier so the projected premium stays exact, then let
+    # Pydantic coerce back to the legacy float field on OptionsPositionDetails.
+    projected_premium = snapshot.avg_entry_price * Decimal(str(prior.contract_multiplier))
     return prior.model_copy(
         update={
             "contract_count": snapshot.qty,
-            "premium_paid_per_contract": snapshot.avg_entry_price * prior.contract_multiplier,
+            "premium_paid_per_contract": projected_premium,
             "greeks": _stale_greeks(prior.greeks),
         }
     )

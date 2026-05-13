@@ -20,6 +20,8 @@ fill_price)``. On retry (transient storage failure, ``GET /v2/orders`` replay),
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy import (
     CheckConstraint,
     Float,
@@ -30,6 +32,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from alphamind.execution.state_persistence.tables._money_column import DecimalText
 from alphamind.execution.state_persistence.write_paths.records import (
     FillProcessingStatus,
 )
@@ -61,12 +64,12 @@ class FillRecordRow(Base):
         nullable=False,
     )
     fill_timestamp: Mapped[str] = mapped_column(Text, nullable=False)
-    fill_price: Mapped[float] = mapped_column(Float, nullable=False)
+    fill_price: Mapped[Decimal] = mapped_column(DecimalText, nullable=False)
     fill_quantity: Mapped[float] = mapped_column(Float, nullable=False)
     remaining_quantity_after: Mapped[float] = mapped_column(Float, nullable=False)
     order_status_after: Mapped[str] = mapped_column(Text, nullable=False)
-    slippage_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
-    fees_usd: Mapped[float] = mapped_column(Float, nullable=False)
+    slippage_usd: Mapped[Decimal | None] = mapped_column(DecimalText, nullable=True)
+    fees_usd: Mapped[Decimal] = mapped_column(DecimalText, nullable=False)
     execution_venue: Mapped[str | None] = mapped_column(Text, nullable=True)
     gateway_reference: Mapped[str | None] = mapped_column(Text, nullable=True)
     persistence_timestamp: Mapped[str] = mapped_column(Text, nullable=False)

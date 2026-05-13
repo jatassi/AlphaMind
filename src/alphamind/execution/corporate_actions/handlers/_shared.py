@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Final
 
 from sqlalchemy import select
@@ -242,9 +243,13 @@ async def _apply_signed_cash_movement(
     if cash_row is None:
         msg = "cash_ledger singleton missing — CA handler cannot apply cash movement"
         raise ValueError(msg)
-    cash_row.current_cash_usd = cash_row.current_cash_usd + signed_cash_impact_usd
+    # ALP-462 — current_cash_usd is ``Numeric``/Decimal-backed; thread the
+    # caller-supplied float impact through ``Decimal(str(...))`` so the cash
+    # accumulator stays exact across CA-driven movements.
+    cash_row.current_cash_usd = cash_row.current_cash_usd + Decimal(str(signed_cash_impact_usd))
     cash_row.last_updated_at = datetime.now(UTC).isoformat()
-    new_balance = cash_row.current_cash_usd
+    # ALP-462 — Decimal → float at the activity-log boundary (06a migrates).
+    new_balance = float(cash_row.current_cash_usd)
     if signed_cash_impact_usd >= 0:
         await _emit(
             handle,

@@ -43,6 +43,7 @@ from alphamind._kernel.ids import (
     Symbol,
     ThesisId,
 )
+from alphamind._kernel.money import money, price
 from alphamind._kernel.regime import RiskZone
 from alphamind.execution.broker_adapter.queries import (
     PositionSnapshot,
@@ -986,46 +987,53 @@ def _ca_activities() -> tuple[CorporateActionActivity, ...]:
 
 
 def _equity_snapshot(symbol: str, qty: float, avg_entry_price: float) -> PositionSnapshot:
+    # ALP-462 — PositionSnapshot fields are Price/Money; wrap fixture floats.
+    px = price(str(avg_entry_price))
+    notional = money(str(qty * avg_entry_price))
     return PositionSnapshot(
         symbol=symbol,
         asset_class="us_equity",
         qty=qty,
-        avg_entry_price=avg_entry_price,
-        market_value=qty * avg_entry_price,
-        cost_basis=qty * avg_entry_price,
-        unrealized_pl=0.0,
+        avg_entry_price=px,
+        market_value=notional,
+        cost_basis=notional,
+        unrealized_pl=money("0"),
         unrealized_plpc=0.0,
-        current_price=avg_entry_price,
+        current_price=px,
         side="long",
     )
 
 
 def _equity_short_snapshot(symbol: str, qty: float, avg_entry_price: float) -> PositionSnapshot:
+    px = price(str(avg_entry_price))
+    notional = money(str(qty * avg_entry_price))
     return PositionSnapshot(
         symbol=symbol,
         asset_class="us_equity",
         qty=qty,
-        avg_entry_price=avg_entry_price,
-        market_value=qty * avg_entry_price,
-        cost_basis=qty * avg_entry_price,
-        unrealized_pl=0.0,
+        avg_entry_price=px,
+        market_value=notional,
+        cost_basis=notional,
+        unrealized_pl=money("0"),
         unrealized_plpc=0.0,
-        current_price=avg_entry_price,
+        current_price=px,
         side="short",
     )
 
 
 def _options_snapshot(symbol: str, qty: float, avg_entry_price: float) -> PositionSnapshot:
+    px = price(str(avg_entry_price))
+    notional = money(str(qty * avg_entry_price * 100.0))
     return PositionSnapshot(
         symbol=symbol,
         asset_class="us_option",
         qty=qty,
-        avg_entry_price=avg_entry_price,
-        market_value=qty * avg_entry_price * 100.0,
-        cost_basis=qty * avg_entry_price * 100.0,
-        unrealized_pl=0.0,
+        avg_entry_price=px,
+        market_value=notional,
+        cost_basis=notional,
+        unrealized_pl=money("0"),
         unrealized_plpc=0.0,
-        current_price=avg_entry_price,
+        current_price=px,
         side="long",
     )
 
@@ -1114,14 +1122,15 @@ def _alpaca_account_aligned() -> TradeAccountSnapshot:
         + _CASH_MERGER_PROCEEDS
         + _STOCK_MERGER_CASH_PARTIAL
     )
+    # ALP-462 — TradeAccountSnapshot fields are Money; wrap fixture floats.
     return TradeAccountSnapshot(
         account_id="alp-account-1",
-        cash=expected_cash,
-        equity=expected_cash,
-        buying_power=200_000.0,
-        regt_buying_power=200_000.0,
-        daytrading_buying_power=200_000.0,
-        maintenance_margin=0.0,
+        cash=money(str(expected_cash)),
+        equity=money(str(expected_cash)),
+        buying_power=money("200000"),
+        regt_buying_power=money("200000"),
+        daytrading_buying_power=money("200000"),
+        maintenance_margin=money("0"),
         daytrade_count=0,
         pattern_day_trader=False,
         status="ACTIVE",

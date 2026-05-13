@@ -20,6 +20,7 @@ from alphamind._kernel.ids import (
     ClientOrderId,
     OccSymbol,
 )
+from alphamind._kernel.money import price
 from alphamind.execution.broker_adapter import FillReport
 from alphamind.execution.continuous_monitor.fill_stream_consumer import (
     fill_report_to_fill_record,
@@ -85,7 +86,10 @@ class TestEquityFillEvent:
         assert record is not None
         assert record.order_id == "oms-order-1"
         assert record.fill_timestamp == report.fill_timestamp
-        assert record.fill_price == pytest.approx(189.42)
+        # ALP-462 — FillRecord.fill_price is ``Price`` (Decimal-backed); the
+        # translator forwards the report's float value through Pydantic's
+        # float→Decimal coercion, so equality is against the canonical string.
+        assert record.fill_price == price("189.42")
         assert record.fill_quantity == pytest.approx(100.0)
         assert record.remaining_quantity_after == pytest.approx(0.0)
         assert record.order_status_after is OrderStatus.FILLED
@@ -155,7 +159,8 @@ class TestSingleLegOptionsEvent:
         # round-trip into the persistence row.
         assert record is not None
         assert record.order_status_after is OrderStatus.PARTIALLY_FILLED
-        assert record.fill_price == pytest.approx(3.45)
+        # ALP-462 — FillRecord.fill_price is ``Price`` (Decimal-backed).
+        assert record.fill_price == price("3.45")
         assert record.fill_quantity == pytest.approx(2.0)
 
 

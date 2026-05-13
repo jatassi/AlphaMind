@@ -99,12 +99,19 @@ async def test_run_verify_algebra_holds_per_fill(fresh_db: Path) -> None:
 
 async def test_run_verify_trailing_30d_equals_sum_of_per_fill_excess(fresh_db: Path) -> None:
     """The trailing-30d aggregate equals the sum of the per-fill regt_excess_over_pm."""
+    from decimal import Decimal
+
     from alphamind.scripts.verify_regt_margin_attribution import run_verify
 
     result = await run_verify(fresh_db, invocation_id="verify-regt-agg-001")
     assert result.ok, result.failures
-    expected = sum(row.attribution.regt_excess_over_pm for row in result.attributions)
-    assert abs(result.trailing_30d_usd - expected) < 1e-6
+    # ALP-462 — ``regt_excess_over_pm`` is ``Money``; sum in Decimal space and
+    # compare against the float trailing-30d aggregate via Decimal coercion.
+    expected = sum(
+        (row.attribution.regt_excess_over_pm for row in result.attributions),
+        start=Decimal(0),
+    )
+    assert abs(Decimal(str(result.trailing_30d_usd)) - expected) < Decimal("1e-6")
 
 
 async def test_run_verify_all_attribution_fields_finite(fresh_db: Path) -> None:

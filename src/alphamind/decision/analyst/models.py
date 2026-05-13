@@ -45,6 +45,7 @@ from alphamind._kernel.ids import (
 from alphamind._kernel.ids import (
     recommendation_id as _recommendation_id_constructor,
 )
+from alphamind._kernel.money import Money, Price
 from alphamind.risk_guardrails.guardrail_evaluation import Greeks, RuleProjection
 
 __all__ = [
@@ -102,7 +103,7 @@ class InstrumentOption(BaseModel):
 
     asset_type: Literal["option"]
     underlying: Symbol = Field(min_length=1)
-    strike: float = Field(gt=0)
+    strike: Price = Field(gt=0)
     expiration: date
     contract_type: Literal["call", "put"]
     direction: Literal["long", "short"]
@@ -113,7 +114,7 @@ class StrategyLeg(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    strike: float = Field(gt=0)
+    strike: Price = Field(gt=0)
     expiration: date
     contract_type: Literal["call", "put"]
     direction: Literal["long", "short"]
@@ -155,8 +156,8 @@ class EntryOrder(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     type: Literal["market", "limit", "stop_limit"]
-    limit_price: float | None = Field(default=None, gt=0)
-    stop_price: float | None = Field(default=None, gt=0)
+    limit_price: Price | None = Field(default=None, gt=0)
+    stop_price: Price | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def _validate_price_fields(self) -> EntryOrder:
@@ -186,9 +187,9 @@ class PositionSize(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     quantity: float = Field(gt=0)
-    dollar_value: float = Field(gt=0)
+    dollar_value: Money = Field(gt=0)
     pct_of_portfolio: float = Field(gt=0)
-    premium_at_risk: float | None = Field(default=None, gt=0)
+    premium_at_risk: Money | None = Field(default=None, gt=0)
     delta_adjusted_exposure: float | None = None
 
 
@@ -203,10 +204,10 @@ class Target(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     target_type: Literal["absolute_price", "pl_percentage", "pl_dollar"]
-    price: float = Field(gt=0)
-    dollar_pl_target: float
+    price: Price = Field(gt=0)
+    dollar_pl_target: Money
     pl_percentage: float | None = None
-    pl_dollar: float | None = None
+    pl_dollar: Money | None = None
 
     @model_validator(mode="after")
     def _validate_pl_fields(self) -> Target:
@@ -229,7 +230,7 @@ class PriceCondition(BaseModel):
 
     underlying_trigger: Symbol = Field(min_length=1)
     comparator: Literal["<=", ">=", "<", ">"]
-    trigger_price: float = Field(gt=0)
+    trigger_price: Price = Field(gt=0)
 
 
 class TimeCondition(BaseModel):
@@ -263,7 +264,7 @@ class OrderParameters(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     order_type: Literal["market", "limit", "stop", "stop_limit"]
-    limit_price: float | None = Field(default=None, gt=0)
+    limit_price: Price | None = Field(default=None, gt=0)
 
 
 # ---------------------------------------------------------------------------

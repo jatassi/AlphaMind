@@ -220,11 +220,13 @@ def _build_open_legs(legs: Sequence[StrategyLeg], underlying: str) -> list[Optio
     simplified = _simplify_ratios(leg.quantity_ratio for leg in legs)
     requests: list[OptionLegRequest] = []
     for leg, ratio in zip(legs, simplified, strict=True):
+        # ALP-462 — strike is ``Price`` (Decimal); cast to float for the OCC
+        # symbol builder which still carries the legacy float surface.
         occ = _build_occ_symbol(
             underlying,
             _parse_expiration(leg.expiration),
             _CONTRACT_TYPE_ENUM[leg.contract_type],
-            leg.strike,
+            float(leg.strike),
         )
         requests.append(
             OptionLegRequest(
@@ -361,7 +363,12 @@ async def submit_mleg_open(
         legs=leg_requests,
         qty=command.position_size.quantity,
         client_order_id=client_order_id,
-        limit_price=command.entry_order.limit_price,
+        # ALP-462 — Price → float at the Alpaca SDK boundary.
+        limit_price=(
+            float(command.entry_order.limit_price)
+            if command.entry_order.limit_price is not None
+            else None
+        ),
     )
     return await _submit(
         client=client,
@@ -470,7 +477,8 @@ async def submit_mleg_close(
         legs=leg_requests,
         qty=qty,
         client_order_id=client_order_id,
-        limit_price=command.limit_price,
+        # ALP-462 — Price → float at the Alpaca SDK boundary.
+        limit_price=float(command.limit_price) if command.limit_price is not None else None,
     )
     return await _submit(
         client=client,
@@ -514,7 +522,12 @@ async def submit_mleg_add(
         legs=leg_requests,
         qty=command.additional_quantity,
         client_order_id=client_order_id,
-        limit_price=command.entry_order.limit_price,
+        # ALP-462 — Price → float at the Alpaca SDK boundary.
+        limit_price=(
+            float(command.entry_order.limit_price)
+            if command.entry_order.limit_price is not None
+            else None
+        ),
     )
     return await _submit(
         client=client,

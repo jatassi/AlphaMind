@@ -210,7 +210,8 @@ async def submit_options_close(
         symbol=occ_symbol,
         side=side,
         qty=qty,
-        limit_price=command.limit_price,
+        # ALP-462 — Price → float at the Alpaca SDK boundary.
+        limit_price=float(command.limit_price) if command.limit_price is not None else None,
         client_order_id=client_order_id,
     )
     return await _submit(client, request, execution, occ_symbol=occ_symbol)
@@ -245,15 +246,16 @@ def _build_request(
         if order.limit_price is None:
             msg = "EntryOrder type=limit requires limit_price"
             raise ValueError(msg)
-        return LimitOrderRequest(**common, limit_price=order.limit_price)
+        # ALP-462 — Price → float at the Alpaca SDK boundary.
+        return LimitOrderRequest(**common, limit_price=float(order.limit_price))
     if order.type == "stop_limit":
         if order.limit_price is None or order.stop_price is None:
             msg = "EntryOrder type=stop_limit requires both limit_price and stop_price"
             raise ValueError(msg)
         return StopLimitOrderRequest(
             **common,
-            limit_price=order.limit_price,
-            stop_price=order.stop_price,
+            limit_price=float(order.limit_price),
+            stop_price=float(order.stop_price),
         )
     # Unreachable — EntryOrderType is an exhaustive Literal.
     msg = f"unsupported EntryOrder.type for options: {order.type!r}"
@@ -328,11 +330,13 @@ def _occ_from_instrument(instrument: OptionInstrument) -> str:
     contract_type = (
         OptionContractType.CALL if instrument.contract_type == "call" else OptionContractType.PUT
     )
+    # ALP-462 — strike is ``Price`` (Decimal); cast to float for the OCC
+    # symbol builder which expects the legacy float surface.
     return build_occ_symbol(
         instrument.underlying,
         expiration,
         contract_type,
-        instrument.strike,
+        float(instrument.strike),
     )
 
 

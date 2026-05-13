@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Callable
 
+from alphamind._kernel.money import signed_money
 from alphamind.portfolio_state.records.positions import Direction, PositionRecord
 from alphamind.portfolio_state.snapshot import DirectionalExposure, SectorExposureEntry
 from alphamind.portfolio_state.views.positions import PositionView
@@ -80,11 +81,13 @@ def compute_sector_exposure(
         long_usd = long_by_sector[sector]
         short_usd = short_by_sector[sector]
         ratio: float | None = long_usd / short_usd if short_usd > 0 and long_usd > 0 else None
+        # ALP-462 — snapshot fields carry ``Money``; wrap the float computation
+        # via ``signed_money`` (handles the zero/negative degenerate cases).
         entries.append(
             SectorExposureEntry(
                 sector=sector,
-                long_delta_adjusted_usd=long_usd,
-                short_delta_adjusted_usd=short_usd,
+                long_delta_adjusted_usd=signed_money(str(long_usd)),
+                short_delta_adjusted_usd=signed_money(str(short_usd)),
                 long_pct_of_portfolio=_pct(long_usd, total_portfolio_value_usd),
                 short_pct_of_portfolio=_pct(short_usd, total_portfolio_value_usd),
                 long_short_ratio=ratio,
@@ -117,9 +120,10 @@ def compute_directional_exposure(
         if pos.delta_adjusted_exposure_usd < 0
     )
 
+    # ALP-462 — snapshot fields carry ``Money``; wrap accumulators here.
     return DirectionalExposure(
-        total_long_delta_adjusted_usd=total_long,
-        total_short_delta_adjusted_usd=total_short,
+        total_long_delta_adjusted_usd=signed_money(str(total_long)),
+        total_short_delta_adjusted_usd=signed_money(str(total_short)),
         net_directional_pct_of_portfolio=_pct(total_long - total_short, total_portfolio_value_usd),
         gross_pct_of_portfolio=_pct(total_long + total_short, total_portfolio_value_usd),
     )
